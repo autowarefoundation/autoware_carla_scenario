@@ -455,6 +455,8 @@ class RobustnessOptimizer:
         return best_params, best_signal, best_merit, best_ok, completed
 
     def _batched_rollout(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
+        if params.shape[0] == 1:
+            return rollout(params[0], inputs, self.config).unsqueeze(0)
         return torch.vmap(lambda p: rollout(p, inputs, self.config))(params)
 
     def _batched_scores(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -468,6 +470,9 @@ class RobustnessOptimizer:
 
     def _batched_scores_eager(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """The body of :meth:`_batched_scores`, separated so it can be compiled."""
+        if signals.shape[0] == 1:
+            merit, robustness = self.rules.merit_and_robustness(signals[0])
+            return merit.reshape(1), robustness.reshape(1)
         return torch.vmap(self.rules.merit_and_robustness)(signals)
 
     def _refine_losses(
@@ -476,7 +481,25 @@ class RobustnessOptimizer:
         inputs: RolloutInputs,
         temperature: float,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """One refinement step's forward pass over every seed at once."""
+        """One refinement step's forward pass over every seed at once.
+
+        At a batch of one there is nothing to batch, and ``vmap`` is then pure
+        dispatch overhead: measured, 15.06 ms through it against 10.64 ms
+        calling the same arithmetic directly, and 3.41 against 1.93 for the
+        exact scoring. Since the refinement runs a single seed by default, that
+        overhead was most of what a tuning run spent its time on -- the policy
+        is two thirds of a closed-loop run's wall clock, and the refinement is
+        most of the policy.
+
+        The alternative reading of the same measurement is that seeds are
+        nearly free -- 12.41 ms per seed at one, 1.71 at eight, 0.47 at
+        thirty-two, for about the same total. Both are worth having; this one
+        is the change that does not alter what the search finds.
+        """
+        if params.shape[0] == 1:
+            signal = rollout(params[0], inputs, self.config)
+            loss = -self.rules.objective(signal, **smooth(temperature))
+            return loss.reshape(1), signal.unsqueeze(0)
         signals = torch.vmap(lambda p: rollout(p, inputs, self.config))(params)
         losses = torch.vmap(lambda s: -self.rules.objective(s, **smooth(temperature)))(signals)
         return losses, signals

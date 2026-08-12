@@ -495,3 +495,30 @@ def test_the_compiled_paths_are_actually_used_when_present():
 
     assert "refine" in calls, "the refinement loop ignored the compiled forward pass"
     assert "scores" in calls, "candidate scoring ignored the compiled path"
+
+
+def test_the_batch_of_one_shortcut_computes_the_same_thing():
+    """Bypassing `vmap` at a batch of one must be invisible in the answer.
+
+    It is there because `vmap` at a batch of one is pure dispatch overhead --
+    15.06 ms against 10.64 for the same arithmetic called directly -- and the
+    refinement runs a single seed by default. A shortcut that changed the
+    numbers would be a different search wearing the same name.
+    """
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    inputs = make_inputs(CONFIG, speed0_mps=7.0)
+    params = torch.tensor([[0.4, -0.9, 0.2, 0.1, 0.6, -0.3]])
+
+    shortcut_signals = optimizer._batched_rollout(params, inputs)
+    batched_signals = torch.vmap(lambda p: rollout(p, inputs, CONFIG))(params)
+    assert torch.allclose(shortcut_signals, batched_signals, atol=1e-5)
+
+    shortcut_merit, shortcut_rob = optimizer._batched_scores_eager(shortcut_signals)
+    batched = torch.vmap(optimizer.rules.merit_and_robustness)(batched_signals)
+    assert torch.allclose(shortcut_merit, batched[0], atol=1e-4)
+    assert torch.allclose(shortcut_rob, batched[1], atol=1e-4)
+
+    losses, signals = optimizer._refine_losses(params.requires_grad_(True), inputs, 4.0)
+    assert losses.shape == (1,)
+    assert signals.shape[0] == 1
+    assert torch.allclose(signals.detach(), batched_signals, atol=1e-5)
