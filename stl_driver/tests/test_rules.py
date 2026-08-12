@@ -521,3 +521,18 @@ def test_the_combined_score_equals_the_two_it_replaces(rules):
         merit, robustness = rules.merit_and_robustness(signal)
         assert float(merit) == pytest.approx(float(rules.objective(signal)), abs=1e-3)
         assert float(robustness) == pytest.approx(float(rules.spec_robustness(signal)), abs=1e-3)
+
+
+def test_the_reported_robustness_is_still_the_conjunction(rules):
+    """`spec_robustness` takes the minimum rather than evaluating the tree.
+
+    The two agree by definition -- a conjunction *is* the minimum over its
+    parts -- and this keeps them honest, because `self.spec` remains the
+    written specification even though the hot path no longer evaluates it.
+    """
+    generator = torch.Generator().manual_seed(7)
+    for _ in range(8):
+        signal = torch.randn(T, N_COLUMNS, generator=generator) * 4.0
+        assert float(rules.spec_robustness(signal)) == pytest.approx(
+            float(rules.spec.robustness(signal, approx_method="true")), abs=1e-3
+        )

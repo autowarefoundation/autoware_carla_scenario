@@ -349,3 +349,66 @@ def test_a_wide_signal_does_not_produce_nan_under_smoothing():
     value = Always(predicate).robustness(wide + parameter, **smooth(8.0))
     value.backward()
     assert torch.isfinite(parameter.grad).all()
+
+
+@pytest.mark.parametrize("approx_method", ["true", "softmax"])
+@pytest.mark.parametrize("lower", [0, 1, 5, 12])
+@pytest.mark.parametrize("bounded", [False, True])
+def test_reducing_straight_to_the_value_matches_the_trace(approx_method, lower, bounded):
+    """`robustness` skips building a trace it would throw away.
+
+    A rule's robustness is `trace[0]`, and no rule here nests one temporal
+    operator inside another, so the rest of the trace is constructed and
+    discarded -- which over ten rules, forward and backward, was most of the
+    operations in a refinement step. This asserts the shortcut agrees with the
+    trace it replaces, including where the interval starts partway in.
+    """
+    from stlcgpp.formula import Always as UpstreamAlways
+    from stlcgpp.formula import Eventually as UpstreamEventually
+    from stlcgpp.formula import GreaterThan
+
+    n_steps = 20
+    generator = torch.Generator().manual_seed(lower + (0 if bounded else 100))
+    signal = torch.randn(n_steps, 1, generator=generator) * 3.0
+    predicate = GreaterThan(Predicate("x", lambda s: s[..., 0]), 0.0)
+    interval = [lower, n_steps - 1] if bounded else [lower, torch.inf]
+    evaluation = (
+        {"approx_method": "true"}
+        if approx_method == "true"
+        else {"approx_method": "softmax", "temperature": 2.0}
+    )
+
+    for ours, theirs in ((Always, UpstreamAlways), (Eventually, UpstreamEventually)):
+        fast = ours(predicate, interval=interval).robustness(signal, **evaluation)
+        slow = theirs(predicate, interval=interval).robustness(signal, **evaluation)
+        assert torch.allclose(fast, slow, atol=1e-4), f"{ours.__name__} interval={interval}"
+
+
+def test_the_shortcut_cuts_the_operation_count():
+    """The point of it, stated as a number so it cannot quietly regress."""
+    import collections
+
+    from stlcgpp.formula import Always as UpstreamAlways
+    from stlcgpp.formula import GreaterThan
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    class Count(TorchDispatchMode):
+        def __init__(self):
+            self.n = 0
+            self.by = collections.Counter()
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            self.n += 1
+            self.by[str(func)] += 1
+            return func(*args, **(kwargs or {}))
+
+    signal = torch.randn(40, 1)
+    predicate = GreaterThan(Predicate("x", lambda s: s[..., 0]), 0.0)
+
+    with Count() as ours:
+        Always(predicate).robustness(signal, **EXACT)
+    with Count() as theirs:
+        UpstreamAlways(predicate).robustness(signal, **EXACT)
+
+    assert ours.n * 4 < theirs.n, f"{ours.n} operations against upstream's {theirs.n}"
+    assert not any("flip" in name for name in ours.by), "no scan should be built at all"

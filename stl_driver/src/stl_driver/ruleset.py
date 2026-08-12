@@ -120,8 +120,21 @@ class RuleSet:
         Equal to the minimum over the individual rules, which is what makes
         the per-rule breakdown in ``debug_scalars`` a genuine decomposition of
         this value rather than a parallel calculation.
+
+        Taken as that minimum rather than by evaluating the conjunction, which
+        is the same number by the identity above and much cheaper to reach.
+        ``And`` combines its children's whole robustness *traces* before the
+        first entry is read, so asking the conjoined tree for a value rebuilds
+        every trace the rules themselves no longer need. ``self.spec`` is kept
+        because it is the specification -- what ``stl-driver explain`` prints,
+        and what says in one place what "satisfied" means.
         """
-        return self.spec.robustness(signal, **EXACT)
+        worst: torch.Tensor | None = None
+        for rule in self.rules:
+            robustness = rule.formula.robustness(signal, **EXACT)
+            worst = robustness if worst is None else torch.minimum(worst, robustness)
+        assert worst is not None  # a RuleSet is never empty; `conjoin` refuses one
+        return worst
 
     def per_rule(self, signal: torch.Tensor, **kwargs: Any) -> dict[str, torch.Tensor]:
         """Each rule's robustness separately, for reporting and diagnosis."""

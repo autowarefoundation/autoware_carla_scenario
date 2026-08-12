@@ -154,6 +154,52 @@ def _suffix_reduce(
     return sign * torch.where(usable, soft, exact)
 
 
+def _suffix_scalar(
+    values: torch.Tensor,
+    interval: Sequence[Any],
+    *,
+    minimum: bool,
+    approx_method: str = "true",
+    temperature: float = 1.0,
+    **_: Any,
+) -> torch.Tensor | None:
+    """``trace[0]`` alone, as one reduction rather than a whole scan.
+
+    A rule's robustness is the first entry of its trace, and this
+    specification never nests one temporal operator inside another, so the
+    rest of the trace is built and discarded. Over ten rules, forward and
+    backward, that was most of the operations in a refinement step -- and the
+    step is dominated by dispatching operations, not by performing them: 1,822
+    of them to write 84,854 elements, 5.8 us each on an average tensor of 47.
+
+    Reduced directly, ``Always(phi, [a, ...])`` at time zero is just the
+    minimum of ``phi`` from ``a`` onwards: one slice and one reduce, against a
+    reversed cumulative scan with its two flips, an ``arange``, a clamp, a
+    gather and a ``where``.
+
+    Returns ``None`` for anything this does not implement -- the same
+    arrangement as :func:`_suffix_trace`, so an interval it does not recognise
+    is left to the general path.
+    """
+    n_steps = values.shape[0]
+    lower, upper = int(interval[0]), interval[1]
+    if lower >= n_steps:
+        return None
+    if not (upper == torch.inf or int(upper) == n_steps - 1):
+        return None
+    if approx_method not in ("true", "softmax"):
+        return None
+
+    window = values[lower:]
+    if approx_method == "true":
+        return window.min() if minimum else window.max()
+
+    sign = -1.0 if minimum else 1.0
+    scaled = sign * window
+    weights = torch.softmax(temperature * scaled, dim=0)
+    return sign * (weights * scaled).sum()
+
+
 def _suffix_trace(
     values: torch.Tensor,
     interval: Sequence[Any],
@@ -206,6 +252,15 @@ class Always(_UpstreamAlways):
     equivalence that licenses it.
     """
 
+    def robustness(self, signal: Any, **kwargs: Any) -> Any:
+        """The value alone, which is all any rule here asks for."""
+        if kwargs.get("padding") is None:
+            values = self.subformula(signal, **kwargs)
+            fast = _suffix_scalar(values, self._interval, minimum=True, **kwargs)
+            if fast is not None:
+                return fast
+        return super().robustness(signal, **kwargs)
+
     def robustness_trace(
         self, signal: Any, padding: Any = None, large_number: float = 1e9, **kwargs: Any
     ) -> Any:
@@ -225,6 +280,15 @@ class Always(_UpstreamAlways):
 
 class Eventually(_UpstreamEventually):
     """``Eventually``, evaluated in linear time when its window is a suffix."""
+
+    def robustness(self, signal: Any, **kwargs: Any) -> Any:
+        """The value alone, which is all any rule here asks for."""
+        if kwargs.get("padding") is None:
+            values = self.subformula(signal, **kwargs)
+            fast = _suffix_scalar(values, self._interval, minimum=False, **kwargs)
+            if fast is not None:
+                return fast
+        return super().robustness(signal, **kwargs)
 
     def robustness_trace(
         self, signal: Any, padding: Any = None, large_number: float = 1e9, **kwargs: Any
