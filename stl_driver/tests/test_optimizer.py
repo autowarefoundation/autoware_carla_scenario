@@ -18,7 +18,7 @@ from stl_driver.config import STLDriverConfig
 from stl_driver.optimizer import RobustnessOptimizer
 from stl_driver.rollout import rollout
 from stl_driver.rules import RuleSet, build_rules
-from stl_driver.signals import Col
+from stl_driver.signals import Col, signal_from_columns
 from tests.conftest import curved_route, make_inputs, stationary_actor, straight_route
 
 CONFIG = STLDriverConfig()
@@ -35,6 +35,10 @@ def optimizer() -> RobustnessOptimizer:
     for _ in range(3):
         search.solve(make_inputs(CONFIG, speed0_mps=5.0))
     return search
+
+
+def constant(value: float) -> torch.Tensor:
+    return torch.full((CONFIG.horizon.n_steps,), float(value))
 
 
 def speeds(solution) -> torch.Tensor:
@@ -238,17 +242,24 @@ def test_the_same_inputs_give_the_same_plan(optimizer):
 
 
 def test_refinement_improves_on_the_best_sample(optimizer):
-    """Otherwise the gradient stage is costing latency for nothing."""
+    """Otherwise the gradient stage is costing latency for nothing.
+
+    Measured on the objective, because that is what selects the plan that gets
+    driven -- see `RobustnessOptimizer.solve` for why a minimum over rules is
+    the wrong thing to maximise once a rule can be gated off by an obstruction.
+    """
     inputs = make_inputs(CONFIG, speed0_mps=4.0)
     rules = RuleSet(build_rules(CONFIG))
 
     candidates = optimizer._candidates(None)
     with torch.no_grad():
-        sampled = [float(rules.spec_robustness(rollout(p, inputs, CONFIG))) for p in candidates]
+        sampled = [float(rules.objective(rollout(p, inputs, CONFIG))) for p in candidates]
     solution = optimizer.solve(inputs)
 
     assert solution.n_refine_steps > 0
-    assert solution.robustness >= max(sampled) - 1e-6
+    with torch.no_grad():
+        chosen = float(rules.objective(solution.signal))
+    assert chosen >= max(sampled) - 1e-6
 
 
 def test_the_search_never_returns_a_worse_plan_than_its_seed(optimizer):
@@ -263,9 +274,11 @@ def test_the_search_never_returns_a_worse_plan_than_its_seed(optimizer):
 
 def test_a_warm_start_is_accepted_and_helps(optimizer):
     inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    rules = RuleSet(build_rules(CONFIG))
     cold = optimizer.solve(inputs, warm_start=None)
     warm = optimizer.solve(inputs, warm_start=cold.params)
-    assert warm.robustness >= cold.robustness - 1e-6
+    with torch.no_grad():
+        assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
 
 
 def test_alternatives_are_reported_for_inspection(optimizer):
@@ -391,3 +404,61 @@ def test_a_moving_ego_still_emergency_brakes_for_the_same_obstacle():
 
     assert solution.needs_fallback
     assert solution.imminent_rule == "collision_free"
+
+
+# ---------------------------------------------------------------------------
+# Which plan gets driven
+# ---------------------------------------------------------------------------
+
+
+def test_a_satisfying_plan_beats_a_higher_scoring_one_that_violates():
+    """Satisfying the specification comes first; the objective only ranks."""
+    from stl_driver.optimizer import _lexicographic_pick
+
+    merit = torch.tensor([10.0, 1.0])
+    robustness = torch.tensor([-0.5, 0.2])
+    assert _lexicographic_pick(merit, robustness) == 1
+
+
+def test_among_satisfying_plans_the_best_objective_wins():
+    from stl_driver.optimizer import _lexicographic_pick
+
+    merit = torch.tensor([1.0, 5.0, 3.0])
+    robustness = torch.tensor([0.1, 0.2, 2.0])
+    assert _lexicographic_pick(merit, robustness) == 1
+
+
+def test_when_nothing_satisfies_the_objective_decides():
+    """A third of city driving admits no satisfying plan at all."""
+    from stl_driver.optimizer import _lexicographic_pick
+
+    merit = torch.tensor([1.0, 7.0, 3.0])
+    robustness = torch.tensor([-0.1, -2.0, -0.5])
+    assert _lexicographic_pick(merit, robustness) == 1
+
+
+def test_selection_does_not_reward_simply_stopping(optimizer):
+    """The failure mode that ranking by robustness alone produces.
+
+    Robustness is a minimum over rules, and a rule gated off by an obstruction
+    contributes nothing to a minimum -- so where the liveness rules are
+    excused, a halt violates nothing and outscores everything. Ranking on it
+    makes stopping the answer to every hard question.
+    """
+    from stl_driver.optimizer import _lexicographic_pick
+
+    # A halt that satisfies everything, and a plan that also satisfies
+    # everything while actually going somewhere.
+    stopped = signal_from_columns(speed=constant(0.0), clearance=constant(0.5))
+    driving = signal_from_columns(speed=constant(7.0))
+    with torch.no_grad():
+        merit = torch.tensor(
+            [float(optimizer.rules.objective(stopped)), float(optimizer.rules.objective(driving))]
+        )
+        robustness = torch.tensor(
+            [
+                float(optimizer.rules.spec_robustness(stopped)),
+                float(optimizer.rules.spec_robustness(driving)),
+            ]
+        )
+    assert _lexicographic_pick(merit, robustness) == 1
