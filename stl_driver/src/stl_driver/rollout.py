@@ -86,6 +86,12 @@ class RolloutInputs:
     actor_centres: torch.Tensor
     #: ``(A,)`` disc radii matching the second axis above.
     actor_radii: torch.Tensor
+    #: How many vehicles those discs came from, for reporting.
+    n_actors: int
+    #: ``(E,)`` ego footprint disc offsets along the heading, measured from the
+    #: rig origin (the rear axle), and their shared radius.
+    ego_disc_offsets: torch.Tensor
+    ego_disc_radius: float
     #: ``(T,)`` station of the vehicle we are following; ``+inf`` when none.
     lead_station_m: torch.Tensor
     #: Station of the stop line, when a light governs us.
@@ -393,16 +399,17 @@ def _clearance(
         # distinguishable from "an actor a very long way off".
         return torch.full(positions.shape[:-1], cap, dtype=positions.dtype, device=positions.device)
 
-    offsets = torch.tensor(
-        limits.ego_disc_offsets_m, dtype=positions.dtype, device=positions.device
-    )
+    offsets = inputs.ego_disc_offsets.to(device=positions.device, dtype=positions.dtype)
     # (T, E, 2): one ego disc centre per offset, laid out along the heading.
+    # The offsets are measured from the rig origin, which is the rear axle --
+    # `RolloutInputs` has already shifted them from body-centre, so they run
+    # from behind the origin to well ahead of it.
     ego_centres = positions.unsqueeze(-2) + offsets.reshape(-1, 1) * tangent.unsqueeze(-2)
 
     # (T, E, A)
     separation = ego_centres.unsqueeze(-2) - inputs.actor_centres.unsqueeze(-3)
     distance = separation.norm(dim=-1)
-    gap = distance - limits.ego_disc_radius_m - inputs.actor_radii
+    gap = distance - inputs.ego_disc_radius - inputs.actor_radii
     gap = gap - limits.collision_margin_m
 
     flattened = gap.reshape(*gap.shape[:-2], -1)

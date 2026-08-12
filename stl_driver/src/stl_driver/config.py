@@ -94,12 +94,26 @@ class Limits:
     creep_speed_mps: float = 1.0
 
     # -- geometry ----------------------------------------------------------
-    #: Distance from the rig origin (rear axle) to the two footprint discs
-    #: that approximate the ego. NOT centred on the origin: the rig frame is
-    #: anchored at the rear axle, so a body-centred pair would under-report
-    #: forward clearance by roughly half a vehicle length.
-    ego_disc_offsets_m: tuple[float, ...] = (1.0, 3.5)
-    ego_disc_radius_m: float = 1.1
+    #: Ego body dimensions, used to build its collision footprint.
+    ego_length_m: float = 4.7
+    ego_width_m: float = 2.0
+    #: Distance from the rig origin to the centre of the body. The rig frame
+    #: is anchored at the rear axle, not the vehicle centre, so a footprint
+    #: centred on the origin would sit most of a car length too far back and
+    #: over-report forward clearance.
+    ego_rear_axle_to_centre_m: float = 1.4
+
+    #: How much wider than the true body a footprint may be.
+    #:
+    #: Covering a box with discs always inflates it laterally, and the
+    #: inflation is what decides whether a vehicle in the *next lane* reads as
+    #: a collision. Two discs per car inflate a 2.0 m body to 3.0 m, which
+    #: leaves 0.29 m to a vehicle one 3.5 m lane away -- so any slight lane
+    #: offset registers as an imminent collision and the policy emergency
+    #: brakes on an empty road. Capping the inflation instead, and using
+    #: however many discs that takes, keeps the approximation honest where it
+    #: matters. See `footprint_discs`.
+    footprint_max_inflation_m: float = 0.15
     #: Lateral half-extent within which an actor counts as in our lane.
     lead_capture_half_width_m: float = 1.6
 
@@ -151,6 +165,11 @@ class OptimizerConfig:
     #: Fixed for reproducibility -- the runtime's rollouts are seeded, and a
     #: policy that re-randomised would make them irreproducible.
     seed: int = 0
+    #: How far into the horizon a hard-rule violation must fall to count as
+    #: imminent enough for the emergency plan. Beyond this the optimizer is
+    #: already slowing for it and the next replan -- a tenth of a second
+    #: later, with a fresh forecast -- gets another say.
+    fallback_window_s: float = 1.2
     #: Candidates echoed back as `DriveResult.sampled_trajectories_in_rig`.
     n_reported_candidates: int = 4
     #: Threads torch may use. The tensors here are tiny; more threads costs
@@ -175,6 +194,23 @@ class STLDriverConfig:
     #: Extra table length beyond what the fastest plan could reach, so the
     #: lookup never clamps and never loses its gradient at the end of a route.
     route_table_margin_m: float = 20.0
+
+    def ego_footprint(self) -> tuple[list[float], float]:
+        """The ego's collision discs, as offsets from the rig origin.
+
+        `footprint_discs` measures offsets from the body centre; the rig frame
+        is anchored at the rear axle, so they are shifted forward by
+        `ego_rear_axle_to_centre_m`. Skipping that shift puts the whole
+        footprint most of a car length too far back, which reads as generous
+        clearance to whatever is directly ahead.
+        """
+        from stl_driver.perception import footprint_discs
+
+        limits = self.limits
+        offsets, radius = footprint_discs(
+            limits.ego_length_m, limits.ego_width_m, limits.footprint_max_inflation_m
+        )
+        return [float(o) + limits.ego_rear_axle_to_centre_m for o in offsets], radius
 
     def target_speed_mps(self, speed_limit_mps: float) -> float:
         """The speed to aim for, given what the runtime reports as the limit."""

@@ -90,6 +90,34 @@ That is a real trace from CARLA: approaching a red light, braking hard enough
 to trip the fallback, holding exactly at the stop line for ten seconds, then
 pulling away when it turns green.
 
+`scripts/record_drive.py` films a rollout from a chase camera with those
+numbers drawn on every frame; `recordings/stl_drive.mp4` is 70 s of Town10HD
+with 30 background vehicles.
+
+```bash
+docker compose up -d carla
+uv run --extra carla python scripts/record_drive.py --steps 700 --traffic 30
+```
+
+Watching it is what surfaced three bugs that no unit test would have caught,
+because each one produced plausible-looking driving:
+
+- **The footprint was inflated into the next lane.** Approximating a car with
+  two discs turns a 2.0 m body into a 3.0 m one, leaving 0.29 m to a vehicle
+  one lane over -- so an ordinary lane offset read as an imminent collision.
+  Discs are now chosen from a stated inflation tolerance instead.
+- **Vehicles behind counted as collisions.** A car queuing up behind us at a
+  red light sat inside the collision margin, and since the plan only ever
+  moves forward, that is a collision we cannot cause.
+- **A forecast three seconds out triggered emergency braking.** Constant
+  velocity says crossing traffic will meet us; that deserves slowing down, not
+  7 m/s^2, and certainly not re-deciding it 100 ms later. The emergency plan
+  now answers a narrower question -- is there something we can no longer plan
+  our way out of? -- over the opening 1.2 s.
+
+Together those took emergency stops from 25.5% of steps to 4.5%, lane
+invasions from 15 to 0, and route tracking error from 0.55 m to 0.21 m.
+
 ## Setup
 
 ```bash

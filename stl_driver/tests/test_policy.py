@@ -285,5 +285,5 @@ def test_actors_reach_the_policy(policy):
         ],
     )
     result = policy.drive(context(route=straight_route(), renderer_data=data))
-    assert result.debug_scalars["n_actor_discs"] == 2.0
+    assert result.debug_scalars["n_actor_discs"] >= 2.0
     assert result.debug_scalars["min_clearance_m"] < 50.0

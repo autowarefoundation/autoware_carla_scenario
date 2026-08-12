@@ -158,30 +158,63 @@ def test_a_moving_actor_is_extrapolated_at_constant_velocity():
         assert forecast.centres[index].mean(axis=0)[0] == pytest.approx(expected_x, abs=1e-3)
 
 
-def test_an_actor_becomes_two_discs_spanning_its_length():
+def test_an_actor_is_covered_by_discs_that_span_its_length():
+    length, width = 4.8, 2.0
     forecast = forecast_actors(
-        renderer(actor(20.0, 0.0, length=4.8, width=2.0)), Pose.identity(), table(), 0.0, CONFIG
-    )
-    assert forecast.n_discs == 2
-    assert forecast.n_actors == 1
-    separation = np.linalg.norm(forecast.centres[0, 0] - forecast.centres[0, 1])
-    assert separation == pytest.approx(4.8 / 2.0, abs=1e-3)
-    # Radius covers a quarter-length by a half-width.
-    assert forecast.radii[0] == pytest.approx(math.hypot(1.2, 1.0), abs=1e-3)
-
-
-def test_discs_follow_the_actors_heading():
-    """A crossing vehicle's discs must span across our path, not along it."""
-    forecast = forecast_actors(
-        renderer(actor(20.0, 0.0, yaw=math.pi / 2.0, length=4.8)),
+        renderer(actor(20.0, 0.0, length=length, width=width)),
         Pose.identity(),
         table(),
         0.0,
         CONFIG,
     )
-    span = forecast.centres[0, 0] - forecast.centres[0, 1]
-    assert abs(span[0]) < 1e-3
-    assert abs(span[1]) == pytest.approx(2.4, abs=1e-3)
+    assert forecast.n_actors == 1
+    assert forecast.n_discs >= 2
+
+    # The discs span the body: outermost centres one half-spacing inside each end.
+    xs = forecast.centres[0, :, 0]
+    spacing = length / forecast.n_discs
+    assert xs.min() == pytest.approx(20.0 - length / 2 + spacing / 2, abs=1e-3)
+    assert xs.max() == pytest.approx(20.0 + length / 2 - spacing / 2, abs=1e-3)
+    # And reach the corners.
+    assert forecast.radii[0] == pytest.approx(math.hypot(spacing / 2, width / 2), abs=1e-3)
+
+
+def test_the_footprint_is_not_inflated_into_the_next_lane():
+    """The bug that made the policy emergency-brake on an empty road.
+
+    Two discs per car turn a 2.0 m body into a 3.0 m one, which leaves almost
+    nothing between the ego and a vehicle one lane over -- so an ordinary lane
+    offset read as an imminent collision.
+    """
+    from stl_driver.perception import footprint_discs
+
+    tolerance = CONFIG.limits.footprint_max_inflation_m
+    for length, width in [(4.5, 2.0), (2.2, 0.9), (12.0, 2.6), (0.4, 0.4)]:
+        _, radius = footprint_discs(length, width, tolerance)
+        assert radius >= width / 2  # still covers the body
+        assert radius - max(width, 0.5) / 2 <= tolerance + 1e-6
+
+    offsets, radius = footprint_discs(4.5, 2.0, tolerance)
+    # Every corner of the box is inside some disc.
+    for corner in [(2.25, 1.0), (2.25, -1.0), (-2.25, 1.0), (-2.25, -1.0)]:
+        assert min(math.hypot(corner[0] - o, corner[1]) for o in offsets) <= radius + 1e-6
+
+
+def test_discs_follow_the_actors_heading():
+    """A crossing vehicle's discs must span across our path, not along it."""
+    length = 4.8
+    forecast = forecast_actors(
+        renderer(actor(20.0, 0.0, yaw=math.pi / 2.0, length=length)),
+        Pose.identity(),
+        table(),
+        0.0,
+        CONFIG,
+    )
+    xs, ys = forecast.centres[0, :, 0], forecast.centres[0, :, 1]
+    # Laid out along +y (the actor's heading), so x is unchanged.
+    assert np.ptp(xs) < 1e-3
+    spacing = length / forecast.n_discs
+    assert np.ptp(ys) == pytest.approx(length - spacing, abs=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +234,7 @@ def test_a_vehicle_in_the_next_lane_is_not_the_lead():
     """Still an obstacle for `collision_free`, but not something to follow."""
     forecast = forecast_actors(renderer(actor(30.0, 3.6)), Pose.identity(), table(), 0.0, CONFIG)
     assert not np.isfinite(forecast.lead_station_m).any()
-    assert forecast.n_discs == 2  # it still counts for clearance
+    assert forecast.n_discs >= 2  # it still counts for clearance
 
 
 def test_a_vehicle_behind_us_is_not_the_lead():
@@ -358,3 +391,62 @@ def test_a_line_already_crossed_stops_governing_us():
     )
     assert not light.active
     assert math.isinf(light.stop_station_m)
+
+
+def test_a_vehicle_queuing_behind_us_is_not_a_collision():
+    """The dominant cause of spurious emergency stops in city traffic.
+
+    Our plan only ever moves forward, so it cannot drive into something behind
+    the rear bumper -- avoiding that is the following driver's problem. Left
+    in, a car stopping close behind us at a red light violates
+    `collision_free`, which is a hard rule, so the policy emergency-brakes
+    while already stationary and correctly waiting.
+    """
+    behind = forecast_actors(renderer(actor(-4.0, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
+    # Excluded discs are moved far away rather than removed.
+    assert np.linalg.norm(behind.centres[0], axis=-1).min() > 1000.0
+
+    ahead = forecast_actors(renderer(actor(8.0, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
+    assert np.linalg.norm(ahead.centres[0], axis=-1).min() < 20.0
+
+
+def test_a_vehicle_alongside_us_still_counts():
+    """Only strictly behind is dropped; abreast is very much a collision risk."""
+    forecast = forecast_actors(renderer(actor(0.5, 3.2)), Pose.identity(), table(), 0.0, CONFIG)
+    assert np.linalg.norm(forecast.centres[0], axis=-1).min() < 20.0
+
+
+def test_a_vehicle_overtaking_from_behind_reappears_once_it_is_ahead():
+    """The test is per timestep, so a faster follower is not ignored forever."""
+    forecast = forecast_actors(
+        renderer(actor(-6.0, 0.0, vx=12.0)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    assert np.linalg.norm(forecast.centres[0], axis=-1).min() > 1000.0  # behind now
+    assert np.linalg.norm(forecast.centres[-1], axis=-1).min() < 100.0  # ahead later
+
+
+def test_the_stop_margin_never_demands_more_room_than_there_is():
+    """CARLA reports a light only from inside its trigger volume.
+
+    On Town10HD that first sighting can be four metres out. A fixed four-metre
+    margin would ask a moving vehicle to stop where it stands, which no plan
+    can do, so every candidate violates the rule and the fallback engages on a
+    perfectly stoppable approach.
+    """
+    for distance in (1.0, 2.0, 4.0, 8.0):
+        light = read_traffic_light(
+            renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=distance),
+            station0_m=0.0,
+            config=CONFIG,
+        )
+        allowed = light.stop_station_m
+        assert allowed >= distance / 2 - 1e-9  # at least half the gap is usable
+        assert allowed <= distance  # and never past the line
+
+    # Far out, the full margin applies.
+    far = read_traffic_light(
+        renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=40.0),
+        station0_m=0.0,
+        config=CONFIG,
+    )
+    assert far.stop_station_m == pytest.approx(40.0 - CONFIG.limits.stop_line_margin_m)

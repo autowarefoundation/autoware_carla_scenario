@@ -239,6 +239,8 @@ class EgoPolicy(BaseDriver):
             speed_limit = float(renderer_data.speed_limit_mps)
         target_speed = config.target_speed_mps(speed_limit)
 
+        ego_offsets, ego_radius = config.ego_footprint()
+
         return RolloutInputs(
             route_xy=torch.from_numpy(table.xy).to(torch.float32),
             route_tangent=torch.from_numpy(table.tangent).to(torch.float32),
@@ -250,6 +252,9 @@ class EgoPolicy(BaseDriver):
             accel0_mps2=float(accel_mps2),
             actor_centres=torch.from_numpy(forecast.centres),
             actor_radii=torch.from_numpy(forecast.radii),
+            n_actors=forecast.n_actors,
+            ego_disc_offsets=torch.tensor(ego_offsets, dtype=torch.float32),
+            ego_disc_radius=ego_radius,
             lead_station_m=torch.from_numpy(forecast.lead_station_m),
             stop_station_m=light.stop_station_m,
             light_gate=(
@@ -301,6 +306,7 @@ class EgoPolicy(BaseDriver):
             "current_speed_mps": speed_mps,
             "route_length_m": inputs.published_length_m,
             "n_actor_discs": float(inputs.n_actor_discs),
+            "n_actors": float(inputs.n_actors),
             "light_active": 1.0 if inputs.light_gate > 0.0 else 0.0,
         }
         for name, value in solution.per_rule.items():

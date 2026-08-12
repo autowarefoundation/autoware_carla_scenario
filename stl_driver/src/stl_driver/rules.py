@@ -375,5 +375,36 @@ class RuleSet:
         return min(violations, key=lambda name: violations[name])
 
     def any_hard_violated(self, per_rule: Mapping[str, torch.Tensor | float]) -> bool:
-        """Whether a rule marked ``hard`` is violated -- the fallback trigger."""
+        """Whether a rule marked ``hard`` is violated anywhere in the horizon."""
         return any(float(per_rule[name]) < 0.0 for name in self.hard_rules if name in per_rule)
+
+    def imminent_hard_violation(self, signal: torch.Tensor, n_steps: int) -> str | None:
+        """The first hard rule violated within the opening ``n_steps``, if any.
+
+        This, not :meth:`any_hard_violated`, is what should summon the
+        emergency plan.  A hard rule violated at the *end* of a four-second
+        horizon means the best plan found this step runs into trouble three
+        seconds out -- against a constant-velocity forecast of traffic that
+        will itself brake, turn and yield in the meantime.  Treating that the
+        same as a violation happening now means braking at seven metres per
+        second squared for a car crossing an intersection thirty metres away,
+        which is both wrong and, at 10 Hz, wrong again a tenth of a second
+        later.
+
+        Restricting the check to the opening of the horizon asks the question
+        that actually justifies an emergency stop: is there something we can
+        no longer plan our way out of?  Everything further out is left to the
+        optimizer, which is already slowing for it, and to the next replan,
+        which will know more.
+
+        Evaluating on a truncated signal works because every hard rule is an
+        unbounded ``Always``; a rule with a bounded interval would be padded
+        past the end and read as catastrophically violated, so
+        :func:`build_rules` keeps the hard ones unbounded.
+        """
+        window = signal[: max(2, min(n_steps, signal.shape[0]))]
+        for name in self.hard_rules:
+            rule = next(r for r in self.rules if r.name == name)
+            if float(rule.formula.robustness(window, **EXACT)) < 0.0:
+                return name
+        return None

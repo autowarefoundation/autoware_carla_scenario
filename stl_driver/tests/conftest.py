@@ -82,6 +82,8 @@ def make_inputs(
     gate = config.limits.gate_magnitude_m
     target = config.target_speed_mps(limit)
 
+    ego_offsets, ego_radius = config.ego_footprint()
+
     return RolloutInputs(
         route_xy=torch.from_numpy(table.xy).to(torch.float32),
         route_tangent=torch.from_numpy(table.tangent).to(torch.float32),
@@ -95,6 +97,9 @@ def make_inputs(
         accel0_mps2=accel0_mps2,
         actor_centres=actor_centres,
         actor_radii=actor_radii,
+        n_actors=int(actor_radii.shape[0]) // 2,
+        ego_disc_offsets=torch.tensor(ego_offsets, dtype=torch.float32),
+        ego_disc_radius=ego_radius,
         lead_station_m=torch.full((n_steps,), float(lead_station_m), dtype=torch.float32),
         stop_station_m=float(stop_station_m),
         light_gate=gate if light_active else -gate,

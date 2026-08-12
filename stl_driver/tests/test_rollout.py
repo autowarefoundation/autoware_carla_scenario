@@ -234,7 +234,8 @@ def test_clearance_accounts_for_the_rear_axle_origin(config):
 
     limits = config.limits
     # Nearest ego disc is at +3.5 m, so the true gap is 10 - 3.5 - r_ego - r_a.
-    expected = 10.0 - max(limits.ego_disc_offsets_m) - limits.ego_disc_radius_m - 1.0
+    ego_offsets, ego_radius = config.ego_footprint()
+    expected = 10.0 - max(ego_offsets) - ego_radius - 1.0
     expected -= limits.collision_margin_m
     # Tolerance is `saturate`'s tanh compression, not the minimum itself.
     assert signal[0, Col.CLEARANCE].item() == pytest.approx(expected, rel=1e-3)
@@ -261,11 +262,12 @@ def test_clearance_is_exact_in_dense_traffic(config):
     # Recompute the exact minimum the same way, without any smoothing.
     positions, _ = plan_xy(hold_speed_params(), inputs, config)
     limits = config.limits
-    offsets = torch.tensor(limits.ego_disc_offsets_m)
+    ego_offsets, ego_radius = config.ego_footprint()
+    offsets = torch.tensor(ego_offsets)
     ego = positions.unsqueeze(-2) + offsets.reshape(-1, 1) * torch.tensor([1.0, 0.0])
     gaps = (
         (ego.unsqueeze(-2) - centres.unsqueeze(-3)).norm(dim=-1)
-        - limits.ego_disc_radius_m
+        - ego_radius
         - radii
         - limits.collision_margin_m
     )

@@ -304,3 +304,49 @@ def test_the_batched_path_is_the_one_in_use(optimizer):
     """If this ever flips, the loop fallback is live and latency will show it."""
     solution = optimizer.solve(make_inputs(CONFIG, speed0_mps=6.0))
     assert solution.used_vmap
+
+
+def test_a_distant_predicted_conflict_does_not_trigger_an_emergency_stop(optimizer):
+    """Emergency braking is for what we cannot avoid, not for a forecast.
+
+    Constant-velocity prediction of crossing traffic routinely says we will
+    meet something three seconds out. That deserves slowing down -- which the
+    optimizer does -- not seven metres per second squared of braking, which at
+    10 Hz would then be re-decided a tenth of a second later.
+    """
+    centres, radii = stationary_actor(CONFIG, ahead_m=34.0)
+    inputs = make_inputs(CONFIG, speed0_mps=9.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(inputs)
+
+    assert not solution.needs_fallback
+    assert solution.imminent_rule is None
+    # But it is unmistakably slowing for it.
+    assert speeds(solution)[-1].item() < speeds(solution)[0].item()
+
+
+def test_an_imminent_conflict_still_triggers_the_emergency_stop(optimizer):
+    """The distinction has to cut both ways or the fallback is useless."""
+    centres, radii = stationary_actor(CONFIG, ahead_m=2.0)
+    inputs = make_inputs(CONFIG, speed0_mps=10.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(inputs)
+
+    assert solution.needs_fallback
+    assert solution.imminent_rule == "collision_free"
+
+
+def test_the_fallback_window_is_measured_in_the_opening_of_the_horizon(optimizer):
+    """`imminent_hard_violation` judges only the first stretch of the plan."""
+    from stl_driver.signals import signal_from_columns
+
+    late = torch.full((CONFIG.horizon.n_steps,), 8.0)
+    late[-5:] = -3.0  # a violation right at the end
+    signal = signal_from_columns(clearance=late)
+    assert optimizer.rules.imminent_hard_violation(signal, 12) is None
+    assert optimizer.rules.any_hard_violated(optimizer.rules.per_rule(signal))
+
+    early = torch.full((CONFIG.horizon.n_steps,), 8.0)
+    early[3] = -3.0
+    assert (
+        optimizer.rules.imminent_hard_violation(signal_from_columns(clearance=early), 12)
+        == "collision_free"
+    )

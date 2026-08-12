@@ -51,8 +51,10 @@ class PlanSolution:
     alternatives: list[torch.Tensor] = field(default_factory=list)
     n_refine_steps: int = 0
     solve_seconds: float = 0.0
-    #: Set when a rule marked `hard` is violated even by the best plan found.
+    #: Set when a hard rule is violated soon enough that no plan avoids it.
     needs_fallback: bool = False
+    #: Which hard rule that was, if any.
+    imminent_rule: str | None = None
     #: Name of the worst-violated rule, or None when all are satisfied.
     worst_rule: str | None = None
     #: Whether the batched fast path was used, for diagnosis.
@@ -152,6 +154,11 @@ class RobustnessOptimizer:
 
         per_rule = {name: float(value) for name, value in self.rules.per_rule(best_signal).items()}
 
+        # Only a violation we can no longer plan our way out of summons the
+        # emergency plan; see `RuleSet.imminent_hard_violation`.
+        window = max(2, self.config.horizon.index_at(optimizer.fallback_window_s))
+        imminent = self.rules.imminent_hard_violation(best_signal, window)
+
         return PlanSolution(
             params=best_params,
             signal=best_signal,
@@ -160,7 +167,8 @@ class RobustnessOptimizer:
             alternatives=alternatives,
             n_refine_steps=n_steps,
             solve_seconds=time.perf_counter() - started,
-            needs_fallback=self.rules.any_hard_violated(per_rule),
+            needs_fallback=imminent is not None,
+            imminent_rule=imminent,
             worst_rule=self.rules.worst_violated(per_rule),
             used_vmap=used_vmap,
         )
