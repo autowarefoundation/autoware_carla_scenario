@@ -390,8 +390,8 @@ class RobustnessOptimizer:
         # a bound at all.
         step_cost = 0.0
         for step in range(settings.n_refine_steps):
-            elapsed = time.perf_counter() - started
-            if elapsed + step_cost > settings.time_budget_s:
+            budget = settings.time_budget_s
+            if budget is not None and (time.perf_counter() - started) + step_cost > budget:
                 # Degrade by taking fewer steps rather than by missing the
                 # policy deadline. The seeds are already usable plans.
                 break

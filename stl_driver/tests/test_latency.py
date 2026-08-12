@@ -75,12 +75,18 @@ def test_a_step_fits_inside_the_policy_timestep(warm_policy):
     assert p95_ms < 150.0
 
 
-def test_the_search_budget_is_respected(warm_policy):
-    """The configured cutoff is what bounds the step, not luck."""
+def test_the_search_fits_inside_the_policy_step(warm_policy):
+    """What actually has to hold: a plan every 100 ms.
+
+    There is no wall-clock cutoff by default -- the search is a fixed number
+    of steps so that the same situation gives the same plan -- so this is the
+    requirement the fixed count has to be chosen against, rather than a check
+    that a cutoff fired.
+    """
     ctx = make_context(curved_route(radius_m=60.0), speed_mps=7.0, time_now_us=0)
     result = warm_policy.drive(ctx)
-    budget = warm_policy.config.optimizer.time_budget_s
-    assert result.debug_scalars["stl_solve_seconds"] < budget * 2.5
+    assert warm_policy.config.optimizer.time_budget_s is None
+    assert result.debug_scalars["stl_solve_seconds"] < 0.100
 
 
 def test_refinement_actually_runs_within_the_budget(warm_policy):

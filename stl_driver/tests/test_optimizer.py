@@ -233,7 +233,15 @@ def test_a_soft_violation_alone_does_not_trigger_the_fallback(optimizer):
 
 
 def test_the_same_inputs_give_the_same_plan(optimizer):
-    """Determinism: the runtime's rollouts are seeded and must stay repeatable."""
+    """Determinism: the runtime's rollouts are seeded and must stay repeatable.
+
+    This holds by construction now rather than by luck. While the search
+    stopped at a wall-clock bound, two solves of the same situation could
+    complete different numbers of refinement steps and return different plans
+    -- so this test was one busy machine away from failing, and the closed
+    loop was worse than that: the same build on the same route came back
+    96.0%, 91.0% and 93.0% satisfied over 340, 238 and 236 metres.
+    """
     inputs = make_inputs(CONFIG, speed0_mps=6.0)
     first = optimizer.solve(inputs)
     second = optimizer.solve(inputs)
@@ -302,11 +310,31 @@ def test_the_reported_robustness_is_the_minimum_over_rules(optimizer):
     assert solution.robustness == pytest.approx(min(solution.per_rule.values()), abs=1e-4)
 
 
-def test_the_time_budget_is_honoured(optimizer):
-    inputs = make_inputs(CONFIG, speed0_mps=6.0)
-    solution = optimizer.solve(inputs)
+def test_the_search_is_a_fixed_amount_of_work_by_default(optimizer):
+    """No wall-clock bound unless one is asked for, and this is why.
+
+    Under a bound, how many steps the search completes depends on how busy the
+    machine is, and once the ego acts differently at all the whole scenario
+    diverges from there -- the same build on the same route came back 96.0%,
+    91.0% and 93.0% satisfied over 340, 238 and 236 metres. A fixed amount of
+    work makes the same situation give the same plan.
+    """
+    assert CONFIG.optimizer.time_budget_s is None
+    solution = optimizer.solve(make_inputs(CONFIG, speed0_mps=6.0))
+    assert solution.n_refine_steps == CONFIG.optimizer.n_refine_steps
+
+
+def test_the_time_budget_is_honoured_when_one_is_set(optimizer):
+    """Deployments that must hold a deadline can still ask for one."""
+    from dataclasses import replace
+
+    budget = 0.070
+    config = replace(CONFIG, optimizer=replace(CONFIG.optimizer, time_budget_s=budget))
+    bounded = RobustnessOptimizer(RuleSet(build_rules(config)), config)
+    bounded.solve(make_inputs(config, speed0_mps=6.0))  # pay torch's start-up
+    solution = bounded.solve(make_inputs(config, speed0_mps=6.0))
     # Generous: this asserts the cutoff works, not that the machine is fast.
-    assert solution.solve_seconds < CONFIG.optimizer.time_budget_s * 4.0
+    assert solution.solve_seconds < budget * 4.0
 
 
 def test_a_tiny_budget_degrades_to_fewer_steps_rather_than_failing():

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import math
 import queue
 import shutil
 import subprocess
@@ -341,25 +340,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=Path("drive.mp4"))
     parser.add_argument("--frames-dir", type=Path, default=None)
     parser.add_argument(
-        "--deterministic",
-        action="store_true",
+        "--time-budget",
+        type=float,
+        default=None,
         help=(
-            "take a fixed number of refinement steps instead of stopping at "
-            "the wall-clock budget, so the same run gives the same answer."
+            "seconds of wall clock the search may spend, after which it stops "
+            "refining. Off by default: the policy takes a fixed number of "
+            "steps so that the same situation gives the same plan, and a "
+            "wall-clock bound makes a run depend on how busy the machine is."
         ),
     )
     parser.add_argument(
         "--refine-steps",
         type=int,
-        default=STLDriverConfig().optimizer.n_refine_steps,
+        default=None,
         help=(
-            "how many refinement steps --deterministic takes. Fewer is faster "
-            "and *less* reproducible, which is the opposite of what it sounds "
-            "like: a shallow search has not converged, so float noise decides "
-            "which plan wins. Measured over two runs, eight steps agreed to "
-            "within two steps in four hundred and 2%% of distance, while three "
-            "disagreed by 92.0%% against 96.5%% satisfied and 128 against 155 "
-            "metres."
+            "how many refinement steps to take. Fewer is faster and *less* "
+            "reproducible, which is the opposite of what it sounds like: a "
+            "shallow search has not converged, so float noise decides which "
+            "plan wins and the scenario diverges from there."
         ),
     )
     parser.add_argument(
@@ -391,13 +390,6 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    # The search normally stops refining when its wall-clock budget runs out,
-    # which makes the whole closed loop depend on how busy the machine is: the
-    # same drive came back 96.0%, 91.0% and 93.0% satisfied over 340, 238 and
-    # 236 metres. Once the ego acts differently at all, the scenario diverges
-    # from there, so nothing smaller than that spread can be measured. Letting
-    # every step run to completion removes the only nondeterminism the driver
-    # has, at the cost of being slower than real time.
     config = STLDriverConfig()
     if args.compile_search:
         config = replace(
@@ -407,14 +399,13 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(
             config, optimizer=replace(config.optimizer, n_refine_seeds=args.refine_seeds)
         )
-    if args.deterministic:
+    if args.time_budget is not None:
         config = replace(
-            config,
-            optimizer=replace(
-                config.optimizer,
-                time_budget_s=math.inf,
-                n_refine_steps=args.refine_steps,
-            ),
+            config, optimizer=replace(config.optimizer, time_budget_s=args.time_budget)
+        )
+    if args.refine_steps is not None:
+        config = replace(
+            config, optimizer=replace(config.optimizer, n_refine_steps=args.refine_steps)
         )
     policy = EgoPolicy(config=config)
     per_step: list[dict[str, float]] = []

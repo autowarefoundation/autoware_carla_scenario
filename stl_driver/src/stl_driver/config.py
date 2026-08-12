@@ -201,8 +201,15 @@ class OptimizerConfig:
 
     #: Quasi-random seeds drawn once at construction and reused every step.
     n_samples: int = 64
-    #: Adam steps applied to each seed.
-    n_refine_steps: int = 8
+    #: Adam steps applied to each seed, all of them taken unless
+    #: `time_budget_s` is set.
+    #:
+    #: Chosen to be what the search used to *reach* under a 70 ms wall-clock
+    #: bound -- measured at 3.9 to 4.5 steps -- so that making the count fixed
+    #: changes when the work happens rather than how much of it there is. The
+    #: ceiling was 8 before, and raising this to it would roughly double the
+    #: policy's latency past the 100 ms step it has to fit inside.
+    n_refine_steps: int = 4
     #: How many starting points the gradient stage descends from at once.
     #:
     #: Descending from one finds the nearest local optimum, and which one that
@@ -241,12 +248,26 @@ class OptimizerConfig:
     #: optimize something close to the true min.
     temperature_start: float = 2.0
     temperature_end: float = 8.0
-    #: Wall-clock bound on the whole search, enforced by predicting whether the
-    #: next refinement step fits rather than by noticing afterwards that it did
-    #: not. The policy step is 100 ms; this leaves room for the plan-to-proto
-    #: conversion, the gRPC round trip, and a machine slower than the one it
-    #: was tuned on. Overrunning degrades into fewer refinement steps.
-    time_budget_s: float = 0.070
+    #: Wall-clock bound on the whole search, or ``None`` to always take every
+    #: refinement step above.
+    #:
+    #: ``None`` by default, which is a deliberate choice about what the policy
+    #: *is*: a fixed amount of work, so that the same situation produces the
+    #: same plan. Under a wall-clock bound it does not -- how many steps the
+    #: search completes depends on how busy the machine is, and once the ego
+    #: acts differently at all the whole scenario diverges from there. Two runs
+    #: of the same build on the same pinned route came back 96.0%, 91.0% and
+    #: 93.0% satisfied over 340, 238 and 236 metres, which is a wider spread
+    #: than most changes worth making, and made the closed loop nearly useless
+    #: as something to measure against.
+    #:
+    #: Set it for a deployment that must hold a deadline more than it must be
+    #: reproducible. It is enforced by predicting whether the next step fits
+    #: rather than by noticing afterwards that it did not -- a bound that only
+    #: checks whether it has already been exceeded lets a step starting at
+    #: 59 ms of a 60 ms budget run to 70 -- and overrunning degrades into fewer
+    #: refinement steps rather than into a missed deadline.
+    time_budget_s: float | None = None
     #: Fixed for reproducibility -- the runtime's rollouts are seeded, and a
     #: policy that re-randomised would make them irreproducible.
     seed: int = 0
