@@ -656,3 +656,37 @@ def test_the_plan_path_and_the_signal_agree(config):
     )
     _, offset = project_to_frenet(table, positions.detach().numpy())
     assert np.allclose(offset, signal[:, Col.LATERAL_OFFSET].detach().numpy(), atol=0.05)
+
+
+def test_coming_to_a_stop_does_not_manufacture_absurd_jerk(config):
+    """The clamp is ours; the vehicle should not be charged for it.
+
+    Differencing the floored speed puts a kink where a plan comes to rest, and
+    one 0.1 s step later that kink is a step change in acceleration and a jerk
+    of forty-odd metres per second cubed -- ten times the comfort bound, on a
+    manoeuvre a driver would not notice. Measured before the fix, that was the
+    whole of the worst `comfort` violations.
+    """
+    from stl_driver.rules import RuleSet, build_rules
+
+    # Braking to a halt well inside the horizon, so the clamp definitely bites.
+    inputs = make_inputs(config, speed0_mps=3.0)
+    signal = rollout(constant_accel_params(-3.5), inputs, config)
+
+    assert signal[:, Col.SPEED].min().item() >= 0.0  # it does stop
+    assert signal[:, Col.JERK].abs().max().item() < config.limits.max_jerk_mps3 * 2.0
+
+    rules = RuleSet(build_rules(config))
+    assert float(rules.per_rule(signal)["comfort"]) > -5.0
+
+
+def test_comfort_still_sees_a_harsh_deceleration(config):
+    """The fix must not blind the rule to what it is for."""
+    from stl_driver.rules import RuleSet, build_rules
+
+    inputs = make_inputs(config, speed0_mps=12.0, accel0_mps2=0.0)
+    signal = rollout(constant_accel_params(-3.99), inputs, config)
+    rules = RuleSet(build_rules(config))
+    # Commanded deceleration near the bound is still reported near the bound.
+    assert signal[:, Col.ACCEL].min().item() < -3.0
+    assert float(rules.per_rule(signal)["comfort"]) < 1.0
