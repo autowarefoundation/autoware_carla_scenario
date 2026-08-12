@@ -45,6 +45,10 @@ class RouteTable:
     z: np.ndarray
     #: ``(M, 2)`` unit tangents.
     tangent: np.ndarray
+    #: ``(M,)`` signed curvature, positive for a left turn. Read directly by
+    #: the rollout rather than recovered by differentiating the path; see
+    #: `build_route_table`.
+    curvature: np.ndarray
     #: Arc length of the route as published, before extrapolation. The table
     #: itself runs past this so that plan lookups never clamp; `stay_on_route`
     #: is what discourages planning beyond it.
@@ -146,11 +150,31 @@ def build_route_table(
     norms = np.linalg.norm(deltas, axis=1, keepdims=True)
     tangent = deltas / np.maximum(norms, 1e-9)
 
+    # Curvature, tabulated here rather than recovered downstream.
+    #
+    # The rollout used to obtain lateral acceleration by differencing the
+    # planned positions twice. Those positions are read off this table, which
+    # is a polyline, and a polyline carries all of its turning at the
+    # vertices: whether a 0.1 s step straddles one decides whether the second
+    # difference sees a corner or a straight. On a genuinely constant 25 m
+    # bend at 7 m/s -- true lateral acceleration a flat 1.96 m/s^2 -- that
+    # aliasing made the trace oscillate between 1.80 and 2.20 at this
+    # spacing, and between 1.60 and 2.80 at 2 m. The mean was right; the peak
+    # was not, and `comfort` is an `Always`, so the peak is the only part that
+    # is read.
+    #
+    # Differentiating the heading once, here, on the uniform grid, gives a
+    # curvature that is smooth in station and can be interpolated. It is
+    # cheaper too -- two second differences over 2-D positions disappear.
+    heading = np.unwrap(np.arctan2(tangent[:, 1], tangent[:, 0]))
+    curvature = np.gradient(heading) / ds
+
     return RouteTable(
         ds=float(ds),
         xy=np.ascontiguousarray(xy),
         z=np.ascontiguousarray(z),
         tangent=np.ascontiguousarray(tangent),
+        curvature=np.ascontiguousarray(curvature),
         published_length_m=published_length,
     )
 

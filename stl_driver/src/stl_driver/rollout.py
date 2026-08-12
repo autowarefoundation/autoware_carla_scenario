@@ -69,6 +69,8 @@ class RolloutInputs:
     route_xy: torch.Tensor
     #: ``(M, 2)`` unit tangents.
     route_tangent: torch.Tensor
+    #: ``(M,)`` signed route curvature, positive for a left turn.
+    route_curvature: torch.Tensor
     #: Station spacing of the table above.
     route_ds: float
     #: Arc length of the route as published; beyond it the table extrapolates.
@@ -223,7 +225,11 @@ def _lookup_centreline(
         inputs.route_tangent[lower] * (1.0 - weight) + inputs.route_tangent[lower + 1] * weight
     )
     tangent = tangent / tangent.norm(dim=-1, keepdim=True).clamp_min(1e-9)
-    return point, tangent
+    curvature = (
+        inputs.route_curvature[lower] * (1.0 - weight[..., 0])
+        + inputs.route_curvature[lower + 1] * weight[..., 0]
+    )
+    return point, tangent, curvature
 
 
 def _kinematics(
@@ -283,7 +289,8 @@ def _kinematics(
     # Lateral offset as a function of distance travelled, not of time, so the
     # path is decoupled from the speed profile: braking must not also swerve.
     reference = max(8.0, config.cruise_speed_mps * horizon.duration_s)
-    progress = ((station - inputs.station0_m) / reference).clamp(0.0, 1.0)
+    raw_progress = (station - inputs.station0_m) / reference
+    progress = raw_progress.clamp(0.0, 1.0)
     # Quadratic Bezier from the *measured* offset, which keeps the plan
     # continuous with where the vehicle actually is rather than snapping to
     # the centreline every step.
@@ -293,6 +300,17 @@ def _kinematics(
         + progress**2 * offsets[..., 1:2]
     )
 
+    # How sharply the offset profile itself bends, per metre of road.
+    #
+    # A quadratic Bezier has a constant second derivative in its parameter, so
+    # this is one expression rather than a difference -- and being analytic it
+    # is exact, where differencing the sampled path was not. Outside the
+    # clamped span the offset is held constant, so it bends not at all.
+    inside = ((raw_progress > 0.0) & (raw_progress < 1.0)).to(dtype)
+    offset_ss = inside * (
+        2.0 * (inputs.offset0_m - 2.0 * offsets[..., 0:1] + offsets[..., 1:2]) / reference**2
+    )
+
     return {
         "raw_speed": raw_speed,
         "speed": speed,
@@ -300,6 +318,7 @@ def _kinematics(
         "accel": accel,
         "jerk": jerk,
         "offset": offset,
+        "offset_ss": offset_ss,
     }
 
 
@@ -315,7 +334,7 @@ def plan_xy(
     vehicle is asked to drive can never drift apart.
     """
     state = _kinematics(params, inputs, config)
-    point, tangent = _lookup_centreline(state["station"], inputs)
+    point, tangent, _ = _lookup_centreline(state["station"], inputs)
     normal = torch.stack([-tangent[..., 1], tangent[..., 0]], dim=-1)
     positions = point + state["offset"].unsqueeze(-1) * normal
 
@@ -344,25 +363,30 @@ def rollout(
     of ``params``.
     """
     limits = config.limits
-    horizon = config.horizon
     cap = limits.saturation_m
 
     state = _kinematics(params, inputs, config)
     speed = state["speed"]
     station = state["station"]
 
-    point, tangent = _lookup_centreline(station, inputs)
+    point, tangent, curvature = _lookup_centreline(station, inputs)
     normal = torch.stack([-tangent[..., 1], tangent[..., 0]], dim=-1)
     positions = point + state["offset"].unsqueeze(-1) * normal
 
-    velocity = _central_difference(positions, horizon.step_s)
-    acceleration = _central_difference(velocity, horizon.step_s)
-    # Lateral acceleration as (v x a) / |v| rather than the textbook
-    # v^2 * curvature with its (vx^2+vy^2)^{3/2} denominator: algebraically the
-    # same, but far better conditioned at low speed, where the cubed form
-    # divides by an epsilon and reports a swerve that is not there.
-    cross = velocity[..., 0] * acceleration[..., 1] - velocity[..., 1] * acceleration[..., 0]
-    lateral_accel = cross / velocity.norm(dim=-1).clamp_min(0.1)
+    # Lateral acceleration in the road's own frame: the curvature the plan
+    # actually follows, times speed squared.
+    #
+    # Two terms. Riding at offset `d` on a bend of curvature `k` tightens the
+    # radius, because a positive offset is towards the inside of a left turn:
+    # `k / (1 - k*d)`. And steering across the road adds the curvature of the
+    # offset profile itself, `d''(s)`. Cross terms in `d'` are dropped -- the
+    # offset moves about a metre over thirty, so `d'^2` is under a percent and
+    # buys nothing for the arithmetic it costs.
+    #
+    # This replaces differencing the planned positions twice, which aliased
+    # the polyline's vertices into the answer; see `frenet.build_route_table`.
+    denominator = (1.0 - curvature * state["offset"]).clamp_min(0.1)
+    lateral_accel = speed**2 * (curvature / denominator + state["offset_ss"])
 
     clearance = _clearance(positions, tangent, inputs, config)
     headway = _headway_slack(station, speed, inputs, config)

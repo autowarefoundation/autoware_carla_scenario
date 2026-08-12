@@ -265,6 +265,7 @@ class EgoPolicy(BaseDriver):
         return RolloutInputs(
             route_xy=tensor(table.xy),
             route_tangent=tensor(table.tangent),
+            route_curvature=tensor(table.curvature),
             route_ds=table.ds,
             published_length_m=table.published_length_m,
             station0_m=station0,

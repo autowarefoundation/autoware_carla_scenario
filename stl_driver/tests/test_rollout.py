@@ -585,6 +585,7 @@ def _to_double(inputs):
         inputs,
         route_xy=inputs.route_xy.to(torch.float64),
         route_tangent=inputs.route_tangent.to(torch.float64),
+        route_curvature=inputs.route_curvature.to(torch.float64),
         actor_centres=inputs.actor_centres.to(torch.float64),
         actor_radii=inputs.actor_radii.to(torch.float64),
         lead_station_m=inputs.lead_station_m.to(torch.float64),
@@ -675,3 +676,41 @@ def test_comfort_still_sees_a_harsh_deceleration(config):
     # Commanded deceleration near the bound is still reported near the bound.
     assert signal[:, Col.ACCEL].min().item() < -3.0
     assert float(rules.per_rule(signal)["comfort"]) < 1.0
+
+
+def test_a_constant_bend_gives_a_constant_lateral_acceleration(config):
+    """Lateral acceleration must be the road's, not the table's sampling.
+
+    Reading it back off the planned positions meant differencing a polyline
+    twice, and a polyline keeps all its turning at the vertices: on a genuinely
+    constant 25 m bend the trace oscillated between 1.80 and 2.20 against a
+    true 1.96, and between 1.60 and 2.80 with a 2 m table. `comfort` is an
+    `Always`, so the peak was the only part of that anyone read.
+    """
+    for radius_m, speed_mps in ((25.0, 7.0), (40.0, 12.0), (60.0, 4.0)):
+        inputs = make_inputs(
+            config, route=curved_route(radius_m=radius_m), speed0_mps=speed_mps
+        )
+        signal = rollout(torch.zeros(N_PARAMS), inputs, config)
+        # Skip the first and last few metres of road. `np.gradient` is
+        # one-sided at the table's ends, and past the published route the table
+        # extrapolates straight, so the curvature ramps at both. How many
+        # *steps* that is depends on the speed, which is why the margin is
+        # expressed as a distance.
+        margin = int(3.0 / (speed_mps * config.horizon.step_s)) + 1
+        lateral = signal[margin:-margin, Col.LATERAL_ACCEL]
+        truth = speed_mps**2 / radius_m
+        assert torch.allclose(lateral, torch.full_like(lateral, truth), rtol=0.03)
+
+
+def test_steering_across_the_road_shows_up_as_lateral_acceleration(config):
+    """The offset profile's own bend counts, not just the road's."""
+    straight = make_inputs(config, route=straight_route(), speed0_mps=8.0)
+    held = rollout(torch.zeros(N_PARAMS), straight, config)
+    assert held[:, Col.LATERAL_ACCEL].abs().max() < 1e-6
+
+    swerve = torch.zeros(N_PARAMS)
+    swerve[4] = 2.0
+    swerve[5] = -2.0
+    moved = rollout(swerve, straight, config)
+    assert moved[:, Col.LATERAL_ACCEL].abs().max() > 0.1

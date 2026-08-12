@@ -88,6 +88,7 @@ def make_inputs(
     return RolloutInputs(
         route_xy=torch.from_numpy(table.xy).to(torch.float32),
         route_tangent=torch.from_numpy(table.tangent).to(torch.float32),
+        route_curvature=torch.from_numpy(table.curvature).to(torch.float32),
         route_ds=table.ds,
         published_length_m=(
             table.published_length_m if published_length_m is None else published_length_m
