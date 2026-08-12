@@ -182,6 +182,22 @@ class OptimizerConfig:
     #: already slowing for it and the next replan -- a tenth of a second
     #: later, with a fresh forecast -- gets another say.
     fallback_window_s: float = 1.2
+    #: How much better a different plan must be, in robustness, before it is
+    #: preferred over continuing last step's.
+    #:
+    #: Nothing in the specification distinguishes two plans that satisfy it
+    #: equally well, so with no tie-breaker the search picks a different one
+    #: every step -- measured: the parameter vector jumped clear across its
+    #: own box on 48% of steps. The plans are individually fine, yet the
+    #: commanded speed jitters by a third of a metre per second every
+    #: 100 ms, which the tracking controller faithfully turns into throttle
+    #: and brake. From inside the car that is the difference between driving
+    #: and being driven.
+    #:
+    #: Continuity is a property of a *sequence* of plans, so it cannot be
+    #: written as a rule about one plan; it belongs here, in how the search
+    #: chooses, rather than in what the specification demands.
+    continuity_margin: float = 0.3
     #: Candidates echoed back as `DriveResult.sampled_trajectories_in_rig`.
     n_reported_candidates: int = 4
     #: Threads torch may use. The tensors here are tiny; more threads costs

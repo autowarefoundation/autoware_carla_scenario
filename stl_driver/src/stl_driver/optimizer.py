@@ -145,10 +145,27 @@ class RobustnessOptimizer:
         best_signal = signals[best_sample]
         best_robustness = float(robustness[best_sample])
 
+        # Carry on from last step's plan unless something is meaningfully
+        # better. The warm start is the final entry of the candidate batch, so
+        # it has already been rolled out and scored; this only changes which
+        # of two near-equal plans is preferred.
+        margin = optimizer.continuity_margin
+        if warm_start is not None and margin > 0.0:
+            carried = len(candidates) - 1
+            if float(robustness[carried]) >= best_robustness - margin:
+                best_sample = carried
+                best_params = candidates[carried].clone()
+                best_signal = signals[carried]
+                best_robustness = float(robustness[carried])
+                seed = best_params.clone()
+
         refined_params, refined_signal, refined_robustness, n_steps = self._refine(
             seed, inputs, started
         )
-        if refined_robustness > best_robustness:
+        # Refinement has to clear the same bar: it starts from the carried plan
+        # when that was preferred, so accepting any improvement at all would
+        # let it drift a little every step and undo the continuity.
+        if refined_robustness > best_robustness + (margin if warm_start is not None else 0.0):
             best_params, best_signal = refined_params, refined_signal
             best_robustness = refined_robustness
 
