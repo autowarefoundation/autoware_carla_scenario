@@ -105,6 +105,8 @@ class ActorForecast:
     radii: np.ndarray
     #: ``(T,)`` station of the vehicle we are following; ``inf`` where none.
     lead_station_m: np.ndarray
+    #: ``(T,)`` that vehicle's speed along the route; 0 where there is none.
+    lead_speed_mps: np.ndarray
     #: How many actors the forecast came from, for reporting.
     n_actors: int
 
@@ -188,6 +190,7 @@ def forecast_actors(
         centres=np.zeros((n_steps, 0, 2), dtype=np.float32),
         radii=np.zeros((0,), dtype=np.float32),
         lead_station_m=np.full((n_steps,), np.inf, dtype=np.float32),
+        lead_speed_mps=np.zeros((n_steps,), dtype=np.float32),
         n_actors=0,
     )
     if renderer_data is None or not renderer_data.actors:
@@ -218,10 +221,14 @@ def forecast_actors(
     sizes_array = np.asarray(sizes, dtype=np.float64)
 
     centres_over_time, radii = _disc_forecast(centres, velocities, yaws, sizes_array, table, config)
-    stations, _ = project_to_frenet(table, centres_over_time.reshape(-1, 2))
-    stations = stations.reshape(centres_over_time.shape[:2])
-    lead_station = _lead_station(
-        centres_over_time, stations, sizes_array, table, station0_m, config
+    shape = centres_over_time.shape[:2]
+    stations, offsets = project_to_frenet(table, centres_over_time.reshape(-1, 2))
+    stations = stations.reshape(shape)
+    offsets = offsets.reshape(shape)
+
+    along = _along_route_speeds(centres, velocities, table)
+    lead_station, lead_speed = _lead_station(
+        stations, offsets, radii, sizes_array, along, station0_m, config
     )
     centres_over_time = _drop_traffic_behind(centres_over_time, config)
 
@@ -229,6 +236,7 @@ def forecast_actors(
         centres=centres_over_time.astype(np.float32),
         radii=radii.astype(np.float32),
         lead_station_m=lead_station.astype(np.float32),
+        lead_speed_mps=lead_speed.astype(np.float32),
         n_actors=len(renderer_data.actors),
     )
 
@@ -272,6 +280,23 @@ def _drop_traffic_behind(
     moved = centres_over_time.copy()
     moved[behind] = 1.0e4
     return moved
+
+
+def _along_route_speeds(
+    centres: np.ndarray,
+    velocities: np.ndarray,
+    table: RouteTable,
+) -> np.ndarray:
+    """Each actor's speed resolved along the route, which is what RSS needs.
+
+    How much following distance we require depends on how fast the vehicle
+    ahead is already travelling, so its speed has to be measured in the same
+    direction as the gap: along the road, not along whatever heading it
+    happens to have.
+    """
+    stations, offsets = project_to_frenet(table, centres)
+    _, tangents = table.frenet_to_xy_many(stations, offsets)
+    return np.einsum("ak,ak->a", velocities, tangents)
 
 
 def _yaw_in_rig(to_rig: Pose, quat_local_xyzw: np.ndarray) -> float:
@@ -434,46 +459,49 @@ def _predict_centres(
 
 
 def _lead_station(
-    centres_over_time: np.ndarray,
     stations: np.ndarray,
+    offsets: np.ndarray,
+    radii: np.ndarray,
     sizes: np.ndarray,
-    table: RouteTable,
+    along: np.ndarray,
     station0_m: float,
     config: STLDriverConfig,
-) -> np.ndarray:
-    """Station of the nearest in-lane actor ahead, per timestep.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rear of the nearest in-lane actor ahead, and its speed, per timestep.
 
     "In lane" is decided in Frenet coordinates rather than by heading, so a
     vehicle on a parallel road does not become our lead just because it points
-    the same way.
+    the same way.  Its speed comes back too, because the RSS distance in
+    :func:`~stl_driver.rollout._headway_slack` depends on how fast the thing
+    ahead is already travelling, not only on how fast we are.
     """
     limits = config.limits
-    n_steps, n_discs, _ = centres_over_time.shape
+    n_steps, n_discs = stations.shape
     if n_discs == 0:
-        return np.full((n_steps,), np.inf)
+        return np.full((n_steps,), np.inf), np.zeros((n_steps,))
 
-    _, offset = project_to_frenet(table, centres_over_time.reshape(-1, 2))
-    offset = offset.reshape(n_steps, n_discs)
-    station = stations
-
-    # How many discs each actor contributed. Derived rather than assumed:
-    # the count follows from the footprint tolerance and the largest vehicle
-    # present, so hardcoding it here would silently mis-pair discs with the
-    # widths and lengths belonging to some other actor.
+    # How many discs each actor contributed. Derived rather than assumed: the
+    # count follows from the footprint tolerance and the largest vehicle
+    # present, so hardcoding it would silently pair discs with the speed
+    # belonging to some other actor.
     per_actor = n_discs // max(1, len(sizes))
 
-    # A disc's own half-width still counts as intruding, so use the actor's
-    # width rather than treating it as a point.
-    half_widths = np.repeat(np.maximum(sizes[:, 1], 0.5) / 2.0, per_actor)
-    in_lane = np.abs(offset) - half_widths[None, :] < limits.lead_capture_half_width_m
-    ahead = station > station0_m + 0.5
+    # The *centre* has to be in our lane, not merely an edge of it. Allowing an
+    # edge to qualify widens the window into the neighbouring lane, and a car
+    # passing there becomes the vehicle we believe we are following -- a few
+    # metres ahead, which reads as a violation however far the real lead is.
+    in_lane = np.abs(offsets) < limits.lead_capture_half_width_m
+    ahead = stations > station0_m + 0.5
 
-    candidate = np.where(in_lane & ahead, station, np.inf)
-    lead = candidate.min(axis=1)
+    # The rear edge of each disc, which is the part of the lead we would reach
+    # first. Measured from the disc's own radius rather than from half the
+    # length of the largest vehicle anywhere in the scene -- with one ambulance
+    # on the map, that put every lead three metres further back than it was.
+    rear = stations - radii[None, :]
 
-    # Reading the *rear* of the lead vehicle: the discs are its centres, so
-    # back off by the quarter length plus the radius the gap already accounts
-    # for. Being a little conservative here is the right direction to err.
-    lengths = np.repeat(np.maximum(sizes[:, 0], 0.5), per_actor)
-    rear_offset = float(np.max(lengths) / 2.0) if len(lengths) else 0.0
-    return np.where(np.isfinite(lead), lead - rear_offset, np.inf)
+    candidate = np.where(in_lane & ahead, rear, np.inf)
+    chosen = np.argmin(candidate, axis=1)
+    lead = candidate[np.arange(n_steps), chosen]
+
+    lead_speed = np.repeat(along, per_actor)[chosen]
+    return lead, np.where(np.isfinite(lead), lead_speed, 0.0)

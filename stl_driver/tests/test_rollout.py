@@ -286,14 +286,61 @@ def test_headway_saturates_with_no_lead_vehicle(config):
     assert torch.isfinite(signal).all()
 
 
+def rss_distance(speed: float, lead_speed: float, limits) -> float:
+    """The RSS safe longitudinal distance, written out independently."""
+    rho = limits.rss_response_s
+    required = (
+        speed * rho
+        + 0.5 * limits.rss_response_accel_mps2 * rho * rho
+        + (speed + rho * limits.rss_response_accel_mps2) ** 2 / (2 * limits.rss_brake_mps2)
+        - lead_speed**2 / (2 * limits.rss_lead_brake_mps2)
+    )
+    return max(required, limits.standstill_gap_m)
+
+
 def test_headway_tightens_as_we_close_on_a_lead(config):
     inputs = make_inputs(config, speed0_mps=8.0, lead_station_m=30.0)
     signal = rollout(hold_speed_params(), inputs, config)
     slack = signal[:, Col.HEADWAY_SLACK]
     assert slack[0] > slack[-1]
-    limits = config.limits
-    expected0 = 30.0 - 0.0 - (limits.headway_time_s * 8.0 + limits.standstill_gap_m)
+    expected0 = 30.0 - rss_distance(8.0, 0.0, config.limits)
     assert slack[0].item() == pytest.approx(expected0, abs=1.0)
+
+
+def test_a_lead_at_our_own_speed_needs_far_less_room_than_a_stopped_one(config):
+    """The term a fixed time headway leaves out, and why it matters.
+
+    RSS credits the vehicle ahead for the distance its own braking takes, so
+    matching its speed is a much easier requirement than catching a stopped
+    one. A `time * v + gap` rule cannot tell the two apart, and demands the
+    stopped-car distance in both -- which is how the policy came to sit 2.6x
+    further back than it needed to.
+    """
+    limits = config.limits
+    stopped = rss_distance(8.0, 0.0, limits)
+    matched = rss_distance(8.0, 8.0, limits)
+    assert matched < stopped - 3.0
+
+    moving = make_inputs(config, speed0_mps=8.0, lead_station_m=20.0, lead_speed_mps=8.0)
+    halted = make_inputs(config, speed0_mps=8.0, lead_station_m=20.0, lead_speed_mps=0.0)
+    assert (
+        rollout(hold_speed_params(), moving, config)[0, Col.HEADWAY_SLACK]
+        > rollout(hold_speed_params(), halted, config)[0, Col.HEADWAY_SLACK]
+    )
+
+
+def test_a_lead_pulling_away_still_leaves_a_standstill_gap(config):
+    """RSS can ask for nothing at all; we decline to ride a bumper anyway."""
+    limits = config.limits
+    assert rss_distance(2.0, 12.0, limits) == pytest.approx(limits.standstill_gap_m)
+
+
+def test_a_stopped_lead_still_demands_the_full_stopping_distance(config):
+    """The relaxation must not cost anything where it matters."""
+    limits = config.limits
+    required = rss_distance(10.0, 0.0, limits)
+    # Reaction, then braking from whatever speed that reaction left us at.
+    assert required > 10.0**2 / (2 * limits.rss_brake_mps2)
 
 
 def test_the_light_gate_carries_the_configured_magnitude(config):

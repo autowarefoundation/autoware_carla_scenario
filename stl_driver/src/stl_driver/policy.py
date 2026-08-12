@@ -72,6 +72,7 @@ class EgoPolicy(BaseDriver):
         # editing anything here; see `stl_driver.rules` for the shape of one.
         self.rules = rules or RuleSet(build_rules(self.config))
         self.optimizer = RobustnessOptimizer(self.rules, self.config)
+        self.device = self.optimizer.device
 
         self._warm_start: torch.Tensor | None = None
         self._warm_start_lock = threading.Lock()
@@ -175,7 +176,7 @@ class EgoPolicy(BaseDriver):
                     ctx.time_now_us,
                     speed_mps,
                     self.config,
-                    centreline_xy=inputs.route_xy.numpy(),
+                    centreline_xy=inputs.route_xy.cpu().numpy(),
                 ),
                 debug_scalars=scalars,
             )
@@ -244,22 +245,27 @@ class EgoPolicy(BaseDriver):
         target_speed = config.target_speed_mps(speed_limit)
 
         ego_offsets, ego_radius = config.ego_footprint()
+        device = self.device
+
+        def tensor(values, dtype=torch.float32):
+            return torch.as_tensor(values, dtype=dtype, device=device)
 
         return RolloutInputs(
-            route_xy=torch.from_numpy(table.xy).to(torch.float32),
-            route_tangent=torch.from_numpy(table.tangent).to(torch.float32),
+            route_xy=tensor(table.xy),
+            route_tangent=tensor(table.tangent),
             route_ds=table.ds,
             published_length_m=table.published_length_m,
             station0_m=station0,
             offset0_m=offset0,
             speed0_mps=float(speed_mps),
             accel0_mps2=float(accel_mps2),
-            actor_centres=torch.from_numpy(forecast.centres),
-            actor_radii=torch.from_numpy(forecast.radii),
+            actor_centres=tensor(forecast.centres),
+            actor_radii=tensor(forecast.radii),
             n_actors=forecast.n_actors,
-            ego_disc_offsets=torch.tensor(ego_offsets, dtype=torch.float32),
+            ego_disc_offsets=tensor(ego_offsets),
             ego_disc_radius=ego_radius,
-            lead_station_m=torch.from_numpy(forecast.lead_station_m),
+            lead_station_m=tensor(forecast.lead_station_m),
+            lead_speed_mps=tensor(forecast.lead_speed_mps),
             stop_station_m=light.stop_station_m,
             light_gate=(
                 config.limits.gate_magnitude_m if light.active else -config.limits.gate_magnitude_m
@@ -277,8 +283,8 @@ class EgoPolicy(BaseDriver):
         """Lay a parameter vector out as a rig-frame trajectory."""
         with torch.no_grad():
             positions, headings = plan_xy(params, inputs, self.config)
-        points = positions.numpy()
-        yaws = headings.numpy()
+        points = positions.cpu().numpy()
+        yaws = headings.cpu().numpy()
 
         step_us = int(round(self.config.horizon.step_s * 1e6))
         plan = Trajectory.empty()

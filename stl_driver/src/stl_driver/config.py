@@ -65,9 +65,33 @@ class Limits:
     # -- safety ------------------------------------------------------------
     #: Clearance kept from every predicted actor footprint.
     collision_margin_m: float = 0.6
-    #: Time headway to the lead vehicle, on top of `standstill_gap_m`.
-    headway_time_s: float = 1.4
-    standstill_gap_m: float = 4.0
+    # -- following distance, after RSS ------------------------------------
+    #: The longitudinal safe distance follows the Responsibility-Sensitive
+    #: Safety model (Shalev-Shwartz, Shammah & Shashua 2017), which asks:
+    #: if the vehicle ahead braked as hard as it can, right now, could we
+    #: still stop behind it after a response delay?
+    #:
+    #:   d = v_r*rho + a_accel*rho^2/2 + (v_r + rho*a_accel)^2 / 2*b_min
+    #:                                            - v_f^2 / 2*b_max
+    #:
+    #: The last term is the one a fixed time headway leaves out, and it is the
+    #: whole difference: it credits the *lead* for the distance its own
+    #: braking takes. Following a car at the same speed, `1.4 s + 4 m` demands
+    #: 15.2 m at 8 m/s where RSS asks 10.4 m, and a lead pulling away is given
+    #: a gap it does not need at all. Measured before the change: 2.6x the
+    #: required gap kept while following, and `safe_headway` reported violated
+    #: with the lead 29 m away.
+    #:
+    #: Response delay before our braking takes effect.
+    rss_response_s: float = 0.5
+    #: What we might still be doing during that delay.
+    rss_response_accel_mps2: float = 2.0
+    #: The braking we guarantee to apply afterwards.
+    rss_brake_mps2: float = 4.0
+    #: The hardest the vehicle ahead might brake. Larger is more conservative.
+    rss_lead_brake_mps2: float = 8.0
+    #: Never ride closer than this, whatever the arithmetic says.
+    standstill_gap_m: float = 2.5
     #: Half-width of the corridor `lane_keeping` allows.
     lane_half_width_m: float = 1.2
 
@@ -114,8 +138,14 @@ class Limits:
     #: however many discs that takes, keeps the approximation honest where it
     #: matters. See `footprint_discs`.
     footprint_max_inflation_m: float = 0.15
-    #: Lateral half-extent within which an actor counts as in our lane.
-    lead_capture_half_width_m: float = 1.6
+    #: Lateral half-extent within which an actor's *centre* counts as being
+    #: in our lane, and so as something to follow.
+    #:
+    #: Applied to the centre rather than to the near edge. Allowing an edge
+    #: to qualify widens the window to +-2.6 m, which reaches into the
+    #: neighbouring lane -- and a car passing in the next lane then becomes
+    #: the vehicle we are following, a few metres ahead.
+    lead_capture_half_width_m: float = 1.7
 
     # -- prediction --------------------------------------------------------
     #: Predict other vehicles along the road rather than in a straight line.
@@ -203,6 +233,22 @@ class OptimizerConfig:
     #: Threads torch may use. The tensors here are tiny; more threads costs
     #: more in synchronisation than it saves in arithmetic.
     torch_threads: int = 2
+    #: Where the search runs: ``"cpu"``, ``"cuda"``, or ``"auto"``.
+    #:
+    #: CPU is the default because it is faster at this size, not merely
+    #: smaller: 64 candidates over a 40-step horizon is small enough that
+    #: kernel launch latency dominates the arithmetic. It stops being the
+    #: right answer if the search grows -- a few thousand candidates puts the
+    #: batched STL masks into the tens of millions of elements -- so the
+    #: choice is exposed rather than assumed. Install the matching torch with
+    #: `uv sync --extra cuda`.
+    #:
+    #: Worth knowing before reaching for it: measured on this specification,
+    #: 64x the samples and 25x the refinement steps with no time limit at all
+    #: changed the fraction of steps satisfying the specification by nothing
+    #: whatever, and rescued exactly zero violations. The violations are
+    #: situations with no satisfying plan, not searches that ran out of time.
+    device: str = "cpu"
 
 
 @dataclass(frozen=True)
@@ -239,6 +285,24 @@ class STLDriverConfig:
             limits.ego_length_m, limits.ego_width_m, limits.footprint_max_inflation_m
         )
         return [float(o) + limits.ego_rear_axle_to_centre_m for o in offsets], radius
+
+    def resolved_device(self) -> str:
+        """The device to run on, with ``"auto"`` decided here.
+
+        Kept as a method rather than resolved at construction so that a config
+        can be built, pickled and compared without asking about hardware.
+        """
+        import torch
+
+        requested = self.optimizer.device
+        if requested == "auto":
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        if requested == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "device='cuda' but torch reports no CUDA device; install the "
+                "CUDA build with `uv sync --extra cuda`, or use device='auto'"
+            )
+        return requested
 
     def target_speed_mps(self, speed_limit_mps: float) -> float:
         """The speed to aim for, given what the runtime reports as the limit."""

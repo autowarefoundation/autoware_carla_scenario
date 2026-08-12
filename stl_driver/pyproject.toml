@@ -26,11 +26,15 @@ dependencies = [
   # It ships a setup.py only and has no `stlcgpp/__init__.py`, so it installs
   # as a PEP 420 namespace package -- see `stl_driver.stl_backend`.
   "stlcgpp @ git+https://github.com/UW-CTRL/stlcg-plus-plus@44467eec5c21763597e5f6753cec6759a5bc0ac0",
-  "torch>=2.6,<3",
   "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
+# torch lives in an extra rather than the base dependencies so that which
+# build you get is a decision you make; see the index configuration below.
+# One of these is required -- `uv sync --extra cpu` unless you mean otherwise.
+cpu = ["torch>=2.6,<3"]
+cuda = ["torch>=2.6,<3"]
 # The driver process never imports `carla`; only the runtime half does. Kept
 # here so one environment can run both. 0.9.16 is the floor rather than
 # upstream's 0.9.15 because 0.9.15 publishes no wheel for Python 3.11 or 3.12,
@@ -47,17 +51,39 @@ packages = ["src/stl_driver"]
 [tool.hatch.metadata]
 allow-direct-references = true
 
-# The default torch wheel drags in ~2.5 GB of nvidia-* CUDA packages. This
-# policy runs [40, 12] tensors inside a 100 ms budget, where kernel launch
-# latency makes a GPU *slower* than a CPU -- so the CPU build is the correct
-# one, not merely the small one. `tool.uv.*` is ignored by pip, so a plain
-# `pip install .` still works.
+# Which torch build to install is a choice, so it is made explicitly rather
+# than by whatever PyPI happens to serve.
+#
+#   uv sync --extra cpu --extra dev     # the default; what the policy needs
+#   uv sync --extra cuda --extra dev    # CUDA 12.8 build, ~2.5 GB
+#
+# CPU is the right default and not merely the small one. At the sizes the
+# policy actually runs -- 64 candidate plans, `[67, 40, 12]` signals -- kernel
+# launch latency dominates and a GPU is slower. It stops being the right
+# default once the work grows: at a few thousand candidates the batched STL
+# masks reach tens of millions of elements, which is squarely GPU territory.
+# Measured first, then decide; `STLDriverConfig.device` is the switch.
+#
+# The two are declared as conflicting extras because they install the same
+# distribution from different indexes, and uv needs to know it may never
+# resolve both at once.
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "cuda" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.pytest.ini_options]

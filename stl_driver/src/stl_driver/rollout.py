@@ -94,6 +94,8 @@ class RolloutInputs:
     ego_disc_radius: float
     #: ``(T,)`` station of the vehicle we are following; ``+inf`` when none.
     lead_station_m: torch.Tensor
+    #: ``(T,)`` that vehicle's speed along the route; 0 when there is none.
+    lead_speed_mps: torch.Tensor
     #: Station of the stop line, when a light governs us.
     stop_station_m: float
     #: ``+gate`` when a red or amber light applies, ``-gate`` otherwise.
@@ -422,11 +424,31 @@ def _headway_slack(
     inputs: RolloutInputs,
     config: STLDriverConfig,
 ) -> torch.Tensor:
-    """Gap to the lead vehicle beyond the required time headway.
+    """Gap to the lead vehicle beyond the RSS safe longitudinal distance.
 
-    ``lead_station_m`` is ``+inf`` at timesteps with no lead, which would make
-    the subtraction ``inf`` and then ``nan`` once saturated, so it is replaced
-    before the arithmetic rather than after.
+    The question RSS asks is: if the vehicle ahead braked as hard as it
+    possibly could, starting now, could we still stop behind it -- given that
+    we take some time to react, might still be accelerating while we do, and
+    then brake at a rate we are willing to guarantee?
+
+        d = v_r*rho + a_accel*rho^2/2 + (v_r + rho*a_accel)^2 / 2*b_min
+                                                 - v_f^2 / 2*b_max
+
+    The final term is what a fixed time headway leaves out, and it is the
+    whole difference in character.  It credits the vehicle ahead for the
+    distance its *own* braking will take, so the requirement depends on the
+    two speeds rather than on ours alone.  Following at a matched speed asks
+    for much less than `time * v + gap`, and a lead pulling away asks for
+    almost nothing -- which is the behaviour a driver would recognise, and
+    what stops the policy sitting far behind traffic for no reason.
+
+    It is not less safe: with the lead stopped, ``v_f`` is zero, the term
+    vanishes, and the requirement is the full stopping distance again.
+
+    See Shalev-Shwartz, Shammah & Shashua, *On a Formal Model of Safe and
+    Scalable Self-Driving Cars* (2017), and Hekmatnejad et al., *Encoding and
+    Monitoring Responsibility Sensitive Safety Rules for Automated Vehicles in
+    Signal Temporal Logic* (MEMOCODE 2019), for the same model written as STL.
     """
     limits = config.limits
     cap = limits.saturation_m
@@ -436,12 +458,25 @@ def _headway_slack(
     # Substituted before the arithmetic, not after: `inf - station` would be
     # `inf`, and `saturate(inf)` is `nan`, which poisons the whole signal.
     lead = torch.where(absent, station.detach() + cap * 2.0, lead)
+    lead_speed = inputs.lead_speed_mps.to(station.dtype).clamp_min(0.0)
 
-    required = limits.headway_time_s * speed + limits.standstill_gap_m
+    rho = limits.rss_response_s
+    accel = limits.rss_response_accel_mps2
+    brake = limits.rss_brake_mps2
+    lead_brake = limits.rss_lead_brake_mps2
+
+    required = (
+        speed * rho
+        + 0.5 * accel * rho * rho
+        + (speed + rho * accel) ** 2 / (2.0 * brake)
+        - lead_speed**2 / (2.0 * lead_brake)
+    )
+    # RSS can call for nothing at all when the lead is quicker than us; we
+    # still decline to ride its bumper.
+    required = required.clamp_min(limits.standstill_gap_m)
+
     slack = saturate((lead - station) - required, cap)
     # Saturate first, then substitute, so that "no lead vehicle" reads as
     # exactly `cap` -- the same value `_clearance` reports when there are no
-    # actors. Substituting before saturating would push it through the tanh
-    # and land at 0.76 * cap, making the two ways of saying "no constraint
-    # applies" disagree for no reason.
+    # actors.
     return torch.where(absent, torch.full_like(slack, cap), slack)

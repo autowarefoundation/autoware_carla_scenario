@@ -453,9 +453,7 @@ def test_the_machinery_does_not_depend_on_this_particular_specification():
 
     tree = ast.parse(_pathlib.Path(ruleset.__file__).read_text())
     imported = {
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
+        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
     }
     domain = {"stl_driver.signals", "stl_driver.config", "stl_driver.rules"}
     assert not (imported & domain), f"machinery imports {imported & domain}"

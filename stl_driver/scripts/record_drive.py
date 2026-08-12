@@ -214,6 +214,43 @@ def draw_overlay(
     return Image.alpha_composite(image.convert("RGBA"), panel).convert("RGB")
 
 
+def _report_rule_violations(per_step: list[dict[str, float]], rules) -> None:
+    """How often each rule was violated, and how badly.
+
+    The whole point of writing the behaviour as a specification is that this
+    table exists: it says what the vehicle failed to guarantee, in the same
+    language the requirement was written in.
+    """
+    scored = [s for s in per_step if "stl_robustness" in s]
+    if not scored:
+        return
+
+    satisfied = sum(1 for s in scored if s["stl_robustness"] >= 0.0)
+    logger.info(
+        "specification satisfied on %d of %d planned steps (%.1f%%)",
+        satisfied,
+        len(scored),
+        100.0 * satisfied / len(scored),
+    )
+    logger.info("%-18s %8s %8s %10s", "rule", "steps", "share", "worst")
+    for rule in rules:
+        values = [s.get(f"stl_rule_{rule.name}", 0.0) for s in scored]
+        bad = [v for v in values if v < 0.0]
+        logger.info(
+            "%-18s %8d %7.1f%% %10s",
+            rule.name,
+            len(bad),
+            100.0 * len(bad) / len(scored),
+            f"{min(bad):.2f} m" if bad else "-",
+        )
+    emergencies = sum(1 for s in scored if s.get("stl_fallback", 0.0) > 0.5)
+    logger.info(
+        "emergency plan driven on %d steps (%.1f%%)",
+        emergencies,
+        100.0 * emergencies / len(scored),
+    )
+
+
 def encode(frames_dir: Path, output: Path, fps: int) -> None:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is required to encode the recording")
@@ -283,6 +320,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         world = RecordingWorld(config, scenario, width=args.width, height=args.height)
         outcome = CarlaRuntime(world, config, scenario).run_rollout()
+
+    _report_rule_violations(per_step, policy.rules.rules)
 
     logger.info("rollout success=%s over %d steps", outcome.success, outcome.steps)
     for key in sorted(outcome.metrics):

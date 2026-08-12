@@ -97,6 +97,16 @@ class RuleSet:
         self._margins = torch.tensor([rule.margin for rule in rules], dtype=torch.float32)
         self.hard_rules = tuple(rule.name for rule in rules if rule.hard)
 
+    def to(self, device: str) -> RuleSet:
+        """Move the weights and margins the objective needs onto a device.
+
+        The formulas themselves allocate their working tensors on whatever
+        device the signal arrives on, so only these two need moving.
+        """
+        self._weights = self._weights.to(device)
+        self._margins = self._margins.to(device)
+        return self
+
     def __len__(self) -> int:
         return len(self.rules)
 

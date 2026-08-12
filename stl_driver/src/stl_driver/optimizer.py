@@ -65,9 +65,10 @@ class RobustnessOptimizer:
     """Searches plan space for the highest-robustness trajectory."""
 
     def __init__(self, rules: RuleSet, config: STLDriverConfig) -> None:
-        self.rules = rules
         self.config = config
-        self._seeds = self._build_seeds()
+        self.device = config.resolved_device()
+        self.rules = rules.to(self.device)
+        self._seeds = self._build_seeds().to(self.device)
         # Set on the first failure, then honoured for the rest of the session.
         # Batching relies on `vmap` seeing through upstream's hardcoded
         # `reshape([T, 1])`; it works on the pinned versions, but a policy that
@@ -109,7 +110,7 @@ class RobustnessOptimizer:
         ]
         if warm_start is not None:
             fixed.append(warm_start.detach().clone())
-        return torch.cat([self._seeds, torch.stack(fixed)], dim=0)
+        return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
 
     # -- search ------------------------------------------------------------
 
