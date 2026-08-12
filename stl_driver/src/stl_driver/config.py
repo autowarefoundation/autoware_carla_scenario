@@ -207,31 +207,34 @@ class OptimizerConfig:
     #:
     #: Descending from one finds the nearest local optimum, and which one that
     #: is depends on wherever the sampling stage happened to leave off. The
-    #: seeds are independent, so a batched pass covers them all: measured, a
-    #: step over eight costs 13.6 ms against 10.9 ms for one on CPU, and on a
-    #: GPU sixty-four cost the same as one -- 26.2 ms against 25.2 ms.
+    #: seeds are independent, so a batched pass covers them all -- and the cost
+    #: of that pass is per call, not per seed, because the tensors involved are
+    #: tiny and the time goes on dispatching operations rather than on
+    #: performing them. Measured: 12.41 ms per seed at one, 1.71 at eight, 0.47
+    #: at thirty-two, for about the same total each time.
     #:
-    #: One by default, and the reason is worth recording, because the
-    #: measurements point in opposite directions depending on where you look.
+    #: So breadth is very nearly free, and at a fixed 70 ms budget it buys a
+    #: great deal: one seed completes 3.42 refinement steps, eight complete
+    #: 2.80 each -- 22.4 gradient steps in total against 3.4, with the median
+    #: solve unchanged at 70 ms.
     #:
-    #: On a suite of fourteen scenarios with the budget opened up, sixteen
-    #: seeds is clearly better: mean robustness +0.625 -> +0.713, and one more
-    #: scenario satisfied. In closed loop on Town10HD it is catastrophic --
-    #: 19.3 m travelled against 135.8 m, stopped for 87% of steps, identical to
-    #: the metre across two runs against freshly restarted simulators.
+    #: This was 1 for a long time, and the reason it could not be raised is
+    #: worth keeping. `_refine` used to return the highest *robustness* among
+    #: its seeds, and robustness -- a minimum over rules -- is maximised by
+    #: stopping whenever the safety rules bind. With one seed a braking plan
+    #: had to beat a balanced starting point to be returned at all; with
+    #: sixteen there was nearly always one that won. It became the warm start,
+    #: the continuity margin preferred it next step, and the vehicle braked
+    #: itself to a halt it never recovered from: 19.3 m travelled against
+    #: 135.8 m, stopped for 87% of steps.
     #:
-    #: The mechanism is the warm start. `_refine` returns the highest
-    #: *robustness* among its seeds, and robustness -- a minimum over rules --
-    #: is maximised by stopping whenever the safety rules bind. With one seed
-    #: that plan has to beat a balanced starting point to be returned at all;
-    #: with sixteen there is nearly always a braking one that wins. It becomes
-    #: the warm start, the continuity margin then prefers it next step, and the
-    #: vehicle brakes itself to a halt it never recovers from.
-    #:
-    #: So the parallelism is real and the code for it is here, but it needs a
-    #: seed-selection rule that does not quietly prefer standing still. Raising
-    #: this without fixing that reproduces the lock.
-    n_refine_seeds: int = 1
+    #: Selection is lexicographic now -- satisfying first, then the objective,
+    #: which unlike robustness does not reward standing still -- so that trap
+    #: is gone. Confirmed in closed loop over three runs each on a pinned
+    #: route: satisfied 95.2/95.5/95.8% at one seed against 96.2/97.8/98.2% at
+    #: eight, with the emergency plan driven 7/7/7 times against 2/4/4. No
+    #: collisions either way.
+    n_refine_seeds: int = 8
     learning_rate: float = 0.3
     #: Inverse temperature schedule for the smoothed objective: start soft so
     #: every timestep contributes gradient, finish sharp so the last steps
