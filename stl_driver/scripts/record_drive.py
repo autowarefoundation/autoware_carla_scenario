@@ -125,6 +125,29 @@ class RecordingWorld(CarlaWorldAdapter):
         return snapshot
 
 
+class SilentWorld(RecordingWorld):
+    """The same drive with no camera on it.
+
+    Tuning wants the violation table, not the film, and the film is most of
+    the cost: a seven-hundred-step drive spends longer drawing overlays and
+    encoding them than it does driving. Attaching no camera also takes the
+    rendering load off the simulator.
+    """
+
+    def setup(self):
+        # Skip `RecordingWorld.setup`, which is the part that attaches one.
+        result = super(RecordingWorld, self).setup()
+        logger.info(
+            "spawn point %s -- pass --spawn-point to pin it, or two runs are "
+            "of different roads and not comparable",
+            self._spawn_point_index(),
+        )
+        return result
+
+    def tick(self):
+        return super(RecordingWorld, self).tick()
+
+
 def load_font(size: int) -> ImageFont.FreeTypeFont:
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -314,6 +337,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--output", type=Path, default=Path("drive.mp4"))
     parser.add_argument("--frames-dir", type=Path, default=None)
+    parser.add_argument(
+        "--no-video",
+        action="store_true",
+        help=(
+            "report the rule violations and skip the film. Drawing the overlay "
+            "and encoding it costs several minutes and dominates a run, which "
+            "makes the recorder unusable as something to tune against."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -342,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
             carla_port=args.carla_port,
             max_steps=args.steps,
         )
-        world = RecordingWorld(config, scenario, width=args.width, height=args.height)
+        world_class = SilentWorld if args.no_video else RecordingWorld
+        world = world_class(config, scenario, width=args.width, height=args.height)
         outcome = CarlaRuntime(world, config, scenario).run_rollout()
 
     _report_rule_violations(per_step, policy.rules.rules)
@@ -350,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("rollout success=%s over %d steps", outcome.success, outcome.steps)
     for key in sorted(outcome.metrics):
         logger.info("  %-26s %.4f", key, outcome.metrics[key])
+
+    if args.no_video:
+        return 0
 
     frames = world.frames
     if not frames:
