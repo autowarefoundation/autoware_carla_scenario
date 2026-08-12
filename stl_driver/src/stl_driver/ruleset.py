@@ -29,7 +29,13 @@ from typing import Any
 
 import torch
 
-from stl_driver.stl_backend import EXACT, STLFormula, assert_interval_fits, conjoin
+from stl_driver.stl_backend import (
+    EXACT,
+    STLFormula,
+    assert_interval_fits,
+    conjoin,
+    scalar_robustness,
+)
 
 __all__ = ["Rule", "RuleSet", "validate_rules"]
 
@@ -131,7 +137,7 @@ class RuleSet:
         """
         worst: torch.Tensor | None = None
         for rule in self.rules:
-            robustness = rule.formula.robustness(signal, **EXACT)
+            robustness = scalar_robustness(rule.formula, signal, **EXACT)
             worst = robustness if worst is None else torch.minimum(worst, robustness)
         assert worst is not None  # a RuleSet is never empty; `conjoin` refuses one
         return worst
@@ -139,7 +145,10 @@ class RuleSet:
     def per_rule(self, signal: torch.Tensor, **kwargs: Any) -> dict[str, torch.Tensor]:
         """Each rule's robustness separately, for reporting and diagnosis."""
         evaluation = kwargs or EXACT
-        return {rule.name: rule.formula.robustness(signal, **evaluation) for rule in self.rules}
+        return {
+            rule.name: scalar_robustness(rule.formula, signal, **evaluation)
+            for rule in self.rules
+        }
 
     def objective(self, signal: torch.Tensor, **kwargs: Any) -> torch.Tensor:
         """What the optimizer ascends: a weighted, saturated sum.
@@ -170,7 +179,7 @@ class RuleSet:
         """
         total = torch.zeros((), dtype=torch.float32)
         for index, rule in enumerate(self.rules):
-            robustness = rule.formula.robustness(signal, **kwargs)
+            robustness = scalar_robustness(rule.formula, signal, **kwargs)
             total = total + self._weights[index] * self._saturate(robustness, index, rule)
         return total
 
@@ -204,7 +213,7 @@ class RuleSet:
         total = torch.zeros((), dtype=torch.float32)
         worst: torch.Tensor | None = None
         for index, rule in enumerate(self.rules):
-            robustness = rule.formula.robustness(signal, **EXACT)
+            robustness = scalar_robustness(rule.formula, signal, **EXACT)
             worst = robustness if worst is None else torch.minimum(worst, robustness)
             total = total + self._weights[index] * self._saturate(robustness, index, rule)
         assert worst is not None  # a RuleSet is never empty; `conjoin` refuses one

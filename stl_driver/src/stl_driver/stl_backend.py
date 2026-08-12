@@ -81,6 +81,7 @@ from stlcgpp.formula import (
 from stlcgpp.formula import (
     Eventually as _UpstreamEventually,
 )
+from stlcgpp.utils import maxish as _upstream_maxish
 
 __all__ = [
     "And",
@@ -94,6 +95,7 @@ __all__ = [
     "EXACT",
     "assert_interval_fits",
     "conjoin",
+    "scalar_robustness",
     "smooth",
 ]
 
@@ -152,6 +154,73 @@ def _suffix_reduce(
     usable = total > _UNDERFLOW
     soft = suffix_sum(weights * x) / total.clamp_min(_UNDERFLOW)
     return sign * torch.where(usable, soft, exact)
+
+
+def scalar_robustness(formula: Any, signal: Any, **kwargs: Any) -> Any:
+    """A formula's robustness, without materialising traces it does not need.
+
+    ``robustness`` is ``trace[0]``, and every connective in this
+    specification -- ``And``, ``Or``, ``Negation``, ``Implies`` -- is pointwise
+    in time, so its value at ``t = 0`` depends only on its children's values at
+    ``t = 0``. Evaluating them as scalars collapses a whole tree of
+    ``[T]``-shaped intermediates into a handful of numbers.
+
+    It matters where a temporal operator sits *inside* a connective, which the
+    fast path on ``Always`` itself cannot reach. ``makes_progress`` is
+    ``Implies(Always(...), Eventually(...))``, and ``Implies`` asked its
+    children for traces: 86 tensor operations against about 10 for a rule
+    whose temporal operator is outermost, making it three times the cost of
+    any other rule in the specification.
+
+    Dispatch is by class name, deliberately, so that a tree built with ``&``
+    -- which produces upstream's ``And`` rather than the one re-exported here
+    -- is handled too. Anything unrecognised falls back to ``robustness``,
+    which is always correct and merely slower;
+    :mod:`tests.test_stlcgpp_contract` holds the two to agreement.
+    """
+    name = type(formula).__name__
+
+    if name == "And":
+        parts = torch.stack(_flatten("And", formula, signal, **kwargs), dim=-1)
+        return _minish(parts, **kwargs)
+    if name == "Or":
+        parts = torch.stack(_flatten("Or", formula, signal, **kwargs), dim=-1)
+        return _maxish(parts, **kwargs)
+    if name == "Negation":
+        return -scalar_robustness(formula.subformula, signal, **kwargs)
+    if name == "Implies":
+        antecedent = scalar_robustness(formula.subformula1, signal, **kwargs)
+        consequent = scalar_robustness(formula.subformula2, signal, **kwargs)
+        return _maxish(torch.stack([-antecedent, consequent], dim=-1), **kwargs)
+
+    return formula.robustness(signal, **kwargs)
+
+
+def _flatten(name: str, formula: Any, signal: Any, **kwargs: Any) -> list[Any]:
+    """The operands of an n-ary ``And``/``Or`` chain, as scalars.
+
+    Upstream flattens the chain before reducing it, so the soft reduction is
+    over every operand at once rather than over nested pairs of two. Those are
+    not the same number under smoothing, so the flattening has to be preserved.
+    """
+    if type(formula).__name__ != name:
+        return [scalar_robustness(formula, signal, **kwargs)]
+    return _flatten(name, formula.subformula1, signal, **kwargs) + _flatten(
+        name, formula.subformula2, signal, **kwargs
+    )
+
+
+def _maxish(values: torch.Tensor, approx_method: str = "true", temperature: float = 1.0, **_: Any):
+    if approx_method == "true":
+        return values.max(dim=-1)[0]
+    if approx_method == "softmax":
+        return (torch.softmax(temperature * values, dim=-1) * values).sum(dim=-1)
+    return _upstream_maxish(values, dim=-1, keepdim=False, approx_method=approx_method,
+                            temperature=temperature)
+
+
+def _minish(values: torch.Tensor, **kwargs: Any):
+    return -_maxish(-values, **kwargs)
 
 
 def _suffix_scalar(

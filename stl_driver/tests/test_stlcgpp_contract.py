@@ -18,6 +18,7 @@ import math
 import pytest
 import torch
 
+from stl_driver.signals import N_COLUMNS
 from stl_driver.stl_backend import (
     EXACT,
     Always,
@@ -412,3 +413,74 @@ def test_the_shortcut_cuts_the_operation_count():
 
     assert ours.n * 4 < theirs.n, f"{ours.n} operations against upstream's {theirs.n}"
     assert not any("flip" in name for name in ours.by), "no scan should be built at all"
+
+
+@pytest.mark.parametrize("approx_method", ["true", "softmax"])
+def test_scalar_evaluation_matches_the_formula_it_replaces(approx_method):
+    """Collapsing a tree to scalars must not change what it says.
+
+    Every connective here is pointwise in time, so `trace[0]` depends only on
+    the children's `trace[0]` -- but only if the n-ary flattening `And` and
+    `Or` do before reducing is preserved. Nested pairs of two and a single
+    reduction over all operands are the same under an exact min and *not* the
+    same under a soft one, so this checks both.
+    """
+    from stl_driver.stl_backend import Negation, scalar_robustness
+
+    evaluation = (
+        {"approx_method": "true"}
+        if approx_method == "true"
+        else {"approx_method": "softmax", "temperature": 3.0}
+    )
+    generator = torch.Generator().manual_seed(11)
+    a, b, c = (column(i) for i in range(3))
+    shapes = {
+        "always over a conjunction": Always(And(a > 0.0, And(b > 0.0, c > 0.0))),
+        "implication of two temporals": Implies(
+            Always(a > 0.0), Eventually(b > 0.0, interval=[0, T - 1])
+        ),
+        "negation inside": Always(Negation(a > 0.0)),
+        "an ampersand chain": Always((a > 0.0) & (b > 0.0) & (c > 0.0)),
+        "temporal inside a conjunction": And(
+            Always(a > 0.0, interval=[3, T - 1]), Eventually(b > 0.0)
+        ),
+        "a bare predicate": a > 0.0,
+    }
+    for label, formula in shapes.items():
+        for _ in range(4):
+            signal = torch.randn(T, 3, generator=generator) * 2.0
+            fast = scalar_robustness(formula, signal, **evaluation)
+            slow = formula.robustness(signal, **evaluation)
+            assert torch.allclose(fast, slow, atol=1e-4), f"{label} under {approx_method}"
+
+
+def test_scalar_evaluation_cuts_the_operation_count_of_the_worst_rule():
+    """`makes_progress` was three times any other rule, and this is why."""
+    import collections
+
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    from stl_driver.config import STLDriverConfig
+    from stl_driver.rules import build_rules
+    from stl_driver.stl_backend import scalar_robustness
+
+    class Count(TorchDispatchMode):
+        def __init__(self):
+            self.n = 0
+            self.by = collections.Counter()
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            self.n += 1
+            self.by[str(func)] += 1
+            return func(*args, **(kwargs or {}))
+
+    config = STLDriverConfig()
+    rule = next(r for r in build_rules(config) if r.name == "makes_progress")
+    signal = torch.randn(config.horizon.n_steps, N_COLUMNS)
+
+    with Count() as fast:
+        scalar_robustness(rule.formula, signal, **EXACT)
+    with Count() as slow:
+        rule.formula.robustness(signal, **EXACT)
+
+    assert fast.n < slow.n * 0.7, f"{fast.n} operations against {slow.n}"
