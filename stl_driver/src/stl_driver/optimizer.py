@@ -158,6 +158,19 @@ class RobustnessOptimizer:
         # emergency plan; see `RuleSet.imminent_hard_violation`.
         window = max(2, self.config.horizon.index_at(optimizer.fallback_window_s))
         imminent = self.rules.imminent_hard_violation(best_signal, window)
+        if imminent is not None and not self._braking_can_help(inputs):
+            # Braking changes nothing, so it is not the answer.
+            #
+            # A conflict driven by another vehicle's motion rather than our own
+            # -- something crossing towards a stationary ego -- is violated
+            # just as badly by the hardest stop available. Emergency braking
+            # then buys no safety and costs everything else: the vehicle sits
+            # under maximum deceleration, makes no progress, and gets rear-
+            # ended by traffic that did not expect it to stop.
+            #
+            # The violation is still reported. What changes is that we stop
+            # pretending the emergency plan is a remedy for it.
+            imminent = None
 
         return PlanSolution(
             params=best_params,
@@ -172,6 +185,26 @@ class RobustnessOptimizer:
             worst_rule=self.rules.worst_violated(per_rule),
             used_vmap=used_vmap,
         )
+
+    def _braking_can_help(self, inputs: RolloutInputs) -> bool:
+        """Whether stopping harder is capable of changing anything.
+
+        It is, whenever we are moving: the emergency plan decelerates harder
+        than any plan the optimizer can express, so it always ends up short of
+        where the chosen plan would.  That covers the obstacle two metres ahead
+        at ten metres per second -- unavoidable, but braking is still right.
+
+        It is not, when we are already stopped.  A conflict with a vehicle
+        moving towards a stationary ego is violated exactly as badly under
+        maximum braking, because our speed was never what caused it.  Braking
+        there buys nothing and costs everything else: no progress, and a
+        vehicle standing on the brakes in traffic that did not expect it to
+        stop -- which is how a stall turns into being rear-ended.
+
+        The violation is still reported either way.  What this decides is only
+        whether the emergency plan is a *remedy* for it.
+        """
+        return inputs.speed0_mps > self.config.limits.creep_speed_mps
 
     def _score_batch(
         self,

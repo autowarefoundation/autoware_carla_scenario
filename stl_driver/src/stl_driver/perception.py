@@ -217,7 +217,7 @@ def forecast_actors(
     yaws = np.asarray(yaws_rig, dtype=np.float64)
     sizes_array = np.asarray(sizes, dtype=np.float64)
 
-    centres_over_time, radii = _disc_forecast(centres, velocities, yaws, sizes_array, config)
+    centres_over_time, radii = _disc_forecast(centres, velocities, yaws, sizes_array, table, config)
     stations, _ = project_to_frenet(table, centres_over_time.reshape(-1, 2))
     stations = stations.reshape(centres_over_time.shape[:2])
     lead_station = _lead_station(
@@ -286,9 +286,10 @@ def _disc_forecast(
     velocities: np.ndarray,
     yaws: np.ndarray,
     sizes: np.ndarray,
+    table: RouteTable,
     config: STLDriverConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Cover each actor with discs and advance them at constant velocity.
+    """Cover each actor with discs and predict them over the horizon.
 
     A rectangle would be exact but has corners the optimizer cannot
     differentiate through.  Discs are the usual substitute; how many of them
@@ -299,6 +300,9 @@ def _disc_forecast(
     it is taken from the largest actor present, which is the conservative
     direction -- a small car simply gets a few more, tighter discs than it
     needs.
+
+    The prediction itself is either straight-line or along the road; see
+    :func:`_predict_centres`.
     """
     horizon = config.horizon
     times = np.arange(1, horizon.n_steps + 1, dtype=np.float64) * horizon.step_s
@@ -319,16 +323,114 @@ def _disc_forecast(
     )
     radii = np.hypot(spacing / 2.0, widths / 2.0)
 
-    heading = np.stack([np.cos(yaws), np.sin(yaws)], axis=1)
-    # (A, n_discs, 2): disc centres laid out along each actor's own heading.
-    disc_centres = centres[:, None, :] + offsets[:, :, None] * heading[:, None, :]
-    disc_velocities = np.repeat(velocities[:, None, :], n_discs, axis=1)
+    # (T, A, 2) centres and (T, A, 2) unit headings.
+    predicted_centres, headings = _predict_centres(centres, velocities, yaws, table, times, config)
 
     # (T, A, n_discs, 2) -> (T, A * n_discs, 2)
-    predicted = disc_centres[None] + disc_velocities[None] * times[:, None, None, None]
+    predicted = (
+        predicted_centres[:, :, None, :] + offsets[None, :, :, None] * headings[:, :, None, :]
+    )
     predicted = predicted.reshape(len(times), -1, 2)
 
     return predicted, np.repeat(radii, n_discs)
+
+
+def _predict_centres(
+    centres: np.ndarray,
+    velocities: np.ndarray,
+    yaws: np.ndarray,
+    table: RouteTable,
+    times: np.ndarray,
+    config: STLDriverConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Where each actor's centre will be, and which way it will point.
+
+    Two models, selectable because only measurement can say which drives
+    better.
+
+    **Straight line.**  Position plus velocity times time.  Simple, and wrong
+    in a specific way that matters: it ignores the road.  On a bend it sends
+    every vehicle off along the tangent, so a car we are following leaves our
+    lane and stops being our lead, and a car in the oncoming lane is predicted
+    into our path.  Both errors grow with the square of the horizon.
+
+    **Along the road.**  Resolve the velocity into the route's own frame --
+    how fast along, how fast across -- and advance those instead, mapping back
+    through the route geometry.  A vehicle travelling down the road stays on
+    the road however it curves, which is the case that matters most, since
+    that is the vehicle we are following.  A vehicle crossing has a large
+    lateral rate and small longitudinal one, so it sweeps across the route and
+    off the far side rather than being carried along it.
+
+    Neither knows anything about the *other* vehicle's lane; the route is
+    ours.  That is the honest limit of both, and the reason the lateral rate
+    may be decayed: a vehicle's lateral velocity relative to our road is the
+    least persistent thing about it.
+    """
+    limits = config.limits
+    n_times = len(times)
+
+    heading_now = np.stack([np.cos(yaws), np.sin(yaws)], axis=1)
+
+    straight = centres[None] + velocities[None] * times[:, None, None]
+    straight_headings = np.repeat(heading_now[None], n_times, axis=0)
+    if not limits.frenet_prediction:
+        return straight, straight_headings
+
+    stations, offsets = project_to_frenet(table, centres)
+
+    # Frenet coordinates only describe the space the route actually
+    # parameterises. Projection clamps at both ends, so a vehicle *behind* the
+    # ego -- and the route is published from the ego forward -- comes back at
+    # station zero, which would teleport every follower onto our front bumper.
+    # A vehicle far off to the side is no better described: the frame folds
+    # where the road bends away from it.
+    #
+    # Outside that region the straight line is the more honest answer, so the
+    # two models are chosen per actor rather than globally.
+    describable = (
+        (stations > 1e-3)
+        & (stations < table.table_length_m - 1e-3)
+        & (np.abs(offsets) <= limits.frenet_prediction_half_width_m)
+    )
+    if not describable.any():
+        return straight, straight_headings
+    _, tangents = table.frenet_to_xy_many(stations, offsets)
+    normals = np.stack([-tangents[:, 1], tangents[:, 0]], axis=1)
+
+    along = np.einsum("ak,ak->a", velocities, tangents)
+    across = np.einsum("ak,ak->a", velocities, normals)
+
+    # A vehicle's lateral rate relative to *our* road is the least persistent
+    # part of its motion -- it is mostly the road bending, or a lane change
+    # that ends. Integrating it forever manufactures conflicts; decaying it
+    # keeps the first seconds, which is where a genuine cut-in shows up.
+    decay = limits.prediction_lateral_decay_s
+    if decay > 0.0:
+        lateral_travel = across[None, :] * decay * (1.0 - np.exp(-times[:, None] / decay))
+    else:
+        lateral_travel = across[None, :] * times[:, None]
+
+    predicted_s = stations[None, :] + along[None, :] * times[:, None]
+    predicted_d = offsets[None, :] + lateral_travel
+
+    positions, road_tangents = table.frenet_to_xy_many(predicted_s.ravel(), predicted_d.ravel())
+    predicted = positions.reshape(n_times, -1, 2)
+    road_tangents = road_tangents.reshape(n_times, -1, 2)
+
+    # Point each vehicle the way it is actually going: along the road, turned
+    # by however much of its motion is across it. A stationary vehicle has no
+    # direction of travel, so it keeps the heading it was observed with.
+    road_normals = np.stack([-road_tangents[..., 1], road_tangents[..., 0]], axis=-1)
+    speed = np.hypot(along, across)
+    moving = speed > 0.1
+    direction = road_tangents * along[None, :, None] + road_normals * across[None, :, None]
+    norm = np.linalg.norm(direction, axis=-1, keepdims=True)
+    direction = np.divide(direction, np.maximum(norm, 1e-9))
+    headings = np.where(moving[None, :, None], direction, straight_headings)
+
+    keep = describable[None, :, None]
+    return np.where(keep, predicted, straight), np.where(keep, headings, straight_headings)
 
 
 def _lead_station(

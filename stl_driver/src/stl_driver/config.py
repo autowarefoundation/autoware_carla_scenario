@@ -117,6 +117,18 @@ class Limits:
     #: Lateral half-extent within which an actor counts as in our lane.
     lead_capture_half_width_m: float = 1.6
 
+    # -- prediction --------------------------------------------------------
+    #: Predict other vehicles along the road rather than in a straight line.
+    #: See `_predict_centres` for what each model gets wrong.
+    frenet_prediction: bool = True
+    #: Time constant on an actor's lateral rate relative to our route. 0
+    #: integrates it unchanged over the whole horizon.
+    prediction_lateral_decay_s: float = 1.5
+    #: How far off the route Frenet coordinates still describe a vehicle
+    #: usefully. Beyond it -- or behind the route's start -- the straight
+    #: line is the more honest model, and the two are mixed per actor.
+    frenet_prediction_half_width_m: float = 8.0
+
     # -- numerics ----------------------------------------------------------
     #: Distance-like columns saturate here rather than running to infinity.
     #: An unbounded column would collapse the softmax weights inside `And` and

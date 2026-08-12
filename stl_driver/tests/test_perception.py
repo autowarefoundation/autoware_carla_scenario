@@ -10,6 +10,7 @@ about a mistake.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -26,9 +27,9 @@ from carla_driver_interface.grpc_api import Pose as PoseProto
 from carla_driver_interface.grpc_api import Quat as QuatProto
 
 from stl_driver.config import STLDriverConfig
-from stl_driver.frenet import build_route_table
+from stl_driver.frenet import build_route_table, project_to_frenet
 from stl_driver.perception import forecast_actors, read_traffic_light
-from tests.conftest import straight_route
+from tests.conftest import curved_route, straight_route
 
 CONFIG = STLDriverConfig()
 
@@ -121,6 +122,9 @@ def test_actor_velocity_is_rotated_but_not_translated():
     Translating it would make every distant actor appear to be hurtling
     towards us.
     """
+    # Measured against the straight-line model, so this isolates the frame
+    # transform from whatever the prediction does with the road geometry.
+    straight = replace(CONFIG, limits=replace(CONFIG.limits, frenet_prediction=False))
     anchor = Pose.from_xyz_yaw(500.0, 300.0, 0.0, math.pi / 2.0)
     # Moving along +x in local; the rig is rotated 90 degrees, so in rig terms
     # that is -y.
@@ -130,7 +134,7 @@ def test_actor_velocity_is_rotated_but_not_translated():
         anchor,
         table(),
         0.0,
-        CONFIG,
+        straight,
     )
     displacement = forecast.centres[9].mean(axis=0) - forecast.centres[0].mean(axis=0)
     # Nine steps of 0.1 s at 10 m/s is 9 m, along rig -y.
@@ -450,3 +454,98 @@ def test_the_stop_margin_never_demands_more_room_than_there_is():
         config=CONFIG,
     )
     assert far.stop_station_m == pytest.approx(40.0 - CONFIG.limits.stop_line_margin_m)
+
+
+# ---------------------------------------------------------------------------
+# Predicting along the road
+# ---------------------------------------------------------------------------
+
+
+def curved_table():
+    return build_route_table(
+        curved_route(radius_m=40.0),
+        ds=CONFIG.route_table_ds_m,
+        length_m=CONFIG.route_table_length_m(),
+    )
+
+
+def test_a_vehicle_ahead_on_a_bend_stays_on_the_bend():
+    """The error a straight line makes, and the reason to resolve into the road.
+
+    Extrapolating tangentially sends the car we are following out of our lane
+    within a second or two, so it stops being our lead exactly when we most
+    need it to be.
+    """
+    table_c = curved_table()
+    start = table_c.frenet_to_xy(20.0, 0.0)
+    heading = math.atan2(*(table_c.tangent[20][::-1]))
+    speed = 8.0
+
+    along_road = forecast_actors(
+        renderer(
+            actor(
+                float(start[0]),
+                float(start[1]),
+                yaw=heading,
+                vx=speed * math.cos(heading),
+                vy=speed * math.sin(heading),
+            )
+        ),
+        Pose.identity(),
+        table_c,
+        0.0,
+        CONFIG,
+    )
+    straight = replace(CONFIG, limits=replace(CONFIG.limits, frenet_prediction=False))
+    tangentially = forecast_actors(
+        renderer(
+            actor(
+                float(start[0]),
+                float(start[1]),
+                yaw=heading,
+                vx=speed * math.cos(heading),
+                vy=speed * math.sin(heading),
+            )
+        ),
+        Pose.identity(),
+        table_c,
+        0.0,
+        straight,
+    )
+
+    def lane_offset(forecast, index):
+        _, offset = project_to_frenet(forecast_table := curved_table(), forecast.centres[index])
+        del forecast_table
+        return float(np.abs(offset).max())
+
+    # Four seconds later the straight line has left the lane; the road-aware
+    # prediction is still in it.
+    assert lane_offset(along_road, -1) < 1.0
+    assert lane_offset(tangentially, -1) > 3.0
+
+
+def test_a_vehicle_behind_the_route_start_keeps_the_straight_line_model():
+    """Frenet cannot express "behind" when the route begins at the ego.
+
+    Projection clamps, so a follower would come back at station zero -- on our
+    front bumper. Mixing the two models per actor is what avoids that.
+    """
+    forecast = forecast_actors(
+        renderer(actor(-8.0, 0.0, vx=2.0)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    # Still behind us, hence dropped from the collision check entirely.
+    assert np.abs(forecast.centres[0]).min() > 1000.0
+
+
+def test_the_lateral_rate_decays_rather_than_integrating_forever():
+    """A vehicle's sideways drift relative to our road is not persistent."""
+    drifting = forecast_actors(
+        renderer(actor(30.0, 1.0, vx=6.0, vy=1.5)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    offsets = project_to_frenet(table(), drifting.centres.reshape(-1, 2))[1]
+    offsets = offsets.reshape(drifting.centres.shape[:2])
+    early = float(np.abs(offsets[4]).max())
+    late = float(np.abs(offsets[-1]).max())
+    # It moves across early on, then settles rather than running away.
+    assert early > 1.0
+    assert late < 1.0 + 1.5 * CONFIG.limits.prediction_lateral_decay_s + 0.5

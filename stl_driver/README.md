@@ -118,6 +118,34 @@ because each one produced plausible-looking driving:
 Together those took emergency stops from 25.5% of steps to 4.5%, lane
 invasions from 15 to 0, and route tracking error from 0.55 m to 0.21 m.
 
+What remained was a vehicle that still stopped, at nothing, for seconds at a
+time. Two further changes, each measured on its own over repeated runs against
+a fresh simulator:
+
+- **Other vehicles are predicted along the road, not in a straight line.**
+  Their velocity is resolved into the route's frame and advanced there. A
+  straight line ignores the road: on a bend it carries the car we are
+  following out of our lane, and carries oncoming traffic into it.
+- **The emergency plan is only summoned when braking could help.** It always
+  can when we are moving. It cannot when we are stopped and something is
+  moving towards us -- our speed was never the cause -- and braking there
+  merely guarantees we are stationary when it arrives.
+
+Measured over two runs each, 500 steps on Town10HD with 30 vehicles:
+
+| | distance | collisions | stopped at nothing | emergency stops |
+|---|---|---|---|---|
+| neither | 128.5 m | 0 | 26.9% | 2.0% |
+| prediction only | 130.7 m | 0 | 26.2% | 3.0% |
+| braking test only | 125.0 m | 0 | 24.9% | 1.1% |
+| **both** | **135.0 m** | **0** | **22.0%** | **1.1%** |
+
+An earlier attempt at the same symptom is worth recording as a warning: two
+plausible fixes, adopted on a single measurement, turned 0 collisions into
+470. They were reverted. Nothing here is kept without repeated runs against a
+freshly restarted simulator, because a single rollout in this environment says
+almost nothing.
+
 ## Setup
 
 ```bash

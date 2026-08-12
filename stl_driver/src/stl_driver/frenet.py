@@ -65,6 +65,28 @@ class RouteTable:
         weight = index - low
         return self.xy[low] * (1.0 - weight) + self.xy[high] * weight
 
+    def frenet_to_xy_many(
+        self, stations: np.ndarray, offsets: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Vectorised inverse of :func:`project_to_frenet`.
+
+        Returns the positions and the unit route tangent at each station, the
+        latter because anything predicted along the road also needs to know
+        which way the road is pointing there.
+        """
+        stations = np.asarray(stations, dtype=np.float64).ravel()
+        offsets = np.asarray(offsets, dtype=np.float64).ravel()
+
+        index = np.clip(stations / self.ds, 0.0, len(self.xy) - 1.0)
+        low = np.clip(np.floor(index).astype(np.int64), 0, len(self.xy) - 2)
+        weight = (index - low)[:, None]
+
+        point = self.xy[low] * (1.0 - weight) + self.xy[low + 1] * weight
+        tangent = self.tangent[low] * (1.0 - weight) + self.tangent[low + 1] * weight
+        tangent = tangent / np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+        normal = np.stack([-tangent[:, 1], tangent[:, 0]], axis=1)
+        return point + offsets[:, None] * normal, tangent
+
     def frenet_to_xy(self, station_m: float, offset_m: float) -> np.ndarray:
         """Inverse of :func:`project_to_frenet`, for round-trip tests."""
         index = np.clip(station_m / self.ds, 0.0, len(self.xy) - 1.0)

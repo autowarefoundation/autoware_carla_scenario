@@ -350,3 +350,37 @@ def test_the_fallback_window_is_measured_in_the_opening_of_the_horizon(optimizer
         optimizer.rules.imminent_hard_violation(signal_from_columns(clearance=early), 12)
         == "collision_free"
     )
+
+
+def test_a_stationary_ego_does_not_emergency_brake_at_an_approaching_vehicle():
+    """Braking is not a remedy for something our speed never caused.
+
+    A vehicle moving towards a stopped ego violates `collision_free` exactly
+    as badly under maximum braking. Standing on the brakes buys no safety and
+    costs everything else -- no progress, and a vehicle stopped dead in
+    traffic that did not expect it, which is how a stall becomes a rear-end.
+    """
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    optimizer.solve(make_inputs(CONFIG, speed0_mps=5.0))
+
+    centres, radii = stationary_actor(CONFIG, ahead_m=3.0)
+    stopped = make_inputs(CONFIG, speed0_mps=0.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(stopped)
+
+    # The violation is still reported...
+    assert float(solution.per_rule["collision_free"]) < 0.0
+    # ...but the emergency plan is not pretended to be a remedy for it.
+    assert not solution.needs_fallback
+
+
+def test_a_moving_ego_still_emergency_brakes_for_the_same_obstacle():
+    """The distinction is about our speed, not about the obstacle."""
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    optimizer.solve(make_inputs(CONFIG, speed0_mps=5.0))
+
+    centres, radii = stationary_actor(CONFIG, ahead_m=3.0)
+    moving = make_inputs(CONFIG, speed0_mps=9.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(moving)
+
+    assert solution.needs_fallback
+    assert solution.imminent_rule == "collision_free"

@@ -30,6 +30,16 @@ Rule("collision_free", Always(clearance > 0.0), weight=10.0, margin=2.0, hard=Tr
 to spare stops competing with the liveness rules, so the vehicle does not buy
 clearance it does not need at the cost of ever getting anywhere.
 
+`hard` decides one more thing: a violation summons the emergency plan, but
+only if that plan could actually help.  Braking harder always helps when we
+are *moving* -- even for an obstacle too close to avoid.  It helps not at all
+when we are stopped and something is moving towards us, because our speed was
+never what caused the conflict.  Standing on the brakes there buys no safety
+and costs everything else: no progress, and a vehicle stopped dead in traffic
+that did not expect it, which is how a stall turns into being rear-ended.  The
+violation is still reported either way; what the test decides is whether the
+emergency plan is a *remedy* for it.
+
 `hard` also changes how a violation is scored.  Soft rules saturate in *both*
 directions -- they express preferences, so their influence is bounded either
 way.  Hard rules saturate only above: surplus safety levels off, but the
@@ -82,6 +92,15 @@ Keep clearance from every predicted actor at all times.  Actors are predicted
 forward at constant velocity and approximated by two discs each; the ego is
 two discs at 1.0 m and 3.5 m *ahead* of the plan point, because the rig origin
 is the rear axle rather than the vehicle centre.
+
+Other vehicles are predicted **along the road**, not in a straight line:
+their velocity is resolved into the route's own frame and advanced there, so a
+car we are following stays in its lane however the road bends.  A straight
+line leaves the lane tangentially within a second or two, which is exactly
+when it matters.  Frenet coordinates only describe the space the route
+parameterises, though, so a vehicle behind the route's start -- and the route
+begins at the ego -- would come back at station zero, on our front bumper.
+The two models are therefore chosen per vehicle.
 
 The clearance is an exact minimum over disc pairs, not a soft one.  A soft
 minimum would spread gradient more widely, but its error scales with

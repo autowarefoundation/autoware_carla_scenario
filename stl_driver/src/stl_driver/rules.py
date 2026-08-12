@@ -378,6 +378,19 @@ class RuleSet:
         """Whether a rule marked ``hard`` is violated anywhere in the horizon."""
         return any(float(per_rule[name]) < 0.0 for name in self.hard_rules if name in per_rule)
 
+    def hard_robustness(self, signal: torch.Tensor, n_steps: int) -> float:
+        """How well the hard rules hold over the opening ``n_steps``.
+
+        The same quantity :meth:`imminent_hard_violation` tests the sign of,
+        kept separately so two plans can be compared on it even when both are
+        violating.
+        """
+        window = signal[: max(2, min(n_steps, signal.shape[0]))]
+        return min(
+            float(next(r for r in self.rules if r.name == name).formula.robustness(window, **EXACT))
+            for name in self.hard_rules
+        )
+
     def imminent_hard_violation(self, signal: torch.Tensor, n_steps: int) -> str | None:
         """The first hard rule violated within the opening ``n_steps``, if any.
 
