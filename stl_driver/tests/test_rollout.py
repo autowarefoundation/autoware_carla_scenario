@@ -1,0 +1,609 @@
+# SPDX-License-Identifier: Apache-2.0
+"""The differentiable model.
+
+Two kinds of test here.  The analytic ones check that the kinematics mean what
+they say.  The gradient ones check that the model is differentiable *in the
+way the optimizer needs* -- which is a separate question, and the one that
+actually bites: a rollout can produce perfectly sensible trajectories while
+silently reporting a zero gradient, and the only symptom is a policy that
+never steers.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+import torch
+
+from stl_driver.config import Horizon, STLDriverConfig
+from stl_driver.rollout import N_PARAMS, plan_xy, rollout
+from stl_driver.rules import RuleSet, build_rules
+from stl_driver.signals import N_COLUMNS, Col
+from stl_driver.stl_backend import smooth
+from tests.conftest import curved_route, make_inputs, stationary_actor, straight_route
+
+
+def hold_speed_params() -> torch.Tensor:
+    """Parameters meaning "zero acceleration, stay on the centreline".
+
+    The accel knots map through a sigmoid onto [-max_decel, +max_accel], so
+    zero acceleration is the logit of the fraction where that range crosses 0.
+    """
+    limits = STLDriverConfig().limits
+    span = limits.max_accel_mps2 + limits.max_decel_mps2
+    fraction = limits.max_decel_mps2 / span
+    logit = math.log(fraction / (1.0 - fraction))
+    return torch.tensor([logit] * 4 + [0.0, 0.0], dtype=torch.float32)
+
+
+def constant_accel_params(accel: float) -> torch.Tensor:
+    """Parameters requesting a constant acceleration.
+
+    The sigmoid maps onto the *open* interval, so the endpoints are only
+    approachable, never reachable; asking for exactly ``max_accel`` is asking
+    for an infinite logit. Nudging inside is the honest thing to do -- the
+    optimizer lives under the same constraint.
+    """
+    limits = STLDriverConfig().limits
+    span = limits.max_accel_mps2 + limits.max_decel_mps2
+    fraction = (accel + limits.max_decel_mps2) / span
+    fraction = min(max(fraction, 1e-3), 1.0 - 1e-3)
+    logit = math.log(fraction / (1.0 - fraction))
+    return torch.tensor([logit] * 4 + [0.0, 0.0], dtype=torch.float32)
+
+
+# ---------------------------------------------------------------------------
+# Shape and kinematics
+# ---------------------------------------------------------------------------
+
+
+def test_the_signal_has_the_shape_the_rules_expect(config):
+    signal = rollout(hold_speed_params(), make_inputs(config), config)
+    assert signal.shape == (config.horizon.n_steps, N_COLUMNS)
+    assert torch.isfinite(signal).all()
+
+
+def test_holding_speed_keeps_the_speed(config):
+    inputs = make_inputs(config, speed0_mps=7.0)
+    signal = rollout(hold_speed_params(), inputs, config)
+    assert torch.allclose(
+        signal[:, Col.SPEED], torch.full((config.horizon.n_steps,), 7.0), atol=1e-3
+    )
+
+
+def test_acceleration_ramps_in_from_the_measured_value(config):
+    """The profile starts at the acceleration the vehicle has, not at the knot.
+
+    So "constant acceleration parameters" describe a ramp from the measured
+    acceleration to the requested one over the first knot interval, and only
+    then a constant. That is what keeps the opening jerk finite -- see
+    `_KNOT_TIMES_S`.
+    """
+    inputs = make_inputs(config, speed0_mps=2.0, accel0_mps2=0.0)
+    signal = rollout(constant_accel_params(1.0), inputs, config)
+
+    def expected_speed(t: float, a: float = 1.0, v0: float = 2.0) -> float:
+        if t <= 1.0:  # linear ramp 0 -> a
+            return v0 + a * t * t / 2.0
+        return v0 + a / 2.0 + a * (t - 1.0)
+
+    dt = config.horizon.step_s
+    for index in (9, 19, 39):
+        t = (index + 1) * dt
+        assert signal[index, Col.SPEED].item() == pytest.approx(expected_speed(t), abs=0.06)
+
+
+def test_the_opening_jerk_is_bounded(config):
+    """The bug that made `comfort` unsatisfiable by every accelerating plan.
+
+    With a free first knot, the commanded acceleration steps away from the
+    measured one inside a single 0.1 s tick, and differencing gives ten times
+    the knot value in jerk -- 20 m/s^3 for a 2 m/s^2 request, five times the
+    comfort bound. Pinning the first knot to the measurement bounds it.
+    """
+    inputs = make_inputs(config, speed0_mps=0.0, accel0_mps2=0.0)
+    signal = rollout(constant_accel_params(config.limits.max_accel_mps2 * 0.95), inputs, config)
+    assert signal[:, Col.JERK].abs().max().item() < config.limits.max_jerk_mps3
+
+
+def test_a_standstill_is_reported_as_a_standstill(config):
+    """A softplus floor would report a stopped car creeping at log(2)/beta.
+
+    That phantom speed becomes a phantom acceleration and a large phantom
+    jerk the moment it is differenced against a measured standstill.
+    """
+    inputs = make_inputs(config, speed0_mps=0.0, accel0_mps2=0.0)
+    signal = rollout(constant_accel_params(0.0), inputs, config)
+    assert signal[:, Col.SPEED].abs().max().item() < 1e-5
+    assert signal[:, Col.ACCEL].abs().max().item() < 1e-4
+    assert signal[:, Col.JERK].abs().max().item() < 1e-3
+
+
+def test_the_speed_floor_stops_the_vehicle_rather_than_reversing_it(config):
+    """Braking hard from a crawl settles at rest: the station stops advancing.
+
+    The physical claim is about the station, not about the speed column --
+    see the next test for why those differ.
+    """
+    inputs = make_inputs(config, speed0_mps=0.5)
+    signal = rollout(constant_accel_params(-4.0), inputs, config)
+    station = signal[:, Col.PROGRESS_SLACK]  # monotone in station
+    assert torch.all(torch.diff(station) >= -1e-4)
+    # Having stopped, it stays stopped: the last second covers no ground.
+    assert (station[-1] - station[-10]).abs().item() < 0.05
+
+
+def test_braking_to_a_stop_is_not_reported_as_reversing(config):
+    """The speed column is the physical speed, and this is why.
+
+    A plan that brakes to a halt and holds there has a *raw* speed that keeps
+    falling past zero for the rest of the horizon. Exposing that to the rules
+    would make `no_reverse` -- a hard rule, so one that triggers the emergency
+    fallback -- fire on a vehicle that is simply parked. A specification that
+    punishes the correct answer is worse than no specification.
+    """
+    from stl_driver.rules import RuleSet, build_rules
+
+    inputs = make_inputs(config, speed0_mps=0.5)
+    signal = rollout(constant_accel_params(-4.0), inputs, config)
+
+    assert signal[:, Col.SPEED].min().item() >= 0.0
+    rules = RuleSet(build_rules(config))
+    assert float(rules.per_rule(signal)["no_reverse"]) > 0.0
+
+
+def test_no_lateral_input_stays_on_the_centreline_of_a_straight_route(config):
+    inputs = make_inputs(config)
+    signal = rollout(hold_speed_params(), inputs, config)
+    assert torch.allclose(
+        signal[:, Col.LATERAL_OFFSET], torch.zeros(config.horizon.n_steps), atol=1e-5
+    )
+    positions, heading = plan_xy(hold_speed_params(), inputs, config)
+    assert torch.allclose(positions[:, 1], torch.zeros(config.horizon.n_steps), atol=1e-4)
+    assert torch.allclose(heading, torch.zeros(config.horizon.n_steps), atol=1e-4)
+
+
+def test_the_plan_starts_from_the_measured_lateral_offset(config):
+    """C0 continuity with where the vehicle actually is.
+
+    Snapping to the centreline at t=0 would ask the controller to teleport.
+    """
+    inputs = make_inputs(config, offset0_m=0.6)
+    signal = rollout(hold_speed_params(), inputs, config)
+    assert signal[0, Col.LATERAL_OFFSET].item() == pytest.approx(0.6, abs=0.05)
+
+
+def test_a_curve_produces_lateral_acceleration(config):
+    """And a straight road does not -- the low-speed conditioning check."""
+    straight = rollout(hold_speed_params(), make_inputs(config), config)
+    assert straight[:, Col.LATERAL_ACCEL].abs().max().item() < 0.05
+
+    curved = rollout(
+        hold_speed_params(),
+        make_inputs(config, route=curved_route(radius_m=40.0), speed0_mps=8.0),
+        config,
+    )
+    # v^2 / r = 64 / 40 = 1.6 m/s^2, give or take the discretisation.
+    assert curved[:, Col.LATERAL_ACCEL].abs().max().item() == pytest.approx(1.6, rel=0.25)
+
+
+def test_lateral_acceleration_stays_finite_at_a_standstill(config):
+    """The reason for dividing by |v| rather than |v|^3.
+
+    A stopped plan on a curve must not report an infinite swerve.
+    """
+    inputs = make_inputs(config, route=curved_route(radius_m=20.0), speed0_mps=0.0)
+    signal = rollout(constant_accel_params(0.0), inputs, config)
+    assert torch.isfinite(signal[:, Col.LATERAL_ACCEL]).all()
+    assert signal[:, Col.LATERAL_ACCEL].abs().max().item() < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Environment columns
+# ---------------------------------------------------------------------------
+
+
+def test_clearance_saturates_when_the_road_is_empty(config):
+    signal = rollout(hold_speed_params(), make_inputs(config), config)
+    assert torch.allclose(
+        signal[:, Col.CLEARANCE],
+        torch.full((config.horizon.n_steps,), config.limits.saturation_m),
+    )
+
+
+def test_clearance_falls_as_the_plan_approaches_an_obstacle(config):
+    centres, radii = stationary_actor(config, ahead_m=25.0)
+    inputs = make_inputs(config, speed0_mps=6.0, actor_centres=centres, actor_radii=radii)
+    signal = rollout(hold_speed_params(), inputs, config)
+    clearance = signal[:, Col.CLEARANCE]
+    assert clearance[0] > clearance[-1]
+    assert clearance.min().item() < 5.0
+
+
+def test_clearance_accounts_for_the_rear_axle_origin(config):
+    """The ego discs sit ahead of the plan point, not centred on it.
+
+    Centring them would over-report forward clearance by most of a car
+    length -- which is the difference between stopping and not.
+    """
+    centres, radii = stationary_actor(config, ahead_m=10.0, radius_m=1.0)
+    inputs = make_inputs(config, speed0_mps=0.0, actor_centres=centres, actor_radii=radii)
+    signal = rollout(constant_accel_params(0.0), inputs, config)
+
+    limits = config.limits
+    # Nearest ego disc is at +3.5 m, so the true gap is 10 - 3.5 - r_ego - r_a.
+    expected = 10.0 - max(limits.ego_disc_offsets_m) - limits.ego_disc_radius_m - 1.0
+    expected -= limits.collision_margin_m
+    # Tolerance is `saturate`'s tanh compression, not the minimum itself.
+    assert signal[0, Col.CLEARANCE].item() == pytest.approx(expected, rel=1e-3)
+
+
+def test_clearance_is_exact_in_dense_traffic(config):
+    """No error that scales with the number of vehicles on the road.
+
+    A soft minimum, in either its normalised or unnormalised form, is wrong by
+    up to log(N)/beta -- with twenty vehicles that is 0.46 m, most of the
+    collision margin, spent silently and in a direction that depends on which
+    form was chosen. The exact minimum simply does not have the problem.
+    """
+    n_actors = 20
+    generator = torch.Generator().manual_seed(3)
+    centres = torch.rand((n_actors, 2), generator=generator) * torch.tensor([60.0, 12.0])
+    centres[:, 1] -= 6.0
+    centres = centres.unsqueeze(0).expand(config.horizon.n_steps, n_actors, 2).contiguous()
+    radii = torch.full((n_actors,), 1.4)
+
+    inputs = make_inputs(config, speed0_mps=5.0, actor_centres=centres, actor_radii=radii)
+    signal = rollout(hold_speed_params(), inputs, config)
+
+    # Recompute the exact minimum the same way, without any smoothing.
+    positions, _ = plan_xy(hold_speed_params(), inputs, config)
+    limits = config.limits
+    offsets = torch.tensor(limits.ego_disc_offsets_m)
+    ego = positions.unsqueeze(-2) + offsets.reshape(-1, 1) * torch.tensor([1.0, 0.0])
+    gaps = (
+        (ego.unsqueeze(-2) - centres.unsqueeze(-3)).norm(dim=-1)
+        - limits.ego_disc_radius_m
+        - radii
+        - limits.collision_margin_m
+    )
+    exact = gaps.reshape(gaps.shape[0], -1).min(dim=-1).values
+
+    # `saturate` compresses by ~0.1% at these magnitudes; nothing else differs.
+    assert torch.allclose(signal[:, Col.CLEARANCE], exact, rtol=2e-3, atol=1e-3)
+
+
+def test_headway_saturates_with_no_lead_vehicle(config):
+    signal = rollout(hold_speed_params(), make_inputs(config), config)
+    assert torch.allclose(
+        signal[:, Col.HEADWAY_SLACK],
+        torch.full((config.horizon.n_steps,), config.limits.saturation_m),
+    )
+    assert torch.isfinite(signal).all()
+
+
+def test_headway_tightens_as_we_close_on_a_lead(config):
+    inputs = make_inputs(config, speed0_mps=8.0, lead_station_m=30.0)
+    signal = rollout(hold_speed_params(), inputs, config)
+    slack = signal[:, Col.HEADWAY_SLACK]
+    assert slack[0] > slack[-1]
+    limits = config.limits
+    expected0 = 30.0 - 0.0 - (limits.headway_time_s * 8.0 + limits.standstill_gap_m)
+    assert slack[0].item() == pytest.approx(expected0, abs=1.0)
+
+
+def test_the_light_gate_carries_the_configured_magnitude(config):
+    off = rollout(hold_speed_params(), make_inputs(config, light_active=False), config)
+    on = rollout(hold_speed_params(), make_inputs(config, light_active=True), config)
+    assert torch.allclose(
+        off[:, Col.LIGHT_GATE],
+        torch.full((config.horizon.n_steps,), -config.limits.gate_magnitude_m),
+    )
+    assert torch.allclose(
+        on[:, Col.LIGHT_GATE],
+        torch.full((config.horizon.n_steps,), config.limits.gate_magnitude_m),
+    )
+
+
+def test_route_slack_measures_distance_to_the_published_end(config):
+    """Near zero -- where the rule actually bites -- saturation is transparent.
+
+    `saturate` compresses globally, so a 60 m slack reads smaller than 60 m.
+    That is harmless because the rule only asks about the sign, and it is
+    checked here at the scale that matters.
+    """
+    inputs = make_inputs(config, route=straight_route(length_m=24.0), speed0_mps=6.0)
+    signal = rollout(hold_speed_params(), inputs, config)
+    # Four seconds at 6 m/s covers 24 m, so the slack runs down to about zero.
+    assert signal[-1, Col.ROUTE_SLACK].item() == pytest.approx(0.0, abs=0.3)
+    assert signal[-1, Col.ROUTE_SLACK] < signal[0, Col.ROUTE_SLACK]
+
+
+def test_saturation_is_near_transparent_at_the_scales_the_rules_use(config):
+    """The bound on the distortion `saturate` introduces.
+
+    Rules compare against zero with margins of a few metres, so what matters
+    is that the mapping is close to the identity there -- not that it is exact
+    at 80 m, where the only requirement is that nothing runs away.
+    """
+    from stl_driver.signals import saturate
+
+    cap = config.limits.saturation_m
+    for value in (0.1, 0.5, 1.0, 3.0, 5.0):
+        for sign in (1.0, -1.0):
+            saturated = float(saturate(torch.tensor(sign * value), cap))
+            assert saturated == pytest.approx(sign * value, rel=0.003)
+    # And nothing ever escapes the cap, however large the input.
+    assert float(saturate(torch.tensor(1e6), cap)) <= cap
+    assert float(saturate(torch.tensor(-1e6), cap)) >= -cap
+
+
+def test_speed_headroom_tracks_the_posted_limit(config):
+    inputs = make_inputs(config, speed0_mps=9.0, speed_limit_mps=10.0)
+    signal = rollout(hold_speed_params(), inputs, config)
+    assert signal[0, Col.SPEED_HEADROOM].item() == pytest.approx(1.0, abs=0.05)
+
+
+# ---------------------------------------------------------------------------
+# Differentiability -- the tests that matter most
+# ---------------------------------------------------------------------------
+
+
+def test_rollout_passes_gradcheck(config):
+    """Analytic gradients agree with numerical ones, in double precision."""
+    small = STLDriverConfig(horizon=Horizon(n_steps=8, step_s=0.1))
+    inputs = make_inputs(small, speed0_mps=5.0)
+    inputs = _to_double(inputs)
+
+    params = torch.zeros(N_PARAMS, dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(
+        lambda p: rollout(p, inputs, small),
+        (params,),
+        eps=1e-6,
+        atol=1e-4,
+        rtol=1e-3,
+    )
+
+
+def test_the_lateral_gradient_survives_the_station_lookup(config):
+    """The `floor`-without-detach bug, caught the only way it can be.
+
+    `torch.floor` has zero derivative almost everywhere. Differentiating
+    through it zeroes d(position)/d(station), and the resulting policy plans
+    perfectly reasonable-looking trajectories that never respond to lateral
+    cost. Finite differences against autograd is what distinguishes that from
+    a merely badly-tuned optimizer.
+    """
+    inputs = make_inputs(config, route=curved_route(radius_m=50.0), speed0_mps=7.0)
+    rules = RuleSet(build_rules(config))
+
+    def score(params: torch.Tensor) -> torch.Tensor:
+        return rules.objective(rollout(params, inputs, config), **smooth(4.0))
+
+    params = torch.tensor([0.1, -0.2, 0.05, 0.0, 0.3, -0.4], dtype=torch.float32)
+    analytic = torch.func.grad(score)(params)
+
+    step = 1e-3
+    numeric = torch.zeros_like(params)
+    for index in range(N_PARAMS):
+        shifted_up = params.clone()
+        shifted_up[index] += step
+        shifted_down = params.clone()
+        shifted_down[index] -= step
+        numeric[index] = (score(shifted_up) - score(shifted_down)) / (2.0 * step)
+
+    assert torch.allclose(analytic, numeric, atol=2e-2, rtol=5e-2)
+    # And specifically: the lateral parameters are not dead.
+    assert analytic[4:].abs().max().item() > 1e-3
+
+
+def test_the_longitudinal_gradient_points_the_right_way(config):
+    """Closing on an obstacle, the objective must prefer decelerating.
+
+    The obstacle sits where the plan currently stops just short of it, which
+    is the band where the clearance rule has gradient to give -- see
+    `test_gradients_cannot_escape_an_already_colliding_plan` for what happens
+    outside it.
+    """
+    centres, radii = stationary_actor(config, ahead_m=43.0)
+    inputs = make_inputs(config, speed0_mps=9.0, actor_centres=centres, actor_radii=radii)
+    rules = RuleSet(build_rules(config))
+
+    def score(params: torch.Tensor) -> torch.Tensor:
+        return rules.objective(rollout(params, inputs, config), **smooth(4.0))
+
+    params = hold_speed_params()
+    signal = rollout(params, inputs, config)
+    # Precondition: the plan is near the obstacle but not yet through it.
+    assert 0.0 < signal[:, Col.CLEARANCE].min().item() < 2.0
+
+    gradient = torch.func.grad(score)(params)
+    # Raising the accel knots means going faster; the objective must fall.
+    assert gradient[:4].sum().item() < 0.0
+
+
+def test_gradients_cannot_escape_an_already_colliding_plan(config):
+    """Why the optimizer samples before it descends.
+
+    Once a plan passes through an obstacle, it does so at any speed, so the
+    minimum clearance over the horizon barely depends on the speed profile and
+    the gradient goes quiet. Gradient descent alone would sit there. Escaping
+    needs a *different* plan, which is what the sampling stage supplies -- so
+    this is not a defect to fix but the reason the search has two stages.
+    """
+    centres, radii = stationary_actor(config, ahead_m=18.0)
+    inputs = make_inputs(config, speed0_mps=9.0, actor_centres=centres, actor_radii=radii)
+    rules = RuleSet(build_rules(config))
+
+    formula = next(r for r in rules.rules if r.name == "collision_free").formula
+
+    def clearance_pull(scenario_inputs) -> float:
+        def score(p: torch.Tensor) -> torch.Tensor:
+            return formula.robustness(rollout(p, scenario_inputs, config), **smooth(4.0))
+
+        return torch.func.grad(score)(hold_speed_params())[:4].abs().sum().item()
+
+    colliding = rollout(hold_speed_params(), inputs, config)
+    assert colliding[:, Col.CLEARANCE].min().item() < 0.0
+
+    # The same rule, in the band where the plan stops just short, pulls far
+    # harder -- so the quiet gradient above is about the situation, not about
+    # the rule being weak.
+    near_centres, near_radii = stationary_actor(config, ahead_m=43.0)
+    near_miss = make_inputs(
+        config, speed0_mps=9.0, actor_centres=near_centres, actor_radii=near_radii
+    )
+    assert clearance_pull(near_miss) > 10.0 * clearance_pull(inputs)
+
+    # Escaping such a state is the sampler's job, not the gradient's; that it
+    # succeeds is asserted where it matters, in
+    # `test_optimizer.py::test_it_stops_short_of_a_stationary_obstacle`.
+
+
+def test_gradients_flow_from_every_rule_to_the_parameters(config):
+    """No rule may be structurally invisible to the optimizer.
+
+    Checked across two scenarios rather than one, because `stop_on_red` and
+    `keep_moving` are gated on opposite states of the same traffic light and
+    can never both be live at once -- that mutual exclusion is the design, and
+    demanding one scenario satisfy both would be demanding a contradiction.
+    """
+    centres, radii = stationary_actor(config, ahead_m=30.0, lateral_m=1.0)
+    common = dict(
+        route=curved_route(radius_m=60.0),
+        speed0_mps=7.0,
+        actor_centres=centres,
+        actor_radii=radii,
+        lead_station_m=45.0,
+        published_length_m=70.0,
+    )
+    scenarios = {
+        "red light": make_inputs(config, stop_station_m=50.0, light_active=True, **common),
+        "green light": make_inputs(config, light_active=False, **common),
+    }
+    rules = RuleSet(build_rules(config))
+    params = torch.tensor([0.2, -0.1, 0.1, 0.0, 0.2, -0.1], dtype=torch.float32)
+
+    reachable: set[str] = set()
+    for inputs in scenarios.values():
+        for rule in rules.rules:
+
+            def score(p: torch.Tensor, rule=rule, inputs=inputs) -> torch.Tensor:
+                return rule.formula.robustness(rollout(p, inputs, config), **smooth(4.0))
+
+            if torch.func.grad(score)(params).abs().max().item() > 1e-9:
+                reachable.add(rule.name)
+
+    dead = set(rules.names) - reachable
+    assert not dead, f"rules with no gradient to the plan in any scenario: {sorted(dead)}"
+
+
+def test_a_vacuous_rule_contributes_no_gradient(config):
+    """The flip side: an inapplicable rule must not tug on the plan at all."""
+    rules = RuleSet(build_rules(config))
+    green = make_inputs(config, speed0_mps=7.0, light_active=False)
+    stop_on_red = next(r for r in rules.rules if r.name == "stop_on_red").formula
+
+    def score(p: torch.Tensor) -> torch.Tensor:
+        return stop_on_red.robustness(rollout(p, green, config), **smooth(4.0))
+
+    gradient = torch.func.grad(score)(torch.zeros(N_PARAMS))
+    assert gradient.abs().max().item() < 1e-9
+
+
+def test_vmap_matches_a_python_loop(config):
+    """The optimizer's batching fast path, against the obvious slow one.
+
+    Upstream hardcodes `signal.reshape([T, 1])` inside the temporal
+    operators, so a manual batch dimension breaks where `vmap` does not. This
+    is the canary that says which path is live on the pinned torch.
+    """
+    inputs = make_inputs(config, speed0_mps=6.0)
+    rules = RuleSet(build_rules(config))
+    batch = torch.randn(12, N_PARAMS, generator=torch.Generator().manual_seed(0))
+
+    batched_signals = torch.vmap(lambda p: rollout(p, inputs, config))(batch)
+    looped_signals = torch.stack([rollout(p, inputs, config) for p in batch])
+    # Tolerance is float32 rounding on the jerk column, whose values run to
+    # tens of m/s^3 -- the two paths reassociate the same arithmetic.
+    assert torch.allclose(batched_signals, looped_signals, atol=1e-4, rtol=1e-4)
+
+    batched_scores = torch.vmap(lambda s: rules.objective(s, **smooth(2.0)))(batched_signals)
+    looped_scores = torch.stack([rules.objective(s, **smooth(2.0)) for s in looped_signals])
+    assert torch.allclose(batched_scores, looped_scores, atol=1e-4)
+
+
+def test_rollout_is_deterministic(config):
+    inputs = make_inputs(config)
+    params = torch.tensor([0.3, -0.2, 0.1, 0.4, 0.2, -0.3])
+    first = rollout(params, inputs, config)
+    second = rollout(params, inputs, config)
+    assert torch.equal(first, second)
+
+
+def _to_double(inputs):
+    """Cast the tensor fields of RolloutInputs to float64 for gradcheck."""
+    from dataclasses import replace
+
+    return replace(
+        inputs,
+        route_xy=inputs.route_xy.to(torch.float64),
+        route_tangent=inputs.route_tangent.to(torch.float64),
+        actor_centres=inputs.actor_centres.to(torch.float64),
+        actor_radii=inputs.actor_radii.to(torch.float64),
+        lead_station_m=inputs.lead_station_m.to(torch.float64),
+    )
+
+
+def test_the_route_table_covers_any_plan_the_optimizer_can_produce(config):
+    """Guards the "lookup never clamps" invariant the gradient depends on.
+
+    A plan that ran off the end of the table would hit the index clamp, where
+    the station gradient is zero.
+    """
+    inputs = make_inputs(config, speed0_mps=config.limits.default_speed_limit_mps)
+    signal = rollout(constant_accel_params(config.limits.max_accel_mps2 * 0.999), inputs, config)
+    travelled = (signal[:, Col.PROGRESS_SLACK] + inputs.progress_target_m).max().item()
+    table_length = (inputs.route_xy.shape[0] - 1) * inputs.route_ds
+    assert inputs.station0_m + travelled < table_length
+
+
+def test_a_batch_of_random_parameters_never_produces_nans(config):
+    """Sobol seeds land anywhere in the box; none may poison the objective."""
+    centres, radii = stationary_actor(config, ahead_m=6.0)
+    inputs = make_inputs(
+        config,
+        speed0_mps=0.0,
+        actor_centres=centres,
+        actor_radii=radii,
+        lead_station_m=3.0,
+        stop_station_m=1.0,
+        light_active=True,
+    )
+    batch = torch.randn(64, N_PARAMS, generator=torch.Generator().manual_seed(7)) * 4.0
+    signals = torch.vmap(lambda p: rollout(p, inputs, config))(batch)
+    assert torch.isfinite(signals).all()
+
+
+def test_the_plan_path_and_the_signal_agree(config):
+    """`plan_xy` is what the vehicle drives; the signal is what the rules judge.
+
+    They share `_kinematics` precisely so they cannot disagree, and this is
+    what says so.
+    """
+    inputs = make_inputs(config, route=curved_route(radius_m=45.0), speed0_mps=6.0)
+    params = torch.tensor([0.2, 0.1, -0.1, 0.0, 0.4, 0.2])
+    positions, _ = plan_xy(params, inputs, config)
+    signal = rollout(params, inputs, config)
+
+    from stl_driver.frenet import build_route_table, project_to_frenet
+
+    table = build_route_table(
+        curved_route(radius_m=45.0),
+        ds=config.route_table_ds_m,
+        length_m=config.route_table_length_m(),
+    )
+    _, offset = project_to_frenet(table, positions.detach().numpy())
+    assert np.allclose(offset, signal[:, Col.LATERAL_OFFSET].detach().numpy(), atol=0.05)

@@ -1,0 +1,296 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Finding the plan that best satisfies the specification.
+
+Two stages, and the split is not incidental.
+
+**Sample first.**  A quasi-random sweep of the six-dimensional parameter box,
+evaluated in one batch.  This is what makes the search robust to the shape of
+the robustness landscape: once a plan already passes through an obstacle, its
+clearance barely depends on the speed profile -- the plan goes through the
+obstacle at any speed -- so the gradient there is close to flat and descent
+alone would never escape.  Sampling does not care.
+
+**Then descend.**  A handful of Adam steps on the single best sample, against
+a smoothed robustness.  This is what makes the result precise rather than
+merely the best of sixty-four guesses: it converts "brake somewhat" into
+"brake exactly hard enough to stop at the line".
+
+Sampling without descent plans coarsely; descent without sampling gets stuck.
+The combination is worth more than either.
+
+Throughout, the *scoring* function is the weighted objective while the
+*acceptance* test is the plain specification -- see :mod:`stl_driver.rules`
+for why those must not be the same function.
+"""
+
+from __future__ import annotations
+
+import math
+import time
+from dataclasses import dataclass, field
+
+import torch
+
+from stl_driver.config import STLDriverConfig
+from stl_driver.rollout import N_PARAMS, RolloutInputs, rollout
+from stl_driver.rules import RuleSet
+from stl_driver.stl_backend import smooth
+
+__all__ = ["PlanSolution", "RobustnessOptimizer"]
+
+
+@dataclass
+class PlanSolution:
+    """The chosen plan, and enough about the search to explain it."""
+
+    params: torch.Tensor
+    signal: torch.Tensor
+    robustness: float
+    per_rule: dict[str, float]
+    #: Best candidates from the sampling stage, for `sampled_trajectories`.
+    alternatives: list[torch.Tensor] = field(default_factory=list)
+    n_refine_steps: int = 0
+    solve_seconds: float = 0.0
+    #: Set when a rule marked `hard` is violated even by the best plan found.
+    needs_fallback: bool = False
+    #: Name of the worst-violated rule, or None when all are satisfied.
+    worst_rule: str | None = None
+    #: Whether the batched fast path was used, for diagnosis.
+    used_vmap: bool = True
+
+
+class RobustnessOptimizer:
+    """Searches plan space for the highest-robustness trajectory."""
+
+    def __init__(self, rules: RuleSet, config: STLDriverConfig) -> None:
+        self.rules = rules
+        self.config = config
+        self._seeds = self._build_seeds()
+        # Set on the first failure, then honoured for the rest of the session.
+        # Batching relies on `vmap` seeing through upstream's hardcoded
+        # `reshape([T, 1])`; it works on the pinned versions, but a policy that
+        # crashed on a torch upgrade would be a poor trade for the speed.
+        self._vmap_ok = True
+
+    # -- seeds -------------------------------------------------------------
+
+    def _build_seeds(self) -> torch.Tensor:
+        """Quasi-random parameter seeds, drawn once and reused every step.
+
+        Sobol rather than uniform because it fills the box far more evenly at
+        these sample counts, and drawn once rather than per step because the
+        runtime's rollouts are seeded and a policy that re-randomised would
+        make them irreproducible.
+        """
+        optimizer = self.config.optimizer
+        engine = torch.quasirandom.SobolEngine(
+            dimension=N_PARAMS, scramble=True, seed=optimizer.seed
+        )
+        unit = engine.draw(optimizer.n_samples)
+        # Map (0, 1) onto a symmetric box in logit space. +-3 covers almost the
+        # whole physical range once the sigmoid and tanh are applied, without
+        # wasting samples deep in saturation where plans are indistinguishable.
+        return (unit * 2.0 - 1.0) * 3.0
+
+    def _candidates(self, warm_start: torch.Tensor | None) -> torch.Tensor:
+        """The sampling stage's parameter batch.
+
+        The Sobol sweep plus three plans worth having regardless: hold the
+        current speed, brake comfortably to a stop, and whatever worked last
+        step.  The braking seed matters most -- it is the one that rescues a
+        step where every random plan happens to be unsafe.
+        """
+        limits = self.config.limits
+        fixed = [
+            _accel_params(0.0, limits),
+            _accel_params(-limits.max_decel_mps2 * 0.9, limits),
+        ]
+        if warm_start is not None:
+            fixed.append(warm_start.detach().clone())
+        return torch.cat([self._seeds, torch.stack(fixed)], dim=0)
+
+    # -- search ------------------------------------------------------------
+
+    def solve(
+        self,
+        inputs: RolloutInputs,
+        warm_start: torch.Tensor | None = None,
+    ) -> PlanSolution:
+        """Search for the plan that best satisfies the specification."""
+        started = time.perf_counter()
+        optimizer = self.config.optimizer
+
+        candidates = self._candidates(warm_start)
+        signals, scores, robustness, used_vmap = self._score_batch(candidates, inputs)
+
+        order = torch.argsort(scores, descending=True)
+        alternatives = [
+            candidates[int(index)].clone()
+            for index in order[1 : 1 + optimizer.n_reported_candidates]
+        ]
+
+        # Two different bests, for two different jobs. Refinement starts from
+        # the highest *objective* -- the smoothed, saturated score is the
+        # better guide to which plan is worth improving, since it reflects
+        # every rule rather than only the worst one. But the plan we return is
+        # the highest *specification* robustness seen anywhere, because that
+        # is what "satisfies the rules" actually means. Conflating the two
+        # lets the search hand back a plan worse than one it already found.
+        seed = candidates[int(order[0])].clone()
+
+        best_sample = int(torch.argmax(robustness))
+        best_params = candidates[best_sample].clone()
+        best_signal = signals[best_sample]
+        best_robustness = float(robustness[best_sample])
+
+        refined_params, refined_signal, refined_robustness, n_steps = self._refine(
+            seed, inputs, started
+        )
+        if refined_robustness > best_robustness:
+            best_params, best_signal = refined_params, refined_signal
+            best_robustness = refined_robustness
+
+        per_rule = {name: float(value) for name, value in self.rules.per_rule(best_signal).items()}
+
+        return PlanSolution(
+            params=best_params,
+            signal=best_signal,
+            robustness=best_robustness,
+            per_rule=per_rule,
+            alternatives=alternatives,
+            n_refine_steps=n_steps,
+            solve_seconds=time.perf_counter() - started,
+            needs_fallback=self.rules.any_hard_violated(per_rule),
+            worst_rule=self.rules.worst_violated(per_rule),
+            used_vmap=used_vmap,
+        )
+
+    def _score_batch(
+        self,
+        candidates: torch.Tensor,
+        inputs: RolloutInputs,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
+        """Roll out every candidate and score it both ways.
+
+        Returns the signals, the smoothed objective (which guides the search)
+        and the exact specification robustness (which decides the answer).
+
+        No gradients are needed here, so the whole stage runs under
+        ``inference_mode``: it is the largest tensor work in the step and
+        recording a graph for it would be pure waste.
+        """
+        temperature = self.config.optimizer.temperature_start
+        with torch.inference_mode():
+            if self._vmap_ok:
+                try:
+                    signals = torch.vmap(lambda p: rollout(p, inputs, self.config))(candidates)
+                    scores = torch.vmap(lambda s: self.rules.objective(s, **smooth(temperature)))(
+                        signals
+                    )
+                    robustness = torch.vmap(self.rules.spec_robustness)(signals)
+                    return signals.clone(), scores.clone(), robustness.clone(), True
+                except (RuntimeError, TypeError, IndexError):
+                    # Batching is an optimization, not a requirement. Fall back
+                    # permanently rather than paying the failure every step.
+                    self._vmap_ok = False
+
+            signals = torch.stack([rollout(p, inputs, self.config) for p in candidates])
+            scores = torch.stack([self.rules.objective(s, **smooth(temperature)) for s in signals])
+            robustness = torch.stack([self.rules.spec_robustness(s) for s in signals])
+            return signals.clone(), scores.clone(), robustness.clone(), False
+
+    def _refine(
+        self,
+        seed: torch.Tensor,
+        inputs: RolloutInputs,
+        started: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, float, int]:
+        """Gradient-ascend the smoothed objective from one seed.
+
+        The temperature sharpens as it goes: soft early so every timestep
+        contributes gradient and the step is well-informed, sharp late so the
+        last steps optimize something close to the true minimum they will be
+        judged by.
+
+        Each iterate is scored by the *exact* specification, not by the
+        smoothed objective being descended, and the best is kept.  Smoothing
+        can prefer a plan the specification does not, and it is the
+        specification that decides.
+        """
+        settings = self.config.optimizer
+        params = seed.detach().clone().requires_grad_(True)
+        adam = torch.optim.Adam([params], lr=settings.learning_rate)
+
+        best_params = seed.detach().clone()
+        with torch.no_grad():
+            best_signal = rollout(best_params, inputs, self.config)
+            best_robustness = float(self.rules.spec_robustness(best_signal))
+
+        completed = 0
+        # Measured cost of the last iteration, used to decide whether the next
+        # one fits. Checking only whether the budget has *already* been spent
+        # would let a step that starts at 59 ms of a 60 ms budget run to 70 --
+        # the bound has to predict the step it is about to allow, or it is not
+        # a bound at all.
+        step_cost = 0.0
+        for step in range(settings.n_refine_steps):
+            elapsed = time.perf_counter() - started
+            if elapsed + step_cost > settings.time_budget_s:
+                # Degrade by taking fewer steps rather than by missing the
+                # policy deadline. The seed is already a usable plan.
+                break
+            step_started = time.perf_counter()
+
+            denominator = max(1, settings.n_refine_steps - 1)
+            temperature = settings.temperature_start + (
+                settings.temperature_end - settings.temperature_start
+            ) * (step / denominator)
+
+            adam.zero_grad(set_to_none=True)
+            signal = rollout(params, inputs, self.config)
+            loss = -self.rules.objective(signal, **smooth(temperature))
+
+            # Score the iterate we just rolled out, before stepping away from
+            # it -- the signal is already in hand, so this costs one formula
+            # evaluation rather than another rollout.
+            with torch.no_grad():
+                candidate = signal.detach()
+                candidate_robustness = float(self.rules.spec_robustness(candidate))
+            if candidate_robustness > best_robustness:
+                best_robustness = candidate_robustness
+                best_params = params.detach().clone()
+                best_signal = candidate
+
+            loss.backward()
+            adam.step()
+            completed += 1
+            # Slight over-estimate on purpose: better to skip a marginal step
+            # than to blow the deadline on a momentarily busy machine.
+            step_cost = max(step_cost, time.perf_counter() - step_started)
+
+        # The final step moved the parameters somewhere never scored; the
+        # whole loop would otherwise be one step of work thrown away.
+        if completed:
+            with torch.no_grad():
+                final_signal = rollout(params, inputs, self.config)
+                final_robustness = float(self.rules.spec_robustness(final_signal))
+            if final_robustness > best_robustness:
+                best_robustness = final_robustness
+                best_params = params.detach().clone()
+                best_signal = final_signal
+
+        return best_params, best_signal, best_robustness, completed
+
+
+def _accel_params(accel_mps2: float, limits) -> torch.Tensor:
+    """Parameters requesting a constant acceleration.
+
+    The inverse of the sigmoid mapping in :mod:`stl_driver.rollout`.  Nudged
+    off the endpoints because the sigmoid's range is open -- asking for
+    exactly ``max_accel`` would be asking for an infinite parameter.
+    """
+    span = limits.max_accel_mps2 + limits.max_decel_mps2
+    fraction = (accel_mps2 + limits.max_decel_mps2) / span
+    fraction = min(max(fraction, 1e-3), 1.0 - 1e-3)
+    logit = math.log(fraction / (1.0 - fraction))
+    return torch.tensor([logit] * 4 + [0.0, 0.0], dtype=torch.float32)

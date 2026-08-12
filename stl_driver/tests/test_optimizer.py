@@ -1,0 +1,306 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Does the search actually produce good driving?
+
+These are the tests that would catch a specification that is individually
+correct rule by rule but collectively describes a car that never moves, or one
+that drives through things.  They assert on behaviour -- speed profiles, where
+the plan stops -- rather than on robustness numbers.
+"""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+import torch
+
+from stl_driver.config import STLDriverConfig
+from stl_driver.optimizer import RobustnessOptimizer
+from stl_driver.rollout import rollout
+from stl_driver.rules import RuleSet, build_rules
+from stl_driver.signals import Col
+from tests.conftest import curved_route, make_inputs, stationary_actor, straight_route
+
+CONFIG = STLDriverConfig()
+
+
+@pytest.fixture(scope="module")
+def optimizer() -> RobustnessOptimizer:
+    search = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    # Pay torch's lazy initialisation before any test measures anything.
+    # Without it the first solve spends its entire time budget on start-up and
+    # takes zero refinement steps -- which is exactly why `EgoPolicy` warms up
+    # in `on_session_start` rather than on the first real step.
+    search.solve(make_inputs(CONFIG, speed0_mps=5.0))
+    return search
+
+
+def speeds(solution) -> torch.Tensor:
+    return solution.signal[:, Col.SPEED]
+
+
+def stations(solution, inputs) -> torch.Tensor:
+    return solution.signal[:, Col.PROGRESS_SLACK] + inputs.progress_target_m + inputs.station0_m
+
+
+# ---------------------------------------------------------------------------
+# The anti-parking property
+# ---------------------------------------------------------------------------
+
+
+def test_on_an_empty_road_it_drives(optimizer):
+    """The regression test for the whole liveness argument.
+
+    Standing still satisfies every safety rule. If the liveness rules or the
+    objective's saturation were wrong, this is what would fail -- and it would
+    fail as a car that sits at the start line forever.
+    """
+    inputs = make_inputs(CONFIG, speed0_mps=0.0)
+    solution = optimizer.solve(inputs)
+
+    assert solution.robustness > 0.0
+    assert not solution.needs_fallback
+    # Four seconds from rest under a 2 m/s^2 bound cannot reach cruise, so the
+    # test is that it accelerates hard rather than that it arrives. The bounds
+    # are loose because the search takes fewer refinement steps on a busy
+    # machine -- by design -- and a tight threshold here would be measuring the
+    # load on the test runner rather than the policy.
+    assert speeds(solution)[-1].item() > 4.0
+    assert solution.signal[:, Col.ACCEL].max().item() > CONFIG.limits.max_accel_mps2 * 0.7
+    # And covers more ground than `makes_progress` demanded.
+    travelled = speeds(solution).sum().item() * CONFIG.horizon.step_s
+    assert travelled > inputs.progress_target_m
+
+
+def test_from_a_standstill_it_pulls_away_smoothly(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=0.0)
+    solution = optimizer.solve(inputs)
+    speed = speeds(solution)
+    assert torch.all(torch.diff(speed) > -0.5)  # no lurching backwards
+    assert solution.signal[:, Col.ACCEL].max().item() <= CONFIG.limits.max_accel_mps2 + 0.3
+
+
+def test_at_cruise_it_holds_a_steady_speed(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=8.0)
+    solution = optimizer.solve(inputs)
+    speed = speeds(solution)
+    assert speed.mean().item() == pytest.approx(8.0, abs=1.5)
+    assert speed.std().item() < 1.5
+
+
+def test_it_does_not_exceed_the_posted_limit(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=5.0, speed_limit_mps=6.0)
+    solution = optimizer.solve(inputs)
+    tolerance = CONFIG.limits.speed_tolerance_mps
+    assert speeds(solution).max().item() < 6.0 + tolerance + 0.2
+    assert float(solution.per_rule["speed_limit"]) > -0.1
+
+
+# ---------------------------------------------------------------------------
+# Reacting to the world
+# ---------------------------------------------------------------------------
+
+
+def test_it_stops_short_of_a_stationary_obstacle(optimizer):
+    """The plan must not pass through the obstacle, and must slow for it."""
+    centres, radii = stationary_actor(CONFIG, ahead_m=22.0)
+    inputs = make_inputs(CONFIG, speed0_mps=7.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(inputs)
+
+    assert solution.signal[:, Col.CLEARANCE].min().item() > 0.0
+    assert speeds(solution)[-1].item() < speeds(solution)[0].item()
+    assert float(solution.per_rule["collision_free"]) > 0.0
+
+
+def test_it_slows_for_a_slower_vehicle_ahead(optimizer):
+    centres, radii = stationary_actor(CONFIG, ahead_m=30.0)
+    inputs = make_inputs(
+        CONFIG,
+        speed0_mps=9.0,
+        actor_centres=centres,
+        actor_radii=radii,
+        lead_station_m=28.0,
+    )
+    solution = optimizer.solve(inputs)
+    assert speeds(solution)[-1].item() < 6.0
+    assert float(solution.per_rule["safe_headway"]) > -0.5
+
+
+def test_it_stops_before_a_red_light(optimizer):
+    stop_station = 25.0
+    inputs = make_inputs(CONFIG, speed0_mps=7.0, stop_station_m=stop_station, light_active=True)
+    solution = optimizer.solve(inputs)
+
+    final_station = stations(solution, inputs)[-1].item()
+    assert final_station < stop_station
+    assert float(solution.per_rule["stop_on_red"]) > 0.0
+    # It need not be stationary by the end of this horizon -- the plan is
+    # replanned at 10 Hz and only has to keep the line ahead of it -- but it
+    # must clearly be slowing for the light.
+    assert speeds(solution)[-1].item() < speeds(solution)[0].item() * 0.75
+
+
+def test_it_drives_through_a_green_light(optimizer):
+    """The same geometry with the light inactive must not cause a stop."""
+    inputs = make_inputs(CONFIG, speed0_mps=7.0, stop_station_m=25.0, light_active=False)
+    solution = optimizer.solve(inputs)
+    assert speeds(solution).mean().item() > 5.0
+    assert stations(solution, inputs)[-1].item() > 25.0
+
+
+def test_it_slows_before_the_end_of_the_route(optimizer):
+    inputs = make_inputs(
+        CONFIG, route=straight_route(length_m=200.0), speed0_mps=8.0, published_length_m=18.0
+    )
+    solution = optimizer.solve(inputs)
+    assert stations(solution, inputs)[-1].item() < 18.0 + 1.0
+    assert speeds(solution)[-1].item() < speeds(solution)[0].item()
+
+
+def test_it_stays_in_lane_on_a_curve(optimizer):
+    inputs = make_inputs(CONFIG, route=curved_route(radius_m=45.0), speed0_mps=7.0)
+    solution = optimizer.solve(inputs)
+    offset = solution.signal[:, Col.LATERAL_OFFSET]
+    assert offset.abs().max().item() < CONFIG.limits.lane_half_width_m
+    assert float(solution.per_rule["lane_keeping"]) > 0.0
+
+
+def test_it_respects_the_lateral_acceleration_bound_on_a_tight_curve(optimizer):
+    inputs = make_inputs(CONFIG, route=curved_route(radius_m=25.0), speed0_mps=9.0)
+    solution = optimizer.solve(inputs)
+    # Slowing is the only way to hold the bound at this radius.
+    assert speeds(solution)[-1].item() < 9.0
+
+
+def test_it_recentres_from_a_lateral_offset(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=6.0, offset0_m=0.9)
+    solution = optimizer.solve(inputs)
+    offset = solution.signal[:, Col.LATERAL_OFFSET]
+    assert offset[0].item() == pytest.approx(0.9, abs=0.1)  # starts where we are
+    assert abs(offset[-1].item()) < 0.6  # and heads back
+
+
+# ---------------------------------------------------------------------------
+# When the specification cannot be met
+# ---------------------------------------------------------------------------
+
+
+def test_an_unavoidable_obstacle_triggers_the_fallback(optimizer):
+    """Two metres ahead at 10 m/s: nothing satisfies `collision_free`."""
+    centres, radii = stationary_actor(CONFIG, ahead_m=2.0)
+    inputs = make_inputs(CONFIG, speed0_mps=10.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(inputs)
+
+    assert solution.robustness < 0.0
+    assert solution.needs_fallback
+    assert solution.worst_rule == "collision_free"
+
+
+def test_even_when_failing_it_prefers_slowing_down(optimizer):
+    """A hopeless situation must still produce the least-bad plan.
+
+    The fallback overrides the trajectory, but the solution's own speed
+    profile is what says the search understood the situation rather than
+    giving up arbitrarily.
+    """
+    centres, radii = stationary_actor(CONFIG, ahead_m=6.0)
+    inputs = make_inputs(CONFIG, speed0_mps=11.0, actor_centres=centres, actor_radii=radii)
+    solution = optimizer.solve(inputs)
+    assert speeds(solution)[-1].item() < speeds(solution)[0].item()
+
+
+def test_a_soft_violation_alone_does_not_trigger_the_fallback(optimizer):
+    """Being slightly out of lane is not a reason to slam on the brakes."""
+    inputs = make_inputs(CONFIG, speed0_mps=6.0, offset0_m=1.6)
+    solution = optimizer.solve(inputs)
+    assert not solution.needs_fallback
+
+
+# ---------------------------------------------------------------------------
+# Search behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_the_same_inputs_give_the_same_plan(optimizer):
+    """Determinism: the runtime's rollouts are seeded and must stay repeatable."""
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    first = optimizer.solve(inputs)
+    second = optimizer.solve(inputs)
+    assert torch.equal(first.params, second.params)
+    assert first.robustness == second.robustness
+
+
+def test_refinement_improves_on_the_best_sample(optimizer):
+    """Otherwise the gradient stage is costing latency for nothing."""
+    inputs = make_inputs(CONFIG, speed0_mps=4.0)
+    rules = RuleSet(build_rules(CONFIG))
+
+    candidates = optimizer._candidates(None)
+    with torch.no_grad():
+        sampled = [float(rules.spec_robustness(rollout(p, inputs, CONFIG))) for p in candidates]
+    solution = optimizer.solve(inputs)
+
+    assert solution.n_refine_steps > 0
+    assert solution.robustness >= max(sampled) - 1e-6
+
+
+def test_the_search_never_returns_a_worse_plan_than_its_seed(optimizer):
+    """Refinement keeps the best iterate, so it cannot make things worse."""
+    for speed in (0.0, 3.0, 7.0, 12.0):
+        inputs = make_inputs(CONFIG, speed0_mps=speed)
+        solution = optimizer.solve(inputs)
+        braking = rollout(optimizer._candidates(None)[-1], inputs, CONFIG)
+        rules = RuleSet(build_rules(CONFIG))
+        assert solution.robustness >= float(rules.spec_robustness(braking)) - 1e-6
+
+
+def test_a_warm_start_is_accepted_and_helps(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    cold = optimizer.solve(inputs, warm_start=None)
+    warm = optimizer.solve(inputs, warm_start=cold.params)
+    assert warm.robustness >= cold.robustness - 1e-6
+
+
+def test_alternatives_are_reported_for_inspection(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    solution = optimizer.solve(inputs)
+    assert len(solution.alternatives) == CONFIG.optimizer.n_reported_candidates
+    assert all(a.shape == solution.params.shape for a in solution.alternatives)
+
+
+def test_every_rule_is_reported(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    solution = optimizer.solve(inputs)
+    rules = RuleSet(build_rules(CONFIG))
+    assert set(solution.per_rule) == set(rules.names)
+    assert all(math.isfinite(v) for v in solution.per_rule.values())
+
+
+def test_the_reported_robustness_is_the_minimum_over_rules(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    solution = optimizer.solve(inputs)
+    assert solution.robustness == pytest.approx(min(solution.per_rule.values()), abs=1e-4)
+
+
+def test_the_time_budget_is_honoured(optimizer):
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    solution = optimizer.solve(inputs)
+    # Generous: this asserts the cutoff works, not that the machine is fast.
+    assert solution.solve_seconds < CONFIG.optimizer.time_budget_s * 4.0
+
+
+def test_a_tiny_budget_degrades_to_fewer_steps_rather_than_failing():
+    """A slow machine must drop refinement, not miss the deadline."""
+    from dataclasses import replace
+
+    config = replace(CONFIG, optimizer=replace(CONFIG.optimizer, time_budget_s=1e-9))
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(config)), config)
+    solution = optimizer.solve(make_inputs(config, speed0_mps=6.0))
+    assert solution.n_refine_steps == 0
+    assert solution.signal is not None  # still a usable plan
+
+
+def test_the_batched_path_is_the_one_in_use(optimizer):
+    """If this ever flips, the loop fallback is live and latency will show it."""
+    solution = optimizer.solve(make_inputs(CONFIG, speed0_mps=6.0))
+    assert solution.used_vmap

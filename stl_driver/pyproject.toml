@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stl-driver"
+version = "0.1.0"
+description = "An ego policy whose driving behaviour is written in Signal Temporal Logic and optimised for STL robustness"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+  # The driver half we plug into. Its own `alpasim-grpc @ git+...` direct
+  # reference is why `allow-direct-references` below is mandatory, and its
+  # `requires-python` is where ours comes from.
+  #
+  # Pinned to a commit rather than tracking `main`, since upstream has no
+  # releases. This one is the merge of
+  # https://github.com/hakuturu583/carla_driver_interface/pull/3, which is the
+  # earliest that works: before it, the runtime reported an unsigned distance
+  # to a traffic light's stop line, and a policy that correctly stopped just
+  # past the line was told forever that the line was still ahead.
+  "carla-driver-interface @ git+https://github.com/hakuturu583/carla_driver_interface@90a71fc6a177a526a24aa1612f862fd37f084f56",
+  # STLCG++. Pinned to a commit because upstream has no releases and no tags.
+  # It ships a setup.py only and has no `stlcgpp/__init__.py`, so it installs
+  # as a PEP 420 namespace package -- see `stl_driver.stl_backend`.
+  "stlcgpp @ git+https://github.com/UW-CTRL/stlcg-plus-plus@44467eec5c21763597e5f6753cec6759a5bc0ac0",
+  "torch>=2.6,<3",
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# The driver process never imports `carla`; only the runtime half does. Kept
+# here so one environment can run both. 0.9.16 is the floor rather than
+# upstream's 0.9.15 because 0.9.15 publishes no wheel for Python 3.11 or 3.12,
+# which `requires-python` above restricts us to.
+carla = ["carla>=0.9.16,<0.10"]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+stl-driver = "stl_driver.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stl_driver"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# The default torch wheel drags in ~2.5 GB of nvidia-* CUDA packages. This
+# policy runs [40, 12] tensors inside a 100 ms budget, where kernel launch
+# latency makes a GPU *slower* than a CPU -- so the CPU build is the correct
+# one, not merely the small one. `tool.uv.*` is ignored by pip, so a plain
+# `pip install .` still works.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# So test modules can import the scenario builders from `tests.conftest`.
+pythonpath = ["."]
+timeout = 300
+markers = [
+  "slow: closed-loop rollouts and latency benchmarks",
+  "carla: needs a running CARLA server",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# stlcgpp is a namespace package with no py.typed and `from ... import *` at
+# module scope; mypy cannot follow it usefully.
+module = ["stlcgpp.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
