@@ -19,7 +19,7 @@ import torch
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.rules import RuleSet, build_rules
-from stl_driver.signals import signal_from_columns
+from stl_driver.signals import N_COLUMNS, signal_from_columns
 
 CONFIG = STLDriverConfig()
 T = CONFIG.horizon.n_steps
@@ -504,3 +504,20 @@ def test_a_genuinely_clear_road_still_demands_progress(rules):
     idle = signal_from_columns(speed=constant(0.0), progress_slack=constant(-12.0))
     assert robustness(rules, "makes_progress", idle) < 0.0
     assert robustness(rules, "keep_moving", idle) < 0.0
+
+
+def test_the_combined_score_equals_the_two_it_replaces(rules):
+    """`merit_and_robustness` is an optimisation, so it must change nothing.
+
+    It evaluates each rule once and reduces the results two ways, where
+    `objective` and `spec_robustness` each evaluated the whole set separately.
+    That is only sound because the specification's conjunction *is* the minimum
+    over the rules -- the same property that makes the per-rule breakdown in
+    `debug_scalars` a decomposition rather than a parallel calculation.
+    """
+    generator = torch.Generator().manual_seed(0)
+    for _ in range(8):
+        signal = torch.randn(T, N_COLUMNS, generator=generator) * 4.0
+        merit, robustness = rules.merit_and_robustness(signal)
+        assert float(merit) == pytest.approx(float(rules.objective(signal)), abs=1e-3)
+        assert float(robustness) == pytest.approx(float(rules.spec_robustness(signal)), abs=1e-3)

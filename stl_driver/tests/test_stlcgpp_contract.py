@@ -255,7 +255,97 @@ def test_temporal_operators_reject_tuple_inputs():
     Upstream's demo notebook shows multi-signal formulas built from several
     ``Expression`` objects and fed a tuple.  That idiom does not survive being
     wrapped in a temporal operator, which is the whole point of a driving spec.
+
+    Which exception comes out depends on which layer notices first, and that
+    moved when ``Always`` gained its linear-time path: upstream reads
+    ``signal.device`` before checking for a tuple and raises ``AttributeError``,
+    while ours reaches the subformula and the column index goes out of bounds.
+    Either way the idiom is unusable, which is the point being pinned.
     """
     phi = Always(And(column(0) > 0.0, column(1) > 0.0))
-    with pytest.raises((AttributeError, TypeError)):
+    with pytest.raises((AttributeError, TypeError, IndexError)):
         phi.robustness((signal_from([1.0] * T), signal_from([1.0] * T)), **EXACT)
+
+
+@pytest.mark.parametrize("approx_method", ["true", "softmax"])
+@pytest.mark.parametrize("lower", [0, 1, 5, 12])
+@pytest.mark.parametrize("bounded", [False, True])
+def test_linear_time_temporal_operators_match_upstream(approx_method, lower, bounded):
+    """Our `Always`/`Eventually` must be upstream's, only faster.
+
+    Upstream evaluates them by materialising every window as a row of a
+    `(T + b + 1, T)` matrix. We replace that with a cumulative scan whenever the
+    window is a suffix, which every interval in `rules.py` is. This is the test
+    that licenses the substitution: it compares whole traces, not just the
+    `trace[0]` a rule reads, so a divergence anywhere shows up here rather than
+    surviving until some future rule nests a temporal operator.
+    """
+    from stlcgpp.formula import Always as UpstreamAlways
+    from stlcgpp.formula import Eventually as UpstreamEventually
+    from stlcgpp.formula import GreaterThan
+
+    from stl_driver.stl_backend import Always, Eventually
+
+    n_steps = 20
+    generator = torch.Generator().manual_seed(lower)
+    signal = torch.randn(n_steps, 1, generator=generator) * 3.0
+    predicate = GreaterThan(Predicate("x", lambda s: s[..., 0]), 0.0)
+    interval = [lower, n_steps - 1] if bounded else [lower, torch.inf]
+    evaluation = (
+        {"approx_method": "true"}
+        if approx_method == "true"
+        else {"approx_method": "softmax", "temperature": 2.0}
+    )
+
+    for ours, theirs in ((Always, UpstreamAlways), (Eventually, UpstreamEventually)):
+        fast = ours(predicate, interval=interval).robustness_trace(signal, **evaluation)
+        slow = theirs(predicate, interval=interval).robustness_trace(signal, **evaluation)
+        assert torch.allclose(fast, slow, atol=1e-4), f"{ours.__name__} interval={interval}"
+
+
+def test_the_fast_path_is_actually_being_taken():
+    """A guard against the fallback silently swallowing every call.
+
+    The optimisation is invisible in results by construction -- the test above
+    asserts exactly that -- so nothing else would notice if the fast path
+    stopped being reached.
+    """
+    from stl_driver.stl_backend import _suffix_trace
+
+    values = torch.tensor([3.0, 1.0, 4.0, 1.0, 5.0])
+    assert _suffix_trace(values, [0, torch.inf], 1e9, minimum=True) is not None
+    assert _suffix_trace(values, [2, 4], 1e9, minimum=True) is not None
+    # A window that ends before the horizon is upstream's problem, not ours.
+    assert _suffix_trace(values, [0, 2], 1e9, minimum=True) is None
+    assert (
+        _suffix_trace(values, [0, torch.inf], 1e9, minimum=True, approx_method="logsumexp")
+        is None
+    )
+
+
+def test_a_wide_signal_does_not_produce_nan_under_smoothing():
+    """The linear-time scan shifts once for the whole signal, not per window.
+
+    Where a suffix sits far below the global maximum every weight in it
+    underflows, and the ratio is 0/0. That is not a rounding error: the NaN
+    reaches the gradient, the gradient reaches the plan parameters, and the
+    station lookup then indexes a route table with `INT64_MIN`. It showed up
+    exactly that way -- three optimizer tests failing on an out-of-bounds
+    index, nowhere near the arithmetic that caused it.
+    """
+    from stlcgpp.formula import GreaterThan
+
+    from stl_driver.stl_backend import Always, smooth
+
+    n_steps = 20
+    wide = torch.full((n_steps, 1), -60.0)
+    wide[0, 0] = 60.0
+    predicate = GreaterThan(Predicate("x", lambda s: s[..., 0]), 0.0)
+
+    trace = Always(predicate).robustness_trace(wide, **smooth(8.0))
+    assert torch.isfinite(trace).all()
+
+    parameter = torch.zeros(1, requires_grad=True)
+    value = Always(predicate).robustness(wide + parameter, **smooth(8.0))
+    value.backward()
+    assert torch.isfinite(parameter.grad).all()

@@ -66,17 +66,20 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+import torch
 from stlcgpp.formula import (
-    Always as Always,  # re-exported; see assert_interval_fits
+    Always as _UpstreamAlways,
 )
 from stlcgpp.formula import (
     And,
-    Eventually,
     Implies,
     Negation,
     Or,
     Predicate,
     STLFormula,
+)
+from stlcgpp.formula import (
+    Eventually as _UpstreamEventually,
 )
 
 __all__ = [
@@ -94,9 +97,150 @@ __all__ = [
     "smooth",
 ]
 
+#: Below this a suffix's softmax weights have underflowed and its ratio is
+#: 0/0; see :func:`_suffix_reduce`. Comfortably above float32's smallest
+#: normal, so the guard fires before the arithmetic does.
+_UNDERFLOW = 1e-30
+
 #: Evaluation kwargs for reporting and for accept/reject decisions: exact
 #: min/max semantics, so a robustness value means what the STL definition says.
 EXACT: dict[str, Any] = {"approx_method": "true"}
+
+
+def _suffix_reduce(
+    values: torch.Tensor,
+    *,
+    minimum: bool,
+    approx_method: str = "true",
+    temperature: float = 1.0,
+    **_: Any,
+) -> torch.Tensor | None:
+    """``result[t]`` is ``values[t:]`` reduced, in one pass instead of ``T``.
+
+    Returns ``None`` for an evaluation mode this does not implement, so the
+    caller can fall back to upstream rather than quietly answer something else.
+    """
+    if approx_method not in ("true", "softmax"):
+        return None
+
+    # A soft min is a soft max of the negated signal, so only one direction
+    # needs writing.
+    sign = -1.0 if minimum else 1.0
+    x = sign * values
+    exact = torch.flip(torch.cummax(torch.flip(x, (0,)), 0)[0], (0,))
+    if approx_method == "true":
+        return sign * exact
+
+    # Weights are `exp(temperature * x)`, shifted by the global maximum for the
+    # same reason `softmax` shifts internally.
+    #
+    # One shift for the whole signal, where upstream gets one per window. Where
+    # a suffix sits far enough below the global maximum, every weight in it
+    # underflows and the ratio is 0/0 -- which is not a rounding problem but a
+    # NaN that propagates into the gradient and from there into the plan. It
+    # happens readily: float32 underflows about 87 below the shift, so a
+    # temperature of 8 needs only eleven metres of spread.
+    #
+    # Where that happens the soft maximum has already converged on the hard
+    # one, so the exact scan is not a fallback but the limit being approached.
+    weights = torch.exp(temperature * (x - x.max()))
+
+    def suffix_sum(v: torch.Tensor) -> torch.Tensor:
+        return torch.flip(torch.cumsum(torch.flip(v, (0,)), 0), (0,))
+
+    total = suffix_sum(weights)
+    usable = total > _UNDERFLOW
+    soft = suffix_sum(weights * x) / total.clamp_min(_UNDERFLOW)
+    return sign * torch.where(usable, soft, exact)
+
+
+def _suffix_trace(
+    values: torch.Tensor,
+    interval: Sequence[Any],
+    large_number: float,
+    *,
+    minimum: bool,
+    **kwargs: Any,
+) -> torch.Tensor | None:
+    """A temporal operator's robustness trace, when its window is a suffix.
+
+    Upstream evaluates ``Always`` and ``Eventually`` by materialising a
+    ``(T + b + 1, T)`` matrix of every window at once and reducing it: correct,
+    and quadratic. Every interval this specification uses ends at the horizon,
+    which makes each window a suffix of the last -- so the whole trace is one
+    cumulative scan, and the quadratic disappears.
+
+    Anything else returns ``None`` and is left to upstream. That is the point
+    of the arrangement: a rule may use whatever interval it likes, and only the
+    shapes proven equivalent in :mod:`tests.test_stlcgpp_contract` take the
+    fast path.
+    """
+    n_steps = values.shape[0]
+    lower, upper = int(interval[0]), interval[1]
+    unbounded = upper == torch.inf
+    if not unbounded and int(upper) != n_steps - 1:
+        return None
+
+    scan = _suffix_reduce(values, minimum=minimum, **kwargs)
+    if scan is None:
+        return None
+
+    starts = torch.arange(n_steps, device=values.device) + lower
+    reachable = starts <= n_steps - 1
+    if not unbounded and minimum:
+        # A bounded `Always` pads past the horizon with `-large_number`, and a
+        # minimum over a window containing it is that. Only the windows that
+        # end inside the horizon survive.
+        ends = torch.arange(n_steps, device=values.device) + int(upper)
+        reachable = reachable & (ends <= n_steps - 1)
+
+    picked = scan[starts.clamp(max=n_steps - 1)]
+    return torch.where(reachable, picked, torch.full_like(picked, -large_number))
+
+
+class Always(_UpstreamAlways):
+    """``Always``, evaluated in linear time when its window is a suffix.
+
+    Exactly upstream's semantics -- see :func:`_suffix_trace` for which shapes
+    take the fast path and :mod:`tests.test_stlcgpp_contract` for the
+    equivalence that licenses it.
+    """
+
+    def robustness_trace(
+        self, signal: Any, padding: Any = None, large_number: float = 1e9, **kwargs: Any
+    ) -> Any:
+        if padding is None:
+            values = self.subformula(
+                signal, padding=padding, large_number=large_number, **kwargs
+            )
+            fast = _suffix_trace(
+                values, self._interval, large_number, minimum=True, **kwargs
+            )
+            if fast is not None:
+                return fast
+        return super().robustness_trace(
+            signal, padding=padding, large_number=large_number, **kwargs
+        )
+
+
+class Eventually(_UpstreamEventually):
+    """``Eventually``, evaluated in linear time when its window is a suffix."""
+
+    def robustness_trace(
+        self, signal: Any, padding: Any = None, large_number: float = 1e9, **kwargs: Any
+    ) -> Any:
+        if padding is None:
+            values = self.subformula(
+                signal, padding=padding, large_number=large_number, **kwargs
+            )
+            fast = _suffix_trace(
+                values, self._interval, large_number, minimum=False, **kwargs
+            )
+            if fast is not None:
+                return fast
+        return super().robustness_trace(
+            signal, padding=padding, large_number=large_number, **kwargs
+        )
 
 
 def smooth(temperature: float) -> dict[str, Any]:

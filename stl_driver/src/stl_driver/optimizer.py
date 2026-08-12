@@ -315,8 +315,9 @@ class RobustnessOptimizer:
 
             signals = torch.stack([rollout(p, inputs, self.config) for p in candidates])
             scores = torch.stack([self.rules.objective(s, **smooth(temperature)) for s in signals])
-            merit = torch.stack([self.rules.objective(s) for s in signals])
-            robustness = torch.stack([self.rules.spec_robustness(s) for s in signals])
+            scored = [self.rules.merit_and_robustness(s) for s in signals]
+            merit = torch.stack([m for m, _ in scored])
+            robustness = torch.stack([r for _, r in scored])
             return signals.clone(), scores.clone(), merit.clone(), robustness.clone(), False
 
     def _score_batch_eager(
@@ -328,8 +329,7 @@ class RobustnessOptimizer:
         """The batched sampling stage, as one function so it can be compiled."""
         signals = torch.vmap(lambda p: rollout(p, inputs, self.config))(candidates)
         scores = torch.vmap(lambda s: self.rules.objective(s, **smooth(temperature)))(signals)
-        merit = torch.vmap(self.rules.objective)(signals)
-        robustness = torch.vmap(self.rules.spec_robustness)(signals)
+        merit, robustness = torch.vmap(self.rules.merit_and_robustness)(signals)
         return signals, scores, merit, robustness
 
     def _refine(
@@ -411,8 +411,7 @@ class RobustnessOptimizer:
             if step > 0:
                 with torch.no_grad():
                     candidates = signals.detach()
-                    candidate_merit = self._batched_merit(candidates)
-                    candidate_rob = self._batched_robustness(candidates)
+                    candidate_merit, candidate_rob = self._batched_scores(candidates)
                     candidate_ok = candidate_rob >= 0.0
                     pick = _lexicographic_pick(candidate_merit, candidate_rob)
                     if (bool(candidate_ok[pick]), float(candidate_merit[pick])) > (
@@ -438,8 +437,7 @@ class RobustnessOptimizer:
         if completed:
             with torch.no_grad():
                 final_signals = self._batched_rollout(params.detach(), inputs)
-                final_merit = self._batched_merit(final_signals)
-                final_rob = self._batched_robustness(final_signals)
+                final_merit, final_rob = self._batched_scores(final_signals)
                 pick = _lexicographic_pick(final_merit, final_rob)
                 if (bool(final_rob[pick] >= 0.0), float(final_merit[pick])) > (
                     best_ok,
@@ -455,16 +453,13 @@ class RobustnessOptimizer:
     def _batched_rollout(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
         return torch.vmap(lambda p: rollout(p, inputs, self.config))(params)
 
-    def _batched_robustness(self, signals: torch.Tensor) -> torch.Tensor:
-        return torch.vmap(self.rules.spec_robustness)(signals)
-
-    def _batched_merit(self, signals: torch.Tensor) -> torch.Tensor:
-        """The exact objective for a batch: what decides which plan is driven.
+    def _batched_scores(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Exact objective and exact robustness for a batch, in one pass.
 
         Exact rather than smoothed -- the smoothing exists to make gradients
         informative, and has no business deciding anything.
         """
-        return torch.vmap(self.rules.objective)(signals)
+        return torch.vmap(self.rules.merit_and_robustness)(signals)
 
     def _refine_losses(
         self,

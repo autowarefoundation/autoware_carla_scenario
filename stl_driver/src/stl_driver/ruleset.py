@@ -158,15 +158,44 @@ class RuleSet:
         total = torch.zeros((), dtype=torch.float32)
         for index, rule in enumerate(self.rules):
             robustness = rule.formula.robustness(signal, **kwargs)
-            margin = self._margins[index]
-            if math.isfinite(rule.margin):
-                saturated = margin * torch.tanh(robustness / margin)
-                if rule.hard:
-                    # Keep violations linear and unbounded; saturate rewards.
-                    saturated = torch.minimum(robustness, saturated)
-                robustness = saturated
-            total = total + self._weights[index] * robustness
+            total = total + self._weights[index] * self._saturate(robustness, index, rule)
         return total
+
+    def _saturate(self, robustness: torch.Tensor, index: int, rule: Rule) -> torch.Tensor:
+        """One rule's contribution to the objective; see :meth:`objective`."""
+        if not math.isfinite(rule.margin):
+            return robustness
+        margin = self._margins[index]
+        saturated = margin * torch.tanh(robustness / margin)
+        if rule.hard:
+            # Keep violations linear and unbounded; saturate rewards.
+            saturated = torch.minimum(robustness, saturated)
+        return saturated
+
+    def merit_and_robustness(self, signal: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Both exact scores, from one evaluation of the rules.
+
+        :meth:`objective` and :meth:`spec_robustness` are two reductions of the
+        same per-rule robustness values -- a weighted saturated sum and a
+        minimum -- and every caller that wants one wants the other, since
+        selection is lexicographic in the pair. Evaluating the formulas twice
+        for that was the single largest cost in a policy step: at ten rules
+        over a forty-step horizon each pass costs about as much as the rollout
+        it is judging, twice over.
+
+        Equal to calling the two separately, which
+        :mod:`tests.test_ruleset` asserts directly -- the conjunction *is* the
+        minimum over the rules, which is also what makes the per-rule breakdown
+        in ``debug_scalars`` a genuine decomposition.
+        """
+        total = torch.zeros((), dtype=torch.float32)
+        worst: torch.Tensor | None = None
+        for index, rule in enumerate(self.rules):
+            robustness = rule.formula.robustness(signal, **EXACT)
+            worst = robustness if worst is None else torch.minimum(worst, robustness)
+            total = total + self._weights[index] * self._saturate(robustness, index, rule)
+        assert worst is not None  # a RuleSet is never empty; `conjoin` refuses one
+        return total, worst
 
     def worst_violated(self, per_rule: Mapping[str, torch.Tensor | float]) -> str | None:
         """Name of the most-violated rule, or ``None`` if all are satisfied."""
