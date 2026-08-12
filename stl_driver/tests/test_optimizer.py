@@ -462,3 +462,36 @@ def test_selection_does_not_reward_simply_stopping(optimizer):
             ]
         )
     assert _lexicographic_pick(merit, robustness) == 1
+
+
+def test_the_compiled_paths_are_actually_used_when_present():
+    """Compiling a function and then not calling it buys nothing.
+
+    That is exactly what happened: `prepare` built a compiled `_refine_losses`
+    and the refinement loop went on calling the eager one, so enabling
+    `compile_search` sped up only the sampling stage -- which the profile says
+    is the cheaper half. Refining a single seed costs more per step than
+    scoring all sixty-six sampled candidates.
+
+    Compilation itself takes about a minute, far too long for a unit test, so
+    this substitutes a sentinel for the compiled artefact and checks it is
+    reached.
+    """
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    calls: list[str] = []
+
+    def spy_refine(params, inp, temperature):
+        calls.append("refine")
+        return optimizer._refine_losses(params, inp, temperature)
+
+    def spy_scores(signals):
+        calls.append("scores")
+        return optimizer._batched_scores_eager(signals)
+
+    optimizer._compiled_refine = spy_refine
+    optimizer._compiled_scores = spy_scores
+    optimizer.solve(inputs)
+
+    assert "refine" in calls, "the refinement loop ignored the compiled forward pass"
+    assert "scores" in calls, "candidate scoring ignored the compiled path"

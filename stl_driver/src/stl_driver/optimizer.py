@@ -83,6 +83,7 @@ class RobustnessOptimizer:
         # paths are used until then, and again if compilation fails.
         self._compiled_batch: Any = None
         self._compiled_refine: Any = None
+        self._compiled_scores: Any = None
 
     def prepare(self, example: RolloutInputs) -> None:
         """Do the expensive one-off work before the runtime starts waiting.
@@ -109,11 +110,13 @@ class RobustnessOptimizer:
         try:
             self._compiled_batch = torch.compile(self._score_batch_eager, dynamic=True)
             self._compiled_refine = torch.compile(self._refine_losses, dynamic=True)
+            self._compiled_scores = torch.compile(self._batched_scores_eager, dynamic=True)
             self.solve(example)
         except Exception:  # noqa: BLE001 - any compile failure falls back
             logger.warning("torch.compile failed; continuing eagerly", exc_info=True)
             self._compiled_batch = None
             self._compiled_refine = None
+            self._compiled_scores = None
 
     # -- seeds -------------------------------------------------------------
 
@@ -400,7 +403,8 @@ class RobustnessOptimizer:
             ) * (step / denominator)
 
             adam.zero_grad(set_to_none=True)
-            losses, signals = self._refine_losses(params, inputs, temperature)
+            refine = self._compiled_refine or self._refine_losses
+            losses, signals = refine(params, inputs, temperature)
 
             # Score the iterates we just rolled out, before stepping away from
             # them -- the signals are already in hand, so this costs one
@@ -459,6 +463,11 @@ class RobustnessOptimizer:
         Exact rather than smoothed -- the smoothing exists to make gradients
         informative, and has no business deciding anything.
         """
+        scores = self._compiled_scores or self._batched_scores_eager
+        return scores(signals)
+
+    def _batched_scores_eager(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The body of :meth:`_batched_scores`, separated so it can be compiled."""
         return torch.vmap(self.rules.merit_and_robustness)(signals)
 
     def _refine_losses(

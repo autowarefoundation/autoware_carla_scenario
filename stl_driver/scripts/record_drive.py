@@ -85,7 +85,31 @@ class RecordingWorld(CarlaWorldAdapter):
         # now stops sensors before destroying anything -- covers it too.
         self._sensors.append(camera)
         logger.info("chase camera attached: %dx%d", *self._film_size)
+        logger.info(
+            "spawn point %s -- pass --spawn-point to pin it, or two recordings "
+            "are of different roads and not comparable",
+            self._spawn_point_index(),
+        )
         return result
+
+    def _spawn_point_index(self) -> int | str:
+        """Which of the map's spawn points the ego actually started from.
+
+        Left unset, the runtime draws one from its seeded generator, which is
+        reproducible only as long as nothing upstream of the draw changes how
+        much of that generator it consumes -- so a run recorded today and one
+        recorded last week can silently be of different roads. Recovering the
+        index by position means a recording always says where it began, and
+        `--spawn-point` can pin it.
+        """
+        if self.scenario.spawn_point_index is not None:
+            return self.scenario.spawn_point_index
+        here = self._ego.get_transform().location
+        points = self._map.get_spawn_points()
+        if not points:  # pragma: no cover - guarded upstream at spawn time
+            return "unknown"
+        distances = [here.distance(point.location) for point in points]
+        return int(min(range(len(points)), key=distances.__getitem__))
 
     def tick(self):
         snapshot = super().tick()
