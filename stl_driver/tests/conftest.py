@@ -85,18 +85,21 @@ def make_inputs(
 
     ego_offsets, ego_radius = config.ego_footprint()
 
+    def scalar(value: float) -> torch.Tensor:
+        return torch.as_tensor(float(value), dtype=torch.float32)
+
     return RolloutInputs(
         route_xy=torch.from_numpy(table.xy).to(torch.float32),
         route_tangent=torch.from_numpy(table.tangent).to(torch.float32),
         route_curvature=torch.from_numpy(table.curvature).to(torch.float32),
         route_ds=table.ds,
-        published_length_m=(
+        published_length_m=scalar(
             table.published_length_m if published_length_m is None else published_length_m
         ),
-        station0_m=station0,
-        offset0_m=offset0,
-        speed0_mps=speed0_mps,
-        accel0_mps2=accel0_mps2,
+        station0_m=scalar(station0),
+        offset0_m=scalar(offset0),
+        speed0_mps=scalar(speed0_mps),
+        accel0_mps2=scalar(accel0_mps2),
         actor_centres=actor_centres,
         actor_radii=actor_radii,
         n_actors=int(actor_radii.shape[0]) // 2,
@@ -104,10 +107,10 @@ def make_inputs(
         ego_disc_radius=ego_radius,
         lead_station_m=torch.full((n_steps,), float(lead_station_m), dtype=torch.float32),
         lead_speed_mps=torch.full((n_steps,), float(lead_speed_mps), dtype=torch.float32),
-        stop_station_m=float(stop_station_m),
-        light_gate=gate if light_active else -gate,
-        speed_limit_mps=limit,
-        progress_target_m=config.progress_target_m(target, speed0_mps),
+        stop_station_m=scalar(stop_station_m),
+        light_gate=scalar(gate if light_active else -gate),
+        speed_limit_mps=scalar(limit),
+        progress_target_m=scalar(config.progress_target_m(target, speed0_mps)),
     )
 
 

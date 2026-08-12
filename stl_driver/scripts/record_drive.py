@@ -373,6 +373,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--compile",
+        dest="compile_search",
+        action="store_true",
+        help="compile the search with torch.compile before driving",
+    )
+    parser.add_argument(
         "--no-video",
         action="store_true",
         help=(
@@ -393,6 +399,10 @@ def main(argv: list[str] | None = None) -> int:
     # every step run to completion removes the only nondeterminism the driver
     # has, at the cost of being slower than real time.
     config = STLDriverConfig()
+    if args.compile_search:
+        config = replace(
+            config, optimizer=replace(config.optimizer, compile_search=True)
+        )
     if args.refine_seeds is not None:
         config = replace(
             config, optimizer=replace(config.optimizer, n_refine_seeds=args.refine_seeds)

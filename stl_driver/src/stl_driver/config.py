@@ -278,21 +278,33 @@ class OptimizerConfig:
     torch_threads: int = 2
     #: Compile the two hot paths with ``torch.compile`` before driving.
     #:
-    #: Measured on this specification: the batched sampling stage 13.9 -> 11.5
-    #: ms and a gradient step 8.3 -> 6.2 ms, about 24% off a whole step. The
-    #: cost is roughly a minute of compilation, which `EgoPolicy` pays in
-    #: `on_session_start` -- before any observation arrives, so no deadline is
-    #: missed, but every rollout starts a minute later.
+    #: Off, and measured to be the right answer rather than assumed. On a
+    #: fixed five-scenario bench it looks excellent -- refinement steps 3.93 to
+    #: 5.63 within the same budget, a 43% deeper search for nothing. On the
+    #: road it is not viable, and the two disagree for a reason worth keeping.
     #:
-    #: Off by default for that reason, and because it is the sort of thing
-    #: that is worth having only once the extra time buys something: with the
-    #: budget unchanged it buys two or three more refinement steps.
+    #: `torch.compile` specialises on what it sees. It used to specialise on
+    #: the *values* of the Python floats in `RolloutInputs` -- the ego station,
+    #: the route length, the speed -- every one of which differs every step, so
+    #: it rebuilt the graph every step and hit its recompilation limit: a
+    #: 400-step drive went from 57.9 s to 200.5 s. Those scalars are 0-d
+    #: tensors now and that particular trap is gone; no frame recompiles during
+    #: steady-state solving.
     #:
-    #: Compiled with dynamic shapes, which matters here -- the number of actor
-    #: footprint discs changes every step as traffic comes and goes, and a
-    #: static compile would rebuild the graph each time. Measured across 4 to
-    #: 40 discs, the first call at a new size costs the same as the steady
-    #: state, so no rebuilding is happening.
+    #: What remains is shape. The actor footprint tensor is as wide as there
+    #: are vehicles nearby, which changes continuously in traffic and not at
+    #: all on a bench. Each new width is a new graph, compiled mid-drive, and
+    #: those spikes land inside the policy's own deadline. Two runs each on a
+    #: pinned route: satisfied 96.8/94.2% eager against 97.5/98.0% compiled,
+    #: which sounds like a win until the latency is read -- 0.091/0.093 s
+    #: against 0.121/0.137 s, against a policy timestep of 0.100 s. The better
+    #: plans were bought by overrunning the deadline, which is not a trade
+    #: available on a vehicle.
+    #:
+    #: Making this pay would mean padding the actor tensors to a fixed width so
+    #: there is one shape to compile. That is plausible -- the cost here is
+    #: dispatch, not arithmetic, so the padding would be nearly free -- but it
+    #: is not done, and until it is, this stays off.
     compile_search: bool = False
     #: Where the search runs: ``"cpu"``, ``"cuda"``, or ``"auto"``.
     #:

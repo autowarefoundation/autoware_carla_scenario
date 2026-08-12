@@ -74,14 +74,21 @@ class RolloutInputs:
     #: Station spacing of the table above.
     route_ds: float
     #: Arc length of the route as published; beyond it the table extrapolates.
-    published_length_m: float
+    #:
+    #: A 0-d tensor, like every scalar below that reaches the arithmetic, and
+    #: for one reason: ``torch.compile`` specialises on the *value* of a Python
+    #: float it sees, so a quantity that differs every step generates a fresh
+    #: graph every step. Measured, that took a 400-step drive from 57.9 s to
+    #: 200.5 s, dynamo giving up at its recompilation limit with this field
+    #: named as the cause. Tensors are traced as inputs, not baked in.
+    published_length_m: torch.Tensor
 
     # -- ego ---------------------------------------------------------------
     #: Station and signed offset of the ego at ``t = 0``.
-    station0_m: float
-    offset0_m: float
-    speed0_mps: float
-    accel0_mps2: float
+    station0_m: torch.Tensor
+    offset0_m: torch.Tensor
+    speed0_mps: torch.Tensor
+    accel0_mps2: torch.Tensor
 
     # -- environment -------------------------------------------------------
     #: ``(T, A, 2)`` predicted actor disc centres, rig frame; ``A`` may be 0.
@@ -98,14 +105,14 @@ class RolloutInputs:
     lead_station_m: torch.Tensor
     #: ``(T,)`` that vehicle's speed along the route; 0 when there is none.
     lead_speed_mps: torch.Tensor
-    #: Station of the stop line, when a light governs us.
-    stop_station_m: float
+    #: Station of the stop line, when a light governs us; ``+inf`` when none.
+    stop_station_m: torch.Tensor
     #: ``+gate`` when a red or amber light applies, ``-gate`` otherwise.
-    light_gate: float
+    light_gate: torch.Tensor
     #: The posted limit to hold ourselves to.
-    speed_limit_mps: float
+    speed_limit_mps: torch.Tensor
     #: Distance `makes_progress` asks the plan to cover.
-    progress_target_m: float
+    progress_target_m: torch.Tensor
 
     @property
     def n_actor_discs(self) -> int:
@@ -133,7 +140,7 @@ def knot_step_limit(limits) -> float:
 
 def _map_params(
     params: torch.Tensor,
-    accel0_mps2: float,
+    accel0_mps2: torch.Tensor,
     config: STLDriverConfig,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Unconstrained parameters to physical acceleration knots and offsets.
@@ -162,7 +169,7 @@ def _map_params(
     step_limit = knot_step_limit(limits)
 
     # Start from the measured acceleration and walk, one bounded step per knot.
-    measured = torch.full_like(params[..., :1], float(accel0_mps2))
+    measured = torch.zeros_like(params[..., :1]) + accel0_mps2
     deltas = step_limit * torch.tanh(params[..., :4])
     knots = torch.cumsum(torch.cat([measured, deltas], dim=-1), dim=-1)
     # The walk must still land inside what the vehicle can do -- just inside,
@@ -282,7 +289,7 @@ def _kinematics(
     # The commanded profile is piecewise linear between knots and smooth by
     # construction, and it is what the controller is being asked to achieve.
     accel = commanded
-    accel0 = torch.as_tensor(inputs.accel0_mps2, device=device, dtype=dtype).reshape(1)
+    accel0 = inputs.accel0_mps2.reshape(1)
     accel0 = accel0.expand(*accel.shape[:-1], 1) if accel.dim() > 1 else accel0
     jerk = torch.diff(accel, dim=-1, prepend=accel0) / dt
 
@@ -392,13 +399,11 @@ def rollout(
     headway = _headway_slack(station, speed, inputs, config)
 
     stop_slack = saturate(
-        torch.as_tensor(inputs.stop_station_m, dtype=station.dtype, device=station.device)
-        - station,
+        inputs.stop_station_m - station,
         cap,
     )
     route_slack = saturate(
-        torch.as_tensor(inputs.published_length_m, dtype=station.dtype, device=station.device)
-        - station,
+        inputs.published_length_m - station,
         cap,
     )
     progress_slack = saturate(
@@ -407,7 +412,7 @@ def rollout(
     )
     speed_headroom = inputs.speed_limit_mps - speed
 
-    light_gate = torch.full_like(speed, float(inputs.light_gate))
+    light_gate = torch.zeros_like(speed) + inputs.light_gate
 
     # Keyed by column so the assembly cannot silently transpose two of them,
     # then ordered by the enum's own values.

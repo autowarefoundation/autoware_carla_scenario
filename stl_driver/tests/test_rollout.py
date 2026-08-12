@@ -589,6 +589,17 @@ def _to_double(inputs):
         actor_centres=inputs.actor_centres.to(torch.float64),
         actor_radii=inputs.actor_radii.to(torch.float64),
         lead_station_m=inputs.lead_station_m.to(torch.float64),
+        lead_speed_mps=inputs.lead_speed_mps.to(torch.float64),
+        ego_disc_offsets=inputs.ego_disc_offsets.to(torch.float64),
+        published_length_m=inputs.published_length_m.to(torch.float64),
+        station0_m=inputs.station0_m.to(torch.float64),
+        offset0_m=inputs.offset0_m.to(torch.float64),
+        speed0_mps=inputs.speed0_mps.to(torch.float64),
+        accel0_mps2=inputs.accel0_mps2.to(torch.float64),
+        stop_station_m=inputs.stop_station_m.to(torch.float64),
+        light_gate=inputs.light_gate.to(torch.float64),
+        speed_limit_mps=inputs.speed_limit_mps.to(torch.float64),
+        progress_target_m=inputs.progress_target_m.to(torch.float64),
     )
 
 

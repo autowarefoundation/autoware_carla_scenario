@@ -262,16 +262,20 @@ class EgoPolicy(BaseDriver):
         def tensor(values, dtype=torch.float32):
             return torch.as_tensor(values, dtype=dtype, device=device)
 
+        def scalar(value: float) -> torch.Tensor:
+            """A 0-d tensor, so `torch.compile` traces it instead of baking it in."""
+            return torch.as_tensor(float(value), dtype=torch.float32, device=device)
+
         return RolloutInputs(
             route_xy=tensor(table.xy),
             route_tangent=tensor(table.tangent),
             route_curvature=tensor(table.curvature),
             route_ds=table.ds,
-            published_length_m=table.published_length_m,
-            station0_m=station0,
-            offset0_m=offset0,
-            speed0_mps=float(speed_mps),
-            accel0_mps2=float(accel_mps2),
+            published_length_m=scalar(table.published_length_m),
+            station0_m=scalar(station0),
+            offset0_m=scalar(offset0),
+            speed0_mps=scalar(speed_mps),
+            accel0_mps2=scalar(accel_mps2),
             actor_centres=tensor(forecast.centres),
             actor_radii=tensor(forecast.radii),
             n_actors=forecast.n_actors,
@@ -279,12 +283,12 @@ class EgoPolicy(BaseDriver):
             ego_disc_radius=ego_radius,
             lead_station_m=tensor(forecast.lead_station_m),
             lead_speed_mps=tensor(forecast.lead_speed_mps),
-            stop_station_m=light.stop_station_m,
-            light_gate=(
+            stop_station_m=scalar(light.stop_station_m),
+            light_gate=scalar(
                 config.limits.gate_magnitude_m if light.active else -config.limits.gate_magnitude_m
             ),
-            speed_limit_mps=target_speed,
-            progress_target_m=config.progress_target_m(target_speed, speed_mps),
+            speed_limit_mps=scalar(target_speed),
+            progress_target_m=scalar(config.progress_target_m(target_speed, speed_mps)),
         )
 
     def _to_trajectory(
@@ -327,10 +331,10 @@ class EgoPolicy(BaseDriver):
             "stl_refine_steps": float(solution.n_refine_steps),
             "stl_vmap": 1.0 if solution.used_vmap else 0.0,
             "current_speed_mps": speed_mps,
-            "route_length_m": inputs.published_length_m,
+            "route_length_m": float(inputs.published_length_m),
             "n_actor_discs": float(inputs.n_actor_discs),
             "n_actors": float(inputs.n_actors),
-            "light_active": 1.0 if inputs.light_gate > 0.0 else 0.0,
+            "light_active": 1.0 if float(inputs.light_gate) > 0.0 else 0.0,
         }
         for name, value in solution.per_rule.items():
             scalars[f"stl_rule_{name}"] = value

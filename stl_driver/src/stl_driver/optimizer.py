@@ -282,7 +282,7 @@ class RobustnessOptimizer:
         The violation is still reported either way.  What this decides is only
         whether the emergency plan is a *remedy* for it.
         """
-        return inputs.speed0_mps > self.config.limits.creep_speed_mps
+        return float(inputs.speed0_mps) > self.config.limits.creep_speed_mps
 
     def _score_batch(
         self,
