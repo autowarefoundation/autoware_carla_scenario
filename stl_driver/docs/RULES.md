@@ -88,10 +88,15 @@ keeps the vacuous `+gate` from dominating.
 ```
 □ (clearance > 0)
 ```
-Keep clearance from every predicted actor at all times.  Actors are predicted
-forward at constant velocity and approximated by two discs each; the ego is
-two discs at 1.0 m and 3.5 m *ahead* of the plan point, because the rig origin
-is the rear axle rather than the vehicle centre.
+Keep clearance from every predicted actor at all times.  Every vehicle,
+including the ego, is covered by discs whose count comes from a stated bound
+on how much wider they make it -- 0.15 m -- rather than being fixed at two.
+Two discs turn a 2.0 m car into a 3.0 m one, which leaves almost nothing
+between us and a vehicle one lane over, so an ordinary lane offset reads as an
+imminent collision.
+
+The ego's discs are placed relative to the *rear axle*, since that is where
+the rig frame is anchored, not the vehicle centre.
 
 Other vehicles are predicted **along the road**, not in a straight line:
 their velocity is resolved into the route's own frame and advanced there, so a
