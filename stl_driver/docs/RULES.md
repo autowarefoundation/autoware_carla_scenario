@@ -1,8 +1,42 @@
 # The specification
 
-This is what the policy promises to do.  It is the same set of rules that
+This is what the policy aims at.  It is the same set of rules that
 `src/stl_driver/rules.py` builds and that `stl-driver explain` prints -- this
 document explains *why* each one is phrased the way it is.
+
+`src/stl_driver/rules.py` is nothing but the specification, so it can be
+edited or replaced outright; `ruleset.py` holds what a rule *is* and how a set
+of them is scored, and knows nothing about driving.  `EgoPolicy(rules=...)`
+takes a rule set directly, so a different specification needs no edits here at
+all.
+
+## It aims; it does not guarantee
+
+Nothing in this design proves the rules will hold.  Worth being plain about,
+because "specification" invites the opposite assumption:
+
+* The search **maximises** robustness over 64 sampled plans plus a few
+  gradient steps, inside a 70 ms budget.  It is not a constraint solver and
+  issues no feasibility certificate -- even where a satisfying plan exists, it
+  may not be found.
+* Some situations admit no satisfying plan at all.  Another vehicle driving at
+  a stationary ego violates `collision_free` whatever we do.
+* The rules are evaluated against a *forecast* of the other traffic.  Being
+  satisfied means the plan is safe against what we predicted, which is not the
+  same as being safe.
+
+What the design does give is that the shortfall is **stated rather than
+hidden**.  `spec_robustness` is reported every step and is negative exactly
+when some rule fails; the per-rule breakdown names which.  Measured over 500
+steps of Town10HD with 30 vehicles: every rule held on 65.8% of steps, and the
+violations were mostly `safe_headway`, `comfort` and the two liveness rules.
+`collision_free` went negative on 11% of steps against the forecast -- and the
+rollout ended with zero actual collisions.
+
+The one place a violation changes what is driven is a `hard` rule breached
+within the next 1.2 s, when braking could still help; then the emergency plan
+replaces the optimizer's.  That fired on 0.6% of steps.  Everywhere else the
+best plan found is driven, violations and all.
 
 Every rule is an STL formula over a signal of twelve columns, sampled at
 0.1 s over a 4 s horizon.  Each column is a **slack**: a quantity that should

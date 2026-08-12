@@ -26,6 +26,23 @@ keep_moving      □[1s,4s] (clear ⇒ (speed > 1.0))
 [`docs/RULES.md`](docs/RULES.md) explains why each rule is phrased the way it
 is.
 
+That file is *only* the specification -- what a rule is and how a set of them
+is scored lives in `ruleset.py`, which knows nothing about driving. To drive
+by different rules, replace `build_rules` and hand the result over; nothing
+else needs editing:
+
+```python
+EgoPolicy(rules=RuleSet(my_build_rules(config)))
+```
+
+**It aims at the rules; it does not guarantee them.** The search maximises
+robustness under a 70 ms budget rather than solving a constraint system, some
+situations admit no satisfying plan, and the rules are checked against a
+*forecast* of the other traffic. What the design gives is that the shortfall
+is reported rather than hidden: over 500 steps with 30 vehicles every rule
+held on 65.8% of steps, and `spec_robustness` said so on the rest.
+[`docs/RULES.md`](docs/RULES.md) has the breakdown.
+
 Built on:
 
 - [`carla_driver_interface`](https://github.com/hakuturu583/carla_driver_interface)

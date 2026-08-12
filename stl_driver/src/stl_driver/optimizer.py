@@ -19,7 +19,7 @@ Sampling without descent plans coarsely; descent without sampling gets stuck.
 The combination is worth more than either.
 
 Throughout, the *scoring* function is the weighted objective while the
-*acceptance* test is the plain specification -- see :mod:`stl_driver.rules`
+*acceptance* test is the plain specification -- see :mod:`stl_driver.ruleset`
 for why those must not be the same function.
 """
 
@@ -33,7 +33,7 @@ import torch
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.rollout import N_PARAMS, RolloutInputs, rollout
-from stl_driver.rules import RuleSet
+from stl_driver.ruleset import RuleSet
 from stl_driver.stl_backend import smooth
 
 __all__ = ["PlanSolution", "RobustnessOptimizer"]

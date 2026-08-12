@@ -29,7 +29,8 @@ from stl_driver.frenet import build_route_table, project_to_frenet
 from stl_driver.optimizer import PlanSolution, RobustnessOptimizer
 from stl_driver.perception import forecast_actors, read_traffic_light
 from stl_driver.rollout import RolloutInputs, plan_xy
-from stl_driver.rules import RuleSet, build_rules
+from stl_driver.rules import build_rules
+from stl_driver.ruleset import RuleSet
 
 __all__ = ["EgoPolicy"]
 
@@ -52,6 +53,7 @@ class EgoPolicy(BaseDriver):
         self,
         cruise_speed_mps: float | None = None,
         config: STLDriverConfig | None = None,
+        rules: RuleSet | None = None,
     ) -> None:
         # `cruise_speed_mps` is the first keyword and named to match, so the
         # upstream CLI -- which calls `policy_cls(cruise_speed_mps=...)` -- can
@@ -66,7 +68,9 @@ class EgoPolicy(BaseDriver):
             self.config = replace(base, cruise_speed_mps=float(cruise_speed_mps))
 
         torch.set_num_threads(self.config.optimizer.torch_threads)
-        self.rules = RuleSet(build_rules(self.config))
+        # A caller can supply an entirely different specification without
+        # editing anything here; see `stl_driver.rules` for the shape of one.
+        self.rules = rules or RuleSet(build_rules(self.config))
         self.optimizer = RobustnessOptimizer(self.rules, self.config)
 
         self._warm_start: torch.Tensor | None = None

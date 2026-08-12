@@ -381,7 +381,7 @@ def test_rule_windows_follow_the_horizon_rather_than_hardcoded_indices():
 
 def test_a_rule_whose_interval_overflows_the_horizon_is_rejected():
     """The guard that stops an overflowing window reading as -1e9."""
-    from stl_driver.rules import Rule, _validate
+    from stl_driver.ruleset import Rule, validate_rules
     from stl_driver.signals import Col, column
     from stl_driver.stl_backend import Always
 
@@ -393,7 +393,7 @@ def test_a_rule_whose_interval_overflows_the_horizon_is_rejected():
         description="deliberately malformed",
     )
     with pytest.raises(ValueError, match="does not fit"):
-        _validate((bad,), T)
+        validate_rules((bad,), T)
 
 
 def test_margins_and_weights_are_positive_and_finite(rules):
@@ -401,3 +401,64 @@ def test_margins_and_weights_are_positive_and_finite(rules):
     assert all(rule.margin > 0.0 for rule in rules.rules)
     # Finiteness is the safety property: see `RuleSet.objective`.
     assert all(math.isfinite(rule.margin) for rule in rules.rules)
+
+
+# ---------------------------------------------------------------------------
+# Swapping the specification out
+# ---------------------------------------------------------------------------
+
+
+def test_a_different_specification_can_be_supplied_without_editing_anything():
+    """`rules.py` is meant to be replaceable, so this is the contract for it.
+
+    A caller hands `EgoPolicy` its own rule set; nothing in the package needs
+    editing or monkey-patching for the vehicle to drive by different rules.
+    """
+    from stl_driver.policy import EgoPolicy
+    from stl_driver.ruleset import Rule, RuleSet
+    from stl_driver.signals import Col, column
+    from stl_driver.stl_backend import Always
+
+    crawl = RuleSet(
+        (
+            Rule(
+                "never_exceed_walking_pace",
+                Always(column("speed", Col.SPEED) < 1.4),
+                weight=1.0,
+                margin=1.0,
+                hard=True,
+                description="A deliberately different specification.",
+            ),
+        )
+    )
+    policy = EgoPolicy(rules=crawl)
+    assert policy.rules.names == ("never_exceed_walking_pace",)
+
+    signal = signal_from_columns(speed=constant(9.0))
+    assert float(policy.rules.spec_robustness(signal)) < 0.0
+    assert float(policy.rules.spec_robustness(signal_from_columns(speed=constant(0.5)))) > 0.0
+
+
+def test_the_machinery_does_not_depend_on_this_particular_specification():
+    """`ruleset` must stay generic, or swapping the spec means editing it too.
+
+    Checked structurally rather than by grepping prose: what matters is that
+    the machinery imports nothing that knows about driving, and defines no
+    rules of its own.
+    """
+    import ast
+    import pathlib as _pathlib
+
+    from stl_driver import ruleset
+
+    tree = ast.parse(_pathlib.Path(ruleset.__file__).read_text())
+    imported = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    domain = {"stl_driver.signals", "stl_driver.config", "stl_driver.rules"}
+    assert not (imported & domain), f"machinery imports {imported & domain}"
+
+    defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    assert "build_rules" not in defined
