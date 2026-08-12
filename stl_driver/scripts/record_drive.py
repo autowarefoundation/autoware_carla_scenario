@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import queue
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,7 @@ from carla_driver_interface.runtime.carla_runtime import CarlaRuntime
 from carla_driver_interface.runtime.carla_world import CarlaWorldAdapter
 from PIL import Image, ImageDraw, ImageFont
 
+from stl_driver.config import STLDriverConfig
 from stl_driver.policy import EgoPolicy
 
 logger = logging.getLogger("record_drive")
@@ -338,6 +341,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=Path("drive.mp4"))
     parser.add_argument("--frames-dir", type=Path, default=None)
     parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help=(
+            "let the search always take all its refinement steps instead of "
+            "stopping at the wall-clock budget, so the same run gives the same "
+            "answer. Slower per step, and not how the policy drives for real."
+        ),
+    )
+    parser.add_argument(
         "--no-video",
         action="store_true",
         help=(
@@ -350,7 +362,19 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    policy = EgoPolicy()
+    # The search normally stops refining when its wall-clock budget runs out,
+    # which makes the whole closed loop depend on how busy the machine is: the
+    # same drive came back 96.0%, 91.0% and 93.0% satisfied over 340, 238 and
+    # 236 metres. Once the ego acts differently at all, the scenario diverges
+    # from there, so nothing smaller than that spread can be measured. Letting
+    # every step run to completion removes the only nondeterminism the driver
+    # has, at the cost of being slower than real time.
+    config = STLDriverConfig()
+    if args.deterministic:
+        config = replace(
+            config, optimizer=replace(config.optimizer, time_budget_s=math.inf)
+        )
+    policy = EgoPolicy(config=config)
     per_step: list[dict[str, float]] = []
     original = policy.drive
 
