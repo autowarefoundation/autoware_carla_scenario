@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import torch
 
 from stl_driver.config import STLDriverConfig
@@ -506,15 +507,25 @@ def _lexicographic_pick(merit: torch.Tensor, robustness: torch.Tensor) -> int:
     return int(torch.argmax(merit))
 
 
-def _accel_params(accel_mps2: float, limits) -> torch.Tensor:
-    """Parameters requesting a constant acceleration.
+def _accel_params(accel_mps2: float, limits, accel0_mps2: float = 0.0) -> torch.Tensor:
+    """Parameters that walk the acceleration profile to a requested value.
 
-    The inverse of the sigmoid mapping in :mod:`stl_driver.rollout`.  Nudged
-    off the endpoints because the sigmoid's range is open -- asking for
-    exactly ``max_accel`` would be asking for an infinite parameter.
+    The inverse of the mapping in :func:`~stl_driver.rollout._map_params`,
+    which parameterises the profile as jerk-bounded *changes* from the measured
+    acceleration rather than as absolute values. Reaching a distant target may
+    take more than one knot, exactly as it would on the road.
     """
-    span = limits.max_accel_mps2 + limits.max_decel_mps2
-    fraction = (accel_mps2 + limits.max_decel_mps2) / span
-    fraction = min(max(fraction, 1e-3), 1.0 - 1e-3)
-    logit = math.log(fraction / (1.0 - fraction))
-    return torch.tensor([logit] * 4 + [0.0, 0.0], dtype=torch.float32)
+    from stl_driver.rollout import knot_step_limit
+
+    step = knot_step_limit(limits)
+    current = float(np.clip(accel0_mps2, -limits.max_decel_mps2, limits.max_accel_mps2))
+    target = float(np.clip(accel_mps2, -limits.max_decel_mps2, limits.max_accel_mps2))
+
+    logits = []
+    for _ in range(4):
+        delta = float(np.clip(target - current, -step, step))
+        current += delta
+        # atanh, kept off the asymptote where it is infinite.
+        fraction = float(np.clip(delta / step, -0.999, 0.999))
+        logits.append(0.5 * math.log((1.0 + fraction) / (1.0 - fraction)))
+    return torch.tensor(logits + [0.0, 0.0], dtype=torch.float32)

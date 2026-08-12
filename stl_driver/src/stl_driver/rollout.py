@@ -31,7 +31,7 @@ import torch
 from stl_driver.config import STLDriverConfig
 from stl_driver.signals import N_COLUMNS, Col, saturate
 
-__all__ = ["N_PARAMS", "RolloutInputs", "plan_xy", "rollout"]
+__all__ = ["N_PARAMS", "RolloutInputs", "knot_step_limit", "plan_xy", "rollout"]
 
 #: Four longitudinal acceleration knots plus two lateral control offsets.
 #: Small on purpose: the optimizer explores this space by quasi-random
@@ -110,6 +110,25 @@ class RolloutInputs:
         return int(self.actor_radii.shape[0])
 
 
+#: How far inside a comfort bound the parameterisation keeps itself. Landing
+#: exactly on a bound makes the rule read exactly zero, where float error alone
+#: decides whether it counts as satisfied.
+_INSIDE = 0.98
+
+
+def knot_step_limit(limits) -> float:
+    """The largest acceleration change one knot interval may carry.
+
+    The profile is piecewise linear between knots, so its slope -- the jerk --
+    is a knot-to-knot change divided by the interval. Bounding the change by
+    ``jerk_limit * interval`` bounds the jerk. Kept slightly inside the bound,
+    because exactly at it float error alone decides whether the comfort rule
+    reads as satisfied.
+    """
+    spacing = _KNOT_TIMES_S[1] - _KNOT_TIMES_S[0]
+    return limits.max_jerk_mps3 * spacing * _INSIDE
+
+
 def _map_params(
     params: torch.Tensor,
     accel0_mps2: float,
@@ -120,16 +139,36 @@ def _map_params(
     Smooth bijections rather than clamps, so that a candidate pinned against a
     limit still reports which way it wants to move.
 
-    The returned knots are prefixed with the measured acceleration, which is
-    what anchors the profile to the vehicle's current state; see
-    :data:`_KNOT_TIMES_S`.
+    The knots are parameterised as *changes* from the measured acceleration
+    onwards, each bounded by what the jerk limit allows over one knot interval,
+    rather than as absolute values.  The profile is piecewise linear between
+    knots, so its slope -- the jerk -- is exactly a knot-to-knot change divided
+    by the interval; bounding the change bounds the jerk by construction.
+
+    Left as absolute values, the reachable set includes plans no vehicle should
+    execute, and the search spends its budget deciding how badly to break the
+    comfort bound instead of how best to drive.  It showed up on the road as
+    the vehicle failing to pull away after a slowdown: from a measured
+    -4 m/s^2, asking for +2 is a change of 6 across one second, half again the
+    jerk limit, so *every* way of accelerating away scored as a violation.
+
+    That does make `comfort`'s jerk term true by construction, in the way
+    `no_reverse` is. The rule stays because it states the requirement rather
+    than leaving it as an unwritten property of the parameterisation.
     """
     limits = config.limits
-    accel_span = limits.max_accel_mps2 + limits.max_decel_mps2
-    free = -limits.max_decel_mps2 + accel_span * torch.sigmoid(params[..., :4])
+    step_limit = knot_step_limit(limits)
 
-    measured = torch.full_like(free[..., :1], float(accel0_mps2))
-    knots = torch.cat([measured, free], dim=-1)
+    # Start from the measured acceleration and walk, one bounded step per knot.
+    measured = torch.full_like(params[..., :1], float(accel0_mps2))
+    deltas = step_limit * torch.tanh(params[..., :4])
+    knots = torch.cumsum(torch.cat([measured, deltas], dim=-1), dim=-1)
+    # The walk must still land inside what the vehicle can do -- just inside,
+    # for the same reason the step is: clamping exactly onto the bound leaves
+    # `comfort` reading exactly zero, satisfied with no margin at all, and
+    # every accelerating plan pinned there.
+    knots = knots.clamp(-limits.max_decel_mps2 * _INSIDE, limits.max_accel_mps2 * _INSIDE)
+
     offsets = limits.lane_half_width_m * torch.tanh(params[..., 4:6])
     return knots, offsets
 

@@ -11,8 +11,6 @@ never steers.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pytest
 import torch
@@ -26,32 +24,19 @@ from tests.conftest import curved_route, make_inputs, stationary_actor, straight
 
 
 def hold_speed_params() -> torch.Tensor:
-    """Parameters meaning "zero acceleration, stay on the centreline".
+    """Parameters meaning "hold this acceleration, stay on the centreline".
 
-    The accel knots map through a sigmoid onto [-max_decel, +max_accel], so
-    zero acceleration is the logit of the fraction where that range crosses 0.
+    The profile is parameterised as changes from the measured acceleration, so
+    "no change" is simply zero.
     """
-    limits = STLDriverConfig().limits
-    span = limits.max_accel_mps2 + limits.max_decel_mps2
-    fraction = limits.max_decel_mps2 / span
-    logit = math.log(fraction / (1.0 - fraction))
-    return torch.tensor([logit] * 4 + [0.0, 0.0], dtype=torch.float32)
+    return torch.zeros(N_PARAMS, dtype=torch.float32)
 
 
-def constant_accel_params(accel: float) -> torch.Tensor:
-    """Parameters requesting a constant acceleration.
+def constant_accel_params(accel: float, accel0: float = 0.0) -> torch.Tensor:
+    """Parameters that walk the profile to a requested acceleration."""
+    from stl_driver.optimizer import _accel_params
 
-    The sigmoid maps onto the *open* interval, so the endpoints are only
-    approachable, never reachable; asking for exactly ``max_accel`` is asking
-    for an infinite logit. Nudging inside is the honest thing to do -- the
-    optimizer lives under the same constraint.
-    """
-    limits = STLDriverConfig().limits
-    span = limits.max_accel_mps2 + limits.max_decel_mps2
-    fraction = (accel + limits.max_decel_mps2) / span
-    fraction = min(max(fraction, 1e-3), 1.0 - 1e-3)
-    logit = math.log(fraction / (1.0 - fraction))
-    return torch.tensor([logit] * 4 + [0.0, 0.0], dtype=torch.float32)
+    return _accel_params(accel, STLDriverConfig().limits, accel0)
 
 
 # ---------------------------------------------------------------------------

@@ -219,7 +219,13 @@ class EgoPolicy(BaseDriver):
         limits = self.config.limits
         if not np.isfinite(measured_mps2):
             return 0.0
-        return float(np.clip(measured_mps2, -limits.emergency_decel_mps2, limits.max_accel_mps2))
+        # Bounded by what a *plan* may command, not by what the emergency
+        # stop may. The measured value anchors the acceleration profile, so
+        # an extreme one ties the whole plan to it: after a 7 m/s^2 stop,
+        # every way of pulling away again is a jerk violation and the
+        # vehicle sits there. The emergency plan brakes that hard without
+        # going through here.
+        return float(np.clip(measured_mps2, -limits.max_decel_mps2, limits.max_accel_mps2))
 
     def _build_inputs(
         self,
