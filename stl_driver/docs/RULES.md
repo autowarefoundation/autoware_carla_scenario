@@ -216,10 +216,21 @@ limit caps a four-second pull-away well below it -- so the rule would be
 violated by every plan and the specification would be asking for the
 impossible.
 
-The gate is the same one `keep_moving` uses, so that waiting at a red light is
-not reported as a failure to make progress.  Without it, every correct stop
-would drive the reported robustness negative and it would stop being a useful
-health signal.
+Both liveness rules are gated on the same condition -- *nothing is stopping
+us* -- so that waiting for a legitimate reason is not reported as a failure to
+make progress.  Three things count, and the third was missing for a while: a
+red light, a vehicle close ahead, and anything else close enough to be worth
+waiting for.  Gating on the lead vehicle alone ignored crossing traffic and
+vehicles alongside at junctions, which is most of what actually stops a car in
+a city: of 165 reported violations over 500 steps, 90 had no lead vehicle at
+all but something within two metres, and only 15 were genuine.
+
+`makes_progress` wraps that condition in `Always`, so it reads "if nothing
+obstructs us at any point in the horizon".  Asking only about the present
+instant is the wrong question for a rule about distance covered *over* the
+horizon: a road clear now and blocked in two seconds is not one to accelerate
+down, and demanding progress there demands a plan the safety rules forbid.
+`keep_moving` asks pointwise, because it is about the speed at each instant.
 
 ### `keep_moving` — soft, weight 2, margin 1.0
 ```

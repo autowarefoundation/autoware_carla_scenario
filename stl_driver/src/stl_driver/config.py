@@ -116,6 +116,17 @@ class Limits:
     progress_margin_m: float = 5.0
     #: Below this the vehicle counts as stopped rather than crawling.
     creep_speed_mps: float = 1.0
+    #: Clearance below which something counts as obstructing us, for the
+    #: purpose of excusing a lack of progress.
+    #:
+    #: The liveness rules were gated on the traffic light and the *lead
+    #: vehicle* only. Measured over 500 steps, that missed most of what
+    #: actually stops a car: of 165 steps where `makes_progress` was reported
+    #: violated, 90 had no lead vehicle at all but something else within two
+    #: metres -- crossing traffic, a vehicle alongside at a junction -- and 60
+    #: were clear at that instant but blocked later in the same horizon. Only
+    #: 15 were genuine.
+    liveness_clearance_m: float = 2.0
 
     # -- geometry ----------------------------------------------------------
     #: Ego body dimensions, used to build its collision footprint.
@@ -190,8 +201,37 @@ class OptimizerConfig:
 
     #: Quasi-random seeds drawn once at construction and reused every step.
     n_samples: int = 64
-    #: Adam steps applied to the single best seed.
+    #: Adam steps applied to each seed.
     n_refine_steps: int = 8
+    #: How many starting points the gradient stage descends from at once.
+    #:
+    #: Descending from one finds the nearest local optimum, and which one that
+    #: is depends on wherever the sampling stage happened to leave off. The
+    #: seeds are independent, so a batched pass covers them all: measured, a
+    #: step over eight costs 13.6 ms against 10.9 ms for one on CPU, and on a
+    #: GPU sixty-four cost the same as one -- 26.2 ms against 25.2 ms.
+    #:
+    #: One by default, and the reason is worth recording, because the
+    #: measurements point in opposite directions depending on where you look.
+    #:
+    #: On a suite of fourteen scenarios with the budget opened up, sixteen
+    #: seeds is clearly better: mean robustness +0.625 -> +0.713, and one more
+    #: scenario satisfied. In closed loop on Town10HD it is catastrophic --
+    #: 19.3 m travelled against 135.8 m, stopped for 87% of steps, identical to
+    #: the metre across two runs against freshly restarted simulators.
+    #:
+    #: The mechanism is the warm start. `_refine` returns the highest
+    #: *robustness* among its seeds, and robustness -- a minimum over rules --
+    #: is maximised by stopping whenever the safety rules bind. With one seed
+    #: that plan has to beat a balanced starting point to be returned at all;
+    #: with sixteen there is nearly always a braking one that wins. It becomes
+    #: the warm start, the continuity margin then prefers it next step, and the
+    #: vehicle brakes itself to a halt it never recovers from.
+    #:
+    #: So the parallelism is real and the code for it is here, but it needs a
+    #: seed-selection rule that does not quietly prefer standing still. Raising
+    #: this without fixing that reproduces the lock.
+    n_refine_seeds: int = 1
     learning_rate: float = 0.3
     #: Inverse temperature schedule for the smoothed objective: start soft so
     #: every timestep contributes gradient, finish sharp so the last steps
@@ -233,6 +273,24 @@ class OptimizerConfig:
     #: Threads torch may use. The tensors here are tiny; more threads costs
     #: more in synchronisation than it saves in arithmetic.
     torch_threads: int = 2
+    #: Compile the two hot paths with ``torch.compile`` before driving.
+    #:
+    #: Measured on this specification: the batched sampling stage 13.9 -> 11.5
+    #: ms and a gradient step 8.3 -> 6.2 ms, about 24% off a whole step. The
+    #: cost is roughly a minute of compilation, which `EgoPolicy` pays in
+    #: `on_session_start` -- before any observation arrives, so no deadline is
+    #: missed, but every rollout starts a minute later.
+    #:
+    #: Off by default for that reason, and because it is the sort of thing
+    #: that is worth having only once the extra time buys something: with the
+    #: budget unchanged it buys two or three more refinement steps.
+    #:
+    #: Compiled with dynamic shapes, which matters here -- the number of actor
+    #: footprint discs changes every step as traffic comes and goes, and a
+    #: static compile would rebuild the graph each time. Measured across 4 to
+    #: 40 discs, the first call at a new size costs the same as the steady
+    #: state, so no rebuilding is happening.
+    compile_search: bool = False
     #: Where the search runs: ``"cpu"``, ``"cuda"``, or ``"auto"``.
     #:
     #: CPU is the default because it is faster at this size, not merely

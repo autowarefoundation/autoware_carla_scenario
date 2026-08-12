@@ -90,6 +90,20 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
     # already be moving at t=0.
     moving_from = horizon.index_at(1.0)
 
+    # "Nothing is stopping us" -- the condition both liveness rules are gated
+    # on, so that waiting for a legitimate reason is not reported as a failure
+    # to make progress.
+    #
+    # Three things count as a reason, and the third was missing: a red light,
+    # a vehicle close ahead, and *anything else* close enough to be worth
+    # waiting for. Gating on the lead vehicle alone ignored crossing traffic
+    # and vehicles alongside at junctions, which is most of what actually
+    # stops a car in a city.
+    unobstructed_now = And(
+        And(light < 0.0, headway > limits.standstill_gap_m),
+        clearance > limits.liveness_clearance_m,
+    )
+
     rules = (
         # -- legality ------------------------------------------------------
         Rule(
@@ -206,8 +220,16 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             #
             # Progress is monotone, so `Eventually` reduces to its value at the
             # end of the horizon: a linear reward with a clean gradient.
+            #
+            # The antecedent is wrapped in `Always`, so it reads "if nothing
+            # obstructs us at any point in the horizon". The pointwise version
+            # asked only about this instant, which is the wrong question for a
+            # rule about distance covered *over* the horizon: a road that is
+            # clear now and blocked in two seconds is not one to accelerate
+            # down, and demanding progress there is demanding a plan the
+            # specification elsewhere forbids.
             Implies(
-                And(light < 0.0, headway > limits.standstill_gap_m),
+                Always(unobstructed_now),
                 Eventually(progress > 0.0, interval=[0, last]),
             ),
             weight=2.0,
@@ -223,11 +245,11 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             # integral over the horizon, this one is instantaneous, and they
             # fail in different ways. A plan that creeps the whole time fails
             # progress; one that lurches and stops fails this.
+            # Pointwise, unlike `makes_progress`: this rule is about the
+            # speed at each instant, so it asks whether anything obstructs us
+            # at *that* instant.
             Always(
-                Implies(
-                    And(light < 0.0, headway > limits.standstill_gap_m),
-                    speed > limits.creep_speed_mps,
-                ),
+                Implies(unobstructed_now, speed > limits.creep_speed_mps),
                 interval=[moving_from, last],
             ),
             weight=2.0,

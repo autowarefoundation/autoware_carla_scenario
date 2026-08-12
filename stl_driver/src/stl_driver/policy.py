@@ -96,7 +96,13 @@ class EgoPolicy(BaseDriver):
             self._warm_start = None
 
     def _warm_up(self) -> None:
-        """Solve one synthetic problem so the real first step is not the first."""
+        """Pay the one-off costs before the runtime starts waiting on us.
+
+        Torch's lazy initialisation, and compilation when it is enabled. The
+        service calls `on_session_start` before any observation arrives, so
+        this is time nobody is waiting on -- whereas the same work inside the
+        first `drive` shows up as a step that missed its deadline.
+        """
         straight = np.stack(
             [
                 np.arange(0.0, 260.0, 2.0),
@@ -113,7 +119,7 @@ class EgoPolicy(BaseDriver):
                 speed_mps=5.0,
                 accel_mps2=0.0,
             )
-            self.optimizer.solve(inputs, warm_start=None)
+            self.optimizer.prepare(inputs)
         except Exception:  # noqa: BLE001
             # A failed warm-up costs a slower first step and nothing else; it
             # must never stop a session from starting.

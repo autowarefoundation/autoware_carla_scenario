@@ -304,10 +304,18 @@ def test_a_deep_hard_violation_is_penalised_without_limit(rules):
 
     A soft rule would flatten out, but "twice as far into an obstacle" has to
     keep scoring worse or the optimizer has no reason to climb back out.
+
+    Measured on a rule set holding `collision_free` alone. Clearance appears
+    in two rules now -- it also tells the liveness rules whether something is
+    obstructing us -- so varying it moves more than one term of the full
+    objective, and the isolation is what makes the arithmetic checkable.
     """
+    from stl_driver.ruleset import RuleSet
+
+    collision_free = RuleSet(tuple(rule for rule in rules.rules if rule.name == "collision_free"))
 
     def objective_at(clearance: float) -> float:
-        return float(rules.objective(signal_from_columns(clearance=constant(clearance))))
+        return float(collision_free.objective(signal_from_columns(clearance=constant(clearance))))
 
     assert objective_at(-1.0) - objective_at(-6.0) == pytest.approx(50.0, rel=1e-3)
     assert objective_at(-6.0) - objective_at(-11.0) == pytest.approx(50.0, rel=1e-3)
@@ -460,3 +468,39 @@ def test_the_machinery_does_not_depend_on_this_particular_specification():
 
     defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
     assert "build_rules" not in defined
+
+
+def test_the_liveness_gate_excuses_an_obstruction_that_is_not_a_lead_vehicle(rules):
+    """Crossing traffic and vehicles alongside stop a car too.
+
+    Gating only on the lead vehicle missed most of what actually holds a car
+    up in a city: measured over 500 steps, 90 of 165 reported `makes_progress`
+    violations had no lead vehicle at all but something within two metres.
+    """
+    blocked = signal_from_columns(
+        speed=constant(0.0), progress_slack=constant(-12.0), clearance=constant(0.5)
+    )
+    assert robustness(rules, "makes_progress", blocked) > 0.0
+    assert robustness(rules, "keep_moving", blocked) > 0.0
+
+
+def test_the_progress_gate_looks_at_the_whole_horizon_not_just_now(rules):
+    """A road clear now and blocked in two seconds is not one to accelerate down.
+
+    `makes_progress` is about distance covered *over* the horizon, so asking
+    only about this instant is the wrong question -- and demanding progress
+    there demands a plan the safety rules forbid.
+    """
+    clear_then_blocked = torch.full((T,), 40.0)
+    clear_then_blocked[20:] = 0.5
+    signal = signal_from_columns(
+        speed=constant(0.0), progress_slack=constant(-12.0), clearance=clear_then_blocked
+    )
+    assert robustness(rules, "makes_progress", signal) > 0.0
+
+
+def test_a_genuinely_clear_road_still_demands_progress(rules):
+    """The gate must not become an excuse for never moving."""
+    idle = signal_from_columns(speed=constant(0.0), progress_slack=constant(-12.0))
+    assert robustness(rules, "makes_progress", idle) < 0.0
+    assert robustness(rules, "keep_moving", idle) < 0.0
