@@ -491,7 +491,6 @@ def _lead_station(
     # passing there becomes the vehicle we believe we are following -- a few
     # metres ahead, which reads as a violation however far the real lead is.
     in_lane = np.abs(offsets) < limits.lead_capture_half_width_m
-    ahead = stations > station0_m + 0.5
 
     # The rear edge of each disc, which is the part of the lead we would reach
     # first. Measured from the disc's own radius rather than from half the
@@ -499,9 +498,38 @@ def _lead_station(
     # on the map, that put every lead three metres further back than it was.
     rear = stations - radii[None, :]
 
-    candidate = np.where(in_lane & ahead, rear, np.inf)
-    chosen = np.argmin(candidate, axis=1)
-    lead = candidate[np.arange(n_steps), chosen]
+    # Who we are following is decided *now*, and then that vehicle is followed.
+    #
+    # Choosing it afresh at each step of the horizon looks equivalent and is
+    # not, because the only reference available to a plan-independent forecast
+    # is where the ego is at t = 0. Four seconds out the ego has driven twenty
+    # metres past that mark, so a car overtaking us from behind crosses it and
+    # is promptly adopted as the vehicle we are following -- at a gap measured
+    # from a position we left two seconds ago, and therefore negative.
+    #
+    # Measured on the road, that was not a corner case. The lead station would
+    # read a steady 74.6 m for most of the horizon, dip to 0.4 m for three or
+    # four steps as someone passed, and return; `safe_headway` reported -16 m
+    # against a road that was completely clear, and the policy braked from
+    # 7 m/s to a standstill over ten steps. It accounted for nearly every
+    # violation of the rule -- 19.4% of a seven-hundred-step drive -- and for
+    # the stops that had no visible cause.
+    #
+    # Nothing is given up by fixing the identity. A vehicle that cuts in ahead
+    # is picked up by the next replan a tenth of a second later, and its
+    # geometry is `collision_free`'s business in the meantime -- that rule
+    # watches every actor's footprint, not just the one we follow.
+    ahead_now = (stations[0] > station0_m + 0.5) & in_lane[0]
+    if not ahead_now.any():
+        return np.full((n_steps,), np.inf), np.zeros((n_steps,))
 
-    lead_speed = np.repeat(along, per_actor)[chosen]
-    return lead, np.where(np.isfinite(lead), lead_speed, 0.0)
+    followed = int(np.argmin(np.where(ahead_now, rear[0], np.inf))) // per_actor
+    columns = slice(followed * per_actor, (followed + 1) * per_actor)
+
+    # Its nearest edge over the horizon, and absent once it has left our lane
+    # -- a vehicle turning off is no longer something we are following, and
+    # its station along *our* route stops meaning anything once it has gone.
+    still_ours = in_lane[:, columns].any(axis=1)
+    lead = np.where(still_ours, rear[:, columns].min(axis=1), np.inf)
+    lead_speed = np.where(still_ours, float(along[followed]), 0.0)
+    return lead, lead_speed

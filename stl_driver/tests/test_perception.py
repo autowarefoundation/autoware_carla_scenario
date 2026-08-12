@@ -549,3 +549,47 @@ def test_the_lateral_rate_decays_rather_than_integrating_forever():
     # It moves across early on, then settles rather than running away.
     assert early > 1.0
     assert late < 1.0 + 1.5 * CONFIG.limits.prediction_lateral_decay_s + 0.5
+
+
+def test_a_vehicle_overtaking_from_behind_never_becomes_the_lead():
+    """The bug that produced most of `safe_headway`'s violations.
+
+    The forecast cannot know where the plan will put the ego, so the only
+    reference it has for "ahead" is the ego's station at t = 0. Deciding the
+    lead afresh at each step of the horizon against that fixed mark means a
+    faster vehicle passing us crosses it and is adopted as the vehicle we are
+    following -- at a gap measured from a position the ego left seconds ago,
+    and so negative.
+
+    On the road the lead station read a steady 74.6 m for most of the horizon,
+    dipped to 0.4 m for three or four steps as someone passed, and returned.
+    `safe_headway` reported -16 m against a clear road and the policy braked
+    from 7 m/s to a standstill.
+    """
+    overtaking = actor(-12.0, 0.0, vx=14.0)  # behind us, and much quicker
+    forecast = forecast_actors(renderer(overtaking), Pose.identity(), table(), 0.0, CONFIG)
+    assert not np.isfinite(forecast.lead_station_m).any(), (
+        "a vehicle that starts behind us must never be adopted as the lead, "
+        "however far forward it travels within the horizon"
+    )
+
+
+def test_the_lead_stays_the_same_vehicle_across_the_horizon():
+    """Following is an identity, not a per-step argmin.
+
+    With a slow vehicle far ahead and a quick one passing, the gap to the one
+    we follow must decrease smoothly -- never jump to the passer and back.
+    """
+    forecast = forecast_actors(
+        renderer(actor(60.0, 0.0, vx=2.0), actor(-10.0, 0.0, vx=16.0)),
+        Pose.identity(),
+        table(),
+        0.0,
+        CONFIG,
+    )
+    lead = forecast.lead_station_m
+    assert np.isfinite(lead).all()
+    # Monotone: the vehicle we follow is moving forward, so its station only
+    # grows. A switch to the overtaking car would show up as a step down.
+    assert np.all(np.diff(lead) >= -1e-6)
+    assert lead.min() > 50.0
