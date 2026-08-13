@@ -554,8 +554,12 @@ def _accel_params(accel_mps2: float, limits, accel0_mps2: float = 0.0) -> torch.
     from stl_driver.rollout import knot_step_limit
 
     step = knot_step_limit(limits)
-    current = float(np.clip(accel0_mps2, -limits.max_decel_mps2, limits.max_accel_mps2))
-    target = float(np.clip(accel_mps2, -limits.max_decel_mps2, limits.max_accel_mps2))
+    # The same envelope the profile itself is clamped to, so that a requested
+    # acceleration this function reports as reachable really is -- see
+    # `Limits.plan_accel_envelope`.
+    lowest, highest = limits.plan_accel_envelope()
+    current = float(np.clip(accel0_mps2, lowest, highest))
+    target = float(np.clip(accel_mps2, lowest, highest))
 
     logits = []
     for _ in range(4):

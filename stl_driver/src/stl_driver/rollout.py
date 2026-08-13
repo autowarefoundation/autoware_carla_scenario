@@ -125,23 +125,19 @@ class RolloutInputs:
         return int(self.actor_radii.shape[0])
 
 
-#: How far inside a comfort bound the parameterisation keeps itself. Landing
-#: exactly on a bound makes the rule read exactly zero, where float error alone
-#: decides whether it counts as satisfied.
-_INSIDE = 0.98
-
-
 def knot_step_limit(limits) -> float:
     """The largest acceleration change one knot interval may carry.
 
     The profile is piecewise linear between knots, so its slope -- the jerk --
     is a knot-to-knot change divided by the interval. Bounding the change by
-    ``jerk_limit * interval`` bounds the jerk. Kept slightly inside the bound,
-    because exactly at it float error alone decides whether the comfort rule
-    reads as satisfied.
+    ``plan_jerk_limit() * interval`` bounds the jerk.
+
+    The inset that keeps this off the comfort bound belongs to `Limits`, along
+    with the matching one on acceleration, so that this and everything else
+    anchoring a plan cannot drift apart -- see `Limits.plan_accel_envelope`.
     """
     spacing = _KNOT_TIMES_S[1] - _KNOT_TIMES_S[0]
-    return limits.max_jerk_mps3 * spacing * _INSIDE
+    return limits.plan_jerk_limit() * spacing
 
 
 def _map_params(
@@ -182,7 +178,8 @@ def _map_params(
     # for the same reason the step is: clamping exactly onto the bound leaves
     # `comfort` reading exactly zero, satisfied with no margin at all, and
     # every accelerating plan pinned there.
-    knots = knots.clamp(-limits.max_decel_mps2 * _INSIDE, limits.max_accel_mps2 * _INSIDE)
+    lowest, highest = limits.plan_accel_envelope()
+    knots = knots.clamp(lowest, highest)
 
     offsets = limits.lane_half_width_m * torch.tanh(params[..., 4:6])
     return knots, offsets

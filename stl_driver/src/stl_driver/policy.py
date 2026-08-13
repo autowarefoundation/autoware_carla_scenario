@@ -216,7 +216,6 @@ class EgoPolicy(BaseDriver):
         could physically produce are routine. Clamping to the same envelope
         the plan is held to keeps a sensor artefact from dictating the plan.
         """
-        limits = self.config.limits
         if not np.isfinite(measured_mps2):
             return 0.0
         # Bounded by what a *plan* may command, not by what the emergency
@@ -225,7 +224,13 @@ class EgoPolicy(BaseDriver):
         # every way of pulling away again is a jerk violation and the
         # vehicle sits there. The emergency plan brakes that hard without
         # going through here.
-        return float(np.clip(measured_mps2, -limits.max_decel_mps2, limits.max_accel_mps2))
+        #
+        # The envelope comes from `Limits` rather than from the comfort bounds,
+        # so that this and the first knot agree exactly. They used to differ by
+        # the inset, and that 2% arrived in the opening jerk ten times over --
+        # see `Limits.plan_accel_envelope`.
+        lowest, highest = self.config.limits.plan_accel_envelope()
+        return float(np.clip(measured_mps2, lowest, highest))
 
     def _build_inputs(
         self,

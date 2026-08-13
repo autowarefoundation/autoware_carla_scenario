@@ -96,12 +96,34 @@ class Limits:
     lane_half_width_m: float = 1.2
 
     # -- comfort -----------------------------------------------------------
+    #: What `comfort` asserts. These bounds belong to the *specification*: they
+    #: say when a ride stops being comfortable. What a *plan* is allowed to
+    #: command is a little tighter -- see `plan_bound_inset` and the two
+    #: accessors below, which is what everything building or anchoring a plan
+    #: must ask, rather than reaching for these.
     max_accel_mps2: float = 2.0
     max_decel_mps2: float = 4.0
     max_jerk_mps3: float = 4.0
     max_lat_accel_mps2: float = 2.5
     #: Only the fallback plan may exceed `max_decel_mps2`.
     emergency_decel_mps2: float = 7.0
+    #: How far inside the comfort bounds a plan keeps itself.
+    #:
+    #: Landing exactly on a bound leaves the rule reading exactly zero, where
+    #: float error alone decides whether it counts as satisfied, and every
+    #: accelerating plan pinned there.
+    #:
+    #: The gap is small and the arithmetic around it is not, which is why the
+    #: envelope is derived here rather than at each use. The plan is anchored
+    #: at the measured acceleration and the opening jerk is the difference
+    #: between that and the first knot over one 0.1 s tick -- so two callers
+    #: insetting differently put ten times their disagreement into the jerk.
+    #: Measured, when the ego's acceleration was confined to the comfort bounds
+    #: and the first knot to these: 0.8 m/s^3 of opening jerk before the plan
+    #: asked for anything, a fifth of the budget, which made `comfort`
+    #: unsatisfiable by every candidate on the steps that followed a hard stop.
+    #: The vehicle's only relief was to pull away more gently than it meant to.
+    plan_bound_inset: float = 0.98
 
     # -- liveness ----------------------------------------------------------
     #: `makes_progress` asks for this fraction of what free-flow travel over
@@ -221,12 +243,32 @@ class Limits:
     #: dominating. 20 m comfortably brackets both.
     gate_magnitude_m: float = 20.0
 
+    def plan_accel_envelope(self) -> tuple[float, float]:
+        """Accelerations a plan may command, as ``(lowest, highest)``.
+
+        The single answer to "how hard may we ask the vehicle to speed up or
+        slow down". Anything generating a plan, anchoring one at the vehicle's
+        measured state, or inverting the parameterisation asks here; only the
+        specification in `rules.py` reads the comfort bounds directly, because
+        only it is stating the requirement rather than staying inside it.
+        """
+        return (
+            -self.max_decel_mps2 * self.plan_bound_inset,
+            self.max_accel_mps2 * self.plan_bound_inset,
+        )
+
+    def plan_jerk_limit(self) -> float:
+        """The largest rate of change of acceleration a plan may command."""
+        return self.max_jerk_mps3 * self.plan_bound_inset
+
     def __post_init__(self) -> None:
         if self.gate_magnitude_m <= self.stop_line_margin_m:
             raise ValueError(
                 "gate_magnitude_m must exceed stop_line_margin_m, or ordinary "
                 "stop-line overshoots would be clipped"
             )
+        if not 0.0 < self.plan_bound_inset <= 1.0:
+            raise ValueError("plan_bound_inset must be a fraction of the comfort bounds")
 
 
 @dataclass(frozen=True)

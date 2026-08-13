@@ -93,6 +93,41 @@ def test_the_opening_jerk_is_bounded(config):
     assert signal[:, Col.JERK].abs().max().item() < config.limits.max_jerk_mps3
 
 
+def test_no_measurable_state_can_force_a_jerk_violation(config):
+    """`comfort` must be reachable from wherever the vehicle actually is.
+
+    The plan is anchored at the measured acceleration and the opening jerk is
+    the difference between that and the first knot over one 0.1 s tick, so any
+    disagreement about the envelope arrives in the jerk ten times over. The
+    two disagreed by the inset -- the measurement was confined to the comfort
+    bounds and the knot to 98% of them -- which made `comfort` unsatisfiable
+    by *every* candidate on the 15 steps of a 400-step drive that followed a
+    hard stop, all of them with the measured acceleration pinned at -4.0.
+
+    Swept over the whole envelope and both extremes of the plan, because the
+    failure only appeared at its edges.
+    """
+    from stl_driver.policy import EgoPolicy
+    from stl_driver.rollout import knot_step_limit
+
+    limits = config.limits
+    policy = EgoPolicy(config=config)
+    hardest = torch.tensor([3.0, 3.0, 3.0, 3.0, 0.0, 0.0])  # tanh saturates: full steps
+    for measured in np.linspace(-limits.max_decel_mps2, limits.max_accel_mps2, 17):
+        # What the policy would actually hand the rollout for this reading.
+        accel0 = policy._plausible_acceleration(float(measured))
+        inputs = make_inputs(config, speed0_mps=4.0, accel0_mps2=accel0)
+        for params in (hardest, -hardest):
+            signal = rollout(params, inputs, config)
+            assert signal[:, Col.JERK].abs().max().item() <= limits.max_jerk_mps3, (
+                f"measured {measured:.2f} -> accel0 {accel0:.3f}"
+            )
+
+    # And the bound is the knot step itself, not something looser that happens
+    # to fit: one knot interval of change is the most a plan can ask for.
+    assert knot_step_limit(limits) < limits.max_jerk_mps3
+
+
 def test_a_standstill_is_reported_as_a_standstill(config):
     """A softplus floor would report a stopped car creeping at log(2)/beta.
 

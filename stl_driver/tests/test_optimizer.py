@@ -289,6 +289,32 @@ def test_a_warm_start_is_accepted_and_helps(optimizer):
         assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
 
 
+def test_nothing_the_search_can_try_breaks_the_comfort_bounds(optimizer):
+    """The guard against the two envelopes drifting apart again.
+
+    A plan is held to `Limits.plan_accel_envelope`, which is inset from the
+    comfort bounds the specification asserts. Anything that reaches for those
+    bounds directly to build or anchor a plan re-opens the gap, and the gap
+    arrives in the opening jerk multiplied by ten -- it made `comfort`
+    unsatisfiable by every candidate after a hard stop. This asks the question
+    end to end instead: over the whole range of states the vehicle can report,
+    is there anything at all the search might try that the rule would reject?
+    """
+    limits = CONFIG.limits
+    lowest, highest = limits.plan_accel_envelope()
+    for accel0 in (lowest, 0.0, highest):
+        inputs = make_inputs(CONFIG, speed0_mps=5.0, accel0_mps2=accel0)
+        candidates = optimizer._candidates(torch.zeros(N_PARAMS))
+        with torch.no_grad():
+            for params in candidates:
+                signal = rollout(params, inputs, CONFIG)
+                accel = signal[:, Col.ACCEL]
+                jerk = signal[:, Col.JERK]
+                assert accel.max().item() <= limits.max_accel_mps2
+                assert accel.min().item() >= -limits.max_decel_mps2
+                assert jerk.abs().max().item() <= limits.max_jerk_mps3
+
+
 def test_the_candidate_batch_is_the_same_width_with_or_without_a_warm_start(optimizer):
     """A width that varies is a graph that gets recompiled mid-drive.
 
