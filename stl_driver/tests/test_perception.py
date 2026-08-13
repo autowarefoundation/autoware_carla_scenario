@@ -407,8 +407,12 @@ def test_a_vehicle_queuing_behind_us_is_not_a_collision():
     while already stationary and correctly waiting.
     """
     behind = forecast_actors(renderer(actor(-4.0, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
-    # Excluded discs are moved far away rather than removed.
-    assert np.linalg.norm(behind.centres[0], axis=-1).min() > 1000.0
+    # `_drop_traffic_behind` moves such discs far away rather than removing
+    # them, since it works per timestep and the actor may yet come past us.
+    # This one never does, so nothing it leaves behind is within reach and
+    # `_drop_traffic_out_of_reach` then drops it outright.
+    assert behind.centres.shape[1] == 0
+    assert behind.radii.shape == (0,)
 
     ahead = forecast_actors(renderer(actor(8.0, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
     assert np.linalg.norm(ahead.centres[0], axis=-1).min() < 20.0
@@ -418,6 +422,34 @@ def test_a_vehicle_alongside_us_still_counts():
     """Only strictly behind is dropped; abreast is very much a collision risk."""
     forecast = forecast_actors(renderer(actor(0.5, 3.2)), Pose.identity(), table(), 0.0, CONFIG)
     assert np.linalg.norm(forecast.centres[0], axis=-1).min() < 20.0
+
+
+def test_a_vehicle_too_far_to_reach_is_not_forecast_at_all():
+    """Most of what the simulator reports could never touch us.
+
+    Carrying it is not free: the discs are padded to a fixed width and every
+    candidate plan is scored against all of it.
+    """
+    far = CONFIG.limits.actor_reach_m + 30.0
+    forecast = forecast_actors(renderer(actor(far, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
+    assert forecast.centres.shape[1] == 0
+    # Still counted as seen -- it is dropped from the collision check, not
+    # from the report of what is out there.
+    assert forecast.n_actors == 1
+
+
+def test_a_distant_vehicle_closing_on_us_is_kept():
+    """The test is closest approach over the horizon, not distance now.
+
+    The discs already carry the other vehicle's predicted motion, so the one
+    case a range gate must not get wrong -- something far away and arriving --
+    is the case it reads as near.
+    """
+    far = CONFIG.limits.actor_reach_m + 30.0
+    closing = actor(far, 0.0, yaw=math.pi, vx=-20.0)
+    forecast = forecast_actors(renderer(closing), Pose.identity(), table(), 0.0, CONFIG)
+    assert forecast.centres.shape[1] > 0
+    assert np.linalg.norm(forecast.centres, axis=-1).min() < CONFIG.limits.actor_reach_m
 
 
 def test_a_vehicle_overtaking_from_behind_reappears_once_it_is_ahead():

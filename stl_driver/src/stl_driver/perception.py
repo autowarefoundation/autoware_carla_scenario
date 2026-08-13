@@ -237,6 +237,7 @@ def forecast_actors(
         stations, offsets, radii, sizes_array, along, station0_m, config
     )
     centres_over_time = _drop_traffic_behind(centres_over_time, config)
+    centres_over_time, radii = _drop_traffic_out_of_reach(centres_over_time, radii, config)
 
     return ActorForecast(
         centres=centres_over_time.astype(np.float32),
@@ -264,8 +265,11 @@ def pad_actor_discs(
     than room, the farthest go -- for the same reason, only the nearest can
     decide a minimum.
 
-    Costs almost nothing: the work here is dispatching tensor operations, not
-    performing them, so a wider tensor is the same number of operations.
+    The width is worth keeping close to what the road produces, because the
+    padding is not free once the search is compiled: 48.8 ms at 128 discs
+    against 41.8 at 48. Eagerly it very nearly was, the time going on
+    dispatching operations rather than performing them, which is the measure-
+    it-again lesson rather than a fact about padding.
     """
     n_steps, n_discs, _ = centres.shape
     if n_discs == capacity:
@@ -284,6 +288,47 @@ def pad_actor_discs(
     return (
         np.concatenate([centres, far], axis=1),
         np.concatenate([radii, np.zeros(missing, dtype=radii.dtype)]),
+    )
+
+
+def _drop_traffic_out_of_reach(
+    centres_over_time: np.ndarray,
+    radii: np.ndarray,
+    config: STLDriverConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep only the discs the ego could still reach, and drop the rest entirely.
+
+    The forecast is of every vehicle the simulator reports, and most of them
+    are nowhere near us: measured over 200 steps in traffic of thirty, 90
+    discs per step of which 19 came within 60 m at their closest approach.
+    The 32nd-nearest disc never came closer than 61.3 m on any step. Those
+    cannot decide `collision_free`, and carrying them is not free -- the
+    tensors are padded to a fixed width and every candidate is scored against
+    all of it, worth 11 ms of a 60 ms search.
+
+    The test is the *closest approach over the horizon*, not the distance
+    now, because the discs already carry the other vehicle's predicted
+    motion. Something far off but closing is near by this measure and stays.
+    That is also what makes the radius easy to justify: it has to cover the
+    ego's own reach and nothing more. At the default speed limit over a
+    four-second horizon that is 55.6 m, plus the front of the car and the
+    collision margin -- see `Limits.actor_reach_m`.
+
+    Removed rather than moved away, unlike `_drop_traffic_behind`: the point
+    is a narrower tensor, and this runs after the discs are no longer needed
+    per timestep. Followers pushed aside by that function are dropped here
+    too, since a disc parked at 10 km approaches nothing.
+    """
+    if centres_over_time.shape[1] == 0:
+        return centres_over_time, radii
+
+    closest = np.linalg.norm(centres_over_time, axis=2).min(axis=0)
+    keep = closest <= config.limits.actor_reach_m
+    if keep.all():
+        return centres_over_time, radii
+    return (
+        np.ascontiguousarray(centres_over_time[:, keep]),
+        np.ascontiguousarray(radii[keep]),
     )
 
 

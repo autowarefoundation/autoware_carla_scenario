@@ -169,21 +169,42 @@ class Limits:
     #: usefully. Beyond it -- or behind the route's start -- the straight
     #: line is the more honest model, and the two are mixed per actor.
     frenet_prediction_half_width_m: float = 8.0
+    #: How near a predicted disc must come before the rollout is told about it.
+    #:
+    #: Measured against the disc's *closest approach over the horizon*, which
+    #: already includes the other vehicle's predicted motion, so this radius
+    #: has only to cover how far the ego itself can get: at
+    #: `default_speed_limit_mps` over a four-second horizon, 55.6 m, plus the
+    #: front of the car (3.75 m from the rear axle) and `collision_margin_m`.
+    #: Round that up and nothing the ego could touch is outside it.
+    #:
+    #: Worth having because the simulator reports every vehicle on the map and
+    #: almost none of them are relevant: 200 steps in traffic of thirty gave 90
+    #: discs per step, of which 19 came within 60 m and the 32nd-nearest never
+    #: came within 61.3 m on any step. Gating there cuts the search from 59.9
+    #: to 48.8 ms and the forecast's own cost with it. See
+    #: `_drop_traffic_out_of_reach`.
+    actor_reach_m: float = 60.0
 
     # -- numerics ----------------------------------------------------------
     #: How many actor footprint discs the rollout is given, always.
     #:
-    #: The forecast produces as many as there are vehicles nearby, which on a
-    #: 400-step drive through thirty cars was 91, 98, 105 or 112 -- four widths,
-    #: and therefore four shapes for anything compiling the graph to specialise
-    #: on. Padding to a fixed width leaves one.
+    #: The forecast produces as many as there are vehicles within
+    #: `actor_reach_m`, which on a 400-step drive through thirty cars varied
+    #: continuously and peaked at 29 -- and a width that varies is a graph
+    #: shape that varies, recompiled mid-drive. Padding to a fixed width
+    #: leaves one shape; the rest of this is headroom over that peak.
     #:
-    #: The padding costs almost nothing, because the time here goes on
-    #: dispatching operations rather than on performing them: a wider tensor is
-    #: the same number of operations. Discs beyond this are dropped
-    #: farthest-first, which is the right way round -- `collision_free` is a
-    #: minimum, so only the nearest can decide it.
-    max_actor_discs: int = 128
+    #: Not free, and it was thought to be: the argument was that the time goes
+    #: on dispatching operations rather than performing them, so a wider tensor
+    #: costs the same. That held while the search ran eagerly and stopped
+    #: holding when it was compiled, which is what dispatch overhead is for.
+    #: Measured compiled, at 128 discs the search takes 48.8 ms against 41.8 at
+    #: 48 -- so the width is worth keeping near what the road actually
+    #: produces. Discs beyond it are dropped farthest-first, which is the right
+    #: way round: `collision_free` is a minimum, so only the nearest can decide
+    #: it.
+    max_actor_discs: int = 48
     #: Distance-like columns saturate here rather than running to infinity.
     #: An unbounded column would collapse the softmax weights inside `And` and
     #: dominate the weighted objective -- the sort of bug that shows up as
@@ -307,9 +328,16 @@ class OptimizerConfig:
     continuity_margin: float = 0.3
     #: Candidates echoed back as `DriveResult.sampled_trajectories_in_rig`.
     n_reported_candidates: int = 4
-    #: Threads torch may use. The tensors here are tiny; more threads costs
-    #: more in synchronisation than it saves in arithmetic.
-    torch_threads: int = 2
+    #: Threads torch may use.
+    #:
+    #: This was 2, on the grounds that the tensors here are tiny and more
+    #: threads would cost more in synchronisation than they saved in
+    #: arithmetic. That stopped being true when the actor discs were padded to
+    #: a fixed width and the search compiled: 67 candidates over 40 timesteps
+    #: against 48 discs is no longer tiny. Measured, one configuration per
+    #: process so that nothing recompiles for the wrong reason: 91.2 ms at one
+    #: thread, 71.9 at two, 59.9 at four, 61.5 at eight.
+    torch_threads: int = 4
     #: Compile the two hot paths with ``torch.compile`` before driving.
     #:
     #: On, and measured on the road rather than on a bench -- for two drives
