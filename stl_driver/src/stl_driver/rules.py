@@ -145,7 +145,24 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             # stays 0 like every other rule's.
             Always(clearance > 0.0),
             weight=10.0,
-            margin=2.0,
+            # Where surplus clearance stops being worth anything, and it has to
+            # be small, because this rule outweighs every other by design.
+            #
+            # At 2.0 the objective still paid about 9.4 per metre of clearance
+            # at the half-metre a car passing in the next lane leaves, against
+            # 2.0 per metre of progress from `makes_progress` -- so backing off
+            # scored nearly five times what getting on did, and the search
+            # took that trade whenever traffic came past. Measured, on a
+            # 400-step drive: 44 steps braked below -1 m/s^2 with every rule
+            # satisfied by simply holding speed, and on 33 of them the
+            # objective preferred the braking plan outright.
+            #
+            # Half a metre saturates by about a metre and a half of clearance,
+            # which is as much air as any plan needs to be judged safe. Nothing
+            # about the safety argument changes: this is a hard rule, so the
+            # penalty *below* zero stays linear and unbounded, and only the
+            # reward for surplus is capped.
+            margin=0.5,
             hard=True,
             description="Keep clearance from every predicted actor at all times.",
         ),

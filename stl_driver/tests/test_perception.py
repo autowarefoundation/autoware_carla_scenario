@@ -424,6 +424,36 @@ def test_a_vehicle_alongside_us_still_counts():
     assert np.linalg.norm(forecast.centres[0], axis=-1).min() < 20.0
 
 
+def test_a_vehicle_beside_the_road_does_not_decide_the_clearance():
+    """`collision_free` is a minimum, so anything present decides it.
+
+    A vehicle two lanes over is the nearest thing about for most of a drive,
+    and the objective pays for clearance -- which made it a standing reason to
+    slow down for something that could not be hit.
+    """
+    beside = forecast_actors(renderer(actor(12.0, 9.0)), Pose.identity(), table(), 0.0, CONFIG)
+    assert beside.centres.shape[1] == 0
+
+    # The corridor a plan may occupy still counts: this one is inside it.
+    within = forecast_actors(renderer(actor(12.0, 1.0)), Pose.identity(), table(), 0.0, CONFIG)
+    assert within.centres.shape[1] > 0
+
+
+def test_traffic_crossing_into_our_lane_is_kept_from_the_start():
+    """The case a lane filter must not get wrong.
+
+    Something crossing a junction is far to one side now and across our path
+    two seconds from now. Judged on where it is, it would be dropped exactly
+    when it matters most; judged on where it is predicted to be, it is kept.
+    """
+    crossing = actor(20.0, -14.0, yaw=math.pi / 2, vy=4.0)
+    forecast = forecast_actors(renderer(crossing), Pose.identity(), table(), 0.0, CONFIG)
+    assert forecast.centres.shape[1] > 0
+    # It really does start outside the corridor -- otherwise the test proves
+    # nothing about prediction.
+    assert abs(forecast.centres[0, :, 1]).min() > CONFIG.limits.lane_half_width_m * 2.0
+
+
 def test_a_vehicle_too_far_to_reach_is_not_forecast_at_all():
     """Most of what the simulator reports could never touch us.
 
