@@ -349,7 +349,7 @@ def test_the_continuity_rule_finds_last_step_s_plan(optimizer):
     So the rows are named, and this asserts the names are right rather than
     that some index is.
     """
-    warm = _accel_params(1.234, CONFIG.limits, 0.0)
+    warm = _accel_params(1.234, CONFIG.limits, 0.0, CONFIG.horizon)
     candidates = optimizer._candidates(warm, 0.0)
     assert torch.allclose(candidates[WARM_START_ROW], warm)
     assert not torch.allclose(candidates[BRAKE_ROW], warm)

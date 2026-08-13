@@ -197,40 +197,6 @@ def test_makes_progress_fails_when_the_plan_never_covers_the_distance(rules):
     assert robustness(rules, "makes_progress", signal) == pytest.approx(-7.5)
 
 
-def test_keep_moving_ignores_a_stall_before_the_window_opens(rules):
-    """Pins that intervals are timestep indices, not seconds.
-
-    The window opens at 1.0 s, which is index 10 at a 0.1 s step. A stall at
-    index 5 is inside the first second and must be tolerated -- pulling away
-    from a standstill takes time.
-    """
-    stalled_early = signal_from_columns(speed=spike(6.0, 0.0, at=5))
-    assert robustness(rules, "keep_moving", stalled_early) > 0.0
-
-
-def test_keep_moving_catches_a_stall_inside_the_window(rules):
-    stalled_late = signal_from_columns(speed=spike(6.0, 0.0, at=12))
-    assert robustness(rules, "keep_moving", stalled_late) == pytest.approx(-LIMITS.creep_speed_mps)
-
-
-def test_keep_moving_is_vacuous_at_a_red_light(rules):
-    """Stopping at a red light must not read as a liveness failure."""
-    signal = signal_from_columns(
-        light_gate=constant(LIMITS.gate_magnitude_m),
-        speed=constant(0.0),
-    )
-    assert robustness(rules, "keep_moving", signal) == pytest.approx(LIMITS.gate_magnitude_m)
-
-
-def test_keep_moving_is_vacuous_behind_a_close_vehicle(rules):
-    """Nor may queueing behind a stopped vehicle."""
-    signal = signal_from_columns(
-        headway_slack=constant(0.5),  # below standstill_gap_m
-        speed=constant(0.0),
-    )
-    assert robustness(rules, "keep_moving", signal) > 0.0
-
-
 # ---------------------------------------------------------------------------
 # The specification as a whole
 # ---------------------------------------------------------------------------
@@ -366,13 +332,12 @@ def test_the_rule_set_covers_the_four_declared_families(rules):
         "lane_keeping",
         "comfort",
         "makes_progress",
-        "keep_moving",
     }
     assert set(rules.names) == expected
 
 
 def test_rule_windows_follow_the_horizon_rather_than_hardcoded_indices():
-    """`keep_moving` must mean "after one second" whatever the step size is.
+    """A rule's window must mean seconds whatever the step size is.
 
     Intervals are indices, so a rule that hardcoded 10 would silently become a
     half-second window if `step_s` were halved.
@@ -481,7 +446,6 @@ def test_the_liveness_gate_excuses_an_obstruction_that_is_not_a_lead_vehicle(rul
         speed=constant(0.0), progress_slack=constant(-12.0), clearance=constant(0.5)
     )
     assert robustness(rules, "makes_progress", blocked) > 0.0
-    assert robustness(rules, "keep_moving", blocked) > 0.0
 
 
 def test_the_progress_gate_looks_at_the_whole_horizon_not_just_now(rules):
@@ -503,7 +467,6 @@ def test_a_genuinely_clear_road_still_demands_progress(rules):
     """The gate must not become an excuse for never moving."""
     idle = signal_from_columns(speed=constant(0.0), progress_slack=constant(-12.0))
     assert robustness(rules, "makes_progress", idle) < 0.0
-    assert robustness(rules, "keep_moving", idle) < 0.0
 
 
 def test_the_combined_score_equals_the_two_it_replaces(rules):

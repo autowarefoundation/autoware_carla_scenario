@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """**The driving specification.** This is the file to edit.
 
-Ten formulas in Signal Temporal Logic that say what the vehicle may and may
+Nine formulas in Signal Temporal Logic that say what the vehicle may and may
 not do.  Everything else in the package -- the rollout, the search, the gRPC
 plumbing -- exists so that these can be evaluated on a candidate plan and
 maximised.  Change the behaviour here, not in the planner.
@@ -85,22 +85,24 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
     progress = column("progress_slack", Col.PROGRESS_SLACK)
     headroom = column("speed_headroom", Col.SPEED_HEADROOM)
 
-    # `keep_moving` only starts asking after a second, so that a plan is
-    # allowed to pull away from a standstill rather than being required to
-    # already be moving at t=0.
-    moving_from = horizon.index_at(1.0)
-
-    # "Nothing is stopping us" -- the condition both liveness rules are gated
-    # on, so that waiting for a legitimate reason is not reported as a failure
-    # to make progress.
+    # "Nothing is stopping us" -- what the liveness rules are gated on, so that
+    # waiting for a legitimate reason is not reported as a failure to make
+    # progress. The two of them need different answers, and used to share one.
     #
     # Three things count as a reason, and the third was missing: a red light,
     # a vehicle close ahead, and *anything else* close enough to be worth
     # waiting for. Gating on the lead vehicle alone ignored crossing traffic
     # and vehicles alongside at junctions, which is most of what actually
     # stops a car in a city.
+    #
+    # Traffic only. A red light needs no gate here, because what
+    # `makes_progress` asks for already accounts for the stop line: the
+    # distance demanded is capped by the room the line leaves, so approaching
+    # one satisfies the rule rather than being excused from it -- and a rule
+    # that is satisfied still has a gradient, which is what carries the
+    # vehicle up to the line instead of leaving it stopped short of it.
     unobstructed_now = And(
-        And(light < 0.0, headway > limits.standstill_gap_m),
+        headway > limits.standstill_gap_m,
         clearance > limits.liveness_clearance_m,
     )
 
@@ -134,7 +136,23 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             # instead of at whatever the stop slack happens to be.
             Always(Implies(light > 0.0, stop_slack > 0.0)),
             weight=6.0,
-            margin=2.0,
+            # Where having room to spare stops being worth more, and it has to
+            # be small for the same reason `collision_free`'s does: at 2.0 the
+            # rule paid the vehicle to stay away from the line.
+            #
+            # Decomposed at a settled stop 7.2 m short of a line it had every
+            # right to reach: `stop_on_red` contributed +11.36 and
+            # `makes_progress` -6.17, and closing three of those metres would
+            # have cost 7.9 of the first to gain 5.0 of the second. So it sat
+            # there, and the objective was right to keep it there -- given
+            # what it had been told a metre of distance from a stop line is
+            # worth.
+            #
+            # At 0.5 the same three metres cost 0.5. Nothing about the safety
+            # argument changes: the rule is hard, so below zero the penalty
+            # stays linear and unbounded, and only the reward for surplus is
+            # capped.
+            margin=0.5,
             hard=True,
             description="While a red or amber light governs us, never cross its stop line.",
         ),
@@ -229,8 +247,7 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
         # *which* requirement it is failing.
         Rule(
             "makes_progress",
-            # Gated on the same condition as `keep_moving`, so that waiting at
-            # a red light or queueing behind a stopped vehicle is not reported
+            # Gated so that queueing behind a stopped vehicle is not reported
             # as a failure to make progress. Without the gate, every correct
             # stop would drive the specification's robustness negative and the
             # reported value would stop being a useful health signal.
@@ -255,23 +272,6 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             # this buys nothing -- `speed_limit` is what caps the top end.
             margin=limits.progress_margin_m,
             description="Cover a reasonable distance over the planning horizon.",
-        ),
-        Rule(
-            "keep_moving",
-            # Redundant with `makes_progress` by design: that one is an
-            # integral over the horizon, this one is instantaneous, and they
-            # fail in different ways. A plan that creeps the whole time fails
-            # progress; one that lurches and stops fails this.
-            # Pointwise, unlike `makes_progress`: this rule is about the
-            # speed at each instant, so it asks whether anything obstructs us
-            # at *that* instant.
-            Always(
-                Implies(unobstructed_now, speed > limits.creep_speed_mps),
-                interval=[moving_from, last],
-            ),
-            weight=2.0,
-            margin=1.0,
-            description="With no red light and nothing close ahead, do not crawl.",
         ),
     )
 

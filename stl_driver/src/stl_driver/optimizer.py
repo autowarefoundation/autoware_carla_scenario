@@ -224,11 +224,16 @@ class RobustnessOptimizer:
         already has, which costs one row in sixty-seven and no correctness.
         """
         limits = self.config.limits
-        hold = _accel_params(0.0, limits, accel0_mps2)
-        fixed = [None] * 3
-        fixed[WARM_START_ROW] = hold.clone() if warm_start is None else warm_start.detach().clone()
-        fixed[HOLD_ROW] = hold
-        fixed[BRAKE_ROW] = _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2)
+        horizon = self.config.horizon
+        hold = _accel_params(0.0, limits, accel0_mps2, horizon)
+        # Keyed by row and then laid out in row order, so the constants decide
+        # where each plan goes rather than the order they are written in.
+        by_row = {
+            WARM_START_ROW: hold.clone() if warm_start is None else warm_start.detach().clone(),
+            HOLD_ROW: hold,
+            BRAKE_ROW: _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2, horizon),
+        }
+        fixed = [by_row[row] for row in sorted(by_row)]
         return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
 
     # -- search ------------------------------------------------------------
@@ -620,7 +625,7 @@ def _atanh(fraction: torch.Tensor) -> torch.Tensor:
     return torch.atanh(fraction.clamp(-0.999, 0.999))
 
 
-def _accel_params(accel_mps2: float, limits, accel0_mps2: float) -> torch.Tensor:
+def _accel_params(accel_mps2: float, limits, accel0_mps2: float, horizon) -> torch.Tensor:
     """Parameters that walk the acceleration profile to a requested value.
 
     The inverse of the mapping in :func:`~stl_driver.rollout._map_params`,
@@ -636,7 +641,7 @@ def _accel_params(accel_mps2: float, limits, accel0_mps2: float) -> torch.Tensor
     """
     from stl_driver.rollout import knot_step_limit
 
-    step = knot_step_limit(limits)
+    step = knot_step_limit(limits, horizon)
     # The same envelope the profile itself is clamped to, so that a requested
     # acceleration this function reports as reachable really is -- see
     # `Limits.plan_accel_envelope`.

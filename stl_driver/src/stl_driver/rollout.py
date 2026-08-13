@@ -38,17 +38,32 @@ __all__ = ["N_PARAMS", "RolloutInputs", "knot_step_limit", "plan_xy", "rollout"]
 #: sampling, and sampling density falls off fast with dimension.
 N_PARAMS = 6
 
-#: Times, in seconds, at which the acceleration profile is pinned. The value
-#: at ``t = 0`` is *not* a free parameter -- it is the acceleration the vehicle
-#: currently has, so that the plan starts from the vehicle's actual state
-#: rather than stepping to a new one instantaneously.
-#:
-#: This is not a detail. A step change in acceleration is, by definition,
-#: unbounded jerk: differencing a commanded 2 m/s^2 against a measured 0 over
-#: one 0.1 s tick gives 20 m/s^3, five times the comfort bound. Left free, the
-#: first knot makes `comfort` unsatisfiable by *any* plan that accelerates,
-#: and the search spends its whole budget picking between violations.
-_KNOT_TIMES_S = (0.0, 1.0, 2.0, 3.0, 4.0)
+#: How many points the acceleration profile is pinned at, including ``t = 0``.
+#: Four of them are free parameters; see `N_PARAMS`.
+_N_KNOTS = 5
+
+
+def knot_times_s(horizon) -> tuple[float, ...]:
+    """Times at which the acceleration profile is pinned, spread over the horizon.
+
+    The value at ``t = 0`` is *not* a free parameter -- it is the acceleration
+    the vehicle currently has, so that the plan starts from the vehicle's
+    actual state rather than stepping to a new one instantaneously.
+
+    This is not a detail. A step change in acceleration is, by definition,
+    unbounded jerk: differencing a commanded 2 m/s^2 against a measured 0 over
+    one 0.1 s tick gives 20 m/s^3, five times the comfort bound. Left free, the
+    first knot makes `comfort` unsatisfiable by *any* plan that accelerates,
+    and the search spends its whole budget picking between violations.
+
+    Spread over whatever the horizon is rather than fixed at one second apart,
+    so that lengthening the horizon lengthens the plan rather than appending
+    time the parameters cannot shape -- past the final knot the profile holds
+    its last value, which for a four-knot plan on an eight-second horizon is
+    four seconds of constant acceleration nobody chose.
+    """
+    spacing = horizon.duration_s / (_N_KNOTS - 1)
+    return tuple(index * spacing for index in range(_N_KNOTS))
 
 #: Sharpness of the softplus speed floor. Higher tracks `max(v, 0)` more
 #: closely but softens the gradient over a narrower band; 4.0 puts the
@@ -125,7 +140,7 @@ class RolloutInputs:
         return int(self.actor_radii.shape[0])
 
 
-def knot_step_limit(limits) -> float:
+def knot_step_limit(limits, horizon) -> float:
     """The largest acceleration change one knot interval may carry.
 
     The profile is piecewise linear between knots, so its slope -- the jerk --
@@ -136,7 +151,7 @@ def knot_step_limit(limits) -> float:
     with the matching one on acceleration, so that this and everything else
     anchoring a plan cannot drift apart -- see `Limits.plan_accel_envelope`.
     """
-    spacing = _KNOT_TIMES_S[1] - _KNOT_TIMES_S[0]
+    spacing = horizon.duration_s / (_N_KNOTS - 1)
     return limits.plan_jerk_limit() * spacing
 
 
@@ -168,7 +183,7 @@ def _map_params(
     than leaving it as an unwritten property of the parameterisation.
     """
     limits = config.limits
-    step_limit = knot_step_limit(limits)
+    step_limit = knot_step_limit(limits, config.horizon)
 
     # Start from the measured acceleration and walk, one bounded step per knot.
     measured = torch.zeros_like(params[..., :1]) + accel0_mps2
@@ -185,19 +200,21 @@ def _map_params(
     return knots, offsets
 
 
-def _interpolate_knots(knots: torch.Tensor, times_s: torch.Tensor) -> torch.Tensor:
+def _interpolate_knots(
+    knots: torch.Tensor, times_s: torch.Tensor, times: tuple[float, ...]
+) -> torch.Tensor:
     """Piecewise-linear acceleration profile through the knots.
 
-    ``knots`` holds one value per entry of :data:`_KNOT_TIMES_S`, the first of
+    ``knots`` holds one value per entry of :func:`knot_times_s`, the first of
     which is the measured acceleration rather than a free parameter.
     """
-    knot_times = torch.tensor(_KNOT_TIMES_S, dtype=times_s.dtype, device=times_s.device)
+    knot_times = torch.tensor(times, dtype=times_s.dtype, device=times_s.device)
 
     # Built as a sum of masked segments rather than by indexing: only a few
     # knots, and this stays differentiable in the knot *values* with no
     # gather, which keeps it clean under vmap.
     profile = torch.zeros_like(times_s)
-    for index in range(len(_KNOT_TIMES_S) - 1):
+    for index in range(len(times) - 1):
         start_t, end_t = knot_times[index], knot_times[index + 1]
         weight = ((times_s - start_t) / (end_t - start_t)).clamp(0.0, 1.0)
         segment = knots[..., index] + weight * (knots[..., index + 1] - knots[..., index])
@@ -256,7 +273,7 @@ def _kinematics(
     times = torch.arange(1, horizon.n_steps + 1, device=device, dtype=dtype) * dt
     knots, offsets = _map_params(params, inputs.accel0_mps2, config)
 
-    commanded = _interpolate_knots(knots, times)
+    commanded = _interpolate_knots(knots, times, knot_times_s(horizon))
 
     # Speed, floored at zero: a stopped car stays stopped rather than
     # reversing.
@@ -401,16 +418,39 @@ def rollout(
     clearance = _clearance(positions, tangent, inputs, config)
     headway = _headway_slack(station, speed, inputs, config)
 
-    stop_slack = saturate(
-        inputs.stop_station_m - station,
-        cap,
-    )
+    stop_slack = _stop_slack(station, speed, inputs, config)
     route_slack = saturate(
         inputs.published_length_m - station,
         cap,
     )
+    # What to ask for is the lesser of what free-flow travel would cover and
+    # what the stop line leaves room for. Asking for the full target while a
+    # red light is 15 m away is asking for the plan to run it, and reporting
+    # the refusal as a liveness failure -- measured, 75 steps of a 400-step
+    # drive once the light stopped excusing them wholesale.
+    #
+    # Reducing the demand rather than switching the rule off is what keeps the
+    # vehicle moving up to the line. A rule made vacuous contributes a constant,
+    # and a constant has no gradient towards anything: gated off entirely, the
+    # vehicle stopped 18.7 m short of a line it could see and waited there.
+    # This still rewards every metre gained, and stops rewarding them exactly
+    # at the line.
+    # Less the room the final stop itself takes: the plan has to be *able* to
+    # stop at the line the whole way in, so the ground it can still cover is
+    # the distance to the line less that. Measured from the vehicle's own
+    # speed rather than the plan's, so every candidate is asked for the same
+    # thing and none can lower the bar by slowing down.
+    _, brake, ramp = _stopping_terms(config.limits)
+    stopping = inputs.speed0_mps**2 / (2.0 * brake) + inputs.speed0_mps * ramp
+    # Floored a little below zero rather than at it, so that a vehicle stopped
+    # at the line is asked for slightly less than nothing and reads as
+    # satisfied. At exactly zero it reads exactly zero -- neither satisfied nor
+    # violated -- which is no way to report the most correct thing it does.
+    floor = -config.limits.liveness_stop_gap_m
+    reachable = (inputs.stop_station_m - inputs.station0_m - stopping).clamp_min(floor)
+    demanded = torch.minimum(inputs.progress_target_m, reachable)
     progress_slack = saturate(
-        (station - inputs.station0_m) - inputs.progress_target_m,
+        (station - inputs.station0_m) - demanded,
         cap,
     )
     # Capped above, and only above: being further under the limit than the
@@ -522,6 +562,62 @@ def _clearance(
 
     flattened = gap.reshape(*gap.shape[:-2], -1)
     return saturate(flattened.min(dim=-1).values, cap)
+
+
+def _stopping_terms(limits) -> tuple[float, float, float]:
+    """``(envelope floor, braking rate, ramp coefficient)`` for a stop.
+
+    Stopping takes ``v^2 / 2b`` plus ``v * b / 2j`` -- the textbook distance
+    and what the jerk-limited ramp to full braking costs. At 5 m/s those are
+    3.2 m and 2.5 m, so the ramp is not a correction but half the answer.
+
+    Shared so that the rule asking whether there is room to stop and the rule
+    asking how much ground is left to cover cannot disagree about what
+    stopping costs.
+    """
+    lowest, _ = limits.plan_accel_envelope()
+    brake = -lowest
+    return lowest, brake, brake / (2.0 * limits.plan_jerk_limit())
+
+
+def _stop_slack(
+    station: torch.Tensor,
+    speed: torch.Tensor,
+    inputs: RolloutInputs,
+    config: STLDriverConfig,
+) -> torch.Tensor:
+    """Room left to stop at the line, rather than distance left to it.
+
+    `stop_on_red` used to read the distance itself, which asks the plan never
+    to reach the line inside its horizon -- and a horizon is four seconds
+    long. Approaching at 5 m/s, "do not cover the next 20 m" is what the rule
+    demanded, so the vehicle slowed while the line was still far away and
+    crept the rest, stopping well short of it. That is not what a red light
+    asks for. It asks that you be able to stop at the line, and being able to
+    is a bound on speed, not on position.
+
+    So the requirement is the distance stopping actually takes, and the slack
+    is what is left over. Told the same way as the RSS gap in
+    `_headway_slack`, and jerk-limited for the same reason the plan is:
+    braking cannot appear instantly, and the ramp is worth more than the
+    arithmetic suggests. From ``b`` the plan may command and ``j`` the jerk
+    it may use,
+
+        d = v^2 / 2b   +   v * b / 2j
+
+    where the first term is the textbook stopping distance and the second is
+    what the ramp to full braking costs. At 5 m/s they are 3.2 m and 2.5 m,
+    so leaving the ramp out would have understated the requirement by nearly
+    half and put the line under the bumper.
+
+    Approaching at any speed is then allowed until the room runs out, which
+    is how the line is arrived at rather than crept up on -- and at rest the
+    requirement is zero, so stopping anywhere short of the line satisfies it.
+    """
+    limits = config.limits
+    _, brake, ramp = _stopping_terms(limits)
+    required = speed**2 / (2.0 * brake) + speed * ramp
+    return saturate((inputs.stop_station_m - station) - required, limits.saturation_m)
 
 
 def _headway_slack(
