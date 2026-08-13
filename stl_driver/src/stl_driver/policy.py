@@ -75,6 +75,11 @@ class EgoPolicy(BaseDriver):
         self.device = self.optimizer.device
 
         self._warm_start: torch.Tensor | None = None
+        # The acceleration the last plan was anchored at, so this one can be
+        # anchored somewhere the vehicle could actually have got to. Under the
+        # same lock as the warm start, and for the same reason: gRPC handler
+        # threads and the search both touch it.
+        self._anchor_accel_mps2: float | None = None
         self._warm_start_lock = threading.Lock()
 
     # -- session hooks -----------------------------------------------------
@@ -89,11 +94,13 @@ class EgoPolicy(BaseDriver):
         """
         with self._warm_start_lock:
             self._warm_start = None
+            self._anchor_accel_mps2 = None
         self._warm_up()
 
     def on_session_close(self, session: SessionState) -> None:
         with self._warm_start_lock:
             self._warm_start = None
+            self._anchor_accel_mps2 = None
 
     def _warm_up(self) -> None:
         """Pay the one-off costs before the runtime starts waiting on us.
@@ -215,6 +222,22 @@ class EgoPolicy(BaseDriver):
         correspondingly noisy -- transients well outside anything the vehicle
         could physically produce are routine. Clamping to the same envelope
         the plan is held to keeps a sensor artefact from dictating the plan.
+
+        Bounding the magnitude is not enough, because what the ride feels is
+        the *change*. Each plan is jerk-limited inside itself, so nothing
+        within one is ever harsh; what the vehicle actually gets is the first
+        step of a new plan every 100 ms, and consecutive plans agreed only as
+        well as their anchors did. Measured over a drive, the reading moved by
+        up to 5.9 m/s^2 between one step and the next -- 59 m/s^3, fifteen
+        times the comfort bound -- and the commanded acceleration followed it
+        with a correlation of 0.99, exceeding the bound on 42% of steps while
+        every rule read as satisfied. `comfort` cannot see this: it judges one
+        plan, and this is a disagreement between two.
+
+        So the anchor moves no faster than the vehicle itself could, which is
+        the jerk limit over one policy step -- about 0.39 m/s^2. Noise faster
+        than that is not acceleration, and a real change is followed at the
+        rate a real vehicle would take to make it.
         """
         if not np.isfinite(measured_mps2):
             return 0.0
@@ -229,8 +252,17 @@ class EgoPolicy(BaseDriver):
         # so that this and the first knot agree exactly. They used to differ by
         # the inset, and that 2% arrived in the opening jerk ten times over --
         # see `Limits.plan_accel_envelope`.
-        lowest, highest = self.config.limits.plan_accel_envelope()
-        return float(np.clip(measured_mps2, lowest, highest))
+        limits = self.config.limits
+        lowest, highest = limits.plan_accel_envelope()
+        plausible = float(np.clip(measured_mps2, lowest, highest))
+
+        with self._warm_start_lock:
+            previous = self._anchor_accel_mps2
+            if previous is not None:
+                step = limits.plan_jerk_limit() * self.config.horizon.step_s
+                plausible = float(np.clip(plausible, previous - step, previous + step))
+            self._anchor_accel_mps2 = plausible
+        return plausible
 
     def _build_inputs(
         self,

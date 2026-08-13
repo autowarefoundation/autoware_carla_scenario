@@ -115,6 +115,10 @@ def test_no_measurable_state_can_force_a_jerk_violation(config):
     hardest = torch.tensor([3.0, 3.0, 3.0, 3.0, 0.0, 0.0])  # tanh saturates: full steps
     for measured in np.linspace(-limits.max_decel_mps2, limits.max_accel_mps2, 17):
         # What the policy would actually hand the rollout for this reading.
+        # Reset first: the anchor is rate-limited between steps, and this is
+        # sweeping states the vehicle might be *in*, not a sequence it passes
+        # through.
+        policy._anchor_accel_mps2 = None
         accel0 = policy._plausible_acceleration(float(measured))
         inputs = make_inputs(config, speed0_mps=4.0, accel0_mps2=accel0)
         for params in (hardest, -hardest):

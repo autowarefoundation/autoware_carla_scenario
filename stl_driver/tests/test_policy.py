@@ -30,6 +30,7 @@ from stl_driver.policy import EgoPolicy
 from tests.conftest import curved_route, straight_route
 
 TIME_NOW_US = 1_700_000_000_000_000
+CONFIG = STLDriverConfig()
 
 
 @pytest.fixture(scope="module")
@@ -182,9 +183,49 @@ def test_an_implausible_measured_acceleration_is_confined(policy, measured):
 
 
 def test_the_acceleration_clamp_keeps_ordinary_readings_intact(policy):
-    assert policy._plausible_acceleration(1.2) == pytest.approx(1.2)
-    assert policy._plausible_acceleration(-3.0) == pytest.approx(-3.0)
+    for reading in (1.2, -3.0):
+        policy._anchor_accel_mps2 = None  # as at the start of a session
+        assert policy._plausible_acceleration(reading) == pytest.approx(reading)
+    policy._anchor_accel_mps2 = None
     assert policy._plausible_acceleration(float("nan")) == 0.0
+
+
+def test_the_anchor_moves_no_faster_than_the_vehicle_could(policy):
+    """What the ride feels is the change, and nothing else was bounding it.
+
+    Each plan is jerk-limited inside itself, so nothing within one is harsh.
+    What the vehicle gets is the first step of a new plan every 100 ms, and
+    consecutive plans agree only as well as their anchors do. CARLA's
+    acceleration is a finite difference of velocity: measured over a drive it
+    moved by up to 5.9 m/s^2 between steps -- 59 m/s^3 against a comfort bound
+    of 4 -- and the commanded acceleration followed it at a correlation of
+    0.99, exceeding the bound on 42% of steps while every rule read as
+    satisfied.
+    """
+    limits = CONFIG.limits
+    step = limits.plan_jerk_limit() * CONFIG.horizon.step_s
+
+    policy._anchor_accel_mps2 = None
+    settled = policy._plausible_acceleration(0.0)
+    assert settled == pytest.approx(0.0)
+
+    # A reading that jumps the whole envelope in one step is not acceleration.
+    jumped = policy._plausible_acceleration(-3.9)
+    assert jumped == pytest.approx(-step, abs=1e-6)
+
+    # But a real change is followed, at the rate a real vehicle would make it.
+    for _ in range(40):
+        following = policy._plausible_acceleration(-3.9)
+    assert following == pytest.approx(-3.9, abs=0.05)
+
+    # And the ramp never exceeds what the plan itself may command.
+    policy._anchor_accel_mps2 = None
+    previous = policy._plausible_acceleration(0.0)
+    for reading in (3.0, -3.0, 3.0, -3.0):
+        for _ in range(3):
+            current = policy._plausible_acceleration(reading)
+            assert abs(current - previous) <= step + 1e-6
+            previous = current
 
 
 # ---------------------------------------------------------------------------
