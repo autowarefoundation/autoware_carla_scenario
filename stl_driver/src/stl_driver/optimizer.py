@@ -225,10 +225,14 @@ class RobustnessOptimizer:
         """
         limits = self.config.limits
         hold = _accel_params(0.0, limits, accel0_mps2)
-        fixed = [None] * 3
-        fixed[WARM_START_ROW] = hold.clone() if warm_start is None else warm_start.detach().clone()
-        fixed[HOLD_ROW] = hold
-        fixed[BRAKE_ROW] = _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2)
+        # Keyed by row and then laid out in row order, so the constants decide
+        # where each plan goes rather than the order they are written in.
+        by_row = {
+            WARM_START_ROW: hold.clone() if warm_start is None else warm_start.detach().clone(),
+            HOLD_ROW: hold,
+            BRAKE_ROW: _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2),
+        }
+        fixed = [by_row[row] for row in sorted(by_row)]
         return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
 
     # -- search ------------------------------------------------------------

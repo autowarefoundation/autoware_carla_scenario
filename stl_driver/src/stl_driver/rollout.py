@@ -401,16 +401,39 @@ def rollout(
     clearance = _clearance(positions, tangent, inputs, config)
     headway = _headway_slack(station, speed, inputs, config)
 
-    stop_slack = saturate(
-        inputs.stop_station_m - station,
-        cap,
-    )
+    stop_slack = _stop_slack(station, speed, inputs, config)
     route_slack = saturate(
         inputs.published_length_m - station,
         cap,
     )
+    # What to ask for is the lesser of what free-flow travel would cover and
+    # what the stop line leaves room for. Asking for the full target while a
+    # red light is 15 m away is asking for the plan to run it, and reporting
+    # the refusal as a liveness failure -- measured, 75 steps of a 400-step
+    # drive once the light stopped excusing them wholesale.
+    #
+    # Reducing the demand rather than switching the rule off is what keeps the
+    # vehicle moving up to the line. A rule made vacuous contributes a constant,
+    # and a constant has no gradient towards anything: gated off entirely, the
+    # vehicle stopped 18.7 m short of a line it could see and waited there.
+    # This still rewards every metre gained, and stops rewarding them exactly
+    # at the line.
+    # Less the room the final stop itself takes: the plan has to be *able* to
+    # stop at the line the whole way in, so the ground it can still cover is
+    # the distance to the line less that. Measured from the vehicle's own
+    # speed rather than the plan's, so every candidate is asked for the same
+    # thing and none can lower the bar by slowing down.
+    _, brake, ramp = _stopping_terms(config.limits)
+    stopping = inputs.speed0_mps**2 / (2.0 * brake) + inputs.speed0_mps * ramp
+    # Floored a little below zero rather than at it, so that a vehicle stopped
+    # at the line is asked for slightly less than nothing and reads as
+    # satisfied. At exactly zero it reads exactly zero -- neither satisfied nor
+    # violated -- which is no way to report the most correct thing it does.
+    floor = -config.limits.liveness_stop_gap_m
+    reachable = (inputs.stop_station_m - inputs.station0_m - stopping).clamp_min(floor)
+    demanded = torch.minimum(inputs.progress_target_m, reachable)
     progress_slack = saturate(
-        (station - inputs.station0_m) - inputs.progress_target_m,
+        (station - inputs.station0_m) - demanded,
         cap,
     )
     # Capped above, and only above: being further under the limit than the
@@ -522,6 +545,62 @@ def _clearance(
 
     flattened = gap.reshape(*gap.shape[:-2], -1)
     return saturate(flattened.min(dim=-1).values, cap)
+
+
+def _stopping_terms(limits) -> tuple[float, float, float]:
+    """``(envelope floor, braking rate, ramp coefficient)`` for a stop.
+
+    Stopping takes ``v^2 / 2b`` plus ``v * b / 2j`` -- the textbook distance
+    and what the jerk-limited ramp to full braking costs. At 5 m/s those are
+    3.2 m and 2.5 m, so the ramp is not a correction but half the answer.
+
+    Shared so that the rule asking whether there is room to stop and the rule
+    asking how much ground is left to cover cannot disagree about what
+    stopping costs.
+    """
+    lowest, _ = limits.plan_accel_envelope()
+    brake = -lowest
+    return lowest, brake, brake / (2.0 * limits.plan_jerk_limit())
+
+
+def _stop_slack(
+    station: torch.Tensor,
+    speed: torch.Tensor,
+    inputs: RolloutInputs,
+    config: STLDriverConfig,
+) -> torch.Tensor:
+    """Room left to stop at the line, rather than distance left to it.
+
+    `stop_on_red` used to read the distance itself, which asks the plan never
+    to reach the line inside its horizon -- and a horizon is four seconds
+    long. Approaching at 5 m/s, "do not cover the next 20 m" is what the rule
+    demanded, so the vehicle slowed while the line was still far away and
+    crept the rest, stopping well short of it. That is not what a red light
+    asks for. It asks that you be able to stop at the line, and being able to
+    is a bound on speed, not on position.
+
+    So the requirement is the distance stopping actually takes, and the slack
+    is what is left over. Told the same way as the RSS gap in
+    `_headway_slack`, and jerk-limited for the same reason the plan is:
+    braking cannot appear instantly, and the ramp is worth more than the
+    arithmetic suggests. From ``b`` the plan may command and ``j`` the jerk
+    it may use,
+
+        d = v^2 / 2b   +   v * b / 2j
+
+    where the first term is the textbook stopping distance and the second is
+    what the ramp to full braking costs. At 5 m/s they are 3.2 m and 2.5 m,
+    so leaving the ramp out would have understated the requirement by nearly
+    half and put the line under the bumper.
+
+    Approaching at any speed is then allowed until the room runs out, which
+    is how the line is arrived at rather than crept up on -- and at rest the
+    requirement is zero, so stopping anywhere short of the line satisfies it.
+    """
+    limits = config.limits
+    _, brake, ramp = _stopping_terms(limits)
+    required = speed**2 / (2.0 * brake) + speed * ramp
+    return saturate((inputs.stop_station_m - station) - required, limits.saturation_m)
 
 
 def _headway_slack(

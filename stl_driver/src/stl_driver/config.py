@@ -175,6 +175,21 @@ class Limits:
     #: were clear at that instant but blocked later in the same horizon. Only
     #: 15 were genuine.
     liveness_clearance_m: float = 2.0
+    #: How little room to stop must be left before a red light excuses being
+    #: stopped rather than merely slowing.
+    #:
+    #: `stop_slack` is the distance to the line less what stopping from this
+    #: speed takes, so at rest it is simply the distance left -- and this is
+    #: therefore how close to the line the vehicle must come before it may
+    #: settle. Small, because the stop station is already backed off from the
+    #: line by `stop_line_margin_m`, which is about the distance from the rear
+    #: axle to the bumper.
+    #:
+    #: Gating on the light alone instead, which is what this replaced, made a
+    #: red light anywhere ahead a licence to stand still: standing still
+    #: satisfies every other rule, so the vehicle braked for a light 26 m away,
+    #: stopped 18.7 m short of it, and stayed there until it went green.
+    liveness_stop_gap_m: float = 1.0
 
     # -- geometry ----------------------------------------------------------
     #: Ego body dimensions, used to build its collision footprint.
