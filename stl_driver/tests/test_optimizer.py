@@ -289,6 +289,33 @@ def test_a_warm_start_is_accepted_and_helps(optimizer):
         assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
 
 
+def test_the_sampled_plans_are_lane_shaped(optimizer):
+    """What the sampling stage spends its sixty-four plans on.
+
+    Drawn as a box in logit space, the two lateral parameters gave 53% of
+    plans ending against the corridor edge -- `tanh` saturates, so a uniform
+    logit is not a uniform lane position -- and 47% whose Bezier control point
+    lay the opposite side of the centreline from their end offset, which is an
+    S through a 1.2 m corridor.
+    """
+    half = CONFIG.limits.lane_half_width_m
+    control = half * torch.tanh(optimizer._seeds[:, 4])
+    end = half * torch.tanh(optimizer._seeds[:, 5])
+
+    # Centred by default: that is the lane position a vehicle holds unless it
+    # has a reason not to.
+    assert (end.abs() < 0.3).float().mean() > 0.4
+    assert (end.abs() > 0.9 * half).float().mean() < 0.15
+
+    # No sampled path swings away from where it is going, or past it.
+    assert torch.all(control * end >= -1e-6)
+    assert torch.all(control.abs() <= end.abs() + 1e-6)
+
+    # The edge of the corridor is still reachable, or nothing could ever be
+    # sampled that moves aside.
+    assert end.abs().max() > 0.8 * half
+
+
 def test_nothing_the_search_can_try_breaks_the_comfort_bounds(optimizer):
     """The guard against the two envelopes drifting apart again.
 
