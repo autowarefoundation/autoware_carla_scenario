@@ -259,7 +259,7 @@ def test_refinement_improves_on_the_best_sample(optimizer):
     inputs = make_inputs(CONFIG, speed0_mps=4.0)
     rules = RuleSet(build_rules(CONFIG))
 
-    candidates = optimizer._candidates(None)
+    candidates = optimizer._candidates(None, 0.0)
     with torch.no_grad():
         sampled = [float(rules.objective(rollout(p, inputs, CONFIG))) for p in candidates]
     solution = optimizer.solve(inputs)
@@ -275,7 +275,7 @@ def test_the_search_never_returns_a_worse_plan_than_its_seed(optimizer):
     for speed in (0.0, 3.0, 7.0, 12.0):
         inputs = make_inputs(CONFIG, speed0_mps=speed)
         solution = optimizer.solve(inputs)
-        braking = rollout(optimizer._candidates(None)[-1], inputs, CONFIG)
+        braking = rollout(optimizer._candidates(None, 0.0)[-1], inputs, CONFIG)
         rules = RuleSet(build_rules(CONFIG))
         assert solution.robustness >= float(rules.spec_robustness(braking)) - 1e-6
 
@@ -287,6 +287,30 @@ def test_a_warm_start_is_accepted_and_helps(optimizer):
     warm = optimizer.solve(inputs, warm_start=cold.params)
     with torch.no_grad():
         assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
+
+
+def test_the_hold_speed_candidate_holds_speed(optimizer):
+    """It did not, and it failed where it was needed most.
+
+    The parameters describe jerk-bounded changes from the vehicle's *measured*
+    acceleration, and `_candidates` built the fixed plans as though that were
+    always zero. From 6 m/s with a measured -2 m/s^2, the plan offered to the
+    search as "hold speed" brought the vehicle to a standstill inside the
+    horizon; at +1.5 it ran to 12 m/s against an 8 m/s limit. So on exactly
+    the steps where the vehicle was already slowing -- the steps where
+    something has to offer the alternative of not slowing -- no candidate did.
+    """
+    for accel0 in (-2.0, -1.0, 0.0, 1.5):
+        inputs = make_inputs(CONFIG, speed0_mps=6.0, accel0_mps2=accel0)
+        # The three fixed plans are the last three rows: the warm start's slot,
+        # then hold, then the braking seed.
+        hold = optimizer._candidates(None, accel0)[-2]
+        with torch.no_grad():
+            speed = rollout(hold, inputs, CONFIG)[:, Col.SPEED]
+        # It cannot hold 6.0 exactly -- walking the acceleration back to zero
+        # takes a knot interval, and that is honest. It must not run away with
+        # the measured value, which is what leaving `accel0` at zero did.
+        assert abs(float(speed[-1]) - 6.0) < 1.6, f"from {accel0} m/s^2"
 
 
 def test_the_sampled_plans_are_lane_shaped(optimizer):
@@ -331,7 +355,7 @@ def test_nothing_the_search_can_try_breaks_the_comfort_bounds(optimizer):
     lowest, highest = limits.plan_accel_envelope()
     for accel0 in (lowest, 0.0, highest):
         inputs = make_inputs(CONFIG, speed0_mps=5.0, accel0_mps2=accel0)
-        candidates = optimizer._candidates(torch.zeros(N_PARAMS))
+        candidates = optimizer._candidates(torch.zeros(N_PARAMS), accel0)
         with torch.no_grad():
             for params in candidates:
                 signal = rollout(params, inputs, CONFIG)
@@ -349,8 +373,8 @@ def test_the_candidate_batch_is_the_same_width_with_or_without_a_warm_start(opti
     with a previous plan to reuse -- against a 0.064 s median and a 0.100 s
     policy timestep.
     """
-    cold = optimizer._candidates(None)
-    warm = optimizer._candidates(torch.zeros(N_PARAMS))
+    cold = optimizer._candidates(None, 0.0)
+    warm = optimizer._candidates(torch.zeros(N_PARAMS), 0.0)
     assert cold.shape == warm.shape == (CONFIG.optimizer.n_samples + 3, N_PARAMS)
     # The braking plan stays last either way: it is the seed that rescues a
     # step where every sampled plan is unsafe, and tests reach for it by index.

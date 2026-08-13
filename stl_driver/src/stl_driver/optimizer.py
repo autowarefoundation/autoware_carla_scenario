@@ -172,7 +172,11 @@ class RobustnessOptimizer:
         logits[:, 5] = _atanh(target)
         return logits
 
-    def _candidates(self, warm_start: torch.Tensor | None) -> torch.Tensor:
+    def _candidates(
+        self,
+        warm_start: torch.Tensor | None,
+        accel0_mps2: float,
+    ) -> torch.Tensor:
         """The sampling stage's parameter batch.
 
         The Sobol sweep plus three plans worth having regardless: whatever
@@ -180,6 +184,18 @@ class RobustnessOptimizer:
         stop.  The braking seed matters most -- it is the one that rescues a
         step where every random plan happens to be unsafe, and it is kept last
         so that ``_candidates(...)[-1]`` names it.
+
+        ``accel0_mps2`` is the vehicle's measured acceleration, and it is not
+        optional. The parameters describe jerk-bounded *changes* from that
+        value, so the same numbers mean different plans depending on it: built
+        as though the vehicle were at constant speed -- which is what this did
+        -- the hold-speed plan holds whatever the vehicle is currently doing
+        instead. Measured from 6 m/s: at -2 m/s^2 of measured deceleration the
+        "hold speed" candidate brought the vehicle to a complete stop inside
+        the horizon, and at +1.5 it ran to 12 m/s, half again the posted
+        limit. The failure is worst exactly where the candidate matters most,
+        because a vehicle that is already slowing is when something has to
+        offer the plain alternative of not slowing.
 
         The batch is the same width whether or not there is a plan to warm
         start from, because that width is a graph shape. Left to vary it is a
@@ -190,11 +206,11 @@ class RobustnessOptimizer:
         already has, which costs one row in sixty-seven and no correctness.
         """
         limits = self.config.limits
-        hold = _accel_params(0.0, limits)
+        hold = _accel_params(0.0, limits, accel0_mps2)
         fixed = [
             hold.clone() if warm_start is None else warm_start.detach().clone(),
             hold,
-            _accel_params(-limits.max_decel_mps2 * 0.9, limits),
+            _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2),
         ]
         return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
 
@@ -209,7 +225,7 @@ class RobustnessOptimizer:
         started = time.perf_counter()
         optimizer = self.config.optimizer
 
-        candidates = self._candidates(warm_start)
+        candidates = self._candidates(warm_start, float(inputs.accel0_mps2))
         signals, scores, merit, robustness, used_vmap = self._score_batch(candidates, inputs)
 
         order = torch.argsort(scores, descending=True)
@@ -587,13 +603,19 @@ def _atanh(fraction: torch.Tensor) -> torch.Tensor:
     return torch.atanh(fraction.clamp(-0.999, 0.999))
 
 
-def _accel_params(accel_mps2: float, limits, accel0_mps2: float = 0.0) -> torch.Tensor:
+def _accel_params(accel_mps2: float, limits, accel0_mps2: float) -> torch.Tensor:
     """Parameters that walk the acceleration profile to a requested value.
 
     The inverse of the mapping in :func:`~stl_driver.rollout._map_params`,
     which parameterises the profile as jerk-bounded *changes* from the measured
     acceleration rather than as absolute values. Reaching a distant target may
     take more than one knot, exactly as it would on the road.
+
+    ``accel0_mps2`` is where the walk starts and has no default, because there
+    is no safe one: zero used to be it, and a caller that left it there got a
+    plan that held the vehicle's *current* acceleration rather than the one it
+    asked for. An inverse that does not know what it is inverting from is not
+    an inverse.
     """
     from stl_driver.rollout import knot_step_limit
 
