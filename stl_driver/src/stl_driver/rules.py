@@ -136,7 +136,23 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             # instead of at whatever the stop slack happens to be.
             Always(Implies(light > 0.0, stop_slack > 0.0)),
             weight=6.0,
-            margin=2.0,
+            # Where having room to spare stops being worth more, and it has to
+            # be small for the same reason `collision_free`'s does: at 2.0 the
+            # rule paid the vehicle to stay away from the line.
+            #
+            # Decomposed at a settled stop 7.2 m short of a line it had every
+            # right to reach: `stop_on_red` contributed +11.36 and
+            # `makes_progress` -6.17, and closing three of those metres would
+            # have cost 7.9 of the first to gain 5.0 of the second. So it sat
+            # there, and the objective was right to keep it there -- given
+            # what it had been told a metre of distance from a stop line is
+            # worth.
+            #
+            # At 0.5 the same three metres cost 0.5. Nothing about the safety
+            # argument changes: the rule is hard, so below zero the penalty
+            # stays linear and unbounded, and only the reward for surplus is
+            # capped.
+            margin=0.5,
             hard=True,
             description="While a red or amber light governs us, never cross its stop line.",
         ),
