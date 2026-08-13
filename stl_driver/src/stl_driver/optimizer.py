@@ -43,6 +43,22 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PlanSolution", "RobustnessOptimizer"]
 
+#: Where each of the three fixed plans sits in the candidate batch, counted
+#: from the end -- the quasi-random sweep occupies everything before them.
+#:
+#: Named because they were positional, and a caller read the wrong one. The
+#: batch used to end with the warm start, `solve` read `candidates[-1]` to find
+#: it, and a test read the same index to find the braking seed; when the order
+#: changed to give the braking seed that index, `solve` went on reading it and
+#: silently began asking whether *braking* was close enough to the best plan to
+#: be worth continuing. It never was -- a hard stop is nowhere near the best
+#: plan on 293 of 293 steps measured -- so nothing lurched. What it did instead
+#: was switch the continuity rule off altogether, and continuity is what stops
+#: the commanded speed jittering by a third of a metre per second at 10 Hz.
+WARM_START_ROW = -3
+HOLD_ROW = -2
+BRAKE_ROW = -1
+
 
 @dataclass
 class PlanSolution:
@@ -182,8 +198,10 @@ class RobustnessOptimizer:
         The Sobol sweep plus three plans worth having regardless: whatever
         worked last step, hold the current speed, and brake comfortably to a
         stop.  The braking seed matters most -- it is the one that rescues a
-        step where every random plan happens to be unsafe, and it is kept last
-        so that ``_candidates(...)[-1]`` names it.
+        step where every random plan happens to be unsafe.
+
+        Which row is which is `WARM_START_ROW`, `HOLD_ROW` and `BRAKE_ROW`,
+        and callers must use them rather than counting from the end.
 
         ``accel0_mps2`` is the vehicle's measured acceleration, and it is not
         optional. The parameters describe jerk-bounded *changes* from that
@@ -207,11 +225,10 @@ class RobustnessOptimizer:
         """
         limits = self.config.limits
         hold = _accel_params(0.0, limits, accel0_mps2)
-        fixed = [
-            hold.clone() if warm_start is None else warm_start.detach().clone(),
-            hold,
-            _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2),
-        ]
+        fixed = [None] * 3
+        fixed[WARM_START_ROW] = hold.clone() if warm_start is None else warm_start.detach().clone()
+        fixed[HOLD_ROW] = hold
+        fixed[BRAKE_ROW] = _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2)
         return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
 
     # -- search ------------------------------------------------------------
@@ -261,12 +278,12 @@ class RobustnessOptimizer:
         best_satisfies = bool(robustness[best_sample] >= 0.0)
 
         # Carry on from last step's plan unless something is meaningfully
-        # better. The warm start is the final entry of the candidate batch, so
-        # it has already been rolled out and scored; this only changes which
-        # of two near-equal plans is preferred.
+        # better. The warm start is one of the fixed entries of the candidate
+        # batch, so it has already been rolled out and scored; this only
+        # changes which of two near-equal plans is preferred.
         margin = optimizer.continuity_margin
         if warm_start is not None and margin > 0.0:
-            carried = len(candidates) - 1
+            carried = len(candidates) + WARM_START_ROW
             carried_satisfies = bool(robustness[carried] >= 0.0)
             if carried_satisfies >= best_satisfies and float(merit[carried]) >= best_merit - margin:
                 best_sample = carried

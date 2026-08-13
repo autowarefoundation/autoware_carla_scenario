@@ -15,7 +15,13 @@ import pytest
 import torch
 
 from stl_driver.config import STLDriverConfig
-from stl_driver.optimizer import RobustnessOptimizer
+from stl_driver.optimizer import (
+    BRAKE_ROW,
+    HOLD_ROW,
+    WARM_START_ROW,
+    RobustnessOptimizer,
+    _accel_params,
+)
 from stl_driver.rollout import N_PARAMS, rollout
 from stl_driver.rules import RuleSet, build_rules
 from stl_driver.signals import Col, signal_from_columns
@@ -275,7 +281,7 @@ def test_the_search_never_returns_a_worse_plan_than_its_seed(optimizer):
     for speed in (0.0, 3.0, 7.0, 12.0):
         inputs = make_inputs(CONFIG, speed0_mps=speed)
         solution = optimizer.solve(inputs)
-        braking = rollout(optimizer._candidates(None, 0.0)[-1], inputs, CONFIG)
+        braking = rollout(optimizer._candidates(None, 0.0)[BRAKE_ROW], inputs, CONFIG)
         rules = RuleSet(build_rules(CONFIG))
         assert solution.robustness >= float(rules.spec_robustness(braking)) - 1e-6
 
@@ -287,6 +293,32 @@ def test_a_warm_start_is_accepted_and_helps(optimizer):
     warm = optimizer.solve(inputs, warm_start=cold.params)
     with torch.no_grad():
         assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
+
+
+def test_the_continuity_rule_finds_last_step_s_plan(optimizer):
+    """It read the wrong row for a while, and nothing failed.
+
+    `solve` located the warm start by counting from the end of the candidate
+    batch. When the fixed plans were reordered -- so that a test could name the
+    braking seed as `[-1]` -- it went on counting and began asking whether
+    *braking* was worth continuing instead. A hard stop is never within the
+    continuity margin of the best plan, so nothing lurched; what happened
+    instead was that the continuity rule stopped firing at all, and continuity
+    is the only thing keeping the commanded speed from jittering at 10 Hz.
+
+    So the rows are named, and this asserts the names are right rather than
+    that some index is.
+    """
+    warm = _accel_params(1.234, CONFIG.limits, 0.0)
+    candidates = optimizer._candidates(warm, 0.0)
+    assert torch.allclose(candidates[WARM_START_ROW], warm)
+    assert not torch.allclose(candidates[BRAKE_ROW], warm)
+
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    with torch.no_grad():
+        braking = rollout(candidates[BRAKE_ROW], inputs, CONFIG)[:, Col.SPEED]
+        holding = rollout(candidates[HOLD_ROW], inputs, CONFIG)[:, Col.SPEED]
+    assert braking[-1] < holding[-1] - 2.0  # the rows are not merely distinct
 
 
 def test_the_hold_speed_candidate_holds_speed(optimizer):
@@ -304,7 +336,7 @@ def test_the_hold_speed_candidate_holds_speed(optimizer):
         inputs = make_inputs(CONFIG, speed0_mps=6.0, accel0_mps2=accel0)
         # The three fixed plans are the last three rows: the warm start's slot,
         # then hold, then the braking seed.
-        hold = optimizer._candidates(None, accel0)[-2]
+        hold = optimizer._candidates(None, accel0)[HOLD_ROW]
         with torch.no_grad():
             speed = rollout(hold, inputs, CONFIG)[:, Col.SPEED]
         # It cannot hold 6.0 exactly -- walking the acceleration back to zero
