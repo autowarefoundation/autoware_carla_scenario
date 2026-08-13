@@ -36,7 +36,8 @@ def constant_accel_params(accel: float, accel0: float = 0.0) -> torch.Tensor:
     """Parameters that walk the profile to a requested acceleration."""
     from stl_driver.optimizer import _accel_params
 
-    return _accel_params(accel, STLDriverConfig().limits, accel0)
+    config = STLDriverConfig()
+    return _accel_params(accel, config.limits, accel0, config.horizon)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +130,7 @@ def test_no_measurable_state_can_force_a_jerk_violation(config):
 
     # And the bound is the knot step itself, not something looser that happens
     # to fit: one knot interval of change is the most a plan can ask for.
-    assert knot_step_limit(limits) < limits.max_jerk_mps3
+    assert knot_step_limit(limits, config.horizon) < limits.max_jerk_mps3
 
 
 def test_a_standstill_is_reported_as_a_standstill(config):

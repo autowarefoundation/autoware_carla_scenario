@@ -80,7 +80,7 @@ wheels = [
 [[package]]
 name = "carla-driver-interface"
 version = "0.1.0"
-source = { git = "https://github.com/hakuturu583/carla_driver_interface?rev=90a71fc6a177a526a24aa1612f862fd37f084f56#90a71fc6a177a526a24aa1612f862fd37f084f56" }
+source = { git = "https://github.com/hakuturu583/carla_driver_interface?rev=af1dcd3#af1dcd3d3ddae7739f811e414a642d72d0440386" }
 dependencies = [
     { name = "alpasim-grpc" },
     { name = "grpcio" },
@@ -1011,7 +1011,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "carla", marker = "extra == 'carla'", specifier = ">=0.9.16,<0.10" },
-    { name = "carla-driver-interface", git = "https://github.com/hakuturu583/carla_driver_interface?rev=90a71fc6a177a526a24aa1612f862fd37f084f56" },
+    { name = "carla-driver-interface", git = "https://github.com/hakuturu583/carla_driver_interface?rev=af1dcd3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },

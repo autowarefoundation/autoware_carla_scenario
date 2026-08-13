@@ -17,11 +17,22 @@ dependencies = [
   #
   # Pinned to a commit rather than tracking `main`, since upstream has no
   # releases. This one is the merge of
-  # https://github.com/hakuturu583/carla_driver_interface/pull/3, which is the
-  # earliest that works: before it, the runtime reported an unsigned distance
-  # to a traffic light's stop line, and a policy that correctly stopped just
-  # past the line was told forever that the line was still ahead.
-  "carla-driver-interface @ git+https://github.com/hakuturu583/carla_driver_interface@90a71fc6a177a526a24aa1612f862fd37f084f56",
+  # https://github.com/hakuturu583/carla_driver_interface/pull/5, and the
+  # policy's behaviour at traffic lights depends on it:
+  #
+  # * lights are reported from 60 m down the lane rather than from inside the
+  #   trigger volume, which on Town10HD_Opt reaches a median of 0.55 m back
+  #   from the line -- too late to stop from any ordinary speed,
+  # * no light is reported at all from inside a junction, so a policy that has
+  #   crossed the line clears the box instead of finding a reason to wait in
+  #   the middle of it,
+  # * the line is reported at the junction mouth rather than at CARLA's stop
+  #   waypoint, which sits a median of 5.5 m upstream of it.
+  #
+  # Before it, PR #3 was the earliest that worked at all: the runtime reported
+  # an unsigned distance to the stop line, and a policy that correctly stopped
+  # just past the line was told forever that the line was still ahead.
+  "carla-driver-interface @ git+https://github.com/hakuturu583/carla_driver_interface@af1dcd3",
   # STLCG++. Pinned to a commit because upstream has no releases and no tags.
   # It ships a setup.py only and has no `stlcgpp/__init__.py`, so it installs
   # as a PEP 420 namespace package -- see `stl_driver.stl_backend`.

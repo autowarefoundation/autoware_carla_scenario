@@ -38,17 +38,32 @@ __all__ = ["N_PARAMS", "RolloutInputs", "knot_step_limit", "plan_xy", "rollout"]
 #: sampling, and sampling density falls off fast with dimension.
 N_PARAMS = 6
 
-#: Times, in seconds, at which the acceleration profile is pinned. The value
-#: at ``t = 0`` is *not* a free parameter -- it is the acceleration the vehicle
-#: currently has, so that the plan starts from the vehicle's actual state
-#: rather than stepping to a new one instantaneously.
-#:
-#: This is not a detail. A step change in acceleration is, by definition,
-#: unbounded jerk: differencing a commanded 2 m/s^2 against a measured 0 over
-#: one 0.1 s tick gives 20 m/s^3, five times the comfort bound. Left free, the
-#: first knot makes `comfort` unsatisfiable by *any* plan that accelerates,
-#: and the search spends its whole budget picking between violations.
-_KNOT_TIMES_S = (0.0, 1.0, 2.0, 3.0, 4.0)
+#: How many points the acceleration profile is pinned at, including ``t = 0``.
+#: Four of them are free parameters; see `N_PARAMS`.
+_N_KNOTS = 5
+
+
+def knot_times_s(horizon) -> tuple[float, ...]:
+    """Times at which the acceleration profile is pinned, spread over the horizon.
+
+    The value at ``t = 0`` is *not* a free parameter -- it is the acceleration
+    the vehicle currently has, so that the plan starts from the vehicle's
+    actual state rather than stepping to a new one instantaneously.
+
+    This is not a detail. A step change in acceleration is, by definition,
+    unbounded jerk: differencing a commanded 2 m/s^2 against a measured 0 over
+    one 0.1 s tick gives 20 m/s^3, five times the comfort bound. Left free, the
+    first knot makes `comfort` unsatisfiable by *any* plan that accelerates,
+    and the search spends its whole budget picking between violations.
+
+    Spread over whatever the horizon is rather than fixed at one second apart,
+    so that lengthening the horizon lengthens the plan rather than appending
+    time the parameters cannot shape -- past the final knot the profile holds
+    its last value, which for a four-knot plan on an eight-second horizon is
+    four seconds of constant acceleration nobody chose.
+    """
+    spacing = horizon.duration_s / (_N_KNOTS - 1)
+    return tuple(index * spacing for index in range(_N_KNOTS))
 
 #: Sharpness of the softplus speed floor. Higher tracks `max(v, 0)` more
 #: closely but softens the gradient over a narrower band; 4.0 puts the
@@ -125,7 +140,7 @@ class RolloutInputs:
         return int(self.actor_radii.shape[0])
 
 
-def knot_step_limit(limits) -> float:
+def knot_step_limit(limits, horizon) -> float:
     """The largest acceleration change one knot interval may carry.
 
     The profile is piecewise linear between knots, so its slope -- the jerk --
@@ -136,7 +151,7 @@ def knot_step_limit(limits) -> float:
     with the matching one on acceleration, so that this and everything else
     anchoring a plan cannot drift apart -- see `Limits.plan_accel_envelope`.
     """
-    spacing = _KNOT_TIMES_S[1] - _KNOT_TIMES_S[0]
+    spacing = horizon.duration_s / (_N_KNOTS - 1)
     return limits.plan_jerk_limit() * spacing
 
 
@@ -168,7 +183,7 @@ def _map_params(
     than leaving it as an unwritten property of the parameterisation.
     """
     limits = config.limits
-    step_limit = knot_step_limit(limits)
+    step_limit = knot_step_limit(limits, config.horizon)
 
     # Start from the measured acceleration and walk, one bounded step per knot.
     measured = torch.zeros_like(params[..., :1]) + accel0_mps2
@@ -185,19 +200,21 @@ def _map_params(
     return knots, offsets
 
 
-def _interpolate_knots(knots: torch.Tensor, times_s: torch.Tensor) -> torch.Tensor:
+def _interpolate_knots(
+    knots: torch.Tensor, times_s: torch.Tensor, times: tuple[float, ...]
+) -> torch.Tensor:
     """Piecewise-linear acceleration profile through the knots.
 
-    ``knots`` holds one value per entry of :data:`_KNOT_TIMES_S`, the first of
+    ``knots`` holds one value per entry of :func:`knot_times_s`, the first of
     which is the measured acceleration rather than a free parameter.
     """
-    knot_times = torch.tensor(_KNOT_TIMES_S, dtype=times_s.dtype, device=times_s.device)
+    knot_times = torch.tensor(times, dtype=times_s.dtype, device=times_s.device)
 
     # Built as a sum of masked segments rather than by indexing: only a few
     # knots, and this stays differentiable in the knot *values* with no
     # gather, which keeps it clean under vmap.
     profile = torch.zeros_like(times_s)
-    for index in range(len(_KNOT_TIMES_S) - 1):
+    for index in range(len(times) - 1):
         start_t, end_t = knot_times[index], knot_times[index + 1]
         weight = ((times_s - start_t) / (end_t - start_t)).clamp(0.0, 1.0)
         segment = knots[..., index] + weight * (knots[..., index + 1] - knots[..., index])
@@ -256,7 +273,7 @@ def _kinematics(
     times = torch.arange(1, horizon.n_steps + 1, device=device, dtype=dtype) * dt
     knots, offsets = _map_params(params, inputs.accel0_mps2, config)
 
-    commanded = _interpolate_knots(knots, times)
+    commanded = _interpolate_knots(knots, times, knot_times_s(horizon))
 
     # Speed, floored at zero: a stopped car stays stopped rather than
     # reversing.
