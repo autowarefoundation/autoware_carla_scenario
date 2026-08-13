@@ -413,7 +413,33 @@ def rollout(
         (station - inputs.station0_m) - inputs.progress_target_m,
         cap,
     )
-    speed_headroom = inputs.speed_limit_mps - speed
+    # Capped above, and only above: being further under the limit than the
+    # tolerance is not more legal, and the objective was paying as though it
+    # were.
+    #
+    # `speed_limit` is a *constraint*, but its contribution grew smoothly with
+    # every metre per second given up, and `makes_progress` saturates. Swept on
+    # an empty straight road under an 8 m/s limit, the two crossed at 6.5 m/s:
+    # from 6.0 to 8.0 the progress term gained 0.33 and the speed term lost
+    # 1.05, so the objective's happiest cruise was a metre and a half under the
+    # limit and approaching the limit made every plan score worse. On the road
+    # that showed up as decelerations with nothing within 50 m to explain them.
+    #
+    # The violation side is untouched: below zero this reads its true
+    # magnitude, so exceeding the limit costs exactly what it did. A clamp on
+    # the other side would have been simpler and is wrong for the reason
+    # `RuleSet.objective` gives about clamps generally -- it takes the gradient
+    # to exactly zero, and a rule with no gradient anywhere it is comfortably
+    # satisfied is a rule that cannot start pushing back until it is too late.
+    # `tanh` matches the identity in value and slope at zero and decays from
+    # there.
+    raw_headroom = inputs.speed_limit_mps - speed
+    scale = limits.speed_headroom_scale_mps
+    speed_headroom = torch.where(
+        raw_headroom > 0.0,
+        scale * torch.tanh(raw_headroom / scale),
+        raw_headroom,
+    )
 
     light_gate = torch.zeros_like(speed) + inputs.light_gate
 

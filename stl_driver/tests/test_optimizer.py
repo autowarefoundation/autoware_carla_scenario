@@ -295,6 +295,46 @@ def test_a_warm_start_is_accepted_and_helps(optimizer):
         assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
 
 
+def test_the_objective_never_prefers_dawdling(optimizer):
+    """A speed limit is a constraint, and it was being paid as a preference.
+
+    `speed_limit` earned more the further under the limit a plan stayed, while
+    `makes_progress` saturates -- so on an empty road the two crossed well
+    below the limit and every plan that approached it scored worse. Swept at an
+    8 m/s limit, the objective's happiest cruise was 6.5 m/s, and the road
+    showed decelerations with nothing within 50 m to explain them.
+    """
+    limit = 8.0
+
+    def signal_at(speed: float):
+        inputs = make_inputs(CONFIG, speed0_mps=speed, speed_limit_mps=limit)
+        with torch.no_grad():
+            return rollout(torch.zeros(N_PARAMS), inputs, CONFIG)
+
+    def score(speed: float) -> float:
+        with torch.no_grad():
+            return float(optimizer.rules.objective(signal_at(speed)))
+
+    # The sharp statement of it: well under the limit, this rule must have no
+    # opinion at all. Anything else and it is bidding against the liveness
+    # rules for speed the limit does not care about.
+    rule = next(r for r in optimizer.rules.rules if r.name == "speed_limit")
+    with torch.no_grad():
+        dawdling = float(rule.formula.robustness(signal_at(4.0)))
+        cruising = float(rule.formula.robustness(signal_at(6.0)))
+    # Unsaturated these differed by the whole 2 m/s. What is left is the tail
+    # of the saturation, which is what keeps a gradient here at all.
+    assert abs(dawdling - cruising) < 0.02
+
+    # So the objective rises with speed until the limit is close enough to
+    # matter, rather than peaking at some comfortable dawdle and declining.
+    climbing = [score(speed) for speed in (4.0, 5.0, 6.0, 7.0)]
+    assert climbing == sorted(climbing), f"objective falls with speed: {climbing}"
+
+    # And the limit is still a limit: past it, the score must fall away.
+    assert score(limit + 2.0) < max(climbing) - 1.0
+
+
 def test_the_continuity_rule_finds_last_step_s_plan(optimizer):
     """It read the wrong row for a while, and nothing failed.
 

@@ -410,9 +410,30 @@ def test_saturation_is_near_transparent_at_the_scales_the_rules_use(config):
 
 
 def test_speed_headroom_tracks_the_posted_limit(config):
-    inputs = make_inputs(config, speed0_mps=9.0, speed_limit_mps=10.0)
-    signal = rollout(hold_speed_params(), inputs, config)
-    assert signal[0, Col.SPEED_HEADROOM].item() == pytest.approx(1.0, abs=0.05)
+    """Exact where the limit binds, saturating where it does not.
+
+    Being further under a limit than the tolerance is not more legal, and an
+    unsaturated column made the objective pay for it: swept on an empty road,
+    the happiest cruise was a metre and a half under an 8 m/s limit and every
+    plan approaching the limit scored worse. Above the limit the reading stays
+    exact, so a violation costs what it always did.
+    """
+    scale = config.limits.speed_headroom_scale_mps
+
+    def headroom(speed: float, limit: float) -> float:
+        inputs = make_inputs(config, speed0_mps=speed, speed_limit_mps=limit)
+        return rollout(hold_speed_params(), inputs, config)[0, Col.SPEED_HEADROOM].item()
+
+    # Over the limit: exact, and unbounded.
+    assert headroom(11.5, 10.0) == pytest.approx(-1.5, abs=0.05)
+    # Just under it: still close to the truth, since this is where it binds.
+    assert headroom(9.8, 10.0) == pytest.approx(0.2, abs=0.05)
+    # Far under it: saturated, and never past the scale it saturates over.
+    assert headroom(4.0, 10.0) <= scale + 1e-6
+    assert headroom(4.0, 10.0) == pytest.approx(scale, abs=0.02)
+    # But still moving, or the rule would have no gradient where it is
+    # satisfied and could not start pushing back until too late.
+    assert headroom(9.0, 10.0) < headroom(8.0, 10.0)
 
 
 # ---------------------------------------------------------------------------
@@ -534,10 +555,17 @@ def test_gradients_cannot_escape_an_already_colliding_plan(config):
 def test_gradients_flow_from_every_rule_to_the_parameters(config):
     """No rule may be structurally invisible to the optimizer.
 
-    Checked across two scenarios rather than one, because `stop_on_red` and
-    `keep_moving` are gated on opposite states of the same traffic light and
-    can never both be live at once -- that mutual exclusion is the design, and
-    demanding one scenario satisfy both would be demanding a contradiction.
+    Checked across several scenarios rather than one, because some rules are
+    gated on states that exclude each other. `stop_on_red` and `keep_moving`
+    turn on opposite states of the same traffic light, and demanding one
+    scenario satisfy both would be demanding a contradiction.
+
+    `speed_limit` needs its own for a different reason: the headroom column
+    saturates once a plan is comfortably legal, so a vehicle 7 m/s under the
+    limit is *meant* to feel no pull from it -- that saturation is what stopped
+    the objective paying for every metre per second given up. The rule is
+    reachable where it is relevant, which is near the limit, so that is where
+    this asks.
     """
     centres, radii = stationary_actor(config, ahead_m=30.0, lateral_m=1.0)
     common = dict(
@@ -548,9 +576,11 @@ def test_gradients_flow_from_every_rule_to_the_parameters(config):
         lead_station_m=45.0,
         published_length_m=70.0,
     )
+    at_the_limit = dict(common, speed0_mps=config.limits.default_speed_limit_mps - 0.2)
     scenarios = {
         "red light": make_inputs(config, stop_station_m=50.0, light_active=True, **common),
         "green light": make_inputs(config, light_active=False, **common),
+        "at the speed limit": make_inputs(config, light_active=False, **at_the_limit),
     }
     rules = RuleSet(build_rules(config))
     params = torch.tensor([0.2, -0.1, 0.1, 0.0, 0.2, -0.1], dtype=torch.float32)

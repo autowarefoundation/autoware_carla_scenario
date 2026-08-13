@@ -59,6 +59,32 @@ class Limits:
     speed_tolerance_mps: float = 0.5
     #: Fallback cap when the runtime reports no speed limit (0 means unknown).
     default_speed_limit_mps: float = 13.9
+    #: How much room under the limit still counts as more room.
+    #:
+    #: `speed_headroom` reads exactly above the limit and saturates below it,
+    #: over this scale. Without the saturation `speed_limit` paid for every
+    #: metre per second given up while `makes_progress` saturated, so on an
+    #: empty road under an 8 m/s limit the objective's happiest cruise was
+    #: 6.5 m/s and approaching the limit made every plan score worse. That is
+    #: what decelerations with nothing within 50 m of the vehicle looked like.
+    #:
+    #: It sets where the search settles, and both directions cost something --
+    #: the narrower it is the closer the vehicle cruises to the limit, and the
+    #: less the objective minds a plan crossing it. Swept on that same empty
+    #: road, giving the best legal cruise and what a metre per second over the
+    #: limit costs, which is what keeps plans off it:
+    #:
+    #:     scale 0.50   -> cruises at 7.25, overshoot costs 2.33
+    #:     scale 0.75   -> cruises at 7.00, overshoot costs 2.46
+    #:     scale 1.00   -> cruises at 6.75, overshoot costs 2.53
+    #:     unsaturated  -> cruises at 6.75, overshoot costs 2.67
+    #:
+    #: Past 1.0 it stops buying anything: the cruise is already back where the
+    #: unsaturated column put it. And 0.5 is too narrow in the other direction
+    #: -- the rule has almost no say until the limit is upon it, and on the
+    #: road plans crossed it on 2.5% of steps against 0.2% before. 0.75 keeps
+    #: the approach under gradient while refusing to pay for a dawdle.
+    speed_headroom_scale_mps: float = 0.75
     #: Stop this far short of the reported traffic-light distance.
     stop_line_margin_m: float = 4.0
 
