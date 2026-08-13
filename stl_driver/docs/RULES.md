@@ -230,19 +230,20 @@ obstructs us at any point in the horizon".  Asking only about the present
 instant is the wrong question for a rule about distance covered *over* the
 horizon: a road clear now and blocked in two seconds is not one to accelerate
 down, and demanding progress there demands a plan the safety rules forbid.
-`keep_moving` asks pointwise, because it is about the speed at each instant.
+There was a second liveness rule, `keep_moving`, asking pointwise for speed
+above a crawl.  It was removed.  It is not a traffic rule -- no road code asks
+a driver not to go slowly -- and it existed only to help `makes_progress` stop
+the search discovering that standing still satisfies every safety rule.
+Measured, it was not needed for that: on fixed situations the plans chosen
+with and without it agreed to two decimal places, neither parked from any of
+seven starting speeds, and a drive covered 192.3 m against 191.2 m.
 
-### `keep_moving` — soft, weight 2, margin 1.0
-```
-□[1.0s, 4.0s] ((no red light ∧ headway > 4 m) ⇒ (speed > 1.0))
-```
-Redundant with `makes_progress` by design: that one is an integral over the
-horizon, this one is instantaneous, and they fail in different ways.  A plan
-that creeps the whole time fails progress; one that lurches and stops fails
-this.
-
-The window opens at one second so that a plan is allowed to pull away from a
-standstill rather than being required to already be moving.
+What it did cost was a gate.  Any approach to a red light ends at rest, so a
+rule demanding speed has to be excused near a stop line, and that excuse is
+what made the vehicle stop 18.7 m short of a line it could see from 26 m and
+wait there -- a rule made vacuous contributes a constant, and a constant has
+no gradient towards the line.  `makes_progress` needs no such excuse, because
+what it demands is already capped by the room the stop line leaves.
 
 ## Two evaluations, deliberately different
 

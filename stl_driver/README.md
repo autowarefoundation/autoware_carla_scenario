@@ -5,7 +5,7 @@ Temporal Logic** and driven by maximising the robustness of that
 specification.
 
 The point is that the driving rules are not spread through a planner as
-heuristics and thresholds.  They are ten formulas in
+heuristics and thresholds.  They are nine formulas in
 [`src/stl_driver/rules.py`](src/stl_driver/rules.py), which you can read,
 test, and change:
 
@@ -19,7 +19,6 @@ stay_on_route    □ (route_slack > 0)
 lane_keeping     □[0.5s,4s] (|lateral_offset| < 1.2)
 comfort          □ (|accel| ≤ 2 ∧ |jerk| < 4 ∧ |lat_accel| < 2.5)
 makes_progress   □ (clear ⇒ ◇[0,4s] (progress_slack > 0))
-keep_moving      □[1s,4s] (clear ⇒ (speed > 1.0))
 ```
 
 `uv run stl-driver explain` prints the live specification with its bounds.
@@ -97,10 +96,10 @@ Every step reports each rule's robustness separately in
 answer is in the numbers, in the same language the behaviour was specified in:
 
 ```
-[  0] v= 0.23 rob=  0.293 fb=0 light=0 | comfort=0.29 keep_moving=0.30
+[  0] v= 0.23 rob=  0.293 fb=0 light=0 | comfort=0.29
 [  20] v= 0.55 rob= -0.894 fb=1 light=1 | stop_on_red=-0.89 no_reverse=0.05
 [  60] v= 0.00 rob=  0.000 fb=0 light=1 | stop_on_red=0.00 lane_keeping=1.16
-[ 160] v= 3.49 rob=  0.304 fb=0 light=0 | comfort=0.30 keep_moving=1.04
+[ 160] v= 3.49 rob=  0.304 fb=0 light=0 | comfort=0.30
 ```
 
 That is a real trace from CARLA: approaching a red light, braking hard enough
