@@ -317,6 +317,89 @@ def _report_rule_violations(per_step: list[dict[str, float]], rules) -> None:
         )
 
 
+#: What counts as a stop worth explaining: this much speed lost inside
+#: `_HARD_STOP_WINDOW` steps, ending near a standstill.
+#:
+#: Calibrated on one seen in a recording, where the vehicle went from 5.4 m/s
+#: to nothing in four steps on an empty road. A policy cannot command that --
+#: its own floor is 3.92 m/s^2 and the emergency plan's is 7.0 -- so the shape
+#: of it is worth catching wherever it comes from.
+_HARD_STOP_DROP_MPS = 2.5
+_HARD_STOP_WINDOW = 4
+#: Beyond this, nothing was close enough to be the reason.
+_NOTHING_NEAR_M = 15.0
+
+
+def _report_hard_stops(per_step: list[dict[str, float]], rules) -> None:
+    """Decelerations to a standstill, and what the specification said at the time.
+
+    Here because a drive that does something surprising once in four hundred
+    steps is not reliably reproducible: the traffic diverges the moment the ego
+    acts differently, and three separate attempts to reproduce one from a
+    recording found nothing. A recording that carries its own diagnosis does
+    not need reproducing.
+
+    What it prints is what turned out to be diagnostic when reading such a stop
+    off the video frame by frame: the speed, what the plan asked for, how much
+    room there was, whether a light applied, and which rule had the least of
+    it. On the one that prompted this, the answer was there -- `makes_progress`
+    at -4.18 with 99 m of clearance and no light, which is the specification
+    correctly reporting a stop nothing had asked for.
+    """
+    scored = [s for s in per_step if "current_speed_mps" in s]
+    if len(scored) <= _HARD_STOP_WINDOW:
+        return
+
+    speeds = [s["current_speed_mps"] for s in scored]
+    stops = [
+        i
+        for i in range(_HARD_STOP_WINDOW, len(scored))
+        if speeds[i - _HARD_STOP_WINDOW] - speeds[i] > _HARD_STOP_DROP_MPS and speeds[i] < 1.0
+    ]
+    if not stops:
+        logger.info("no hard stops")
+        return
+
+    # Consecutive detections are one event.
+    events = [stops[0]]
+    events += [i for previous, i in zip(stops, stops[1:], strict=False) if i - previous > 5]
+    logger.info("%d hard stop%s (%.1f m/s lost within %.1f s):",
+                len(events), "" if len(events) == 1 else "s",
+                _HARD_STOP_DROP_MPS, _HARD_STOP_WINDOW / 10.0)
+
+    for at in events:
+        step = scored[at]
+        unexplained = (
+            step.get("light_active", 0.0) < 0.5
+            and step.get("min_clearance_m", 0.0) > _NOTHING_NEAR_M
+            and step.get("min_headway_slack_m", 0.0) > _NOTHING_NEAR_M
+        )
+        logger.info(
+            "  step %d: %.1f -> %.1f m/s%s",
+            at + 1,
+            speeds[at - _HARD_STOP_WINDOW],
+            speeds[at],
+            "  -- NOTHING TO STOP FOR" if unexplained else "",
+        )
+        logger.info("    %5s %7s %9s %9s %6s  %s", "step", "speed", "clearance", "headway",
+                    "light", "worst rule")
+        for i in range(max(0, at - 6), min(len(scored), at + 3)):
+            s = scored[i]
+            per_rule = {r.name: s.get(f"stl_rule_{r.name}", 0.0) for r in rules}
+            worst = min(per_rule, key=per_rule.get)
+            logger.info(
+                "    %5d %7.2f %9.1f %9.1f %6s  %-16s %+7.2f%s",
+                i + 1,
+                s["current_speed_mps"],
+                s.get("min_clearance_m", float("nan")),
+                s.get("min_headway_slack_m", float("nan")),
+                "red" if s.get("light_active", 0.0) > 0.5 else "-",
+                worst,
+                per_rule[worst],
+                "  FALLBACK" if s.get("stl_fallback", 0.0) > 0.5 else "",
+            )
+
+
 #: Steps excluded from the warm solve-time figures. Generous on purpose:
 #: `torch.compile` builds its graphs on the first call, and a mean taken over
 #: the whole drive charges every later step a share of that.
@@ -504,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
         outcome = CarlaRuntime(world, config, scenario).run_rollout()
 
     _report_rule_violations(per_step, policy.rules.rules)
+    _report_hard_stops(per_step, policy.rules.rules)
     _report_solve_times(per_step)
 
     logger.info("rollout success=%s over %d steps", outcome.success, outcome.steps)
