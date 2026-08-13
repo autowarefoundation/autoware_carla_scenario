@@ -16,7 +16,7 @@ import torch
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.optimizer import RobustnessOptimizer
-from stl_driver.rollout import rollout
+from stl_driver.rollout import N_PARAMS, rollout
 from stl_driver.rules import RuleSet, build_rules
 from stl_driver.signals import Col, signal_from_columns
 from tests.conftest import curved_route, make_inputs, stationary_actor, straight_route
@@ -287,6 +287,21 @@ def test_a_warm_start_is_accepted_and_helps(optimizer):
     warm = optimizer.solve(inputs, warm_start=cold.params)
     with torch.no_grad():
         assert float(rules.objective(warm.signal)) >= float(rules.objective(cold.signal)) - 1e-6
+
+
+def test_the_candidate_batch_is_the_same_width_with_or_without_a_warm_start(optimizer):
+    """A width that varies is a graph that gets recompiled mid-drive.
+
+    Costed at 3.4 s on the second step of a compiled session -- the first step
+    with a previous plan to reuse -- against a 0.064 s median and a 0.100 s
+    policy timestep.
+    """
+    cold = optimizer._candidates(None)
+    warm = optimizer._candidates(torch.zeros(N_PARAMS))
+    assert cold.shape == warm.shape == (CONFIG.optimizer.n_samples + 3, N_PARAMS)
+    # The braking plan stays last either way: it is the seed that rescues a
+    # step where every sampled plan is unsafe, and tests reach for it by index.
+    assert torch.allclose(cold[-1], warm[-1])
 
 
 def test_alternatives_are_reported_for_inspection(optimizer):

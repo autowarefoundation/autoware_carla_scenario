@@ -27,7 +27,7 @@ from stl_driver.config import STLDriverConfig
 from stl_driver.fallback import emergency_brake_plan, hold_plan
 from stl_driver.frenet import build_route_table, project_to_frenet
 from stl_driver.optimizer import PlanSolution, RobustnessOptimizer
-from stl_driver.perception import forecast_actors, read_traffic_light
+from stl_driver.perception import forecast_actors, pad_actor_discs, read_traffic_light
 from stl_driver.rollout import RolloutInputs, plan_xy
 from stl_driver.rules import build_rules
 from stl_driver.ruleset import RuleSet
@@ -262,6 +262,10 @@ class EgoPolicy(BaseDriver):
         def tensor(values, dtype=torch.float32):
             return torch.as_tensor(values, dtype=dtype, device=device)
 
+        padded_centres, padded_radii = pad_actor_discs(
+            forecast.centres, forecast.radii, config.limits.max_actor_discs
+        )
+
         def scalar(value: float) -> torch.Tensor:
             """A 0-d tensor, so `torch.compile` traces it instead of baking it in."""
             return torch.as_tensor(float(value), dtype=torch.float32, device=device)
@@ -276,9 +280,10 @@ class EgoPolicy(BaseDriver):
             offset0_m=scalar(offset0),
             speed0_mps=scalar(speed_mps),
             accel0_mps2=scalar(accel_mps2),
-            actor_centres=tensor(forecast.centres),
-            actor_radii=tensor(forecast.radii),
+            actor_centres=tensor(padded_centres),
+            actor_radii=tensor(padded_radii),
             n_actors=forecast.n_actors,
+            n_forecast_discs=int(forecast.radii.shape[0]),
             ego_disc_offsets=tensor(ego_offsets),
             ego_disc_radius=ego_radius,
             lead_station_m=tensor(forecast.lead_station_m),
@@ -332,7 +337,14 @@ class EgoPolicy(BaseDriver):
             "stl_vmap": 1.0 if solution.used_vmap else 0.0,
             "current_speed_mps": speed_mps,
             "route_length_m": float(inputs.published_length_m),
-            "n_actor_discs": float(inputs.n_actor_discs),
+            # The forecast's own count, not the padded tensor's width -- that
+            # width is a constant, and reporting it would hide the one case
+            # worth seeing, a scene with more discs than the rollout has room
+            # for. What is dropped is the farthest, which no minimum over
+            # discs could have selected, but a cap that never says so is the
+            # kind of thing this specification exists not to have.
+            "n_actor_discs": float(inputs.n_forecast_discs),
+            "n_actor_discs_dropped": float(max(0, inputs.n_forecast_discs - inputs.n_actor_discs)),
             "n_actors": float(inputs.n_actors),
             "light_active": 1.0 if float(inputs.light_gate) > 0.0 else 0.0,
         }

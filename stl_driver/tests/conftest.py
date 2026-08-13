@@ -103,6 +103,7 @@ def make_inputs(
         actor_centres=actor_centres,
         actor_radii=actor_radii,
         n_actors=int(actor_radii.shape[0]) // 2,
+        n_forecast_discs=int(actor_radii.shape[0]),
         ego_disc_offsets=torch.tensor(ego_offsets, dtype=torch.float32),
         ego_disc_radius=ego_radius,
         lead_station_m=torch.full((n_steps,), float(lead_station_m), dtype=torch.float32),

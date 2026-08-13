@@ -141,18 +141,27 @@ class RobustnessOptimizer:
     def _candidates(self, warm_start: torch.Tensor | None) -> torch.Tensor:
         """The sampling stage's parameter batch.
 
-        The Sobol sweep plus three plans worth having regardless: hold the
-        current speed, brake comfortably to a stop, and whatever worked last
-        step.  The braking seed matters most -- it is the one that rescues a
-        step where every random plan happens to be unsafe.
+        The Sobol sweep plus three plans worth having regardless: whatever
+        worked last step, hold the current speed, and brake comfortably to a
+        stop.  The braking seed matters most -- it is the one that rescues a
+        step where every random plan happens to be unsafe, and it is kept last
+        so that ``_candidates(...)[-1]`` names it.
+
+        The batch is the same width whether or not there is a plan to warm
+        start from, because that width is a graph shape. Left to vary it is a
+        second graph compiled mid-drive: measured on a session's second step,
+        the first with a previous plan to reuse, at 3.4 s against a 0.064 s
+        median and a 0.100 s timestep. Holding speed is the natural stand-in
+        when there is nothing to carry over -- it duplicates a row that batch
+        already has, which costs one row in sixty-seven and no correctness.
         """
         limits = self.config.limits
+        hold = _accel_params(0.0, limits)
         fixed = [
-            _accel_params(0.0, limits),
+            hold.clone() if warm_start is None else warm_start.detach().clone(),
+            hold,
             _accel_params(-limits.max_decel_mps2 * 0.9, limits),
         ]
-        if warm_start is not None:
-            fixed.append(warm_start.detach().clone())
         return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
 
     # -- search ------------------------------------------------------------

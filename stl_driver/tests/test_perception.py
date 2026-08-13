@@ -593,3 +593,84 @@ def test_the_lead_stays_the_same_vehicle_across_the_horizon():
     # grows. A switch to the overtaking car would show up as a step down.
     assert np.all(np.diff(lead) >= -1e-6)
     assert lead.min() > 50.0
+
+
+def test_padding_discs_leaves_the_clearance_unchanged():
+    """A fixed width must not change what `collision_free` sees.
+
+    The padding exists so there is one graph shape rather than four; it earns
+    that only if it is invisible to the rules.
+    """
+    import torch
+
+    from stl_driver.perception import pad_actor_discs
+    from stl_driver.rollout import N_PARAMS, rollout
+    from stl_driver.signals import Col
+    from tests.conftest import make_inputs, stationary_actor
+
+    centres, radii = stationary_actor(CONFIG, ahead_m=18.0, lateral_m=0.4)
+    unpadded = make_inputs(CONFIG, speed0_mps=7.0, actor_centres=centres, actor_radii=radii)
+
+    padded_centres, padded_radii = pad_actor_discs(
+        centres.numpy(), radii.numpy(), CONFIG.limits.max_actor_discs
+    )
+    assert padded_radii.shape == (CONFIG.limits.max_actor_discs,)
+    padded = make_inputs(
+        CONFIG,
+        speed0_mps=7.0,
+        actor_centres=torch.from_numpy(padded_centres),
+        actor_radii=torch.from_numpy(padded_radii),
+    )
+
+    params = torch.tensor([0.3, -0.5, 0.2, 0.1, 0.4, -0.2])
+    before = rollout(params, unpadded, CONFIG)[:, Col.CLEARANCE]
+    after = rollout(params, padded, CONFIG)[:, Col.CLEARANCE]
+    assert torch.allclose(before, after, atol=1e-4)
+    assert params.shape == (N_PARAMS,)
+
+
+def test_padding_an_empty_scene_reads_as_an_empty_scene():
+    """All-padding must give the same "nothing there" as no discs at all."""
+    import torch
+
+    from stl_driver.perception import pad_actor_discs
+    from stl_driver.rollout import rollout
+    from stl_driver.signals import Col
+    from tests.conftest import make_inputs
+
+    steps = CONFIG.horizon.n_steps
+    empty = make_inputs(CONFIG, speed0_mps=7.0)
+    centres, radii = pad_actor_discs(
+        np.zeros((steps, 0, 2), dtype=np.float32),
+        np.zeros((0,), dtype=np.float32),
+        CONFIG.limits.max_actor_discs,
+    )
+    all_padding = make_inputs(
+        CONFIG,
+        speed0_mps=7.0,
+        actor_centres=torch.from_numpy(centres),
+        actor_radii=torch.from_numpy(radii),
+    )
+    params = torch.zeros(6)
+    assert torch.allclose(
+        rollout(params, empty, CONFIG)[:, Col.CLEARANCE],
+        rollout(params, all_padding, CONFIG)[:, Col.CLEARANCE],
+        atol=1e-4,
+    )
+
+
+def test_too_many_discs_drop_the_farthest():
+    """Only the nearest can decide a minimum, so those are the ones to keep."""
+    from stl_driver.perception import pad_actor_discs
+
+    steps = CONFIG.horizon.n_steps
+    distances = np.array([50.0, 5.0, 200.0, 12.0], dtype=np.float32)
+    centres = np.zeros((steps, 4, 2), dtype=np.float32)
+    centres[:, :, 0] = distances
+    radii = np.arange(4, dtype=np.float32)
+
+    kept_centres, kept_radii = pad_actor_discs(centres, radii, 2)
+    assert kept_centres.shape == (steps, 2, 2)
+    assert sorted(kept_centres[0, :, 0].tolist()) == [5.0, 12.0]
+    # The radii must follow their own discs, not be re-paired with others.
+    assert sorted(kept_radii.tolist()) == [1.0, 3.0]

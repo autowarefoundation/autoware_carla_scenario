@@ -31,11 +31,17 @@ from carla_driver_interface.grpc_api import CarlaRendererData, TrafficLightState
 from stl_driver.config import STLDriverConfig
 from stl_driver.frenet import RouteTable, project_to_frenet
 
+#: Where padding discs are put: far enough that `saturate` reads them as the
+#: same "nothing there" the empty case reports, and far enough that no plan
+#: within the route table's reach can approach one.
+_PADDING_DISTANCE_M = 1.0e4
+
 __all__ = [
     "ActorForecast",
     "TrafficLight",
     "footprint_discs",
     "forecast_actors",
+    "pad_actor_discs",
     "read_traffic_light",
 ]
 
@@ -238,6 +244,46 @@ def forecast_actors(
         lead_station_m=lead_station.astype(np.float32),
         lead_speed_mps=lead_speed.astype(np.float32),
         n_actors=len(renderer_data.actors),
+    )
+
+
+def pad_actor_discs(
+    centres: np.ndarray,
+    radii: np.ndarray,
+    capacity: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """A fixed number of discs, whatever the traffic is doing.
+
+    The forecast is as wide as the traffic is dense, and a width that changes
+    is a graph shape that changes. Padding it to a constant leaves exactly one
+    shape for `torch.compile` to specialise on.
+
+    Padding discs are placed far enough away that they can never be the
+    nearest thing to the ego, and given zero radius, so a `collision_free`
+    that is a minimum over discs cannot see them. Where there are more discs
+    than room, the farthest go -- for the same reason, only the nearest can
+    decide a minimum.
+
+    Costs almost nothing: the work here is dispatching tensor operations, not
+    performing them, so a wider tensor is the same number of operations.
+    """
+    n_steps, n_discs, _ = centres.shape
+    if n_discs == capacity:
+        return centres, radii
+
+    if n_discs > capacity:
+        # Nearest first, judged over the whole horizon from the rig origin --
+        # the ego's own path is not known here, and cannot be, since it is
+        # what the rollout is about to choose.
+        nearest = np.linalg.norm(centres, axis=2).min(axis=0)
+        keep = np.argsort(nearest, kind="stable")[:capacity]
+        return np.ascontiguousarray(centres[:, keep]), np.ascontiguousarray(radii[keep])
+
+    missing = capacity - n_discs
+    far = np.full((n_steps, missing, 2), _PADDING_DISTANCE_M, dtype=centres.dtype)
+    return (
+        np.concatenate([centres, far], axis=1),
+        np.concatenate([radii, np.zeros(missing, dtype=radii.dtype)]),
     )
 
 

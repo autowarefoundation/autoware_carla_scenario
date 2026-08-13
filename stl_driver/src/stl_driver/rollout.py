@@ -97,6 +97,12 @@ class RolloutInputs:
     actor_radii: torch.Tensor
     #: How many vehicles those discs came from, for reporting.
     n_actors: int
+    #: How many of the discs above are real rather than padding, for reporting.
+    #: The tensors are a fixed width so that there is one graph shape to
+    #: compile, which makes their own width uninformative -- and would make a
+    #: scene busy enough to be truncated look exactly like any other. See
+    #: `stl_driver.perception.pad_actor_discs`.
+    n_forecast_discs: int
     #: ``(E,)`` ego footprint disc offsets along the heading, measured from the
     #: rig origin (the rear axle), and their shared radius.
     ego_disc_offsets: torch.Tensor

@@ -299,6 +299,68 @@ def _report_rule_violations(per_step: list[dict[str, float]], rules) -> None:
         100.0 * emergencies / len(scored),
     )
 
+    # Whether the fixed disc budget was actually big enough for this traffic.
+    # The rollout pads to a constant width, so nothing else in a run says so.
+    discs = [s["n_actor_discs"] for s in scored if "n_actor_discs" in s]
+    dropped = [s.get("n_actor_discs_dropped", 0.0) for s in scored]
+    if discs:
+        logger.info(
+            "actor discs: max %d of %d budgeted%s",
+            int(max(discs)),
+            STLDriverConfig().limits.max_actor_discs,
+            (
+                f" -- TRUNCATED on {sum(1 for d in dropped if d > 0)} steps, "
+                f"up to {int(max(dropped))} discs dropped"
+                if max(dropped) > 0
+                else ""
+            ),
+        )
+
+
+#: Steps excluded from the warm solve-time figures. Generous on purpose:
+#: `torch.compile` builds its graphs on the first call, and a mean taken over
+#: the whole drive charges every later step a share of that.
+_WARMUP_STEPS = 20
+
+
+def _report_solve_times(per_step: list[dict[str, float]]) -> None:
+    """What the search cost per step, warm and cold, and at the tail.
+
+    A mean over the drive cannot tell a one-off compile from a search that is
+    slow every step, and those call for opposite decisions. The deadline is
+    missed by individual steps, not by an average, so the tail is reported too.
+    """
+    solves = [s["stl_solve_seconds"] for s in per_step if "stl_solve_seconds" in s]
+    if not solves:
+        return
+
+    ordered = sorted(solves)
+
+    def quantile(fraction: float) -> float:
+        return ordered[min(len(ordered) - 1, int(fraction * len(ordered)))]
+
+    warm = solves[_WARMUP_STEPS:] or solves
+    slowest = max(range(len(solves)), key=solves.__getitem__)
+    logger.info(
+        "solve seconds: mean %.4f, warm mean %.4f (from step %d), median %.4f, "
+        "p95 %.4f, max %.4f at step %d",
+        sum(solves) / len(solves),
+        sum(warm) / len(warm),
+        _WARMUP_STEPS,
+        quantile(0.5),
+        quantile(0.95),
+        ordered[-1],
+        slowest + 1,
+    )
+    # Which step is slowest says what the cost is: a compile lands on one early
+    # step, a search that is simply slow puts its worst anywhere.
+    late = [(i, v) for i, v in enumerate(solves) if v > 3.0 * quantile(0.5)]
+    if late:
+        logger.info(
+            "steps over 3x median: %s",
+            ", ".join(f"{i + 1} ({v:.3f} s)" for i, v in late[:8]),
+        )
+
 
 def encode(frames_dir: Path, output: Path, fps: int) -> None:
     if shutil.which("ffmpeg") is None:
@@ -374,8 +436,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--compile",
         dest="compile_search",
-        action="store_true",
-        help="compile the search with torch.compile before driving",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "compile the search with torch.compile before driving. On by "
+            "default; --no-compile drives eagerly, which is how to check that "
+            "a change is not merely a compilation artefact."
+        ),
     )
     parser.add_argument(
         "--no-video",
@@ -391,9 +458,10 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     config = STLDriverConfig()
-    if args.compile_search:
+    if args.compile_search is not None:
         config = replace(
-            config, optimizer=replace(config.optimizer, compile_search=True)
+            config,
+            optimizer=replace(config.optimizer, compile_search=args.compile_search),
         )
     if args.refine_seeds is not None:
         config = replace(
@@ -436,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
         outcome = CarlaRuntime(world, config, scenario).run_rollout()
 
     _report_rule_violations(per_step, policy.rules.rules)
+    _report_solve_times(per_step)
 
     logger.info("rollout success=%s over %d steps", outcome.success, outcome.steps)
     for key in sorted(outcome.metrics):

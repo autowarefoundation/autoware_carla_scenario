@@ -171,6 +171,19 @@ class Limits:
     frenet_prediction_half_width_m: float = 8.0
 
     # -- numerics ----------------------------------------------------------
+    #: How many actor footprint discs the rollout is given, always.
+    #:
+    #: The forecast produces as many as there are vehicles nearby, which on a
+    #: 400-step drive through thirty cars was 91, 98, 105 or 112 -- four widths,
+    #: and therefore four shapes for anything compiling the graph to specialise
+    #: on. Padding to a fixed width leaves one.
+    #:
+    #: The padding costs almost nothing, because the time here goes on
+    #: dispatching operations rather than on performing them: a wider tensor is
+    #: the same number of operations. Discs beyond this are dropped
+    #: farthest-first, which is the right way round -- `collision_free` is a
+    #: minimum, so only the nearest can decide it.
+    max_actor_discs: int = 128
     #: Distance-like columns saturate here rather than running to infinity.
     #: An unbounded column would collapse the softmax weights inside `And` and
     #: dominate the weighted objective -- the sort of bug that shows up as
@@ -299,34 +312,35 @@ class OptimizerConfig:
     torch_threads: int = 2
     #: Compile the two hot paths with ``torch.compile`` before driving.
     #:
-    #: Off, and measured to be the right answer rather than assumed. On a
-    #: fixed five-scenario bench it looks excellent -- refinement steps 3.93 to
-    #: 5.63 within the same budget, a 43% deeper search for nothing. On the
-    #: road it is not viable, and the two disagree for a reason worth keeping.
+    #: On, and measured on the road rather than on a bench -- for two drives
+    #: this was the wrong answer, and what made it right is worth keeping,
+    #: because both faults were the same fault and neither is visible on a
+    #: bench.
     #:
-    #: `torch.compile` specialises on what it sees. It used to specialise on
-    #: the *values* of the Python floats in `RolloutInputs` -- the ego station,
-    #: the route length, the speed -- every one of which differs every step, so
-    #: it rebuilt the graph every step and hit its recompilation limit: a
-    #: 400-step drive went from 57.9 s to 200.5 s. Those scalars are 0-d
-    #: tensors now and that particular trap is gone; no frame recompiles during
-    #: steady-state solving.
+    #: `torch.compile` specialises on what it sees, so anything that varies
+    #: step to step is a new graph compiled mid-drive, inside the policy's own
+    #: deadline. It specialised first on the *values* of the Python floats in
+    #: `RolloutInputs` -- the ego station, the route length, the speed -- and a
+    #: 400-step drive went from 57.9 s to 200.5 s against dynamo's
+    #: recompilation limit. Those are 0-d tensors now. It then specialised on
+    #: two *shapes*: the actor footprint tensor, as wide as there are vehicles
+    #: nearby, and the candidate batch, one row wider once a previous plan
+    #: exists to warm start from. Both are fixed widths now -- see
+    #: `Limits.max_actor_discs` and `RobustnessOptimizer._candidates`.
     #:
-    #: What remains is shape. The actor footprint tensor is as wide as there
-    #: are vehicles nearby, which changes continuously in traffic and not at
-    #: all on a bench. Each new width is a new graph, compiled mid-drive, and
-    #: those spikes land inside the policy's own deadline. Two runs each on a
-    #: pinned route: satisfied 96.8/94.2% eager against 97.5/98.0% compiled,
-    #: which sounds like a win until the latency is read -- 0.091/0.093 s
-    #: against 0.121/0.137 s, against a policy timestep of 0.100 s. The better
-    #: plans were bought by overrunning the deadline, which is not a trade
-    #: available on a vehicle.
+    #: A bench sees none of this: traffic density is what varies, and a bench
+    #: pins it. Two runs each on a pinned route through thirty vehicles, per
+    #: step: median solve 0.0749/0.0751 s eager against 0.0636/0.0658 s
+    #: compiled, p95 0.0863/0.0865 against 0.0737/0.0750, worst step
+    #: 0.1015/0.1008 against 0.0897/0.0827. Against a 0.100 s timestep that
+    #: last column is the one that decides: compiled fits inside it on every
+    #: step of both runs, and eager does not on either. Specification
+    #: satisfaction was 85.5/86.2% against 87.2/83.5% -- a spread the closed
+    #: loop cannot resolve, so latency is what this is bought for.
     #:
-    #: Making this pay would mean padding the actor tensors to a fixed width so
-    #: there is one shape to compile. That is plausible -- the cost here is
-    #: dispatch, not arithmetic, so the padding would be nearly free -- but it
-    #: is not done, and until it is, this stays off.
-    compile_search: bool = False
+    #: The compile itself costs a few seconds, paid in `prepare` before the
+    #: runtime is waiting. Failure there is caught and falls back to eager.
+    compile_search: bool = True
     #: Where the search runs: ``"cpu"``, ``"cuda"``, or ``"auto"``.
     #:
     #: CPU is the default because it is faster at this size, not merely
