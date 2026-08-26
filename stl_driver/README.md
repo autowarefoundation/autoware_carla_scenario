@@ -1,5 +1,7 @@
 # stl_driver
 
+[![Watch the video](https://img.youtube.com/vi/ji5ljVm3pwk/hqdefault.jpg)](https://youtu.be/ji5ljVm3pwk)
+
 An autonomous-driving policy whose behaviour is **written down as Signal
 Temporal Logic** and driven by maximising the robustness of that
 specification.
