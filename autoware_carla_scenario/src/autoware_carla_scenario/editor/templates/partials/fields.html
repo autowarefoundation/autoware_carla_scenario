@@ -30,6 +30,17 @@
         </option>
       {% endfor %}
     </select>
+  {% elif spec.kind == 'action' %}
+    {# Actions are listed by track, because "which one is Cut in" is a question
+       about whose track it sits on as much as about its title. #}
+    <select name="{{ name }}" class="ed-input">
+      <option value="" {% if not current %}selected{% endif %}>— choose —</option>
+      {% for other in document.actions %}
+        <option value="{{ other.id }}" {% if current == other.id %}selected{% endif %}>
+          {{ action_label(other, document) }}
+        </option>
+      {% endfor %}
+    </select>
   {% elif spec.kind in ('int_list', 'int_list_or_ref') %}
     <input type="text" name="{{ name }}" class="ed-input mono"
            value="{{ current if current is string else (current or [])|join(', ') }}"
@@ -74,13 +85,15 @@
   {% if spec %}
     {%- set visual = spec.visual -%}
     {%- set subject = node.params.get(visual.subject) if visual.subject else none -%}
+    {%- set subject_action = document.action(subject|string) if subject else none -%}
     {%- set target = node.params.get(visual.target) if visual.target else none -%}
     {%- set value = node.params.get(visual.value) if visual.value else none -%}
     {%- set rule = node.params.get(visual.rule) if visual.rule else none -%}
     <div class="cond-subject">
-      {% if subject %}<span>{{ entity_label(subject, document) }}</span>{% endif %}
+      {% if subject_action %}{{ action_ref(subject_action, document) }}
+      {% elif subject %}{{ entity_ref(subject, document) }}{% endif %}
       {% if subject and target is not none %}<span class="cond-arrow">&#8594;</span>{% endif %}
-      {% if target is not none %}<span>{{ entity_label(target, document) }}</span>{% endif %}
+      {% if target is not none %}{{ entity_ref(target, document) }}{% endif %}
       {% if not subject and target is none %}<span class="cond-world">world</span>{% endif %}
     </div>
     <div class="cond-metric">{{ visual.metric }}</div>
@@ -98,6 +111,58 @@
 {% macro entity_label(value, document) %}
   {%- set entity = document.entity(value|string) -%}
   {%- if entity -%}{{ entity.display_name }}{%- else -%}{{ value }}{%- endif -%}
+{% endmacro %}
+
+
+{# An actor's colour comes from its position in the document order, so the same
+   actor is the same hue on its track header, on its clips and on every
+   condition that names it.  That tint is the only thing pointing a reaction
+   back at the track that causes it: an ego action triggered by "NPC1 is inside
+   lanelet 183" hangs in the ego's own slot, not on a wire back to NPC1. #}
+{%- set ACTOR_HUES = ['var(--actor-1)', 'var(--actor-2)', 'var(--actor-3)', 'var(--actor-4)'] -%}
+
+{% macro entity_hue(value, document) %}
+  {%- set entity = document.entity(value|string) -%}
+  {%- if entity is none -%}
+  {%- elif entity.kind == 'ego' -%}var(--actor-ego)
+  {%- else -%}
+    {%- set order = document.ordered_entities()|map(attribute='id')|list -%}
+    {{- ACTOR_HUES[order.index(entity.id) % ACTOR_HUES|length] -}}
+  {%- endif -%}
+{% endmacro %}
+
+
+{# An action named by a condition reads as "<title> on <track>": the title
+   alone is ambiguous once two actors both have a "Lane Change". #}
+{% macro action_label(action, document) %}
+  {%- set spec = get_action_spec(action.type) -%}
+  {%- set title = action.title or (spec.title if spec else action.type) -%}
+  {%- set owner = document.entity(action.actor|string) if action.actor else none -%}
+  {{- title }} · {{ owner.display_name if owner else 'World' -}}
+{% endmacro %}
+
+
+{# The action a condition watches wears the track colour of the actor that runs
+   it, so the card says which track to look at even before the link is traced. #}
+{% macro action_ref(action, document) %}
+  {%- set hue = entity_hue(action.actor, document)|trim if action.actor else '' -%}
+  {%- if hue -%}
+    <span class="cond-actor" style="--ref-hue: {{ hue }}">{{ action_label(action, document) }}</span>
+  {%- else -%}
+    <span>{{ action_label(action, document) }}</span>
+  {%- endif -%}
+{% endmacro %}
+
+
+{# A subject or target that names an actor is tinted; a lanelet id or a raw
+   value is left alone, because only actors have a track to point back at. #}
+{% macro entity_ref(value, document) %}
+  {%- set hue = entity_hue(value, document)|trim -%}
+  {%- if hue -%}
+    <span class="cond-actor" style="--ref-hue: {{ hue }}">{{ entity_label(value, document) }}</span>
+  {%- else -%}
+    <span>{{ entity_label(value, document) }}</span>
+  {%- endif -%}
 {% endmacro %}
 
 

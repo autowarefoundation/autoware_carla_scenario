@@ -65,6 +65,11 @@ FieldKind = Literal[
     "bool",
     "select",
     "entity",
+    # Names another action in the document by id.  The only field kind that
+    # makes an edge *between* two nodes of the AST rather than describing one,
+    # which is what lets "after NPC1 finished cutting in" be a fact the document
+    # states rather than something the canvas infers from card positions.
+    "action",
     "int_list",
     "int_list_or_ref",
 ]
@@ -816,6 +821,47 @@ register_condition_spec(
             ),
         ),
         description="A traffic light is in the expected state.",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="action_state",
+        title="Action state",
+        category="World",
+        builder="build_action_state_condition",
+        visual=ConditionVisual(metric="Action", subject="action", value="state"),
+        fields=(
+            FieldSpec(
+                name="action",
+                label="Action",
+                kind="action",
+            ),
+            FieldSpec(
+                name="state",
+                label="State",
+                kind="select",
+                default="completeState",
+                options=(
+                    SelectOption("standbyState", "Standby -- waiting to be triggered"),
+                    SelectOption("startTransition", "Start -- the tick it fired on"),
+                    SelectOption("runningState", "Running -- under way"),
+                    SelectOption("endTransition", "End -- the tick it finished on"),
+                    SelectOption("completeState", "Complete -- finished"),
+                ),
+                help=(
+                    "OpenSCENARIO storyboard element states.  Complete means the "
+                    "action met its own completion criteria -- a forced lane "
+                    "change is only complete once the vehicle has settled onto "
+                    "the next lane, not when the command was issued."
+                ),
+            ),
+        ),
+        description=(
+            "Another action has reached a lifecycle state.  Use this to make "
+            "one actor react to another finishing a manoeuvre, rather than to "
+            "a world state that merely coincides with it."
+        ),
     )
 )
 

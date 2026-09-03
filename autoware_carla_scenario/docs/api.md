@@ -212,7 +212,7 @@ imports the other.
 | `editor.app.create_app` | Build the FastAPI application (draft and export directories are arguments). |
 | `editor.routes` | HTML-partial routes driven by htmx. |
 | `editor.service.EditorService` | Every document mutation the editor performs, testable without a web client. |
-| `editor.map_preview.evaluate_spawn` | Evaluate spawn constraints with the framework's own sweeper; also projects the map for the offline SVG fallback. |
+| `editor.map_preview.evaluate_spawn` | Evaluate spawn constraints with the framework's own sweeper, and decide which lanelets the viewer outlines. |
 | `editor.map_preview.lanelet2_source` | The `.osm` the editor serves to `simple_lanelet2`'s wasm map viewer. |
 | `editor.app.map_viewer_url` | Where that viewer is loaded from (`SCENARIO_EDITOR_MAP_VIEWER`). |
 | `editor.forms.parse_params` | Turn a form submission into typed IR parameters, driven by `FieldSpec` metadata. |

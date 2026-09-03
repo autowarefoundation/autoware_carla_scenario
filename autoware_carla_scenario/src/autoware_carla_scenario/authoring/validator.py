@@ -111,12 +111,30 @@ def _is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+@dataclass(frozen=True)
+class _Refs:
+    """Ids a node is allowed to point at.
+
+    Both sets are complete before any node is checked, so a trigger may name an
+    action declared later in the document -- an ego reaction to an NPC's
+    manoeuvre is written exactly that way.
+    """
+
+    entities: set[str]
+    actions: set[str]
+
+
+#: Spawn constraints and offset bindings describe lanelets, never entities or
+#: actions, so nothing in them may point at either.
+_NO_REFS = _Refs(entities=set(), actions=set())
+
+
 def _check_field(
     out: _Collector,
     path: str,
     spec: FieldSpec,
     params: dict[str, Any],
-    entity_ids: set[str],
+    refs: _Refs,
     object_id: str | None,
 ) -> None:
     """Validate one parameter against its :class:`FieldSpec`."""
@@ -148,10 +166,17 @@ def _check_field(
                 object_id,
             )
     elif spec.kind == "entity":
-        if str(value) not in entity_ids:
+        if str(value) not in refs.entities:
             out.error(
                 f"{path}.{spec.name}",
                 f"{spec.label} references unknown entity {value!r}.",
+                object_id,
+            )
+    elif spec.kind == "action":
+        if str(value) not in refs.actions:
+            out.error(
+                f"{path}.{spec.name}",
+                f"{spec.label} references unknown action {value!r}.",
                 object_id,
             )
     elif spec.kind == "int_list":
@@ -216,17 +241,33 @@ def _check_unknown_params(
 
 
 def _check_condition(
-    out: _Collector, path: str, node: ConditionNode, entity_ids: set[str]
+    out: _Collector,
+    path: str,
+    node: ConditionNode,
+    refs: _Refs,
+    owner: str | None = None,
 ) -> None:
-    """Validate one condition subtree."""
+    """Validate one condition subtree.
+
+    *owner* is the id of the action this subtree triggers, when it is a trigger
+    at all.  An action whose trigger waits on its own completion can never fire,
+    so that is an error rather than a scenario that quietly does nothing.
+    """
     spec: ConditionSpec | None = get_condition_spec(node.type)
     if spec is None:
         out.error(path, f"Unknown condition type {node.type!r}.", node.id)
         return
 
     for field_spec in spec.fields:
-        _check_field(out, path, field_spec, node.params, entity_ids, node.id)
+        _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
+
+    if owner is not None and node.params.get("action") == owner:
+        out.error(
+            f"{path}.action",
+            f"{spec.title} waits on the action it triggers, which can never fire.",
+            node.id,
+        )
 
     count = len(node.children)
     if count < spec.min_children:
@@ -245,7 +286,7 @@ def _check_condition(
         )
 
     for index, child in enumerate(node.children):
-        _check_condition(out, f"{path}.children[{index}]", child, entity_ids)
+        _check_condition(out, f"{path}.children[{index}]", child, refs, owner)
 
 
 def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
@@ -256,7 +297,7 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
         return
 
     for field_spec in spec.fields:
-        _check_field(out, path, field_spec, node.params, set(), node.id)
+        _check_field(out, path, field_spec, node.params, _NO_REFS, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
 
     count = len(node.constraints)
@@ -275,9 +316,7 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
         _check_constraint(out, f"{path}.constraints[{index}]", child)
 
 
-def _check_action(
-    out: _Collector, path: str, node: ActionNode, entity_ids: set[str]
-) -> None:
+def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> None:
     """Validate one action and its trigger."""
     spec = get_action_spec(node.type)
     if spec is None:
@@ -287,13 +326,13 @@ def _check_action(
     if spec.actor_required:
         if _is_blank(node.actor):
             out.error(f"{path}.actor", f"{spec.title} needs an actor.", node.id)
-        elif node.actor not in entity_ids:
+        elif node.actor not in refs.entities:
             out.error(
                 f"{path}.actor",
                 f"{spec.title} references unknown entity {node.actor!r}.",
                 node.id,
             )
-    elif node.actor is not None and node.actor not in entity_ids:
+    elif node.actor is not None and node.actor not in refs.entities:
         out.error(
             f"{path}.actor",
             f"Action references unknown entity {node.actor!r}.",
@@ -301,11 +340,11 @@ def _check_action(
         )
 
     for field_spec in spec.fields:
-        _check_field(out, path, field_spec, node.params, entity_ids, node.id)
+        _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
 
     if node.trigger is not None:
-        _check_condition(out, f"{path}.trigger", node.trigger, entity_ids)
+        _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
 
 
 def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
@@ -357,7 +396,7 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
                         f"{path}.spawn.s.binding",
                         field_spec,
                         binding.params,
-                        set(),
+                        _NO_REFS,
                         entity.id,
                     )
 
@@ -393,18 +432,22 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
             f"{[e.id for e in egos]}.",
         )
 
-    action_ids: set[str] = set()
+    # Every id is gathered before anything is checked, so a forward reference
+    # to an action declared further down is not a validation error.
+    refs = _Refs(entities=entity_ids, actions={a.id for a in document.actions})
+
+    seen_actions: set[str] = set()
     for index, action in enumerate(document.actions):
         path = f"actions[{index}]"
-        if action.id in action_ids:
+        if action.id in seen_actions:
             out.error(path, f"Duplicate action id {action.id!r}.", action.id)
-        action_ids.add(action.id)
-        _check_action(out, path, action, entity_ids)
+        seen_actions.add(action.id)
+        _check_action(out, path, action, refs)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
-        _check_condition(out, f"assertions.pass[{index}]", condition, entity_ids)
+        _check_condition(out, f"assertions.pass[{index}]", condition, refs)
     for index, condition in enumerate(document.assertions.fail_conditions):
-        _check_condition(out, f"assertions.fail[{index}]", condition, entity_ids)
+        _check_condition(out, f"assertions.fail[{index}]", condition, refs)
 
     if not document.assertions.pass_conditions:
         out.error(

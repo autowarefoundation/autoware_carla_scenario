@@ -11,10 +11,31 @@
   /* ---------------------------------------------------------------------
    * DAG connectors
    *
-   * Each trigger block is linked to its action card. The line is drawn into
-   * one SVG overlay positioned over the canvas, so adding a condition never
+   * Two different lines, because the canvas has two different relationships to
+   * show and a column position expresses neither of them:
+   *
+   *   fires   a trigger to the action it starts. Vertical, inside one slot.
+   *   causes  an action to a condition waiting on it having completed, across
+   *           tracks. Drawn from `data-caused-by`, which carries the document's
+   *           own reference — never from where the two cards happen to sit, so
+   *           moving a clip can neither invent nor erase a causal link.
+   *
+   * Both go into one SVG overlay over the canvas, so adding a condition never
    * has to reason about layout — it just re-renders and we redraw.
    * ------------------------------------------------------------------- */
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /* `hue` is an arrowhead's fill and a line's stroke, so which one it paints is
+   * the caller's to say — an inline fill would override the stylesheet rule
+   * that keeps curves unfilled. */
+  function makePath(svg, d, className, hue, filled) {
+    var path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    if (className) path.setAttribute('class', className);
+    if (hue) path.style[filled ? 'fill' : 'stroke'] = hue;
+    return svg.appendChild(path);
+  }
 
   function drawLinks() {
     var canvas = document.getElementById('canvas');
@@ -28,6 +49,9 @@
     svg.setAttribute('height', scroll.scrollHeight);
 
     var origin = scroll.getBoundingClientRect();
+    function toX(clientX) { return clientX - origin.left + scroll.scrollLeft; }
+    function toY(clientY) { return clientY - origin.top + scroll.scrollTop; }
+
     scroll.querySelectorAll('.ed-trigger-wrap[data-links-to]').forEach(function (wrap) {
       var target = document.getElementById(wrap.getAttribute('data-links-to'));
       if (!target) return;
@@ -36,22 +60,45 @@
 
       var from = trigger.getBoundingClientRect();
       var to = target.getBoundingClientRect();
-      var x1 = from.left + from.width / 2 - origin.left + scroll.scrollLeft;
-      var y1 = from.top - origin.top + scroll.scrollTop;
-      var x2 = to.left + to.width / 2 - origin.left + scroll.scrollLeft;
-      var y2 = to.bottom - origin.top + scroll.scrollTop;
+      var x1 = toX(from.left + from.width / 2);
+      var y1 = toY(from.top);
+      var x2 = toX(to.left + to.width / 2);
+      var y2 = toY(to.bottom);
       if (y1 <= y2) return; // trigger is not below its action; nothing to draw
 
       var mid = (y1 + y2) / 2;
-      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + x1 + ' ' + mid + ', ' +
+      makePath(svg, 'M ' + x1 + ' ' + y1 + ' C ' + x1 + ' ' + mid + ', ' +
         x2 + ' ' + mid + ', ' + x2 + ' ' + (y2 + 5));
-      svg.appendChild(path);
+      makePath(svg, 'M ' + x2 + ' ' + y2 + ' l -4 5.5 l 8 0 z', 'head');
+    });
 
-      var head = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      head.setAttribute('d', 'M ' + x2 + ' ' + y2 + ' l -4 5.5 l 8 0 z');
-      head.setAttribute('class', 'head');
-      svg.appendChild(head);
+    scroll.querySelectorAll('.ed-cond[data-caused-by]').forEach(function (card) {
+      var causes = (card.getAttribute('data-caused-by') || '').split(',');
+      var cardBox = card.getBoundingClientRect();
+
+      causes.forEach(function (actionId) {
+        if (!actionId) return;
+        var clip = document.getElementById('node-' + actionId);
+        if (!clip) return;
+        var clipBox = clip.getBoundingClientRect();
+
+        // The line wears the track colour of whoever runs the causing action.
+        var lane = clip.closest('.ed-lane');
+        var hue = lane
+          ? getComputedStyle(lane).getPropertyValue('--lane-hue').trim()
+          : '';
+
+        var x1 = toX(clipBox.right);
+        var y1 = toY(clipBox.top + clipBox.height / 2);
+        var x2 = toX(cardBox.left - 6);
+        var y2 = toY(cardBox.top + cardBox.height / 2);
+        var bend = Math.max(28, Math.abs(x2 - x1) / 2);
+
+        makePath(svg, 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + bend) + ' ' + y1 + ', ' +
+          (x2 - bend) + ' ' + y2 + ', ' + x2 + ' ' + y2, 'causes', hue);
+        makePath(svg, 'M ' + (x2 + 5) + ' ' + y2 + ' l -6 -4 l 0 8 z',
+          'causes-head', hue, true);
+      });
     });
   }
 
@@ -71,9 +118,9 @@
    * server keeps doing the one thing only it can, which is evaluating the
    * constraints with the real sweeper.
    *
-   * The module is optional. If it cannot be loaded — no network, a locked-down
-   * machine — the server-rendered SVG that ships alongside it stays visible and
-   * the match count is unaffected.
+   * It is the only renderer: there is no SVG fallback beneath it. If the module
+   * cannot be loaded — no network, a locked-down machine — the preview says so
+   * and the match count, which the server computes, is unaffected.
    * ------------------------------------------------------------------- */
 
   var viewerModule = null;   // resolved module, or false once loading has failed
@@ -95,14 +142,23 @@
     if (!url) return;
     frame.dataset.mounted = '1';
 
-    loadViewerModule(url).then(function (module) {
-      if (!module || !module.LaneletViewer) return;
+    // Captured now, while this fragment is certainly in the DOM, and scoped to
+    // this preview rather than the whole page: an async callback looking these
+    // up later can run against a fragment htmx has already replaced.
+    var preview = frame.closest('.ed-preview') || document;
+    var key = preview.querySelector('[data-viewer-hint]');
+    var unavailable = preview.querySelector('[data-viewer-unavailable]');
 
-      // Revealed only now: the viewer needs a sized box to mount into, and an
-      // empty one is what an unreachable module would otherwise leave behind.
+    loadViewerModule(url).then(function (module) {
+      if (!module || !module.LaneletViewer) {
+        if (unavailable) unavailable.hidden = false;
+        return;
+      }
+
+      // Laid out but not shown: the viewer needs a sized box to mount into,
+      // and an empty one is what a map that never arrives would leave behind.
       frame.hidden = false;
-      var hint = document.querySelector('[data-viewer-hint]');
-      if (hint) hint.hidden = false;
+      frame.classList.add('is-mounting');
 
       var viewer = new module.LaneletViewer(frame, {
         theme: 'light',
@@ -112,21 +168,24 @@
       frame.__viewer = viewer;
 
       viewer.addEventListener('load', function () {
-        // The fallback drawing has served its purpose the moment the real map
-        // is on screen; leaving both would just be two maps.
-        var fallback = document.querySelector('[data-map-fallback]');
-        if (fallback) fallback.hidden = true;
+        // Revealed together: the map appears and its caption with it, so the
+        // caption never describes a drawing that is not there.
+        frame.classList.remove('is-mounting');
+        if (key) key.hidden = false;
 
         // The fitted overview is the useful view here: highlighting is what
         // shows where the matches are, and zooming to the current spawn would
         // throw away the very thing the preview is for.
-        var matched = (frame.dataset.matched || '')
+        //
+        // One list, because `setHighlight` is one outline colour. The server
+        // decides what it means — the matches under a constraint search, the
+        // pinned lanelet under a fixed spawn — so the drawing and the caption
+        // below it cannot disagree.
+        var highlight = (frame.dataset.highlight || '')
           .split(',')
           .map(function (v) { return parseInt(v, 10); })
           .filter(function (v) { return !isNaN(v); });
-        var selected = parseInt(frame.dataset.selected, 10);
-        if (!isNaN(selected)) matched.push(selected);
-        if (matched.length) viewer.setHighlight(matched);
+        if (highlight.length) viewer.setHighlight(highlight);
       });
 
       // Picking a lanelet on the map is the fastest way to set a spawn, and it

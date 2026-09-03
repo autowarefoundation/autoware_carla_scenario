@@ -1,14 +1,23 @@
 {% import "partials/condition_node.html" as pred %}
+{% import "partials/fields.html" as f %}
 {% import "partials/icons.html" as ic %}
 
-{# Actor x causal-progression swimlanes.
+{# Actor x causal-progression swimlanes, drawn as a DAW arrangement view.
 
    The horizontal axis is *scenario progression*, not time: a card further right
    happens later in the story, but the distance between two cards means nothing.
+   Borrowing a sequencer's furniture -- track headers down the left, a numbered
+   ruler across the top and a bar line before every slot -- is what makes that
+   direction readable: cards snap to numbered steps, so "further right" is a
+   step number you can name rather than a gap you have to eyeball.  The ruler
+   counts steps and not seconds precisely because the axis is not time.
+
    Triggers hang under the action they fire, so there is no separate event lane
    to correlate by eye. #}
 
-{%- set ACTOR_HUES = ['var(--actor-1)', 'var(--actor-2)', 'var(--actor-3)', 'var(--actor-4)'] -%}
+{# Track colours come from `fields.entity_hue`, the same helper the condition
+   cards tint their actor names with -- two copies of the palette would drift
+   the moment an actor was reordered. #}
 {# Action categories only -- an unlisted one falls back to the generic accent. #}
 {%- set CATEGORY_HUES = {
   'Vehicle / Motion': 'var(--actor-1)',
@@ -105,8 +114,14 @@
 <section id="canvas" class="ed-panel" data-draft="{{ draft.id }}" data-selected="{{ selected }}">
   <div class="ed-panel-head">
     <div>
-      <div class="ed-panel-title">Swimlanes</div>
-      <div class="ed-panel-sub">Left to right is scenario progression, not elapsed time</div>
+      <div class="ed-panel-title">Arrangement</div>
+      <div class="ed-panel-sub">One track per actor. Left to right is step order, not elapsed time</div>
+      {# Two lines that mean different things need saying once, here, rather
+         than being inferred from a dash pattern. #}
+      <div class="ed-links-legend">
+        <span><i class="ed-legend-fires"></i>fires this action</span>
+        <span><i class="ed-legend-causes"></i>the action this condition waits on</span>
+      </div>
     </div>
     <form hx-post="/draft/{{ draft.id }}/entity" hx-target="#editor-body" hx-swap="innerHTML"
           style="display:flex; align-items:center; gap:7px">
@@ -118,12 +133,35 @@
     </form>
   </div>
 
+  {# The ruler has to be as long as the busiest track, or the lane that runs
+     past its last numbered step would have unlabelled slots. #}
+  {%- set widest = namespace(steps=1) -%}
+  {%- for entity in document.ordered_entities() -%}
+    {%- set count = 2 + document.action_slots(entity.id)|length -%}
+    {%- if count > widest.steps %}{% set widest.steps = count %}{% endif -%}
+  {%- endfor -%}
+  {%- for count in [document.action_slots(none)|length + 1,
+                    document.assertions.pass_conditions|length + 1,
+                    document.assertions.fail_conditions|length + 1] -%}
+    {%- if count > widest.steps %}{% set widest.steps = count %}{% endif -%}
+  {%- endfor -%}
+
   <div class="ed-canvas-scroll">
     <svg class="ed-links" aria-hidden="true"></svg>
 
+    <div class="ed-ruler">
+      <div class="ed-ruler-head">
+        <span>Step</span>{{ ic.icon('right', 11) }}
+      </div>
+      <div class="ed-ruler-track">
+        {% for step in range(widest.steps) %}
+          <div class="ed-ruler-step"><span>{{ step + 1 }}</span></div>
+        {% endfor %}
+      </div>
+    </div>
+
     {% for entity in document.ordered_entities() %}
-      {%- set hue = 'var(--actor-ego)' if entity.kind == 'ego'
-                    else ACTOR_HUES[loop.index0 % ACTOR_HUES|length] -%}
+      {%- set hue = f.entity_hue(entity.id, document)|trim -%}
       <div class="ed-lane" data-entity="{{ entity.id }}" style="--lane-hue: {{ hue }}">
         <div class="ed-lane-head {% if selected == entity.id %}is-selected{% endif %}"
              tabindex="0" role="button" data-object-id="{{ entity.id }}"
@@ -150,8 +188,12 @@
 
         <div class="ed-lane-track">
           <div class="ed-column"><div class="ed-origin">Spawn</div></div>
-          {% for action in document.actions_for(entity.id) %}
-            {{ action_column(action, draft, selected, document) }}
+          {% for action in document.action_slots(entity.id) %}
+            {% if action %}
+              {{ action_column(action, draft, selected, document) }}
+            {% else %}
+              <div class="ed-column" aria-hidden="true"></div>
+            {% endif %}
           {% endfor %}
           {{ add_action(draft, entity.id) }}
         </div>
@@ -161,7 +203,7 @@
     {# Actions that act on the environment rather than a vehicle still need
        somewhere to live, or setting an action's actor to "none" would make it
        vanish from the canvas. #}
-    {%- set world = document.world_actions() -%}
+    {%- set world = document.action_slots(none) -%}
     {% if world %}
       <div class="ed-lane" style="--lane-hue: var(--ink-faint)">
         <div class="ed-lane-head is-static">
@@ -175,7 +217,11 @@
         </div>
         <div class="ed-lane-track">
           {% for action in world %}
-            {{ action_column(action, draft, selected, document) }}
+            {% if action %}
+              {{ action_column(action, draft, selected, document) }}
+            {% else %}
+              <div class="ed-column" aria-hidden="true"></div>
+            {% endif %}
           {% endfor %}
           {{ add_action(draft, '') }}
         </div>

@@ -276,3 +276,7 @@ class BuildContext:
     scenario: Any
     client: Any = None
     tm_port: int = 8000
+    #: Action id -> live action, filled in as each one is instantiated.  An
+    #: ``action_completed`` condition keeps this mapping rather than an action,
+    #: so a trigger may name an action that is built after it.
+    actions: dict[str, Any] = field(default_factory=dict)

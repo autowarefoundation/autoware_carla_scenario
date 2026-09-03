@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..authoring import registry
 from ..authoring.persistence import DraftStore, default_draft_dir
-from .service import EditorError, EditorService
+from .service import EditorError, EditorService, condition_actions
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,8 @@ _EDITOR_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _EDITOR_DIR / "templates"
 _STATIC_DIR = _EDITOR_DIR / "static"
 
-#: Environment variable choosing where exported packages are written.
+#: Environment variable choosing where an exported package's archive is
+#: staged until the browser has fetched it.
 EXPORT_DIR_ENV = "SCENARIO_EDITOR_EXPORT_DIR"
 
 #: Environment variable pointing at a self-hosted build of the simple_lanelet2
@@ -47,8 +48,13 @@ MAP_VIEWER_ENV = "SCENARIO_EDITOR_MAP_VIEWER"
 #:
 #: It is loaded from the project's GitHub Pages build because the wasm module is
 #: built, not committed.  Point :data:`MAP_VIEWER_ENV` at ``tools/build_web.sh``
-#: output to serve it yourself; when it cannot be loaded at all the preview
-#: falls back to a server-rendered SVG, so an offline editor still works.
+#: output to serve it yourself.
+#:
+#: It is the only renderer.  A server-rendered SVG used to sit behind it as an
+#: offline fallback, but this page loads htmx from a CDN and every control on it
+#: is an ``hx-`` attribute, so an editor that cannot reach the network is not
+#: usable in the first place -- the fallback bought no offline capability and
+#: cost a second drawing of the same map on screen at once.
 DEFAULT_MAP_VIEWER_URL = "https://hakuturu583.github.io/simple_lanelet2/viewer.js"
 
 
@@ -82,7 +88,7 @@ def create_app(
 
     Args:
         draft_dir: Where drafts are stored.  Defaults to ``./scenario_drafts``.
-        export_dir: Default destination for exported packages.
+        export_dir: Where exported archives are staged for download.
 
     Returns:
         A configured :class:`FastAPI` application.
@@ -103,6 +109,9 @@ def create_app(
         get_condition_spec=registry.get_condition_spec,
         get_constraint_spec=registry.get_constraint_spec,
         get_binding_spec=registry.get_binding_spec,
+        # Which actions a condition waits on -- the canvas draws its causal
+        # links from these, not from where the cards happen to sit.
+        condition_actions=condition_actions,
     )
 
     application.state.templates = templates

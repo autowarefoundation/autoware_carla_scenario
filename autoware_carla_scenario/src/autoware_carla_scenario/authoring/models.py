@@ -426,6 +426,26 @@ class ScenarioDocument(_Node):
         unowned = [a for a in self.actions if not a.actor]
         return sorted(unowned, key=lambda a: (self.ui.column_of(a.id), a.id))
 
+    def action_slots(self, entity_id: Optional[str]) -> list[Optional["ActionNode"]]:
+        """Return one slot per step for a lane, ``None`` where a step is empty.
+
+        Column hints are deliberately sparse.  A reaction belongs in a later
+        step than the action that provokes it even when its own actor does
+        nothing in between -- an ego that swerves *after* NPC1 cuts in reads as
+        a reaction only if its card is further right than the cut-in.  Emitting
+        the empty steps is what lets two tracks be read against one ruler.
+
+        Ties and overlaps cannot be represented, so a card whose hint is already
+        taken is pushed to the next free step rather than drawn on top.
+        """
+        lane = self.actions_for(entity_id) if entity_id else self.world_actions()
+        slots: list[Optional[ActionNode]] = []
+        for action in lane:
+            column = max(len(slots), self.ui.column_of(action.id))
+            slots.extend([None] * (column - len(slots)))
+            slots.append(action)
+        return slots
+
     def sync_layout(self) -> None:
         """Make :attr:`ui` consistent with the semantic content.
 

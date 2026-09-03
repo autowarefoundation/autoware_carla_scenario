@@ -4,7 +4,13 @@
     {{ ic.icon('check', 15) }}
     <div style="min-width:0">
       <div class="ed-notice-title">Package exported</div>
-      <p class="mono" style="font-size:12px; margin-top:2px">{{ result.root }}</p>
+      <p class="mono" style="font-size:12px; margin-top:2px">{{ result.root.name }}/</p>
+      {# A plain link, not htmx: this response is a file, and swapping a zip
+         into the page is not a thing. #}
+      <a class="ed-btn-primary" style="margin:8px 0 4px"
+         href="/draft/{{ draft.id }}/package.zip" download>
+        {{ ic.icon('package', 14) }} Download {{ draft.document.id }}.zip
+      </a>
       <dl class="ed-kv">
         <div><dt>Framework</dt><dd>{{ result.pin.kind }}{% if result.pin.commit %} @ {{ result.pin.commit[:12] }}{% elif result.pin.version %} {{ result.pin.version }}{% endif %}</dd></div>
         <div><dt>Python</dt><dd>{{ result.manifest.runtime.python }}</dd></div>
@@ -24,7 +30,7 @@
   <div class="ed-notice ed-notice-bad">
     {{ ic.icon('alert', 15) }}
     <div style="min-width:0">
-      <div class="ed-notice-title">Export failed — nothing was written</div>
+      <div class="ed-notice-title">Export failed — nothing to download</div>
       <p style="margin-top:2px">{{ error }}</p>
     </div>
   </div>

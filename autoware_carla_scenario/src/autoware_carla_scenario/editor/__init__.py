@@ -26,8 +26,10 @@ def main() -> None:
 
     * ``SCENARIO_EDITOR_DRAFTS`` -- where drafts are stored
       (default ``./scenario_drafts``).
-    * ``SCENARIO_EDITOR_EXPORT_DIR`` -- default export destination
-      (default ``./scenario_packages``).
+    * ``SCENARIO_EDITOR_EXPORT_DIR`` -- where an exported package's ``.zip``
+      is staged until the browser fetches it (default ``./scenario_packages``).
+      Exports are handed back as downloads, so this is a holding area rather
+      than a destination anyone browses.
     * ``SCENARIO_EDITOR_HOST`` / ``SCENARIO_EDITOR_PORT`` -- bind address
       (default ``0.0.0.0:9100``, one port up from the viewer so both can run).
     """

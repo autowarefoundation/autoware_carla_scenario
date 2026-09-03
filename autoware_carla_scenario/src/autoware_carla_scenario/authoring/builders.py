@@ -299,6 +299,24 @@ def build_traffic_signal_condition(
     )
 
 
+def build_action_state_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`ActionStateCondition` watching a named action."""
+    from ..conditions import ActionStateCondition  # noqa: PLC0415
+
+    return ActionStateCondition(
+        action_id=str(compiled.params["action"]),
+        state=str(compiled.params["state"]),
+        # The live mapping, not a copy: the action being watched may not have
+        # been instantiated yet when this condition is built.
+        actions=ctx.actions,
+        label=compiled.label,
+    )
+
+
 def build_always_true_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",

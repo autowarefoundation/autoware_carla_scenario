@@ -8,10 +8,13 @@ only way to catch a template that renders but shows the wrong thing.
 
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 from typing import TypeVar
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from autoware_carla_scenario.authoring.models import (
@@ -85,15 +88,86 @@ class TestPages:
         assert draft_id in body
         assert "Cut in" in body
 
-    def test_editor_page_renders_the_swimlanes(
+    def test_editor_page_renders_the_arrangement(
         self, client: TestClient, draft_id: str
     ) -> None:
         body = client.get(f"/draft/{draft_id}").text
-        assert "Swimlanes" in body
+        assert "Arrangement" in body
         assert "not elapsed time" in body
         # Actors, the triggered action, and both verdict lanes.
         for expected in ("Ego", "NPC1", "Cut in", "PASS", "FAIL"):
             assert expected in body, expected
+
+    def test_the_step_ruler_is_as_long_as_the_busiest_track(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The ruler numbers every slot, including the trailing "add" one.
+
+        The cut-in starter's longest track is NPC1: a spawn, one action and the
+        slot its "+ action" control sits in.
+        """
+        body = client.get(f"/draft/{draft_id}").text
+        steps = body.count('class="ed-ruler-step"')
+        assert steps == 3, steps
+
+    def test_a_condition_links_back_to_the_action_it_waits_on(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The canvas draws its causal link from the document's own reference.
+
+        Without ``data-caused-by`` the reaction and its cause are two cards in
+        neighbouring columns with nothing joining them, which reads as "these
+        happen at the same time" rather than "this one causes that one".  The
+        attribute must carry the referenced action id and nothing inferred from
+        where the cards sit.
+        """
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        cut_in = document["actions"][0]["id"]
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"actor": "ego", "type_id": "lane_change"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        ego_action = document["actions"][-1]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": f"trigger:{ego_action}", "type_id": "action_state"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["actions"][-1]["trigger"]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition/{node}",
+            data={"action": cut_in, "state": "completeState"},
+        )
+
+        body = client.get(f"/draft/{draft_id}").text
+        assert f'data-caused-by="{cut_in}"' in body
+
+    def test_a_condition_that_names_no_action_claims_no_cause(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Position must never be enough to draw a causal link.
+
+        The starter's trigger is a distance/TTC pair -- true of the world, not
+        produced by any action -- so it has to stay unlinked however the cards
+        are arranged.
+        """
+        body = client.get(f"/draft/{draft_id}").text
+        assert 'data-caused-by=""' in body
+
+    def test_an_action_moves_into_an_empty_step(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A lone card still moves, or a reaction could never follow its cause.
+
+        The cut-in starter gives NPC1 a single action; packing a lane against
+        its neighbours would pin it to the first step forever.
+        """
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        action_id = document["actions"][0]["id"]
+        client.post(f"/draft/{draft_id}/action/{action_id}/move", data={"delta": "2"})
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        assert document["ui"]["nodes"][action_id]["column_hint"] == 2
 
     def test_a_condition_reads_as_subject_target_metric_value(
         self, client: TestClient, draft_id: str
@@ -439,7 +513,7 @@ class TestSpawnConstraints:
         ).text
         assert 'data-map-src="/draft/%s/map.osm"' % draft_id in body
         assert 'data-entity="npc1"' in body
-        assert "data-matched=" in body
+        assert "data-highlight=" in body
         assert "hakuturu583.github.io/simple_lanelet2/viewer.js" in body
 
     def test_the_viewer_frame_is_hidden_until_the_module_loads(
@@ -454,8 +528,10 @@ class TestSpawnConstraints:
             data={"entity_id": "npc1", "load_map": "1"},
         ).text
         assert '<div class="ed-map-frame" hidden' in body
-        # The server-rendered SVG is what an offline editor falls back to.
-        assert "data-map-fallback" in body
+        # The viewer is the only renderer; nothing is drawn server-side to sit
+        # underneath it and be mistaken for a second map.
+        assert "data-map-fallback" not in body
+        assert "<svg viewBox" not in body
 
     def test_a_self_hosted_viewer_can_be_configured(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -493,6 +569,29 @@ class TestSpawnConstraints:
         assert "183" in body  # the ego's fixed spawn lanelet
         # No match list: there are no constraints to match.
         assert "matched of" not in body
+        # The viewer has one highlight colour, so a fixed spawn outlines the
+        # pinned lanelet and nothing else.
+        assert 'data-highlight="183"' in body
+
+    def test_a_constraint_search_outlines_its_matches(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """What the single highlight channel means has to follow the mode.
+
+        Under a search it is the matches; mixing the current spawn in would
+        paint it the same colour and claim it is one of them.
+        """
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+        body = client.post(
+            f"/draft/{draft_id}/spawn-preview",
+            data={"entity_id": "npc1", "load_map": "1"},
+        ).text
+        highlight = body.split('data-highlight="')[1].split('"')[0]
+        matched = body.split("Matched IDs")[1]
+        assert highlight, "a search with matches must outline them"
+        assert all(f"{i}" in matched for i in highlight.split(",")[:5])
 
     def test_preview_reports_an_unloadable_map_without_failing(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -573,19 +672,46 @@ class TestValidateSaveExport:
         assert response.status_code == 303
         assert store.get(draft_id) is None
 
-    def test_export_produces_a_package(
+    def test_export_produces_a_downloadable_package(
         self, client: TestClient, tmp_path: Path, draft_id: str
     ) -> None:
-        response = client.post(
-            f"/draft/{draft_id}/export",
-            data={
-                "destination": str(tmp_path / "packages"),
-                "dev_mode": "on",
-            },
-        )
+        """The report comes back with a link, and the link serves the archive.
+
+        The editor is used from other machines on the LAN, so an export that
+        only wrote a directory on the host would put the package somewhere the
+        person exporting cannot reach.
+        """
+        response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         assert response.status_code == 200
         assert "Package exported" in response.text
-        assert (tmp_path / "packages" / "cut_in_scenario" / "pyproject.toml").is_file()
+        assert f"/draft/{draft_id}/package.zip" in response.text
+
+        download = client.get(f"/draft/{draft_id}/package.zip")
+        assert download.status_code == 200
+        assert download.headers["content-type"] == "application/zip"
+        assert 'filename="cut_in.zip"' in download.headers["content-disposition"]
+
+        with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
+            names = archive.namelist()
+        # One top-level directory, so unpacking does not spray the CWD.
+        assert {n.split("/")[0] for n in names} == {"cut_in_scenario"}
+        assert "cut_in_scenario/pyproject.toml" in names
+
+    def test_the_package_tree_is_not_left_on_the_host(
+        self, client: TestClient, tmp_path: Path, draft_id: str
+    ) -> None:
+        """Only the archive outlives the request; the build tree is temporary."""
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        staged = sorted(p.name for p in (tmp_path / "packages").iterdir())
+        assert staged == ["cut_in.zip"]
+
+    def test_downloading_before_an_export_is_an_error_not_a_traceback(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A stale or guessed link is a normal thing to click."""
+        assert (
+            "No exported package" in client.get(f"/draft/{draft_id}/package.zip").text
+        )
 
     def test_a_failed_export_is_reported_as_a_failure(
         self, client: TestClient, store: DraftStore, tmp_path: Path, draft_id: str
@@ -593,12 +719,9 @@ class TestValidateSaveExport:
         draft = _draft(store, draft_id)
         draft.document.assertions.pass_conditions = []
         store.save(draft)
-        response = client.post(
-            f"/draft/{draft_id}/export",
-            data={"destination": str(tmp_path / "packages"), "dev_mode": "on"},
-        )
+        response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         assert "Export failed" in response.text
-        assert not (tmp_path / "packages" / "cut_in_scenario").exists()
+        assert not (tmp_path / "packages" / "cut_in.zip").exists()
 
 
 class TestServiceGuards:

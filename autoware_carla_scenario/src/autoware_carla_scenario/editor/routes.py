@@ -11,7 +11,6 @@ banner from ever disagreeing with each other.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request
@@ -23,7 +22,7 @@ from fastapi.responses import (
 )
 
 from ..authoring.models import ScenarioDocument
-from ..authoring.package_export import PackageExportError, export_package
+from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, dump_document_yaml
 from . import map_preview
 from .service import EditorError, EditorService, find_constraint
@@ -105,7 +104,6 @@ def _context(
         "constraint_owner": constraint_owner,
         "error": error,
         "map_loaded": map_preview.is_map_loaded(document),
-        "export_dir": str(service.export_dir),
         "page": "editor",
     }
 
@@ -547,7 +545,15 @@ def delete_draft(request: Request, draft_id: str) -> RedirectResponse:
 
 @router.post("/draft/{draft_id}/export", response_class=HTMLResponse)
 async def export(request: Request, draft_id: str) -> HTMLResponse:
-    """Export the draft as a reproducible Scenario Package.
+    """Export the draft as a reproducible Scenario Package, ready to download.
+
+    The package is built and zipped server-side but is not left there: the
+    editor is routinely used from another machine on the LAN, where "written to
+    ./scenario_packages" means written somewhere the person exporting cannot
+    reach.  The response is the report -- warnings, the tool log, whether the
+    package's tests passed -- with a link to the archive, because throwing that
+    away to make the response a file download would hide the very things an
+    export is checked for.
 
     Declared ``async`` but doing its work through a blocking call would stall
     the event loop for the length of a dependency resolution, so the export runs
@@ -559,18 +565,16 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     service = _service(request)
     draft = service.require_draft(draft_id)
 
-    destination = Path(str(form.get("destination") or service.export_dir)).expanduser()
     options = {
         "dev_mode": _checked(form, "dev_mode"),
         "lock": _checked(form, "lock"),
         "verify": _checked(form, "verify"),
         "run_tests": _checked(form, "run_tests"),
-        "force": _checked(form, "force"),
     }
 
     def _run() -> tuple[Any, str, str]:
         try:
-            result = export_package(draft.document, destination, **options)
+            result, _archive = service.export_archive(draft, **options)
         except PackageExportError as exc:
             logger.warning("Scenario package export failed: %s", exc)
             # The exporter attaches the failing tool's output to the exception.
@@ -587,8 +591,27 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
             "result": result,
             "error": error,
             "log": log,
-            "destination": str(destination),
         },
+    )
+
+
+@router.get("/draft/{draft_id}/package.zip")
+def download_package(request: Request, draft_id: str) -> FileResponse:
+    """Serve the archive the last export staged for this draft.
+
+    Raises:
+        EditorError: If nothing has been exported yet, or the archive has since
+            been cleared -- a stale link is a normal thing to click.
+    """
+    service = _service(request)
+    draft = service.require_draft(draft_id)
+    archive = service.archive_path(draft)
+    if not archive.is_file():
+        raise EditorError("No exported package to download. Run the export again.")
+    return FileResponse(
+        archive,
+        media_type="application/zip",
+        filename=f"{draft.document.id}.zip",
     )
 
 

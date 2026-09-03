@@ -29,35 +29,99 @@ the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
 ## The canvas
 
-The main view is a **swimlane DAG**: one lane per actor, with the horizontal
-axis reading as *scenario progression*, not time. Actions that act on the
-environment rather than a vehicle get a **World** lane of their own.
+The main view is a **swimlane DAG drawn as a DAW arrangement**: one track per
+actor, with the horizontal axis reading as *scenario progression*, not time.
+Actions that act on the environment rather than a vehicle get a **World** track
+of their own.
 
 ```
-Ego
-[Spawn] ------------ Drive -----------------------------
-NPC1
-[Spawn] - Follow ---------------- <> Lane Change Left
-                                       ^
-                                 +-----+-----+
-                                 |    ALL    |
-                            NPC1 -> Ego   NPC1 -> Ego
-                            Distance      TTC
-                            < 20 m        < 4 s
-PASS
-  NPC1 enters the ego lane
-FAIL
-  Collision
-  Timeout 30 s
+STEP >   | 1          | 2                 | 3
+---------+------------+-------------------+------------------
+Ego      | [SPAWN]    | Drive             |
+---------+------------+-------------------+------------------
+NPC1     | [SPAWN]    | Follow            | # Lane Change Left
+         |            |                   |         ^
+         |            |                   |   +-----+-----+
+         |            |                   |   |    ALL    |
+         |            |                   |  NPC1->Ego  NPC1->Ego
+         |            |                   |  Distance   TTC
+         |            |                   |  < 20 m     < 4 s
+---------+------------+-------------------+------------------
+PASS     | NPC1 enters the ego lane
+FAIL     | Collision  | Timeout 30 s
 ```
 
-Two rules make it readable:
+The sequencer furniture is what makes the direction readable: track headers
+down the left, a numbered ruler across the top, a bar line before every slot
+and every other slot shaded. The ruler counts **steps and not seconds**, which
+is the whole reason it is a step ruler -- see the first rule below.
+
+Three rules make it readable:
 
 * **The distance between cards means nothing.** Column position is
   `ui.column_hint`, which is presentation only and never reaches the runtime.
+  A clip in step 3 happens after one in step 2; how much later is not on screen
+  because the document does not know.
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
-  the action it fires, so cause and effect are next to each other instead of
-  being correlated across the screen.
+  the action it fires and joined to it by a solid line, so cause and effect are
+  next to each other instead of being correlated across the screen.
+* **One actor reacting to another is a reference, not a coincidence.**
+  "Swerve once NPC1 has cut in" is a `Lane Change` clip on the ego track whose
+  trigger is an **Action state** condition naming NPC1's cut-in and the state
+  `completeState`. That reference lives in the document
+  (`params: {action: a_..., state: completeState}`), so it is a fact the
+  scenario contains rather than something the canvas infers.
+
+The canvas draws that reference as a **dashed line in the causing actor's track
+colour**, running from the action to the condition waiting on it. The cut-in
+example reads as one chain across two tracks:
+
+```
+NPC1   ... [Cut in] ......
+                     :         <- dashed: Cut in -> the condition waiting on it
+Ego    ..............:...  [Evade right]
+                          ^ Cut in · NPC1 | Action | completeState
+                            solid: fires this action
+```
+
+Both line types are named in the legend above the canvas, because a dash
+pattern is not self-explanatory. Crucially the dashed line is drawn **only**
+from `data-caused-by`, the document's own reference -- never from where two
+cards happen to sit. Moving a clip can therefore neither invent a causal link
+nor erase one, and a condition that names no action (a distance check, say) is
+never drawn as caused by anything.
+
+### Action states
+
+The states are ASAM OpenSCENARIO 1.2's `StoryboardElementState`, applied to a
+single action:
+
+| State | Meaning |
+| --- | --- |
+| `standbyState` | Instantiated, waiting for its start trigger |
+| `startTransition` | The trigger fired and `execute()` ran -- held for one tick |
+| `runningState` | The work is under way |
+| `endTransition` | The completion criteria were met -- held for one tick |
+| `completeState` | Finished (a repeating action returns to `standbyState`) |
+
+`completeState` is the one that makes "after the cut-in" verifiable. A forced
+lane change stays in `runningState` until the vehicle has actually **settled
+onto the next lane** -- a different lane id, within
+`LANE_CHANGE_CENTER_TOLERANCE_M` of its centre and
+`LANE_CHANGE_HEADING_TOLERANCE_DEG` of its heading. A lane id change alone is
+not enough: a car whose centre has just crossed the boundary is still diagonal,
+and a reaction triggered on that would fire mid-manoeuvre.
+
+There is deliberately **no failure state and no action-level timeout**, because
+OpenSCENARIO has neither. A manoeuvre that never happens stays in
+`runningState` forever, so `completeState` cannot be reached by a lane change
+that did not occur; ending such a run is the scenario timeout's job, which is
+already a FAIL condition. The two transition states are each held for exactly
+one tick, so a condition watching `startTransition` sees it.
+
+Which is also why a card can be moved into an **empty** step rather than only
+swapped with its neighbour: a reaction has to be placeable to the right of the
+cause on another track, and its own track is usually empty in between.
 
 Every condition reads as `subject -> target | metric | rule value`, e.g.
 `NPC1 -> Ego | Distance | < 20 m` or `Ego -> Lanelet 183 | Position | inside`.
@@ -121,10 +185,22 @@ viewer only draws. That split is deliberate: a second constraint engine in
 JavaScript could disagree with the sweep the scenario will actually run.
 
 The module is loaded from the project's GitHub Pages build, because the wasm is
-built rather than committed. It is optional: when it cannot be fetched the panel
-falls back to a server-rendered SVG and the match count is unaffected, so an
-air-gapped editor still works. Point `SCENARIO_EDITOR_MAP_VIEWER` at the output
-of `simple_lanelet2`'s `tools/build_web.sh` to serve it yourself.
+built rather than committed. Point `SCENARIO_EDITOR_MAP_VIEWER` at the output of
+`simple_lanelet2`'s `tools/build_web.sh` to serve it yourself. When it cannot be
+fetched the panel says so; the match count and the matched-ID list come from the
+server and are unaffected.
+
+It is the **only** renderer. A server-rendered SVG used to sit behind it as an
+offline fallback, but the page loads htmx from a CDN and every control here is an
+`hx-` attribute, so an editor that cannot reach the network does not work at all
+— the fallback bought no offline capability while costing a second drawing of the
+same map on screen at once.
+
+The viewer has a single highlight channel — one outline colour, no second class
+— so **what is outlined follows the spawn mode**: a constraint search outlines
+its matches, a fixed spawn outlines the pinned lanelet. The caption under the map
+names which of the two it is, rather than showing colour swatches the viewer does
+not use.
 
 ### Derived offsets
 
@@ -181,25 +257,39 @@ builder that does not exist, or a visual that names a field the primitive lacks.
 
 **Save Draft** writes the working document to `scenario_drafts/<id>.yaml`.
 
-**Export Package** produces a directory another machine can copy and run:
+**Export Package** produces a `.zip` **the browser downloads**, holding a
+directory another machine can unpack and run:
 
 ```
-cut_in_scenario/
-|-- pyproject.toml              # dependencies, pinned exactly
-|-- uv.lock                     # the resolved graph (tracked in git)
-|-- .python-version             # e.g. 3.10.20 -- the exact patch version
-|-- README.md
-|-- conf/scenario/cut_in.yaml   # Hydra config
-|-- scenario/
-|   |-- document.yaml           # the Scenario IR
-|   `-- manifest.yaml           # what this package was generated from
-|-- src/cut_in_scenario/        # register() + the DeclarativeScenario binding
-`-- tests/test_scenario.py      # loads, validates and compiles -- no CARLA needed
+cut_in.zip
+`-- cut_in_scenario/
+    |-- pyproject.toml              # dependencies, pinned exactly
+    |-- uv.lock                     # the resolved graph (tracked in git)
+    |-- .python-version             # e.g. 3.10.20 -- the exact patch version
+    |-- README.md
+    |-- conf/scenario/cut_in.yaml   # Hydra config
+    |-- scenario/
+    |   |-- document.yaml           # the Scenario IR
+    |   `-- manifest.yaml           # what this package was generated from
+    |-- src/cut_in_scenario/        # register() + the DeclarativeScenario binding
+    `-- tests/test_scenario.py      # loads, validates and compiles -- no CARLA needed
 ```
 
-Run it with:
+There is no destination field. The editor is routinely used from another machine
+on the LAN, where a path typed into it would name a directory on the host running
+the server -- not one the person exporting can reach. The package is built in a
+temporary directory, zipped, and handed back; the build tree is removed, so the
+only thing that outlives the request is the archive, and re-exporting never has
+to overwrite a half-written one.
+
+The response is still the **report** -- warnings, the tool log, whether the
+package's own tests passed -- with the download link in it. Making the response
+the file itself would throw away the very things an export is checked for.
+
+Unpack and run it with:
 
 ```bash
+unzip cut_in.zip && cd cut_in_scenario
 uv sync --locked
 uv run scenario scenario=cut_in map=nishishinjuku
 ```
@@ -258,7 +348,7 @@ guess.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Default export destination |
+| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's `.zip` is staged until the browser fetches it |
 | `SCENARIO_EDITOR_HOST` | `0.0.0.0` | Bind address |
 | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
 | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
@@ -290,7 +380,7 @@ for editing:
 | | |
 | --- | --- |
 | htmx | every interaction; the editor needs it |
-| `simple_lanelet2`'s map viewer | the map drawing only — falls back to a server-rendered SVG |
+| `simple_lanelet2`'s map viewer | the map drawing only — the panel says so when it cannot be fetched |
 
 The stylesheet is served by the app itself rather than by a CDN, so a blocked
 egress rule cannot take the layout with it.

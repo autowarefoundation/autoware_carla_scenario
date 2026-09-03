@@ -26,8 +26,6 @@ from ..authoring.validator import MAP_EXCLUSION_REF
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "LaneletPolyline",
-    "MapGeometry",
     "PreviewResult",
     "clear_cache",
     "evaluate_spawn",
@@ -35,13 +33,6 @@ __all__ = [
     "lanelet2_source",
     "materialize_constraints",
 ]
-
-#: Points kept per lanelet centerline.  The preview is a locator, not a
-#: rendering: more points cost DOM nodes and buy nothing at this zoom.
-_MAX_POINTS_PER_LANELET = 8
-
-#: Side of the square SVG user-space the map is fitted into.
-_VIEWBOX = 1000.0
 
 #: Parsed maps kept in memory, newest last.  Parsing is measured in seconds, so
 #: one map has to stay resident to make the preview usable; more than a couple
@@ -53,28 +44,11 @@ _MAP_CACHE: "OrderedDict[tuple[str, str], _LoadedMap]" = OrderedDict()
 
 
 @dataclass
-class LaneletPolyline:
-    """One lanelet centerline, already in SVG user-space coordinates."""
-
-    lanelet_id: int
-    points: str
-
-
-@dataclass
-class MapGeometry:
-    """Every lanelet centerline, fitted to a square viewBox."""
-
-    size: float = _VIEWBOX
-    lanelets: list[LaneletPolyline] = field(default_factory=list)
-
-
-@dataclass
 class _LoadedMap:
     """A parsed map plus the derived structures the preview reuses."""
 
     lanelet_map: Any
     routing_graph: Any
-    geometry: MapGeometry
     lanelet_count: int
 
 
@@ -88,8 +62,7 @@ class PreviewResult:
         matched_ids: Lanelet IDs satisfying the constraints.
         total: Lanelets in the map, for "37 of 812".
         constraint_count: How many top-level constraints were evaluated.
-        geometry: Map drawing, when a map was loaded.
-        selected_id: The entity's current spawn lanelet, highlighted.
+        selected_id: The entity's current spawn lanelet.
         map_loaded: Whether a map was available.
         error: Why the map or the constraints could not be evaluated.
     """
@@ -98,15 +71,29 @@ class PreviewResult:
     matched_ids: list[int] = field(default_factory=list)
     total: int = 0
     constraint_count: int = 0
-    geometry: Optional[MapGeometry] = None
     selected_id: Optional[int] = None
     map_loaded: bool = False
     error: str = ""
 
     @property
-    def matched_set(self) -> set[int]:
-        """Matched IDs as a set, for template membership tests."""
-        return set(self.matched_ids)
+    def highlight_ids(self) -> list[int]:
+        """The lanelets the viewer should outline, which depends on the mode.
+
+        The viewer has a single highlight channel -- one outline colour, no
+        second class -- so the set has to mean exactly one thing:
+
+        * a constraint search outlines **the matches**, which is what the
+          search is for;
+        * a fixed spawn outlines **the pinned lanelet**, because there are no
+          matches to show.
+
+        Mixing the current spawn into a search's matches would paint it the
+        same colour as them, which says it is one of the matches whether or not
+        it is.
+        """
+        if self.searching:
+            return list(self.matched_ids)
+        return [self.selected_id] if self.selected_id else []
 
 
 # ---------------------------------------------------------------------------
@@ -177,49 +164,6 @@ def clear_cache() -> None:
     _MAP_CACHE.clear()
 
 
-def _build_geometry(lanelet_map: Any) -> MapGeometry:
-    """Project every centerline into a square SVG viewBox."""
-    raw: list[tuple[int, list[tuple[float, float]]]] = []
-    min_x = min_y = float("inf")
-    max_x = max_y = float("-inf")
-
-    for lanelet in lanelet_map.laneletLayer:
-        points = [(float(p.x), float(p.y)) for p in lanelet.centerline]
-        if len(points) < 2:
-            continue
-        if len(points) > _MAX_POINTS_PER_LANELET:
-            step = (len(points) - 1) / (_MAX_POINTS_PER_LANELET - 1)
-            points = [
-                points[min(len(points) - 1, round(i * step))]
-                for i in range(_MAX_POINTS_PER_LANELET)
-            ]
-        raw.append((int(lanelet.id), points))
-        for x, y in points:
-            min_x, max_x = min(min_x, x), max(max_x, x)
-            min_y, max_y = min(min_y, y), max(max_y, y)
-
-    geometry = MapGeometry()
-    if not raw:
-        return geometry
-
-    span = max(max_x - min_x, max_y - min_y) or 1.0
-    scale = _VIEWBOX / span
-    # Centre the map in the square, and flip y: Lanelet2 is y-up, SVG is y-down.
-    offset_x = (_VIEWBOX - (max_x - min_x) * scale) / 2.0
-    offset_y = (_VIEWBOX - (max_y - min_y) * scale) / 2.0
-
-    for lanelet_id, points in raw:
-        projected = " ".join(
-            f"{(x - min_x) * scale + offset_x:.1f},"
-            f"{_VIEWBOX - ((y - min_y) * scale + offset_y):.1f}"
-            for x, y in points
-        )
-        geometry.lanelets.append(
-            LaneletPolyline(lanelet_id=lanelet_id, points=projected)
-        )
-    return geometry
-
-
 def _load(document: ScenarioDocument) -> _LoadedMap:
     """Parse the document's map, or return the cached parse.
 
@@ -253,7 +197,6 @@ def _load(document: ScenarioDocument) -> _LoadedMap:
     loaded = _LoadedMap(
         lanelet_map=lanelet_map,
         routing_graph=routing_graph,
-        geometry=_build_geometry(lanelet_map),
         lanelet_count=len(list(lanelet_map.laneletLayer)),
     )
     _MAP_CACHE[key] = loaded
@@ -310,7 +253,6 @@ def evaluate_spawn(
         return result
 
     result.map_loaded = True
-    result.geometry = loaded.geometry
     result.total = loaded.lanelet_count
 
     if not searching:

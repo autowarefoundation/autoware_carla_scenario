@@ -13,6 +13,8 @@ registered primitive is editable with no change to this module.
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -39,7 +41,13 @@ from .forms import parse_params
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EditorError", "EditorService", "SLOT_FAIL", "SLOT_PASS"]
+__all__ = [
+    "EditorError",
+    "EditorService",
+    "SLOT_FAIL",
+    "SLOT_PASS",
+    "condition_actions",
+]
 
 #: Condition slots that are not attached to an action.
 SLOT_PASS = "pass"
@@ -54,12 +62,69 @@ class EditorService:
     """Draft storage plus every document mutation the editor performs."""
 
     def __init__(self, store: DraftStore, export_dir: Path | None = None) -> None:
+        """
+        Args:
+            store: Where drafts are read and written.
+            export_dir: Where a finished export's ``.zip`` is staged until the
+                browser has fetched it.  The editor hands packages to whoever
+                is using it rather than leaving them on the machine it happens
+                to run on -- over a LAN those are not the same machine -- so
+                this is a holding area, not a destination anyone browses.
+        """
         self.store = store
         self.export_dir = (
             Path(export_dir)
             if export_dir is not None
             else Path.cwd() / "scenario_packages"
         )
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def archive_path(self, draft: Draft) -> Path:
+        """Return where *draft*'s exported archive is staged."""
+        return self.export_dir / f"{draft.document.id}.zip"
+
+    def export_archive(self, draft: Draft, **options: Any) -> tuple[Any, Path]:
+        """Export *draft* as a Scenario Package and zip it for download.
+
+        The package is built in a temporary directory and removed once zipped:
+        the only artefact that outlives the request is the archive, so an export
+        never leaves a half-written tree behind and re-exporting needs no
+        ``force`` flag to overwrite one.
+
+        Args:
+            draft: The draft to export.
+            **options: Forwarded to
+                :func:`~autoware_carla_scenario.authoring.package_export.export_package`.
+
+        Returns:
+            The :class:`ExportResult` and the path of the archive.
+
+        Raises:
+            PackageExportError: If the export itself failed.  Nothing is staged
+                in that case.
+        """
+        from ..authoring.package_export import export_package  # noqa: PLC0415
+
+        build_dir = Path(tempfile.mkdtemp(prefix="scenario-export-"))
+        try:
+            result = export_package(draft.document, build_dir, **options)
+            archive = self.archive_path(draft)
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.unlink(missing_ok=True)
+            # `base_dir` keeps the package folder inside the zip, so unpacking
+            # produces one directory rather than spraying files into the CWD.
+            shutil.make_archive(
+                str(archive.with_suffix("")),
+                "zip",
+                root_dir=str(result.root.parent),
+                base_dir=result.root.name,
+            )
+            return result, archive
+        finally:
+            shutil.rmtree(build_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Draft lifecycle
@@ -381,10 +446,16 @@ class EditorService:
     def move_action(
         self, document: ScenarioDocument, action_id: str, delta: int
     ) -> None:
-        """Shift an action along its lane.
+        """Shift an action one step along its lane.
 
         This writes ``ui.column_hint`` only -- causal progression is presentation,
         so moving a card never changes what the scenario does.
+
+        A card moves into an *empty* step rather than being packed against its
+        neighbours: a reaction has to be placeable after the action on another
+        track that provokes it, and its own track is usually empty in between.
+        Landing on a step another card already holds swaps the two, which is the
+        only sensible reading when the target is occupied.
         """
         action = document.action(action_id)
         if action is None:
@@ -396,13 +467,21 @@ class EditorService:
         )
         if action not in lane:
             return
-        index = lane.index(action)
-        target = max(0, min(len(lane) - 1, index + delta))
-        if target == index:
+        column = document.ui.column_of(action.id)
+        target = max(0, column + delta)
+        if target == column:
             return
-        lane.insert(target, lane.pop(index))
-        for column, node in enumerate(lane):
-            document.ui.set_column(node.id, column)
+        occupant = next(
+            (
+                other
+                for other in lane
+                if other.id != action.id and document.ui.column_of(other.id) == target
+            ),
+            None,
+        )
+        if occupant is not None:
+            document.ui.set_column(occupant.id, column)
+        document.ui.set_column(action.id, target)
 
     def reorder_actors(self, document: ScenarioDocument, order: list[str]) -> None:
         """Set the swimlane order.  Presentation only."""
@@ -561,6 +640,35 @@ def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:
     while f"{stem}{index}" in taken:
         index += 1
     return f"{stem}{index}"
+
+
+def condition_actions(node: ConditionNode) -> list[str]:
+    """Return the action ids *node* itself names, in field order.
+
+    This is the canvas's link data, and it is read straight out of the document:
+    an ``action_completed`` condition stores the id of the action it waits on,
+    so the line drawn from that action to this card states a fact the scenario
+    actually contains.  Card positions are not consulted -- they are
+    ``ui.column_hint``, which the compiler never reads, so inferring causality
+    from them would draw a line that moving a card could silently invent or
+    erase.
+
+    Only this node's own parameters are read, never its children's, so a link
+    lands on the leaf that names the action rather than on the ``ALL`` wrapped
+    around it.  Action-typed fields are discovered from the spec, so a newly
+    registered condition needs no change here.
+    """
+    spec = get_condition_spec(node.type)
+    if spec is None:
+        return []
+    found: list[str] = []
+    for field_spec in spec.fields:
+        if field_spec.kind != "action":
+            continue
+        value = str(node.params.get(field_spec.name) or "")
+        if value and value not in found:
+            found.append(value)
+    return found
 
 
 def _references_entity(node: ConditionNode, entity_id: str) -> bool:

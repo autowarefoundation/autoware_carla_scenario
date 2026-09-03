@@ -32,8 +32,11 @@
       </div>
     </div>
   {% else %}
+    {# `data-caused-by` is what lets the canvas draw the causal link, and it is
+       the document's own reference: the action this condition waits on. #}
     <div class="ed-cond {% if selected == node.id %}is-selected{% endif %}"
          tabindex="0" role="button" data-object-id="{{ node.id }}"
+         data-caused-by="{{ condition_actions(node)|join(',') }}"
          hx-get="/draft/{{ draft.id }}/inspector/{{ node.id }}"
          hx-target="#inspector" hx-swap="innerHTML">
       {{ f.condition_summary(node, document) }}

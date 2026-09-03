@@ -181,6 +181,10 @@ class DeclarativeScenario(BaseScenario):
 
         for compiled_action in self._compiled.actions:
             action = instantiate_action(compiled_action, ctx)
+            # Published under the document's own id so an ``action_completed``
+            # condition -- possibly one built earlier, in another action's
+            # trigger -- can find it.
+            ctx.actions[compiled_action.node.id] = action
             if compiled_action.node.timing == "post_tick":
                 self.register_post_tick(action)
             else:

@@ -1,12 +1,18 @@
 {% import "partials/icons.html" as ic %}
 {# Save Draft and Export Package are deliberately separate: saving keeps working
-   state, exporting produces a directory whose dependencies are frozen. #}
+   state, exporting produces a package whose dependencies are frozen.
+
+   There is no destination field. The editor is routinely used from another
+   machine on the LAN, so a path typed here would name a directory on the host
+   running the server -- not one the person exporting can reach. The package is
+   built server-side, zipped, and handed back as a download. #}
 <div id="export-panel" class="ed-panel hidden" style="margin-bottom:16px">
   <div class="ed-panel-head">
     <div>
       <div class="ed-panel-title">Export Scenario Package</div>
       <div class="ed-panel-sub">
-        A directory another machine can copy, <code class="mono">uv sync --locked</code> and run
+        A <code class="mono">.zip</code> another machine can unpack,
+        <code class="mono">uv sync --locked</code> and run
       </div>
     </div>
     <button class="ed-btn-ghost" onclick="toggleExportPanel()">{{ ic.icon('x', 14) }}</button>
@@ -15,15 +21,7 @@
         hx-post="/draft/{{ draft.id }}/export"
         hx-target="#export-result" hx-swap="innerHTML"
         hx-indicator="#export-spinner">
-    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px">
-      <div>
-        <div class="ed-field">
-          <label class="ed-label">Destination directory</label>
-          <input type="text" name="destination" class="ed-input mono" style="font-size:11.5px"
-                 value="{{ export_dir }}">
-          <p class="ed-help">The package is created inside this directory, named after the scenario.</p>
-        </div>
-      </div>
+    <div>
       <div style="display:flex; flex-direction:column; gap:9px">
         <label class="ed-check">
           <input type="checkbox" name="lock" value="on" checked>
@@ -42,10 +40,6 @@
           <input type="checkbox" name="dev_mode" value="on">
           <span>Development export
             <span class="ed-help">Depends on the local framework checkout by path. Not portable.</span></span>
-        </label>
-        <label class="ed-check">
-          <input type="checkbox" name="force" value="on">
-          <span>Replace an existing package of the same name</span>
         </label>
       </div>
     </div>

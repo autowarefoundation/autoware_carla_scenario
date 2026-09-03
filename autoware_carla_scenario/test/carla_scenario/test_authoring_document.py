@@ -16,6 +16,7 @@ from autoware_carla_scenario.authoring.compiler import (
     compile_document,
 )
 from autoware_carla_scenario.authoring.models import (
+    ActionNode,
     ConditionNode,
     ConstraintNode,
     Entity,
@@ -97,6 +98,28 @@ class TestLayoutIsPresentationOnly:
         document.ui.set_column(action.id, 7)
         assert document.actions_for("npc1")[0].id == action.id
         assert compile_document(document).actions[0].node.id == action.id
+
+    def test_action_slots_leave_a_gap_where_a_step_is_empty(self) -> None:
+        """A reaction has to be placeable after a cause on another track.
+
+        The ego's own track is empty in between, so the gap has to survive into
+        the rendered lane rather than being packed away.
+        """
+        document = new_document()
+        action = document.actions[0]
+        document.ui.set_column(action.id, 2)
+        slots = document.action_slots("npc1")
+        assert slots == [None, None, action]
+
+    def test_action_slots_never_stack_two_cards_on_one_step(self) -> None:
+        document = new_document()
+        first = document.actions[0]
+        second = ActionNode(id="a_second", type="lane_change", actor="npc1")
+        document.actions.append(second)
+        document.ui.set_column(first.id, 1)
+        document.ui.set_column(second.id, 1)
+        slots = document.action_slots("npc1")
+        assert [s.id if s else None for s in slots] == [None, first.id, second.id]
 
     def test_sync_layout_drops_stale_entries(self) -> None:
         document = new_document()

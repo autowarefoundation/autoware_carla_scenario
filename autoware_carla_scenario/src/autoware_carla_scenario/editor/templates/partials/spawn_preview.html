@@ -5,9 +5,14 @@
    disagree with an actual sweep. The drawing comes from simple_lanelet2's wasm
    viewer -- the same project that provides the `lanelet2` Python API this
    framework runs on -- which gives real map rendering, pan and zoom, and
-   click-to-pick without any of it being reimplemented here. When that module
-   cannot be loaded the server-rendered SVG below takes over, so the count and
-   the constraint editor keep working offline. #}
+   click-to-pick without any of it being reimplemented here.
+
+   It is the *only* renderer. A server-rendered SVG used to sit underneath it as
+   an offline fallback, but the page loads htmx from a CDN and every control
+   here is an hx- attribute, so nothing on this screen works without network
+   anyway -- the fallback bought no offline capability and cost a second drawing
+   of the same map, a legend describing colours the viewer does not use, and two
+   places to implement every change. #}
 <div class="ed-preview">
   <div class="ed-preview-head">
     <div>
@@ -29,9 +34,6 @@
         <div class="ed-preview-count">Spawn position</div>
         <div class="ed-preview-sub">Not evaluated yet</div>
       {% endif %}
-      {# Only true once the interactive viewer is up; the SVG fallback is a
-         picture. editor.js unhides it together with the map frame. #}
-      <div class="ed-preview-sub" data-viewer-hint hidden>Click a lanelet to spawn there</div>
     </div>
     <button class="ed-btn-sm"
             hx-post="/draft/{{ draft.id }}/spawn-preview"
@@ -51,53 +53,33 @@
     {% endif %}
 
     {% if preview.map_loaded %}
-      {# Hidden until editor.js has the viewer module in hand: an empty 260px
-         box where a map should be is worse than no box, and that is exactly
-         what an unreachable module would leave behind. #}
+      {# Hidden until the map has actually drawn: an empty 260px box where a
+         map should be is worse than no box, and that is what an unreachable
+         module would otherwise leave behind. #}
       <div class="ed-map-frame" hidden
            data-map-viewer="{{ map_viewer_url() }}"
            data-map-src="/draft/{{ draft.id }}/map.osm"
            data-entity="{{ entity.id if entity else '' }}"
            data-draft="{{ draft.id }}"
-           data-matched="{{ preview.matched_ids|join(',') }}"
-           data-selected="{{ preview.selected_id or '' }}">
+           data-highlight="{{ preview.highlight_ids|join(',') }}">
         <noscript>The map viewer needs JavaScript; the ID list below still works.</noscript>
       </div>
 
-      {# Fallback drawing, shown until the viewer reports itself ready and left
-         in place for good if it never does. #}
-      {% if preview.geometry and preview.geometry.lanelets %}
-        {% set matched = preview.matched_set %}
-        <svg viewBox="0 0 {{ preview.geometry.size }} {{ preview.geometry.size }}"
-             class="ed-map" data-map-fallback role="img"
-             aria-label="Matched lanelets on the map">
-          <g class="ed-map-base">
-            {% for lanelet in preview.geometry.lanelets %}
-              {% if lanelet.lanelet_id not in matched %}<polyline points="{{ lanelet.points }}"/>{% endif %}
-            {% endfor %}
-          </g>
-          <g class="ed-map-match">
-            {% for lanelet in preview.geometry.lanelets %}
-              {% if lanelet.lanelet_id in matched and lanelet.lanelet_id != preview.selected_id %}
-                <polyline points="{{ lanelet.points }}"><title>Lanelet {{ lanelet.lanelet_id }}</title></polyline>
-              {% endif %}
-            {% endfor %}
-          </g>
-          <g class="ed-map-selected">
-            {% for lanelet in preview.geometry.lanelets %}
-              {% if lanelet.lanelet_id == preview.selected_id %}
-                <polyline points="{{ lanelet.points }}"><title>Lanelet {{ lanelet.lanelet_id }} (current spawn)</title></polyline>
-              {% endif %}
-            {% endfor %}
-          </g>
-        </svg>
-      {% endif %}
+      {# Revealed by editor.js when the viewer cannot be loaded at all, so a
+         blocked CDN reads as an explanation rather than a missing map. #}
+      <p class="ed-help" data-viewer-unavailable hidden>
+        The Lanelet2 map viewer could not be loaded. The match count and the
+        ID list below are computed on the server and are unaffected.
+      </p>
 
-      <div class="ed-legend">
-        {% if preview.searching %}<span><i class="match"></i> matched</span>{% endif %}
-        <span><i class="selected"></i> current spawn</span>
-        <span><i class="base"></i> other lanelets</span>
-      </div>
+      <p class="ed-map-key" data-viewer-hint hidden>
+        {% if preview.searching %}
+          Outlined: the {{ preview.matched_ids|length }} matching lanelet{{ '' if preview.matched_ids|length == 1 else 's' }}.
+        {% else %}
+          Outlined: lanelet {{ preview.selected_id or '—' }}, this entity's spawn.
+        {% endif %}
+        Click a lanelet to spawn there.
+      </p>
     {% endif %}
 
     {% if preview.matched_ids %}
