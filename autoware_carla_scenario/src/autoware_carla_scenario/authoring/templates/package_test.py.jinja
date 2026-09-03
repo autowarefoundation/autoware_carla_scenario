@@ -1,0 +1,47 @@
+"""Tests that run without a CARLA server.
+
+They cover the part of the package that can go wrong on its own -- the document
+parsing and compiling against the pinned framework.  Anything that needs a
+simulator belongs in an integration run, not here, so that
+``uv run pytest`` stays a useful check on any machine.
+"""
+
+from __future__ import annotations
+
+from autoware_carla_scenario.authoring.compiler import compile_document
+from autoware_carla_scenario.authoring.validator import validate_document
+
+import {{ package_name }}
+from {{ package_name }}.scenario import document_path, load_document
+
+
+def test_document_loads() -> None:
+    """The document ships with the package and parses."""
+    assert document_path().is_file()
+    document = load_document()
+    assert document.id == "{{ scenario_id }}"
+    assert document.entities, "the scenario has no entities"
+
+
+def test_document_validates() -> None:
+    """The document has no blocking validation errors."""
+    report = validate_document(load_document())
+    assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+
+def test_scenario_compiles() -> None:
+    """The document compiles to the framework's actions and conditions."""
+    compiled = compile_document(load_document())
+    assert compiled.ego is not None
+    assert len(compiled.actions) == {{ action_count }}
+    assert len(compiled.pass_conditions) == {{ pass_count }}
+    assert len(compiled.fail_conditions) == {{ fail_count }}
+
+
+def test_package_registers_its_conf_dir() -> None:
+    """``register()`` makes the scenario selectable by name."""
+    from autoware_carla_scenario import get_scenario_builder, get_conf_dirs
+
+    {{ package_name }}.register()
+    assert get_scenario_builder("{{ scenario_id }}") is not None
+    assert {{ package_name }}.CONF_DIR in get_conf_dirs()

@@ -1,0 +1,39 @@
+[project]
+name = "{{ distribution_name }}"
+version = "{{ package_version }}"
+description = "{{ description }}"
+# Matches the framework's own requirement: the CARLA client wheel is what caps
+# the interpreter, so a scenario package cannot be looser than the framework.
+requires-python = "{{ requires_python }}"
+dependencies = [
+    # {{ pin_note }}
+{% for requirement in requirements %}
+    "{{ requirement }}",
+{% endfor %}
+]
+
+# Discovered by the framework CLI at start-up, which calls `register()` to add
+# this scenario and its conf/ directory.
+[project.entry-points."autoware_carla_scenario.scenarios"]
+{{ package_name }} = "{{ package_name }}:register"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["{{ package_name }}"]
+{% if uv_required_version %}
+
+[tool.uv]
+# The uv that produced uv.lock. Resolving with a different uv can produce a
+# different lock, so the version that generated this package is required.
+required-version = "=={{ uv_required_version }}"
+{% endif %}
+{% if sources %}
+
+[tool.uv.sources]
+{% for name, body in sources %}
+{{ name }} = { {{ body }} }
+{% endfor %}
+{% endif %}

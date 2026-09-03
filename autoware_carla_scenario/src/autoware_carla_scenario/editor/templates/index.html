@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block title %}Drafts · Scenario Editor{% endblock %}
+
+{% block content %}
+<div style="display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:16px; align-items:start; padding-top:20px">
+  <section class="ed-panel">
+    <div class="ed-panel-head">
+      <div>
+        <div class="ed-panel-title">Drafts</div>
+        <div class="ed-panel-sub">
+          Stored as YAML in <code class="mono">{{ draft_dir }}</code>
+        </div>
+      </div>
+      <span class="ed-pill ed-pill-ok">{{ drafts|length }} saved</span>
+    </div>
+
+    {% if drafts %}
+      <ul>
+        {% for draft in drafts %}
+        <li class="ed-draft">
+          <div style="min-width:0">
+            <a href="/draft/{{ draft.id }}" class="ed-draft-name">
+              {{ draft.title or draft.document.id }}
+            </a>
+            <div class="ed-draft-meta">
+              <span class="mono">{{ draft.document.id }}</span>
+              <span class="sep">·</span>
+              <span>{{ draft.document.entities|length }} actors</span>
+              <span class="sep">·</span>
+              <span>{{ draft.document.actions|length }} actions</span>
+              <span class="sep">·</span>
+              <span>updated {{ draft.updated_at[:16].replace('T', ' ') }}</span>
+            </div>
+          </div>
+          <form method="post" action="/draft/{{ draft.id }}/delete"
+                onsubmit="return confirm('Delete this draft? The YAML file is removed.')">
+            <button class="ed-btn-ghost" type="submit" title="Delete draft">
+              {{ ic.icon('trash', 14) }}
+            </button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="ed-empty">
+        <div class="ed-empty-title">No drafts yet</div>
+        <p>Create one to start authoring a scenario.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="ed-panel">
+    <div class="ed-panel-head">
+      <div class="ed-panel-title">New scenario</div>
+    </div>
+    <div class="ed-panel-body">
+      <form method="post" action="/new">
+        <div class="ed-field">
+          <label class="ed-label" for="new-title">Title</label>
+          <input id="new-title" name="title" class="ed-input" placeholder="Cut in on the ego">
+        </div>
+        <div class="ed-field">
+          <label class="ed-label" for="new-kind">Start from</label>
+          <select id="new-kind" name="kind" class="ed-input">
+            <option value="cut_in">Cut-in example</option>
+            <option value="blank">Minimal (ego + timeout)</option>
+          </select>
+          <p class="ed-help">
+            The example wires up every feature — swimlanes, a triggered action,
+            a constraint spawn search and a derived offset — so nothing has to be
+            discovered from an empty canvas.
+          </p>
+        </div>
+        <button type="submit" class="ed-btn-primary" style="width:100%">
+          {{ ic.icon('plus', 14) }} Create draft
+        </button>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}

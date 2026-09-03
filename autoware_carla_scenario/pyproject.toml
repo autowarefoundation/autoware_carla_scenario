@@ -1,0 +1,80 @@
+[project]
+name = "autoware-carla-scenario"
+version = "0.1.0"
+description = "CARLA scenario testing framework for Autoware"
+authors = [
+    { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
+]
+# Capped at 3.10 by the CARLA client alone: 0.10.0 is not published to PyPI and
+# the wheel vendored in carla_wheels/ is cp310-only. Nothing else in this package
+# — and nothing in autoware-lanelet2-to-opendrive — is limited to 3.10 any more.
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "pyxodr>=0.1.0",
+    # Headless: the only OpenCV calls in this package are imencode and
+    # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
+    # build would add ~125 MB of GTK/GStreamer libraries (and a libGL system
+    # dependency) that nothing calls.
+    "opencv-python-headless>=4.8",
+    "numpy>=1.21",
+    "pytest>=9.0.1",
+    "python-dotenv>=1.2.2",
+    # See the note in autoware_lanelet2_to_opendrive/pyproject.toml: `lanelet2`
+    # and `autoware_lanelet2_extension_python` are provided by simple-lanelet2.
+    "simple-lanelet2>=1.1.2",
+    "tqdm>=4.67.1",
+    "hydra-core>=1.3.2",
+    "omegaconf>=2.3.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "jinja2>=3.1.0",
+    # The Scenario Editor is driven entirely by HTML form posts, and Starlette
+    # requires this to read a request body as a form -- urlencoded included.
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
+    "pydantic>=2.0.0",
+    "ffmpeg-python>=0.2.0",
+    # Speaks the alpasim `egodriver` gRPC contract to an external driver policy.
+    # The protobuf definitions are vendored (see proto/README.md) rather than pulled
+    # from `alpasim-grpc`, which requires Python >= 3.11 and so cannot coexist with the
+    # CPython-3.10-only CARLA 0.10.0 wheel.
+    "grpcio>=1.60",
+    "protobuf>=4.25.0,<5.0.0",
+]
+
+[project.optional-dependencies]
+carla = ["carla==0.10.0"]
+carla-0-9-16 = ["carla==0.9.16"]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "carla" },
+        { extra = "carla-0-9-16" },
+    ],
+]
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# `hydra_plugins` is a PEP 420 namespace package shared with Hydra itself, so
+# each plugin has to be named individually and `namespace` has to be set --
+# otherwise the backend looks for a single top-level module named after the
+# distribution and the plugins never reach the wheel.
+namespace = true
+module-name = [
+    "autoware_carla_scenario",
+    "hydra_plugins.autoware_scenario_searchpath",
+    "hydra_plugins.autoware_scenario_sweeper",
+]
+
+[project.scripts]
+scenario = "autoware_carla_scenario.examples.run:main"
+scenario-new = "autoware_carla_scenario.scaffold.generator:main"
+detect-no-3d-model = "autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main"
+viewer = "autoware_carla_scenario.ui:main"
+# The editor is a separate application from the viewer; running one does not
+# start the other.
+scenario-editor = "autoware_carla_scenario.editor:main"

@@ -1,0 +1,80 @@
+"""Bind ``scenario/document.yaml`` to the framework's declarative runtime.
+
+The scenario's behaviour lives entirely in the document.  This module only
+loads it and hands it to
+:class:`~autoware_carla_scenario.declarative.DeclarativeScenario`, which
+registers the same actions and pass/fail conditions a hand-written scenario
+would.  Editing the document changes the scenario; editing this file should not
+be necessary.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from autoware_carla_scenario.authoring.models import ScenarioDocument
+from autoware_carla_scenario.authoring.persistence import load_document as _load
+
+from . import DOCUMENT_PATH
+
+if TYPE_CHECKING:
+    from autoware_carla_scenario import BaseScenario, EgoConfig
+    from autoware_carla_scenario.coordinate import (
+        GroundProjectionConfig,
+        Lanelet2Pose,
+    )
+
+__all__ = ["build_scenario", "document_path", "load_document"]
+
+#: Points the package at a different document, for experiments that should not
+#: touch the checked-in one.
+DOCUMENT_PATH_ENV = "{{ document_path_env }}"
+
+
+def document_path() -> Path:
+    """Return the document this package runs.
+
+    Raises:
+        FileNotFoundError: If the document is missing, which means the package
+            directory was not copied whole.
+    """
+    override = os.environ.get(DOCUMENT_PATH_ENV)
+    path = Path(override).expanduser() if override else DOCUMENT_PATH
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Scenario document not found at {path}. Run this package from a "
+            f"complete checkout of its directory, or set {DOCUMENT_PATH_ENV}."
+        )
+    return path
+
+
+def load_document() -> ScenarioDocument:
+    """Load and parse this package's Scenario IR."""
+    return _load(document_path())
+
+
+def build_scenario(
+    ego: "EgoConfig",
+    scenario_dict: dict[str, Any],
+    spawn_pose: "Lanelet2Pose",
+    ground_projection: "GroundProjectionConfig",
+) -> "BaseScenario":
+    """Build the scenario for the framework's runner.
+
+    Matches the ``ScenarioBuilder`` signature registered by ``register()``.
+    """
+    from autoware_carla_scenario.declarative import (
+        DeclarativeScenario,
+        DeclarativeScenarioConfig,
+    )
+
+    config = DeclarativeScenarioConfig(**scenario_dict)
+    return DeclarativeScenario(
+        ego,
+        spawn_pose=spawn_pose,
+        config=config,
+        ground_projection=ground_projection,
+        document=load_document(),
+    )

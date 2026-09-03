@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Scenario Editor{% endblock %}</title>
+  {# The stylesheet is served by this app, not a CDN: the editor is a local tool
+     that is often run beside a simulator on a closed network, and a blocked CDN
+     should not be the difference between a plain page and an unusable one. #}
+  <link rel="stylesheet" href="/static/editor.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  {% import "partials/icons.html" as ic %}
+  <header class="ed-bar">
+    <div class="ed-bar-inner">
+      <a href="/" class="ed-brand">
+        <span class="ed-brand-mark">{{ ic.icon('logo', 14) }}</span>
+        Scenario Editor
+      </a>
+      {% block crumb %}{% endblock %}
+      <div class="ed-bar-spacer"></div>
+      <div class="ed-bar-actions">{% block actions %}{% endblock %}</div>
+    </div>
+  </header>
+
+  <main class="ed-shell">
+    {% block content %}{% endblock %}
+  </main>
+
+  <datalist id="ref-values">
+    <option value="${map.no_3d_model_lanelet_ids}"></option>
+  </datalist>
+
+  <script src="/static/editor.js"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

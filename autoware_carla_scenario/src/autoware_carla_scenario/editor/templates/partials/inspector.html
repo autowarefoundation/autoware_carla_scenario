@@ -1,0 +1,118 @@
+{% import "partials/fields.html" as f %}
+{% import "partials/icons.html" as ic %}
+{# The inspector renders whatever object the canvas selected.
+
+   Every section below is built from registry metadata, so a newly registered
+   action, condition, constraint or binding is editable here without touching
+   this template. #}
+<div class="ed-panel">
+  <div class="ed-panel-head">
+    <div>
+      <div class="ed-panel-title">Inspector</div>
+      <div class="ed-panel-sub mono">{{ selected }}</div>
+    </div>
+    {{ ic.icon('target', 15) }}
+  </div>
+  <div class="ed-panel-body">
+
+  {% if selected_kind == 'scenario' %}
+    {% include "partials/inspector_scenario.html" %}
+
+  {% elif selected_kind == 'entity' %}
+    {% include "partials/inspector_entity.html" %}
+
+  {% elif selected_kind == 'action' %}
+    {% set spec = get_action_spec(target.type) %}
+    <form hx-post="/draft/{{ draft.id }}/action/{{ target.id }}"
+          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <p class="ed-kicker">{{ spec.category if spec else 'Action' }}</p>
+      <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
+      {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
+
+      <div class="ed-field">
+        <label class="ed-label">Label</label>
+        <input type="text" name="title" class="ed-input" value="{{ target.title }}">
+      </div>
+      <div class="ed-field">
+        <label class="ed-label">Actor</label>
+        <select name="actor" class="ed-input">
+          <option value="" {% if not target.actor %}selected{% endif %}>— none (world) —</option>
+          {% for entity in document.entities %}
+            <option value="{{ entity.id }}" {% if target.actor == entity.id %}selected{% endif %}>
+              {{ entity.display_name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% if spec %}{{ f.fields(spec.fields, target.params, document) }}{% endif %}
+      <div class="ed-field">
+        <label class="ed-label">Tick phase</label>
+        <select name="timing" class="ed-input">
+          <option value="pre_tick" {% if target.timing == 'pre_tick' %}selected{% endif %}>Pre-tick</option>
+          <option value="post_tick" {% if target.timing == 'post_tick' %}selected{% endif %}>Post-tick</option>
+        </select>
+      </div>
+      <div class="ed-field">
+        <label class="ed-check">
+          <input type="checkbox" name="once" value="on" {% if target.once %}checked{% endif %}>
+          <span>Fire only once</span>
+        </label>
+      </div>
+    </form>
+    <button class="ed-btn-danger" style="width:100%"
+            hx-post="/draft/{{ draft.id }}/action/{{ target.id }}/delete"
+            hx-target="#editor-body" hx-swap="innerHTML">
+      {{ ic.icon('trash', 13) }} Delete action
+    </button>
+
+  {% elif selected_kind == 'condition' %}
+    {% set spec = get_condition_spec(target.type) %}
+    <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}"
+          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <p class="ed-kicker">{{ spec.category if spec else 'Predicate' }}</p>
+      <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
+      {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
+      {% if spec and spec.fields %}
+        {{ f.fields(spec.fields, target.params, document) }}
+      {% elif spec %}
+        <p class="ed-help" style="margin-bottom:14px">This condition has no parameters.</p>
+      {% endif %}
+    </form>
+    {% if spec and spec.accepts_children %}
+      <p class="ed-help" style="margin-bottom:14px">
+        {{ spec.min_children }} child condition(s) required,
+        {{ 'unlimited' if spec.max_children is none else spec.max_children }} allowed.
+        Add them on the canvas.
+      </p>
+    {% endif %}
+    <button class="ed-btn-danger" style="width:100%"
+            hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}/delete"
+            hx-target="#editor-body" hx-swap="innerHTML">
+      {{ ic.icon('trash', 13) }} Delete condition
+    </button>
+
+  {% elif selected_kind == 'constraint' %}
+    {% set spec = get_constraint_spec(target.type) %}
+    <form hx-post="/draft/{{ draft.id }}/constraint/{{ target.id }}"
+          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="selected" value="{{ constraint_owner or selected }}">
+      <p class="ed-kicker">{{ spec.category if spec else 'Constraint' }}</p>
+      <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
+      {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
+      {% if spec and spec.fields %}
+        {{ f.fields(spec.fields, target.params, document) }}
+      {% else %}
+        <p class="ed-help" style="margin-bottom:14px">This constraint has no parameters.</p>
+      {% endif %}
+    </form>
+    <form hx-post="/draft/{{ draft.id }}/constraint/{{ target.id }}/delete"
+          hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="selected" value="{{ constraint_owner or 'scenario' }}">
+      <button type="submit" class="ed-btn-danger" style="width:100%">
+        {{ ic.icon('trash', 13) }} Delete constraint
+      </button>
+    </form>
+  {% endif %}
+
+  </div>
+</div>

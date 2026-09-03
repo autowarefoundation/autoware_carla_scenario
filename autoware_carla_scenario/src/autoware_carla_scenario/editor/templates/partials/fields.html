@@ -1,0 +1,111 @@
+{# Metadata-driven form controls.
+
+   Every control is chosen from a FieldSpec's `kind`, never from the primitive's
+   type, so registering a new action / condition / constraint in Python gives it
+   a working inspector with no change to this file. #}
+
+{% macro control(spec, value, document, prefix='') %}
+  {%- set name = prefix ~ spec.name -%}
+  {%- set current = spec.default if value is none else value -%}
+  {% if spec.kind == 'bool' %}
+    <label class="ed-check">
+      <input type="checkbox" name="{{ name }}" value="on" {% if current %}checked{% endif %}>
+      <span>{{ spec.label }}{% if spec.help %}<span class="ed-help">{{ spec.help }}</span>{% endif %}</span>
+    </label>
+  {% elif spec.kind == 'select' %}
+    <select name="{{ name }}" class="ed-input">
+      {% for option in spec.options %}
+        <option value="{{ option.value }}"
+                {% if current is not none and option.value == current|string %}selected{% endif %}>
+          {{ option.label }}
+        </option>
+      {% endfor %}
+    </select>
+  {% elif spec.kind == 'entity' %}
+    <select name="{{ name }}" class="ed-input">
+      <option value="" {% if not current %}selected{% endif %}>— choose —</option>
+      {% for entity in document.entities %}
+        <option value="{{ entity.id }}" {% if current == entity.id %}selected{% endif %}>
+          {{ entity.display_name }}
+        </option>
+      {% endfor %}
+    </select>
+  {% elif spec.kind in ('int_list', 'int_list_or_ref') %}
+    <input type="text" name="{{ name }}" class="ed-input mono"
+           value="{{ current if current is string else (current or [])|join(', ') }}"
+           {% if spec.kind == 'int_list_or_ref' %}list="ref-values"{% endif %}
+           placeholder="{{ '3, 4, 41' if spec.kind == 'int_list' else '3, 4, 41  or  ${map.no_3d_model_lanelet_ids}' }}">
+  {% elif spec.kind == 'int' %}
+    <input type="number" step="1" name="{{ name }}" class="ed-input"
+           value="{{ '' if current is none else current }}">
+  {% elif spec.kind == 'number' %}
+    <input type="number" step="any" name="{{ name }}" class="ed-input"
+           value="{{ '' if current is none else current }}">
+  {% else %}
+    <input type="text" name="{{ name }}" class="ed-input"
+           value="{{ '' if current is none else current }}">
+  {% endif %}
+{% endmacro %}
+
+
+{% macro field(spec, params, document, prefix='') %}
+  {%- set value = params.get(spec.name, spec.default) -%}
+  <div class="ed-field">
+    {% if spec.kind != 'bool' %}
+      <label class="ed-label">
+        {{ spec.label }}{% if spec.unit %} <span class="unit">({{ spec.unit }})</span>{% endif %}
+      </label>
+    {% endif %}
+    {{ control(spec, value, document, prefix) }}
+    {% if spec.help and spec.kind != 'bool' %}<p class="ed-help">{{ spec.help }}</p>{% endif %}
+  </div>
+{% endmacro %}
+
+
+{% macro fields(specs, params, document, prefix='') %}
+  {% for spec in specs %}{{ field(spec, params, document, prefix) }}{% endfor %}
+{% endmacro %}
+
+
+{# A condition rendered as `subject -> target | metric | <rule> value unit`,
+   which is the reading the swimlane is built around. #}
+{% macro condition_summary(node, document) %}
+  {%- set spec = get_condition_spec(node.type) -%}
+  {% if spec %}
+    {%- set visual = spec.visual -%}
+    {%- set subject = node.params.get(visual.subject) if visual.subject else none -%}
+    {%- set target = node.params.get(visual.target) if visual.target else none -%}
+    {%- set value = node.params.get(visual.value) if visual.value else none -%}
+    {%- set rule = node.params.get(visual.rule) if visual.rule else none -%}
+    <div class="cond-subject">
+      {% if subject %}<span>{{ entity_label(subject, document) }}</span>{% endif %}
+      {% if subject and target is not none %}<span class="cond-arrow">&#8594;</span>{% endif %}
+      {% if target is not none %}<span>{{ entity_label(target, document) }}</span>{% endif %}
+      {% if not subject and target is none %}<span class="cond-world">world</span>{% endif %}
+    </div>
+    <div class="cond-metric">{{ visual.metric }}</div>
+    <div class="cond-value">
+      {% if rule %}<span class="cond-op">{{ rule_symbol(rule) }}</span>{% endif %}
+      {% if value is not none %}{{ value }}{% if visual.unit %} <span class="cond-unit">{{ visual.unit }}</span>{% endif %}
+      {% elif visual.value_label %}{{ visual.value_label }}{% endif %}
+    </div>
+  {% else %}
+    <div class="cond-metric" style="color:var(--fail)">Unknown condition “{{ node.type }}”</div>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro entity_label(value, document) %}
+  {%- set entity = document.entity(value|string) -%}
+  {%- if entity -%}{{ entity.display_name }}{%- else -%}{{ value }}{%- endif -%}
+{% endmacro %}
+
+
+{% macro rule_symbol(rule) %}
+  {%- set symbols = {
+    'less_than': '<', 'less_than_or_equal': '≤',
+    'greater_than': '>', 'greater_than_or_equal': '≥',
+    'equal_to': '='
+  } -%}
+  {{ symbols.get(rule|string, rule) }}
+{% endmacro %}

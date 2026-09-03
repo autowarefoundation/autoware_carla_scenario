@@ -1,0 +1,68 @@
+{% import "partials/icons.html" as ic %}
+{# One spawn constraint, rendered recursively.
+
+   Children always nest in one list; how many a type takes comes from its
+   spec, the same way a condition composition works. #}
+
+{% macro render(node, draft, entity, selected, document, depth=0) %}
+  {%- set spec = get_constraint_spec(node.type) -%}
+  <div class="ed-constraint {% if selected == node.id %}is-selected{% endif %}">
+    <div class="ed-constraint-head" tabindex="0" role="button"
+         hx-get="/draft/{{ draft.id }}/inspector/{{ node.id }}"
+         hx-target="#inspector" hx-swap="innerHTML">
+      <span class="ed-constraint-title">
+        {% if spec %}{{ spec.title }}{% else %}<span style="color:var(--fail)">{{ node.type }}</span>{% endif %}
+      </span>
+      <span class="ed-constraint-params">{{ constraint_summary(node, spec) }}</span>
+      <form hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}/delete"
+            hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
+        <input type="hidden" name="selected" value="{{ entity.id }}">
+        <button type="submit" class="ed-del" title="Remove">{{ ic.icon('x', 10) }}</button>
+      </form>
+    </div>
+
+    {% if spec and spec.accepts_children %}
+      <div class="ed-constraint-children">
+        {% for child in node.constraints %}
+          {{ render(child, draft, entity, selected, document, depth + 1) }}
+        {% endfor %}
+        {% if spec.max_children is none or node.constraints|length < spec.max_children %}
+          {{ add_constraint(draft, entity, node.id) }}
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+
+{% macro constraint_summary(node, spec) %}
+  {%- if spec -%}
+    {%- set parts = [] -%}
+    {%- for field_spec in spec.fields -%}
+      {%- set value = node.params.get(field_spec.name, field_spec.default) -%}
+      {%- if value is not none and value != [] -%}
+        {%- set shown = value|join(', ') if value is not string and value is iterable else value -%}
+        {%- set _ = parts.append(shown ~ (' ' ~ field_spec.unit if field_spec.unit else '')) -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ parts|join(' ') }}
+  {%- endif -%}
+{% endmacro %}
+
+
+{% macro add_constraint(draft, entity, parent_id='') %}
+  <details class="ed-add">
+    <summary class="ed-add-btn" title="Add a constraint">{{ ic.icon('plus', 11) }} constraint</summary>
+    <form hx-post="/draft/{{ draft.id }}/constraint" hx-target="#editor-body" hx-swap="innerHTML"
+          class="ed-add-form">
+      <input type="hidden" name="entity_id" value="{{ entity.id }}">
+      <input type="hidden" name="parent_id" value="{{ parent_id }}">
+      <select name="type_id" class="ed-input-xs" style="flex:1">
+        {% for spec in constraint_specs() %}
+          <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+    </form>
+  </details>
+{% endmacro %}

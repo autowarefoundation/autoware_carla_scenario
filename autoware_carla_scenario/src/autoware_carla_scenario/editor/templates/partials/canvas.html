@@ -1,0 +1,197 @@
+{% import "partials/condition_node.html" as pred %}
+{% import "partials/icons.html" as ic %}
+
+{# Actor x causal-progression swimlanes.
+
+   The horizontal axis is *scenario progression*, not time: a card further right
+   happens later in the story, but the distance between two cards means nothing.
+   Triggers hang under the action they fire, so there is no separate event lane
+   to correlate by eye. #}
+
+{%- set ACTOR_HUES = ['var(--actor-1)', 'var(--actor-2)', 'var(--actor-3)', 'var(--actor-4)'] -%}
+{# Action categories only -- an unlisted one falls back to the generic accent. #}
+{%- set CATEGORY_HUES = {
+  'Vehicle / Motion': 'var(--actor-1)',
+  'Environment': '#0891b2'
+} -%}
+
+{% macro add_action(draft, actor) %}
+  <div class="ed-column ed-column-add">
+    <details class="ed-add">
+      <summary class="ed-add-btn is-action" title="Add an action">{{ ic.icon('plus', 12) }} action</summary>
+      <form hx-post="/draft/{{ draft.id }}/action" hx-target="#editor-body" hx-swap="innerHTML"
+            class="ed-add-form">
+        <input type="hidden" name="actor" value="{{ actor }}">
+        <select name="type_id" class="ed-input-xs" style="flex:1">
+          {% for spec in action_specs() %}
+            {% if actor or not spec.actor_required %}
+              <option value="{{ spec.type_id }}">{{ spec.title }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+      </form>
+    </details>
+  </div>
+{% endmacro %}
+
+{% macro action_column(action, draft, selected, document) %}
+  {%- set spec = get_action_spec(action.type) -%}
+  {%- set hue = CATEGORY_HUES.get(spec.category, 'var(--accent)') if spec else 'var(--fail)' -%}
+  <div class="ed-column">
+    <div class="ed-action {% if selected == action.id %}is-selected{% endif %}"
+         style="--action-hue: {{ hue }}"
+         tabindex="0" role="button" id="node-{{ action.id }}"
+         data-object-id="{{ action.id }}"
+         hx-get="/draft/{{ draft.id }}/inspector/{{ action.id }}"
+         hx-target="#inspector" hx-swap="innerHTML">
+      <div class="ed-action-top">
+        <span class="ed-action-glyph">
+          {{ ic.icon('bolt' if spec and spec.visual_kind == 'instant' else 'bar', 13) }}
+        </span>
+        <span class="ed-action-title">{{ action.title or (spec.title if spec else action.type) }}</span>
+      </div>
+      <div class="ed-action-meta">
+        {% if spec %}<span>{{ spec.title }}</span>{% else %}<span class="bad">unknown action</span>{% endif %}
+        <span class="dot"></span>
+        <span>{{ action.timing.replace('_', ' ') }}</span>
+        {% if not action.once %}<span class="dot"></span><span>repeats</span>{% endif %}
+      </div>
+    </div>
+
+    <div class="ed-move">
+      <button class="ed-move-btn" title="Move earlier"
+              hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/move"
+              hx-vals='{"delta": -1}' hx-target="#editor-body" hx-swap="innerHTML">
+        {{ ic.icon('left', 11) }}
+      </button>
+      <button class="ed-move-btn" title="Move later"
+              hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/move"
+              hx-vals='{"delta": 1}' hx-target="#editor-body" hx-swap="innerHTML">
+        {{ ic.icon('right', 11) }}
+      </button>
+    </div>
+
+    <div class="ed-trigger-wrap" data-links-to="node-{{ action.id }}">
+      <div class="ed-trigger {% if not action.trigger %}is-empty{% endif %}" id="trigger-{{ action.id }}">
+        {% if action.trigger %}
+          {{ pred.render(action.trigger, draft, selected, document) }}
+        {% else %}
+          fires immediately
+        {% endif %}
+      </div>
+      {{ pred.add(draft, 'trigger:' ~ action.id) }}
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro verdict_lane(kind, label, hint, glyph, conditions, draft, selected, document) %}
+  <div class="ed-lane ed-verdict ed-verdict-{{ kind }}">
+    <div class="ed-lane-head is-static">
+      <div class="ed-verdict-label">{{ ic.icon(glyph, 15) }}<span>{{ label }}</span></div>
+      <div class="ed-verdict-hint">{{ hint }}</div>
+    </div>
+    <div class="ed-lane-track">
+      {% for node in conditions %}
+        <div class="ed-column">
+          <div class="ed-trigger">{{ pred.render(node, draft, selected, document) }}</div>
+        </div>
+      {% endfor %}
+      <div class="ed-column ed-column-add">{{ pred.add(draft, kind) }}</div>
+    </div>
+  </div>
+{% endmacro %}
+
+<section id="canvas" class="ed-panel" data-draft="{{ draft.id }}" data-selected="{{ selected }}">
+  <div class="ed-panel-head">
+    <div>
+      <div class="ed-panel-title">Swimlanes</div>
+      <div class="ed-panel-sub">Left to right is scenario progression, not elapsed time</div>
+    </div>
+    <form hx-post="/draft/{{ draft.id }}/entity" hx-target="#editor-body" hx-swap="innerHTML"
+          style="display:flex; align-items:center; gap:7px">
+      <select name="kind" class="ed-input-sm">
+        <option value="vehicle">Vehicle</option>
+        <option value="ego" {% if document.ego %}disabled{% endif %}>Ego</option>
+      </select>
+      <button type="submit" class="ed-btn-sm">{{ ic.icon('plus', 12) }} Actor</button>
+    </form>
+  </div>
+
+  <div class="ed-canvas-scroll">
+    <svg class="ed-links" aria-hidden="true"></svg>
+
+    {% for entity in document.ordered_entities() %}
+      {%- set hue = 'var(--actor-ego)' if entity.kind == 'ego'
+                    else ACTOR_HUES[loop.index0 % ACTOR_HUES|length] -%}
+      <div class="ed-lane" data-entity="{{ entity.id }}" style="--lane-hue: {{ hue }}">
+        <div class="ed-lane-head {% if selected == entity.id %}is-selected{% endif %}"
+             tabindex="0" role="button" data-object-id="{{ entity.id }}"
+             hx-get="/draft/{{ draft.id }}/inspector/{{ entity.id }}"
+             hx-target="#inspector" hx-swap="innerHTML">
+          <div class="ed-actor">
+            <span class="ed-avatar">{{ ic.icon('user' if entity.kind == 'ego' else 'car', 13) }}</span>
+            <span style="min-width:0">
+              <span class="ed-actor-name" style="display:block">{{ entity.display_name }}</span>
+              <span class="ed-actor-role">{{ 'Ego' if entity.kind == 'ego' else entity.id }}</span>
+            </span>
+          </div>
+          <div class="ed-spawn-chip">
+            {% if entity.spawn.mode == 'fixed' %}
+              <span class="k">lanelet</span> <span class="v">{{ entity.spawn.lanelet_id }}</span>
+              <span class="k">at</span> <span class="v">{{ entity.spawn.s.value }} m</span>
+            {% else %}
+              <span class="v">{{ entity.spawn.constraints|length }} constraint{{ '' if entity.spawn.constraints|length == 1 else 's' }}</span>
+              <span class="k">searched</span>
+              {%- if entity.spawn.s.mode == 'derived' %}<br><span class="k">offset</span> <span class="v">derived</span>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="ed-lane-track">
+          <div class="ed-column"><div class="ed-origin">Spawn</div></div>
+          {% for action in document.actions_for(entity.id) %}
+            {{ action_column(action, draft, selected, document) }}
+          {% endfor %}
+          {{ add_action(draft, entity.id) }}
+        </div>
+      </div>
+    {% endfor %}
+
+    {# Actions that act on the environment rather than a vehicle still need
+       somewhere to live, or setting an action's actor to "none" would make it
+       vanish from the canvas. #}
+    {%- set world = document.world_actions() -%}
+    {% if world %}
+      <div class="ed-lane" style="--lane-hue: var(--ink-faint)">
+        <div class="ed-lane-head is-static">
+          <div class="ed-actor">
+            <span class="ed-avatar" style="background:var(--ink-muted)">{{ ic.icon('globe', 13) }}</span>
+            <span>
+              <span class="ed-actor-name" style="display:block">World</span>
+              <span class="ed-actor-role">no actor</span>
+            </span>
+          </div>
+        </div>
+        <div class="ed-lane-track">
+          {% for action in world %}
+            {{ action_column(action, draft, selected, document) }}
+          {% endfor %}
+          {{ add_action(draft, '') }}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if not document.entities %}
+      <div class="ed-empty">
+        <div class="ed-empty-title">No actors yet</div>
+        <p>Add one to start building the scenario.</p>
+      </div>
+    {% endif %}
+
+    {{ verdict_lane('pass', 'PASS', 'the scenario succeeds when any of these holds',
+                    'check', document.assertions.pass_conditions, draft, selected, document) }}
+    {{ verdict_lane('fail', 'FAIL', 'the scenario fails when any of these holds',
+                    'flag', document.assertions.fail_conditions, draft, selected, document) }}
+  </div>
+</section>

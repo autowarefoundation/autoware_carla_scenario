@@ -1,0 +1,25 @@
+{# The single htmx swap target for every edit: canvas, inspector and validation
+   are re-rendered together so they can never drift apart. #}
+{% import "partials/icons.html" as ic %}
+
+<div id="validation" style="margin-bottom:12px">
+  {% include "partials/validation.html" %}
+</div>
+
+{% if error %}
+  <div class="ed-notice ed-notice-bad" style="margin-bottom:12px">
+    {{ ic.icon('alert', 15) }}
+    <div><div class="ed-notice-title">That edit was not applied</div>{{ error }}</div>
+  </div>
+{% endif %}
+
+<div class="ed-workspace">
+  <div style="min-width:0">
+    {% include "partials/canvas.html" %}
+  </div>
+  <aside style="min-width:0">
+    <div id="inspector" style="position:sticky; top:70px">
+      {% include "partials/inspector.html" %}
+    </div>
+  </aside>
+</div>

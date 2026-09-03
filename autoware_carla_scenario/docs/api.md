@@ -1,0 +1,251 @@
+# API Reference
+
+This page lists the public surface of `autoware_carla_scenario`. All
+symbols exported via the top-level package (`autoware_carla_scenario`)
+are stable; symbols only reachable through deeper subpackages should be
+considered internal unless explicitly noted.
+
+## Top-level package
+
+```python
+from autoware_carla_scenario import (
+    BaseScenario, EgoConfig, ScenarioQueue, ScenarioRunner,
+    CarlaServerManager, CarlaScenarioFixture,
+    # Conditions, actions, kinematics, coordinate poses ...
+)
+```
+
+The full list of re-exports is defined in `autoware_carla_scenario.__all__`
+and includes the conditions, actions, kinematics, coordinate, entity,
+and sensor types described below.
+
+## Scenario orchestration
+
+| Symbol | Module | Purpose |
+|--------|--------|---------|
+| `BaseScenario` | `scenario_base` | Abstract base for user scenarios. Subclasses implement `setup()` and `is_done()`. |
+| `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME`. |
+| `ScenarioRunner` | `scenario_runner` | Executes a single `BaseScenario` against a CARLA world (sync mode tick loop, recording, cleanup). |
+| `ScenarioQueue` | `scenario_queue` | Context manager that owns a `CarlaServerManager` and runs registered scenarios sequentially with cooldown / retry. |
+| `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`. |
+| `CarlaScenarioFixture` | `pytest_fixtures` | Helper that registers a scenario into a queue at import time and exposes a session-scoped pytest fixture for its `ScenarioResult`. |
+| `EGO_ROLE_NAME` | `constants` | Reserved CARLA `role_name` used for the ego actor. |
+| `EntityRole` | `entity_role` | Validated `role_name` wrapper for CARLA actors. Factories: `EntityRole.ego()`, `EntityRole.npc(n)`. |
+
+`CameraRecorder` (re-exported from the top-level package, source in
+`autoware_carla_scenario.camera_recorder`) is the two-pass video
+renderer driven by the native CARLA recorder + an RGB camera sensor.
+It is used internally by `ScenarioRunner` and can also be instantiated
+directly.
+
+## Conditions (`autoware_carla_scenario.conditions`)
+
+All conditions inherit from `BaseCondition` and return a
+`ScenarioResult` from `check(world, elapsed)` once triggered (or
+`None` when not yet triggered).
+
+| Symbol | Description |
+|--------|-------------|
+| `BaseCondition` | Abstract base class. Subclasses override `_check()`. |
+| `ScenarioResult` | Pass / fail outcome with message, elapsed time, and per-condition statuses. |
+| `ConditionStatus` | Per-condition leaf record used for reporting. |
+| `AlwaysTrueCondition` | Default trigger for actions. |
+| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. |
+| `StickyCondition`, `PersistentCondition` | Latch / persist a child condition's truth value. |
+| `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers. |
+| `EntityDistanceCondition`, `TimeToCollisionCondition` | Relative conditions between two entities: separation, and time to collision along the line joining them. |
+| `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
+| `TrafficSignalCondition` | Traffic-light state check. |
+| `ComparisonRule`, `ScalarComparisonRule`, `compare` | Numeric comparison primitives. `compare(actual, rule, value, tolerance)` is the underlying helper. |
+| `find_actor_by_role_name`, `find_actor_in_list` | Helpers for locating CARLA actors by role. `find_actor_in_list` is reachable via `autoware_carla_scenario.conditions`. |
+
+### Composition conditions (`autoware_carla_scenario.conditions.composition`)
+
+These build on `CompositionCondition`, which composes a child condition
+tree internally:
+
+- `EntityLanePositionCondition`
+- `EntityInAreaCondition`
+- `SpeedCondition`, `SpeedDirection`, `SpeedCoordinateSystem`
+- `StandstillCondition`
+- `TemporaryStopCondition`
+- `WaypointCondition`, `WaypointCheckType`
+
+## Actions (`autoware_carla_scenario.actions`)
+
+| Symbol | Description |
+|--------|-------------|
+| `BaseAction` | Abstract base. Owns a trigger `BaseCondition`, a `TickTiming`, and an `execute(world)` side effect. |
+| `TickTiming` | Enum: `PRE_TICK` / `POST_TICK`. |
+| `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
+| `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
+| `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
+| `AttachCameraSensorAction` | Attach a generic `CameraSensorBase` once a condition fires. |
+| `AttachCarlaCameraSensorAction` | CARLA-specific subclass that builds a `CarlaCameraSensor`. |
+
+## Sensors (`autoware_carla_scenario.sensor`)
+
+| Symbol | Description |
+|--------|-------------|
+| `CameraSensorBase`, `CameraSensorConfig` | Provider-agnostic camera sensor interface. |
+| `CarlaCameraSensor`, `CarlaCameraSensorConfig` | CARLA RGB camera implementation, used by the video recorder and `AttachCarlaCameraSensorAction`. |
+
+## External driver (`autoware_carla_scenario.driver`)
+
+Connects the ego to a driving policy served over alpasim's
+`egodriver.EgodriverService`. See [External Driver Interface](driver_interface.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `BaseEgoDriverClient` | Transport-agnostic client interface: session lifecycle, observation submission, `drive`. |
+| `EgoDriverGrpcClient` | gRPC implementation against the vendored alpasim protos. |
+| `DriverClientConfig`, `DriverCameraConfig` | Connection settings, policy cadence, and the camera rig streamed to the policy. |
+| `ControlConfig`, `TrajectoryFollower`, `VehicleCommand` | Pure-pursuit + PID tracking that turns a plan into `carla.VehicleControl`. |
+| `Pose`, `Trajectory` | Rigid-transform primitives with protobuf conversions (right-handed frame). |
+| `EgoObservation`, `DriveOutcome` | The state sent to the policy and the plan it returns. |
+| `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, speed limit) into the `renderer_data` extension payload. |
+
+## Coordinate transforms (`autoware_carla_scenario.coordinate`)
+
+| Symbol | Description |
+|--------|-------------|
+| `Lanelet2Pose`, `OpenDrivePose`, `CarlaWorldPose`, `AnyPose` | Frame-tagged pose dataclasses. |
+| `CoordinateFrame`, `FrameMismatchError`, `frame_of` | Coordinate-frame tagging and validation. |
+| `MapManager` | Singleton owning the loaded `LaneletMap`, `pyxodr` road network, MGRS offset, and z offset. |
+| `to_carla_world`, `to_carla_location`, `to_lanelet2`, `to_opendrive` | Pose conversion entry points (overload by input frame). |
+| `project_onto_road` | Project a `CarlaWorldPose` onto a specified OpenDRIVE road. |
+| `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
+| `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`. |
+| `get_stop_line_poses`, `get_stop_line_poses_with_following` | Resolve stop-line `Lanelet2Pose`s for a lanelet (optionally including following lanelets). |
+
+## Entities (`autoware_carla_scenario.entity`)
+
+| Symbol | Description |
+|--------|-------------|
+| `VehicleEntity`, `VehicleEntityConfig` | Generic vehicle actor with retry-aware spawn. |
+| `EgoVehicle` | Subclass with the fixed `EGO_ROLE_NAME`, plus the `on_scenario_start` / `on_tick` / `on_scenario_end` lifecycle hooks `ScenarioRunner` calls. |
+| `AutowareEntity` | Opts out of TrafficManager autopilot and leaves the actor for an external stack. |
+| `CarlaDriverEntity` | Drives the ego from an external policy's plan over the `egodriver` gRPC contract. See [External Driver Interface](driver_interface.md). |
+| `SpawnLocation` (Protocol) | Tag interface implemented by spawn-point providers. |
+| `SpawnTransform` | Spawn at an explicit `carla.Transform`. |
+| `SpawnPointIndex` | Spawn at the N-th map spawn point. |
+
+## Kinematics (`autoware_carla_scenario.kinematics`)
+
+Frame-aware velocity / acceleration types with affine-space arithmetic
+(absolute - absolute = relative; absolute + relative = absolute).
+
+| Symbol | Description |
+|--------|-------------|
+| `Vector3` | Frame-tagged 3-vector. |
+| `CoordinateFrame`, `FrameMismatchError`, `frame_of` | Re-exported from `coordinate.frames`. |
+| `AbsoluteVelocity`, `RelativeVelocity`, `FrenetVelocity` | Velocity types. |
+| `AbsoluteAcceleration`, `RelativeAcceleration`, `FrenetAcceleration` | Acceleration types. |
+
+## Lanelet constraint sweeper (`autoware_carla_scenario.sweeper`)
+
+Powers the Hydra `lanelet_constraint` sweeper plugin. Can also be used
+directly from Python:
+
+| Symbol | Description |
+|--------|-------------|
+| `LaneletConstraintSweeper` | The Hydra `Sweeper` implementation (also re-exposed via `hydra_plugins.autoware_scenario_sweeper`). |
+| `Constraint` (Protocol) | Base interface. |
+| `EqualsConstraint`, `InSetConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. |
+| `AndConstraint`, `OrConstraint`, `NotConstraint` | Combinators. |
+| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `previous_of`, `following_of`. |
+| `Binding` (Protocol), `StopLineOffsetBinding`, `parse_binding` | Per-match parameter derivation (e.g. compute `ego.spawn_s` from a stop-line offset). |
+| `load_lanelet2_map` | Lightweight Lanelet2 loader used outside of CARLA. |
+
+The plugin is registered with Hydra under
+`hydra/sweeper=lanelet_constraint`; see
+`src/hydra_plugins/autoware_scenario_sweeper/`.
+
+## Result viewer (`autoware_carla_scenario.ui`)
+
+Used internally by the `viewer` CLI. The web app is the supported
+surface, but the helper modules are importable for tooling:
+
+| Symbol | Description |
+|--------|-------------|
+| `ui.app` | FastAPI application object and route handlers. |
+| `ui.scanner` | Discover sessions / scenarios under `outputs/` and `multirun/`, build condition trees. |
+| `ui.runner` | Background `subprocess.run(["uv", "run", "scenario", ...])` orchestration with thread-safe progress. |
+| `ui.sweep_resolver.resolve_sweep` | Resolve a sweep without launching CARLA. |
+| `ui.models` | Pydantic models (`SessionSummary`, `SessionItem`, `ConditionNode`, `ScenarioResultView`, `RunProgress`). |
+
+## Scenario authoring (`autoware_carla_scenario.authoring`)
+
+The declarative authoring layer behind the [Scenario Editor](scenario_editor.md).
+None of it imports CARLA or lanelet2, so a document can be loaded, validated,
+compiled and exported anywhere.
+
+| Symbol | Description |
+|--------|-------------|
+| `ScenarioDocument` | The Scenario IR: entities, actions, assertions, and a `ui` block that is presentation only. |
+| `Entity`, `SpawnSpec`, `SValue`, `BindingRef` | Actors and how they spawn (fixed lanelet, or a constraint search with an optionally derived offset). |
+| `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
+| `ActionSpec`, `ConditionSpec`, `ConstraintSpec`, `BindingSpec`, `FieldSpec`, `ConditionVisual` | Metadata describing how a primitive is presented, edited and built. |
+| `register_action_spec`, `register_condition_spec`, `register_constraint_spec`, `register_binding_spec` | Add a primitive; the GUI, validation and the compiler pick it up with no template change. |
+| `validate_document` -> `ValidationReport` | Metadata-driven validation; errors block export, warnings do not. |
+| `compile_document` -> `CompiledScenario` | Resolve entity ids to CARLA roles and type-check parameters, without importing CARLA. |
+| `authoring.builders` | Factories that turn a compiled plan into the framework's own `BaseAction` / `BaseCondition`. Imports CARLA lazily. |
+| `build_scenario_config`, `dump_scenario_config` | Render a document as the framework's Hydra scenario config, including a `sweep` section the existing sweeper understands. |
+| `export_package` -> `ExportResult` | Write a reproducible Scenario Package; raises `PackageExportError` (leaving nothing behind) when locking or verification fails. |
+| `DraftStore`, `Draft`, `load_document`, `save_document` | YAML persistence for editor drafts and exported documents. |
+| `new_document`, `blank_document` | Starter documents. |
+
+## Declarative runtime (`autoware_carla_scenario.declarative`)
+
+| Symbol | Description |
+|--------|-------------|
+| `DeclarativeScenario` | A `BaseScenario` whose content comes from a `ScenarioDocument`. Registers the same pre/post-tick actions and pass/fail conditions a hand-written scenario would. Imports CARLA. |
+| `DeclarativeScenarioConfig` | Hydra config group: `document_path`, `timeout_seconds`, and `spawn_overrides` (the addressable per-entity spawn keys a sweep drives). |
+
+## Scenario editor (`autoware_carla_scenario.editor`)
+
+Used by the `scenario-editor` CLI. A separate application from `ui`; neither
+imports the other.
+
+| Symbol | Description |
+|--------|-------------|
+| `editor.app.create_app` | Build the FastAPI application (draft and export directories are arguments). |
+| `editor.routes` | HTML-partial routes driven by htmx. |
+| `editor.service.EditorService` | Every document mutation the editor performs, testable without a web client. |
+| `editor.map_preview.evaluate_spawn` | Evaluate spawn constraints with the framework's own sweeper; also projects the map for the offline SVG fallback. |
+| `editor.map_preview.lanelet2_source` | The `.osm` the editor serves to `simple_lanelet2`'s wasm map viewer. |
+| `editor.app.map_viewer_url` | Where that viewer is loaded from (`SCENARIO_EDITOR_MAP_VIEWER`). |
+| `editor.forms.parse_params` | Turn a form submission into typed IR parameters, driven by `FieldSpec` metadata. |
+
+## Utilities (`autoware_carla_scenario.utils`)
+
+| Symbol | Description |
+|--------|-------------|
+| `find_nearest_traffic_light` | Find the nearest CARLA traffic-light actor for a Lanelet2 traffic-light id. |
+| `get_signal_ids_for_controller` | Map an OpenDRIVE controller id to its signal ids. |
+| `lanelet2_traffic_light_id_to_opendrive_controller_id` | ID translation between Lanelet2 regulatory elements and OpenDRIVE controllers. |
+| `get_stop_line_linestrings` | Collect Lanelet2 stop-line `LineString3d` objects for a lanelet. |
+
+## CLI entry points
+
+Defined in `pyproject.toml`:
+
+| Command | Module |
+|---------|--------|
+| `scenario` | `autoware_carla_scenario.examples.run:main` |
+| `detect-no-3d-model` | `autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main` |
+| `viewer` | `autoware_carla_scenario.ui:main` |
+| `scenario-editor` | `autoware_carla_scenario.editor:main` |
+| `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
+
+The `scenario` command also exposes Python-level helpers in
+`autoware_carla_scenario.examples.run` for downstream packages:
+
+| Symbol | Description |
+|--------|-------------|
+| `register_scenario(name, scenario_cls, config_cls)` | Register a built-in-style scenario class under a Hydra `scenario.name`. |
+| `register_scenario_builder(name, builder)` | Register a custom builder when the constructor signature differs. |
+| `get_scenario_registry()` | Return a copy of the registry. |
+| `build_ego_and_spawn(cfg)` | Build `(EgoConfig, Lanelet2Pose, GroundProjectionConfig)` from a resolved Hydra config. |
+| `build_scenario(cfg, *, build_scenario_fn=None)` | Look up the registered builder and instantiate the scenario. |
+| `run_scenario(cfg, ...)` / `run_scenario_with_queue(...)` / `run_batch(...)` / `main()` | Programmatic execution paths used by Hydra and the glob batch dispatcher. |
