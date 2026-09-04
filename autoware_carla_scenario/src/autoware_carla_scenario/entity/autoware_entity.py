@@ -95,7 +95,7 @@ class AutowareEgoEntity(EgoVehicle):
     Pose feedback to the scenario is read directly from the CARLA actor, not the
     bridge: because :meth:`spawn` attaches this entity's
     :attr:`~EgoVehicle.actor` by ``role_name``, every existing condition
-    (``EntityInAreaCondition``, ``EntityLanePositionCondition``,
+    (``EntityLanePositionCondition``,
     ``WaypointCondition``, ``CollisionCondition`` ...) works against the Autoware
     ego exactly as for a TrafficManager or driver ego, via
     ``find_actor_by_role_name(world, EGO_ROLE_NAME).get_transform()``.
