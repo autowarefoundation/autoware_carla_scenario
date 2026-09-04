@@ -408,6 +408,32 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _check_untriggered_actions(out: _Collector, document: ScenarioDocument) -> None:
+    """Warn about an action drawn late that in fact fires on the first tick.
+
+    An action with no trigger gets ``AlwaysTrueCondition``, and every action is
+    armed from the first tick -- so a card in step 5 with an empty trigger runs
+    immediately, while its position says otherwise.  The canvas writes "fires
+    immediately" under the card, but the step number is louder.
+
+    Only actions drawn past the first step are worth saying this about: one in
+    step 1 with no trigger is doing exactly what it looks like.
+    """
+    for index, action in enumerate(document.actions):
+        if action.trigger is not None:
+            continue
+        column = document.ui.column_of(action.id)
+        if column <= 0:
+            continue
+        out.warn(
+            f"actions[{index}].trigger",
+            f"{action.title or action.type!r} has no trigger, so it fires on the "
+            f"first tick even though it is drawn in step {column + 1}. Give it a "
+            f"trigger, or move it to step 1.",
+            action.id,
+        )
+
+
 def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
     """Warn when a stored layout draws an order the runtime cannot honour.
 
@@ -484,6 +510,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
         _check_action(out, path, action, refs)
 
     _check_step_order(out, document)
+    _check_untriggered_actions(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)

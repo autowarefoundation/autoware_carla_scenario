@@ -9,6 +9,7 @@ only way to catch a template that renders but shows the wrong thing.
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from pathlib import Path
 from typing import TypeVar
@@ -25,6 +26,7 @@ from autoware_carla_scenario.authoring.models import (
 )
 from autoware_carla_scenario.authoring.persistence import Draft, DraftStore
 from autoware_carla_scenario.authoring.validator import validate_document
+from autoware_carla_scenario.editor import app as editor_app
 from autoware_carla_scenario.editor.app import create_app
 from autoware_carla_scenario.editor.service import EditorError, EditorService
 
@@ -221,6 +223,86 @@ class TestPages:
         assert survivor is not None, "the dependent action survives"
         assert survivor.trigger is None
         assert validate_document(stored).ok
+
+    def test_an_unconfigured_reference_says_so_on_its_card(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A condition that needs an action must not read as world-scoped.
+
+        `action_state` declares a reference; before one is chosen it used to
+        render as "world", exactly like a collision or a timeout, so the card
+        looked finished and gave no reason to open the inspector.
+        """
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": "fail", "type_id": "action_state"},
+        )
+        body = client.get(f"/draft/{draft_id}").text
+        assert "pick action" in body
+
+        # A genuinely world-scoped condition keeps saying "world".
+        assert 'class="cond-world">world' in body
+
+    def test_choosing_the_action_gives_the_card_its_link(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        cut_in = document["actions"][0]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": "fail", "type_id": "action_state"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["assertions"]["fail"][-1]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition/{node}",
+            data={"action": cut_in, "state": "completeState"},
+        )
+
+        body = client.get(f"/draft/{draft_id}").text
+        assert f'data-caused-by="{cut_in}"' in body
+        assert "pick action" not in body
+
+    def test_an_untriggered_action_drawn_late_is_warned_about(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Its position says "later"; the runtime fires it on the first tick.
+
+        An action with no trigger gets `AlwaysTrueCondition`, and everything is
+        armed from tick one, so the step number is simply wrong about it.
+        """
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        action = document["actions"][-1]["id"]
+        client.post(f"/draft/{draft_id}/action/{action}/move", data={"delta": "3"})
+
+        report = validate_document(_document(store, draft_id))
+        assert report.ok, "a position is presentation; it must not block anything"
+        assert any("fires on the first tick" in w.message for w in report.warnings)
+
+    def test_a_position_can_be_narrowed_to_a_stretch_of_the_lane(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The runtime has always taken `s`/`t` rules; the editor threw them away."""
+        from autoware_carla_scenario.authoring.builders import _scalar_bounds
+        from autoware_carla_scenario.authoring.compiler import compile_document
+
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["assertions"]["pass"][0]["children"][0]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition/{node}",
+            data={"entity": "npc1", "lanelet_id": "183", "s_min": "20", "s_max": "50"},
+        )
+
+        compiled = compile_document(_document(store, draft_id))
+        rules = _scalar_bounds(compiled.pass_conditions[0].children[0].params)
+        assert [(r.field, r.value) for r in rules] == [("s", 20.0), ("s", 50.0)]
+        assert [r.rule.name for r in rules] == [
+            "GREATER_THAN_OR_EQUAL",
+            "LESS_THAN_OR_EQUAL",
+        ]
 
     def test_a_lanelet_field_gets_a_map_to_pick_from(
         self, client: TestClient, draft_id: str
@@ -921,3 +1003,91 @@ class TestServiceGuards:
         service = EditorService(DraftStore(tmp_path))
         with pytest.raises(EditorError):
             service.require_draft("../secrets")
+
+
+class TestEnvironmentTrack:
+    """The canvas has a track for actions no vehicle performs."""
+
+    def test_the_track_is_always_there(self, client: TestClient, draft_id: str) -> None:
+        """Including when it is empty: it is where you go to add one."""
+        body = client.get(f"/draft/{draft_id}").text
+        assert "ed-lane-env" in body
+        assert ">Environment<" in body
+
+    def test_each_track_offers_only_its_own_actions(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A car cannot set the lights, and the world cannot change lane."""
+        body = client.get(f"/draft/{draft_id}").text
+        forms = re.findall(r'<form[^>]*?/action"[\s\S]*?</form>', body)
+        offers = {}
+        for form in forms:
+            actor = re.search(r'name="actor" value="([^"]*)"', form)
+            assert actor is not None
+            offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
+        assert offers["ego"] == {"lane_change", "turn"}
+        assert offers[""] == {"traffic_signal"}
+
+    def test_an_environment_action_needs_no_actor(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        response = client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "traffic_signal", "actor": ""}
+        )
+        assert response.status_code == 200
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        assert document["actions"][-1]["actor"] is None
+
+    def test_an_actor_cannot_be_pinned_on_one(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Nothing reads the field when the action is built, so storing it would
+        only move the card into a lane whose vehicle does nothing."""
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "traffic_signal", "actor": ""}
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        lights = document["actions"][-1]["id"]
+
+        client.post(
+            f"/draft/{draft_id}/action/{lights}",
+            data={"title": "Lights", "actor": "ego", "state": "red", "target": "all"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        assert document["actions"][-1]["actor"] is None
+
+    def test_its_inspector_states_what_it_acts_on(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "traffic_signal", "actor": ""}
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        lights = document["actions"][-1]["id"]
+
+        body = client.get(f"/draft/{draft_id}/inspector/{lights}").text
+        assert "The environment, not a vehicle" in body
+        assert 'name="actor"' not in body
+
+
+class TestMapViewerReuse:
+    """The spawn preview re-renders constantly; the map behind it does not.
+
+    The frame carries the key `editor.js` parks it under, so the parsed wasm
+    scene survives an edit instead of being fetched and parsed again.
+    """
+
+    def test_the_preview_frame_is_marked_for_reuse(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.post(
+            f"/draft/{draft_id}/spawn-preview",
+            data={"entity_id": "ego", "load_map": "1"},
+        ).text
+        assert 'data-viewer-key="spawn"' in body
+
+    def test_the_script_still_honours_that_key(self) -> None:
+        """The attribute is only worth rendering if something reads it."""
+        script = (Path(editor_app.__file__).parent / "static" / "editor.js").read_text()
+        assert "viewerKey" in script
+        assert "function reuseMap(" in script

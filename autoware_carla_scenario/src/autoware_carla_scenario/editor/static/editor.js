@@ -124,6 +124,38 @@
    * ------------------------------------------------------------------- */
 
   var viewerModule = null;   // resolved module, or false once loading has failed
+  var mounted = [];          // frames holding a live viewer
+  var kept = {};             // data-viewer-key -> the frame parked between renders
+
+  /* Is this frame parked, waiting to be put back by `reuseMap`? */
+  function isKept(frame) {
+    var key = frame.dataset.viewerKey;
+    return !!key && kept[key] === frame;
+  }
+
+  /* Destroy the viewers whose frame has left the page for good.
+   *
+   * htmx replaces `#editor-body` wholesale on every edit, and closing a picker
+   * removes its modal, so a frame is detached without anyone telling the
+   * viewer. Each one holds a parsed wasm scene; nothing was calling `destroy`,
+   * so every inspector render leaked one for the life of the page.
+   *
+   * A parked frame is exempt. It is detached at exactly this moment -- between
+   * the swap that took it off the page and the one that puts it back -- and
+   * destroying it there is what would force the re-parse `reuseMap` exists to
+   * avoid. */
+  function reapViewers() {
+    mounted = mounted.filter(function (frame) {
+      if (document.contains(frame) || isKept(frame)) return true;
+      try {
+        if (frame.__viewer) frame.__viewer.destroy();
+      } catch (error) {
+        console.warn('Lanelet2 viewer would not close down:', error);
+      }
+      frame.__viewer = null;
+      return false;
+    });
+  }
 
   function loadViewerModule(url) {
     if (viewerModule === false) return Promise.resolve(null);
@@ -136,18 +168,74 @@
     return viewerModule;
   }
 
+  /* The caption and the map are revealed together, so the caption never
+     describes a drawing that is not there. Resolved when it is needed rather
+     than captured at mount: under reuse the frame outlives several renders of
+     the fragment around it, and the caption is a fresh element every time. */
+  function previewOf(frame) {
+    return frame.closest('.ed-preview, .ed-modal-body') || document;
+  }
+
+  function revealHint(frame) {
+    var hint = previewOf(frame).querySelector('[data-viewer-hint]');
+    if (hint) hint.hidden = false;
+  }
+
+  /* One list, because `setHighlight` is one outline colour. The server decides
+     what it means -- the matches under a constraint search, the pinned lanelet
+     under a fixed spawn -- so the drawing and the caption below it cannot
+     disagree. Always applied, empty included: a reused viewer still shows the
+     previous entity's outline until it is told otherwise. */
+  function applyHighlight(frame) {
+    if (frame.__viewer) frame.__viewer.setHighlight(ids(frame.dataset.highlight));
+  }
+
+  /* Put the live map back rather than building a second one.
+   *
+   * htmx replaces `#editor-body` on every edit and the preview then re-renders
+   * itself, so the server sends a brand new, empty frame each time. Mounting
+   * that frame refetches the whole .osm and parses it again in wasm -- measured
+   * at one fetch per edit, for a map that has not changed. Instead the frame
+   * still holding the parsed scene is swapped back in over the fresh one, and
+   * only what actually differs is copied across: which entity the preview is
+   * for, and which lanelets are outlined.
+   *
+   * The whole frame moves, not the canvas inside it. The viewer keeps a
+   * reference to the element it was constructed with and observes it for
+   * resizes, so lifting the canvas out from under it would leave it measuring a
+   * node no longer on the page.
+   *
+   * Only frames the template marks with a `data-viewer-key` take part, and only
+   * for the same map. A picker has no key: it is mounted when someone opens it
+   * and destroyed when they close it, which is already once per deliberate act.
+   *
+   * Panning and zooming survive an edit as a consequence, which re-mounting had
+   * been silently throwing away. */
+  function reuseMap(fresh) {
+    var key = fresh.dataset.viewerKey;
+    var live = key ? kept[key] : null;
+    if (!live || live === fresh) return false;
+    if (live.dataset.mapSrc !== fresh.dataset.mapSrc) return false;
+
+    fresh.replaceWith(live);
+    live.dataset.entity = fresh.dataset.entity || '';
+    live.dataset.highlight = fresh.dataset.highlight || '';
+    if (live.__loaded) {
+      applyHighlight(live);
+      revealHint(live);
+    }
+    return true;
+  }
+
   function mountMap(frame) {
     if (frame.dataset.mounted === '1') return;
     var url = frame.dataset.mapViewer;
     if (!url) return;
     frame.dataset.mounted = '1';
 
-    // Captured now, while this fragment is certainly in the DOM, and scoped to
-    // this preview rather than the whole page: an async callback looking these
-    // up later can run against a fragment htmx has already replaced.
-    var preview = frame.closest('.ed-preview, .ed-modal-body') || document;
-    var key = preview.querySelector('[data-viewer-hint]');
-    var unavailable = preview.querySelector('[data-viewer-unavailable]');
+    // Scoped now, while this fragment is certainly in the DOM: an async callback
+    // looking it up later can run against a fragment htmx has already replaced.
+    var unavailable = previewOf(frame).querySelector('[data-viewer-unavailable]');
 
     loadViewerModule(url).then(function (module) {
       if (!module || !module.LaneletViewer) {
@@ -166,23 +254,18 @@
         scalebar: true,
       });
       frame.__viewer = viewer;
+      mounted.push(frame);
+      if (frame.dataset.viewerKey) kept[frame.dataset.viewerKey] = frame;
 
       viewer.addEventListener('load', function () {
-        // Revealed together: the map appears and its caption with it, so the
-        // caption never describes a drawing that is not there.
         frame.classList.remove('is-mounting');
-        if (key) key.hidden = false;
+        frame.__loaded = true;
+        revealHint(frame);
 
         // The fitted overview is the useful view here: highlighting is what
         // shows where the matches are, and zooming to the current spawn would
         // throw away the very thing the preview is for.
-        //
-        // One list, because `setHighlight` is one outline colour. The server
-        // decides what it means — the matches under a constraint search, the
-        // pinned lanelet under a fixed spawn — so the drawing and the caption
-        // below it cannot disagree.
-        var highlight = ids(frame.dataset.highlight);
-        if (highlight.length) viewer.setHighlight(highlight);
+        applyHighlight(frame);
       });
 
       // Picking on the map is how a Lanelet2 id is chosen at all, and it writes
@@ -253,6 +336,7 @@
       // A picker inside a closed modal is not on screen and must not pay for a
       // wasm parse of the whole map until someone asks to see it.
       if (frame.closest('.ed-modal[hidden]')) return;
+      if (reuseMap(frame)) return;
       mountMap(frame);
     });
   }
@@ -296,6 +380,7 @@
     document.querySelectorAll('[data-portalled]').forEach(function (modal) {
       modal.remove();
     });
+    reapViewers();
   }
 
   /* A set is saved when the picker is closed, not on every click: sending the
@@ -390,6 +475,9 @@
   };
 
   function refresh() {
+    // Before mounting: a swap has just detached whatever was there, and the
+    // replacements are about to allocate their own.
+    reapViewers();
     scheduleRedraw();
     mountMaps();
   }

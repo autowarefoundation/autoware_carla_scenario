@@ -50,6 +50,11 @@
   --warn-wash: #fdf6e8;
   --warn-line: #f0d9a8;
 
+  /* The environment track. Deliberately outside the actor cycle: it is not
+     one more actor, and reusing an actor hue would say it was. */
+  --env: #0891b2;
+  --env-wash: #ecfbfe;
+
   /* Actor hues, cycled by lane so two lanes never read as one. */
   --actor-ego: #3b6fd4;
   --actor-1: #8b5cf6;
@@ -648,25 +653,6 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
 .ed-step-item { display: flex; flex-direction: column; gap: 7px; }
 .ed-step-item + .ed-step-item { margin-top: 14px; }
 
-/* The start marker, drawn like a sequencer's locator: a flag on the bar line
- * rather than another card, because nothing happens *at* step 1 but a spawn. */
-.ed-origin {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--lane-hue, var(--ink-faint));
-  border-radius: 3px 999px 999px 3px;
-  padding: 4px 13px 4px 10px;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-  background: var(--surface);
-}
-
 /* ------------------------------------------------------------- action cards */
 
 /* An action is drawn as a clip: a tinted title bar in the actor's colour over a
@@ -789,6 +775,10 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
  * one track still says which track it is watching. */
 .cond-actor { color: var(--ref-hue, var(--ink)); font-weight: 660; }
 .cond-world { color: var(--ink-faint); font-weight: 500; }
+/* A reference the condition declares but has not been given.  It reads as
+ * unfinished rather than as a world-scoped condition, which is what showing it
+ * as "world" made it look like. */
+.cond-unset { color: var(--warn); font-weight: 600; }
 .cond-metric { font-size: 10.5px; color: var(--ink-muted); margin-top: 1px; }
 /* The coordinate system a bare id belongs to, and any parameter that would
  * otherwise not appear on the card at all. Quieter than the value itself: it
@@ -1152,4 +1142,34 @@ details > summary:hover { color: var(--ink-body); }
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* The environment track sits under the actors and is not one of them: a
+   sunken ground and a quieter head say "this is the world they drive in"
+   without inventing a sixth actor colour. */
+.ed-lane-env {
+  background: var(--surface-sunken);
+}
+
+.ed-lane-env .ed-lane-head {
+  cursor: default;
+}
+
+/* A field the form does not submit, because there is nothing to choose. */
+.ed-static {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-sunken);
+  color: var(--ink-body);
+  font-size: 12.5px;
+}
+
+.ed-static svg {
+  color: var(--env);
+  flex: none;
 }

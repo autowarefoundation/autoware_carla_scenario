@@ -178,28 +178,51 @@
     {%- set target = node.params.get(visual.target) if visual.target else none -%}
     {%- set value = node.params.get(visual.value) if visual.value else none -%}
     {%- set rule = node.params.get(visual.rule) if visual.rule else none -%}
-    {%- set detail = node.params.get(visual.detail) if visual.detail else none -%}
-    {#- The detail is labelled by the same FieldSpec the inspector renders, so
-        the card and the form cannot drift apart on what a value is called. -#}
-    {%- set detail_spec = (spec.fields | selectattr('name', 'equalto', visual.detail)
-                           | first | default(none, true)) if visual.detail else none -%}
+
+    {#- "world" is for a condition that names nothing because it is about the
+        world -- a collision, a timeout.  A condition that *does* declare a
+        reference but has not been given one is a different thing entirely, and
+        showing it as "world" made an unconfigured card look finished.  It says
+        what it is waiting for instead. -#}
+    {%- set declares_ref = visual.subject is not none or visual.target is not none -%}
+    {%- set ref_field = (spec.fields | selectattr('name', 'equalto', visual.subject)
+                         | first | default(none, true)) if visual.subject else none -%}
     <div class="cond-subject">
       {% if subject_action %}{{ action_ref(subject_action, document) }}
       {% elif subject %}{{ entity_ref(subject, document) }}{% endif %}
       {% if subject and target is not none %}<span class="cond-arrow">&#8594;</span>{% endif %}
       {% if target is not none %}{{ entity_ref(target, document, visual.target_prefix) }}{% endif %}
-      {% if not subject and target is none %}<span class="cond-world">world</span>{% endif %}
+      {% if not subject and target is none %}
+        {% if declares_ref %}
+          <span class="cond-unset">
+            pick {{ (ref_field.label if ref_field else 'a reference')|lower }}
+          </span>
+        {% else %}
+          <span class="cond-world">world</span>
+        {% endif %}
+      {% endif %}
     </div>
     <div class="cond-metric">{{ visual.metric }}</div>
-    {#- An optional detail left unset is stated, not omitted: "Road 80" alone
-        looks like an address, and a road is not one until a lane is named. -#}
-    {%- if detail_spec %}
-      {%- if detail is not none %}
-        <div class="cond-detail">{{ detail_spec.label }} {{ detail }}</div>
-      {%- elif not detail_spec.required %}
-        <div class="cond-detail">any {{ detail_spec.label|lower }}</div>
+    {#- Each detail is labelled by the same FieldSpec the inspector renders, so
+        the card and the form cannot drift apart on what a value is called.  A
+        required one left unset is stated rather than omitted: "Road 80" alone
+        looks like an address, and a road is not one until a lane is named.  An
+        optional bound that is simply absent says nothing, because "no upper
+        limit" is the ordinary case rather than a gap. -#}
+    {%- for name in visual.details %}
+      {%- set field_spec = (spec.fields | selectattr('name', 'equalto', name)
+                            | first | default(none, true)) -%}
+      {%- if field_spec %}
+        {%- set shown = node.params.get(name) -%}
+        {%- if shown is not none %}
+          <div class="cond-detail">
+            {{ field_spec.label }} {{ shown }}{{ ' ' ~ field_spec.unit if field_spec.unit }}
+          </div>
+        {%- elif field_spec.required %}
+          <div class="cond-detail">any {{ field_spec.label|lower }}</div>
+        {%- endif %}
       {%- endif %}
-    {%- endif %}
+    {%- endfor %}
     <div class="cond-value">
       {% if rule %}<span class="cond-op">{{ rule_symbol(rule) }}</span>{% endif %}
       {% if value is not none %}{{ value }}{% if visual.unit %} <span class="cond-unit">{{ visual.unit }}</span>{% endif %}

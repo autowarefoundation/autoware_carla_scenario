@@ -198,12 +198,11 @@ class TestSelectFieldDefaults:
 
     def test_a_visual_detail_names_a_real_field(self) -> None:
         for spec in registry.condition_specs():
-            if spec.visual.detail is None:
-                continue
-            assert any(f.name == spec.visual.detail for f in spec.fields), (
-                f"{spec.type_id} shows a detail named {spec.visual.detail!r} "
-                "that it has no field for"
-            )
+            names = {f.name for f in spec.fields}
+            unknown = sorted(set(spec.visual.details) - names)
+            assert (
+                not unknown
+            ), f"{spec.type_id} shows details {unknown} that it has no fields for"
 
     def test_the_two_position_conditions_do_not_mix_frames(self) -> None:
         """Each frame gets its own condition, so neither can contradict itself.
@@ -215,8 +214,17 @@ class TestSelectFieldDefaults:
         lanelet = registry.get_condition_spec("entity_lane_position")
         opendrive = registry.get_condition_spec("entity_road_position")
         assert lanelet is not None and opendrive is not None
-        assert {f.name for f in lanelet.fields} == {"entity", "lanelet_id"}
-        assert {f.name for f in opendrive.fields} == {"entity", "road_id", "lane_id"}
+        lanelet_fields = {f.name for f in lanelet.fields}
+        opendrive_fields = {f.name for f in opendrive.fields}
+
+        # Each addresses a place in one frame only.  Asserted as "neither names
+        # the other's address" rather than as an exact field list, so a field
+        # both frames share -- the `s`/`t` bounds, say -- does not read as a
+        # regression.
+        assert "lanelet_id" in lanelet_fields
+        assert not {"road_id", "lane_id"} & lanelet_fields
+        assert {"road_id", "lane_id"} <= opendrive_fields
+        assert "lanelet_id" not in opendrive_fields
 
     def test_every_lanelet2_id_is_picked_off_the_map(self) -> None:
         """Nothing that names a Lanelet2 primitive may be a plain text box.

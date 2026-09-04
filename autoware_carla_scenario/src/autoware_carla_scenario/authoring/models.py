@@ -28,6 +28,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .registry import get_action_spec
+
 __all__ = [
     "ActionNode",
     "Assertions",
@@ -259,6 +261,17 @@ class ConditionNode(_Node):
         return False
 
 
+def is_environment_action(action: "ActionNode") -> bool:
+    """Whether *action* acts on the world rather than on a vehicle.
+
+    The action *type* decides, never the stored ``actor``: the field is not read
+    when such an action is built, so honouring it would put the card in a
+    vehicle's track and claim a relationship the run does not have.
+    """
+    spec = get_action_spec(action.type)
+    return spec is not None and spec.scope == "environment"
+
+
 def condition_refs(node: "ConditionNode", kind: str) -> list[str]:
     """Return the ids *node* itself names through fields of *kind*, in order.
 
@@ -440,19 +453,26 @@ class ScenarioDocument(_Node):
         )
 
     def actions_for(self, entity_id: str) -> list[ActionNode]:
-        """Return the actions owned by *entity_id*, in column order."""
-        owned = [a for a in self.actions if a.actor == entity_id]
+        """Return the actions *entity_id* performs, in column order."""
+        owned = [
+            a
+            for a in self.actions
+            if a.actor == entity_id and not is_environment_action(a)
+        ]
         return sorted(owned, key=lambda a: (self.ui.column_of(a.id), a.id))
 
-    def world_actions(self) -> list[ActionNode]:
-        """Return the actions no actor owns, in column order.
+    def environment_actions(self) -> list[ActionNode]:
+        """Return the actions that belong to the environment, in column order.
 
-        Some actions act on the environment rather than on a vehicle -- setting
-        traffic lights, for instance.  They still belong on the canvas, so the
-        editor gives them a lane of their own rather than hiding them.
+        Two kinds end up here.  An action whose *type* acts on the world rather
+        than on a vehicle -- setting traffic lights, for instance -- belongs
+        here whatever its ``actor`` says, because the runtime ignores that field
+        for it.  An action that merely has no actor yet belongs here too: it is
+        invalid and has to stay reachable, and a card nothing draws cannot be
+        fixed.
         """
-        unowned = [a for a in self.actions if not a.actor]
-        return sorted(unowned, key=lambda a: (self.ui.column_of(a.id), a.id))
+        loose = [a for a in self.actions if is_environment_action(a) or not a.actor]
+        return sorted(loose, key=lambda a: (self.ui.column_of(a.id), a.id))
 
     def action_dependencies(self) -> dict[str, set[str]]:
         """Action id -> the ids of the actions its trigger waits on.
@@ -487,7 +507,7 @@ class ScenarioDocument(_Node):
         ego that swerves *after* NPC1 cuts in reads as a reaction only if its
         card is further right.
         """
-        lane = self.actions_for(entity_id) if entity_id else self.world_actions()
+        lane = self.actions_for(entity_id) if entity_id else self.environment_actions()
         slots: list[list[ActionNode]] = []
         for action in lane:
             column = self.ui.column_of(action.id)
@@ -500,22 +520,21 @@ class ScenarioDocument(_Node):
         """Return how many steps the ruler has to number.
 
         As long as the busiest track, or the lane that runs past the last
-        numbered step would have unlabelled slots.  An actor's track carries two
-        columns that are not steps of its own -- the spawn marker and the "add
-        action" control -- and the world and verdict lanes carry only the
-        latter.
+        numbered step would have unlabelled slots.  Every lane carries one
+        column that is not a step of its own -- the "add" control at its end --
+        and no lane carries any other, so a step number means the same column
+        on all of them.
         """
-        actor_extras, other_extras = 2, 1
+        trailing_add = 1
         widths = [
-            len(self.action_slots(entity.id)) + actor_extras
-            for entity in self.ordered_entities()
+            len(self.action_slots(entity.id)) for entity in self.ordered_entities()
         ]
         widths += [
-            len(self.action_slots(None)) + other_extras,
-            len(self.assertions.pass_conditions) + other_extras,
-            len(self.assertions.fail_conditions) + other_extras,
+            len(self.action_slots(None)),
+            len(self.assertions.pass_conditions),
+            len(self.assertions.fail_conditions),
         ]
-        return max([1, *widths])
+        return max(widths, default=0) + trailing_add
 
     def enforce_dependency_order(self) -> None:
         """Push actions right until every trigger's dependencies are behind it.
@@ -563,6 +582,13 @@ class ScenarioDocument(_Node):
         known = [e.id for e in self.entities]
         self.ui.actor_order = [e for e in self.ui.actor_order if e in known]
         self.ui.actor_order.extend(e for e in known if e not in self.ui.actor_order)
+
+        # An environment action's actor is meaningless -- nothing builds with
+        # it -- so it is dropped rather than left in the file to imply that some
+        # vehicle performs it.
+        for action in self.actions:
+            if is_environment_action(action):
+                action.actor = None
 
         object_ids = {a.id for a in self.actions}
         self.ui.nodes = {k: v for k, v in self.ui.nodes.items() if k in object_ids}

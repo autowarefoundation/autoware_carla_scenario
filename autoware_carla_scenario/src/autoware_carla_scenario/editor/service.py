@@ -402,7 +402,10 @@ class EditorService:
         action = ActionNode(
             type=type_id,
             title=spec.title,
-            actor=actor or None,
+            # Refused rather than stored: an environment action is performed by
+            # the world, and the track it is drawn in has to be the one the
+            # runtime actually acts on.
+            actor=None if spec.scope == "environment" else (actor or None),
             params=default_params(spec.fields),
             timing=spec.default_timing,
         )
@@ -423,7 +426,7 @@ class EditorService:
 
         if "title" in form:
             action.title = str(form["title"]).strip()
-        if "actor" in form:
+        if "actor" in form and spec.scope != "environment":
             actor = str(form["actor"]).strip()
             if actor and document.entity(actor) is None:
                 raise EditorError(f"No entity named {actor!r}.")

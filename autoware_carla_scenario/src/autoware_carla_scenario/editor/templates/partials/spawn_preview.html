@@ -56,7 +56,11 @@
       {# Hidden until the map has actually drawn: an empty 260px box where a
          map should be is worse than no box, and that is what an unreachable
          module would otherwise leave behind. #}
+      {# `data-viewer-key` parks this frame across renders: the preview
+         re-renders whenever anything in the inspector changes, and the map
+         behind it is the same file every time. See `reuseMap` in editor.js. #}
       <div class="ed-map-frame" hidden
+           data-viewer-key="spawn"
            data-map-viewer="{{ map_viewer_url() }}"
            data-map-src="/draft/{{ draft.id }}/map.osm"
            data-entity="{{ entity.id if entity else '' }}"

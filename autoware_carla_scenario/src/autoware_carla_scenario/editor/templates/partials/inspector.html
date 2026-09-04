@@ -33,17 +33,27 @@
         <label class="ed-label">Label</label>
         <input type="text" name="title" class="ed-input" value="{{ target.title }}">
       </div>
-      <div class="ed-field">
-        <label class="ed-label">Actor</label>
-        <select name="actor" class="ed-input">
-          <option value="" {% if not target.actor %}selected{% endif %}>— none (world) —</option>
-          {% for entity in document.entities %}
-            <option value="{{ entity.id }}" {% if target.actor == entity.id %}selected{% endif %}>
-              {{ entity.display_name }}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
+      {# No actor to choose for an environment action: nothing performs it, and
+         offering the field would let the card be filed under a vehicle that has
+         nothing to do with it. #}
+      {% if spec and spec.scope == 'environment' %}
+        <div class="ed-field">
+          <label class="ed-label">Acts on</label>
+          <p class="ed-static">{{ ic.icon('globe', 13) }} The environment, not a vehicle</p>
+        </div>
+      {% else %}
+        <div class="ed-field">
+          <label class="ed-label">Actor</label>
+          <select name="actor" class="ed-input">
+            <option value="" {% if not target.actor %}selected{% endif %}>— none —</option>
+            {% for entity in document.entities %}
+              <option value="{{ entity.id }}" {% if target.actor == entity.id %}selected{% endif %}>
+                {{ entity.display_name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endif %}
       {% if spec %}{{ f.fields(spec.fields, target.params, document, '', draft) }}{% endif %}
       <div class="ed-field">
         <label class="ed-label">Tick phase</label>

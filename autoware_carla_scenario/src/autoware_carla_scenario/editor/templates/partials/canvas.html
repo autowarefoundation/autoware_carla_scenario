@@ -21,7 +21,7 @@
 {# Action categories only -- an unlisted one falls back to the generic accent. #}
 {%- set CATEGORY_HUES = {
   'Vehicle / Motion': 'var(--actor-1)',
-  'Environment': '#0891b2'
+  'Environment': 'var(--env)'
 } -%}
 
 {% macro add_action(draft, actor) %}
@@ -32,8 +32,10 @@
             class="ed-add-form">
         <input type="hidden" name="actor" value="{{ actor }}">
         <select name="type_id" class="ed-input-xs" style="flex:1">
+          {# Each track offers only what belongs in it: a vehicle cannot set the
+             traffic lights, and the environment cannot change lane. #}
           {% for spec in action_specs() %}
-            {% if actor or not spec.actor_required %}
+            {% if spec.actor_required == (actor != '') %}
               <option value="{{ spec.type_id }}">{{ spec.title }}</option>
             {% endif %}
           {% endfor %}
@@ -186,8 +188,11 @@
           </div>
         </div>
 
+        {# No spawn column: a spawn is the state a track starts in, not a step
+           of it, and giving actor tracks a leading column nobody else had made
+           "step 3" mean a different column on the World and verdict lanes than
+           on this one. The lane head states the spawn instead. #}
         <div class="ed-lane-track">
-          <div class="ed-column"><div class="ed-origin">Spawn</div></div>
           {% for slot in document.action_slots(entity.id) %}
             {{ step_column(slot, draft, selected, document) }}
           {% endfor %}
@@ -196,29 +201,27 @@
       </div>
     {% endfor %}
 
-    {# Actions that act on the environment rather than a vehicle still need
-       somewhere to live, or setting an action's actor to "none" would make it
-       vanish from the canvas. #}
-    {%- set world = document.action_slots(none) -%}
-    {% if world %}
-      <div class="ed-lane" style="--lane-hue: var(--ink-faint)">
-        <div class="ed-lane-head is-static">
-          <div class="ed-actor">
-            <span class="ed-avatar" style="background:var(--ink-muted)">{{ ic.icon('globe', 13) }}</span>
-            <span>
-              <span class="ed-actor-name" style="display:block">World</span>
-              <span class="ed-actor-role">no actor</span>
-            </span>
-          </div>
-        </div>
-        <div class="ed-lane-track">
-          {% for slot in world %}
-            {{ step_column(slot, draft, selected, document) }}
-          {% endfor %}
-          {{ add_action(draft, '') }}
+    {# The environment gets a track of its own, under the actors. Traffic
+       lights and the like are performed by no vehicle, so drawing them in a
+       vehicle's lane claimed a relationship the run does not have; and a track
+       that is always here is where you go to add one. #}
+    <div class="ed-lane ed-lane-env" style="--lane-hue: var(--env)">
+      <div class="ed-lane-head is-static">
+        <div class="ed-actor">
+          <span class="ed-avatar" style="background:var(--env)">{{ ic.icon('globe', 13) }}</span>
+          <span>
+            <span class="ed-actor-name" style="display:block">Environment</span>
+            <span class="ed-actor-role">the world</span>
+          </span>
         </div>
       </div>
-    {% endif %}
+      <div class="ed-lane-track">
+        {% for slot in document.action_slots(none) %}
+          {{ step_column(slot, draft, selected, document) }}
+        {% endfor %}
+        {{ add_action(draft, '') }}
+      </div>
+    </div>
 
     {% if not document.entities %}
       <div class="ed-empty">

@@ -198,6 +198,30 @@ def build_standstill_condition(
     )
 
 
+def _scalar_bounds(params: dict[str, Any]) -> "list[Any]":
+    """Turn the editor's ``s``/``t`` from-to fields into comparison rules.
+
+    The editor offers a *range* because that is what an author means by "over
+    this stretch of the lane"; the runtime takes a list of one-sided rules, so
+    each bound that is set becomes one.  An empty bound is simply absent, which
+    is how "the whole length" is said.
+    """
+    from ..conditions.comparison import ComparisonRule  # noqa: PLC0415
+    from ..conditions.comparison import ScalarComparisonRule  # noqa: PLC0415
+
+    bounds = (
+        ("s", "s_min", ComparisonRule.GREATER_THAN_OR_EQUAL),
+        ("s", "s_max", ComparisonRule.LESS_THAN_OR_EQUAL),
+        ("t", "t_min", ComparisonRule.GREATER_THAN_OR_EQUAL),
+        ("t", "t_max", ComparisonRule.LESS_THAN_OR_EQUAL),
+    )
+    return [
+        ScalarComparisonRule(field=field, rule=rule, value=float(params[name]))
+        for field, name, rule in bounds
+        if params.get(name) is not None
+    ]
+
+
 def _entity_lane_condition(
     compiled: "CompiledCondition", road_id: str, lane_id: "int | None"
 ) -> "BaseCondition":
@@ -212,6 +236,7 @@ def _entity_lane_condition(
         entity_name=compiled.params["entity"],
         road_id=road_id,
         lane_id=lane_id,
+        rules=_scalar_bounds(compiled.params),
         label=compiled.label,
     )
 

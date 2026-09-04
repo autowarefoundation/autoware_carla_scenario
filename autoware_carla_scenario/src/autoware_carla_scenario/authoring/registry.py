@@ -166,10 +166,10 @@ class ConditionVisual:
     systems: ``NPC1 -> 183`` could be a Lanelet2 lanelet or an OpenDRIVE road,
     and those are different things that happen to be written the same way.
 
-    ``detail`` names a further field to show beside the metric, labelled by its
-    own :class:`FieldSpec`.  It is for the part of a condition that would
-    otherwise be invisible on the canvas -- two conditions differing only in an
-    unshown parameter must not render identically.
+    ``details`` names further fields to show beside the metric, each labelled by
+    its own :class:`FieldSpec`.  They are for the parts of a condition that
+    would otherwise be invisible on the canvas -- two conditions differing only
+    in an unshown parameter must not render identically.
     """
 
     metric: str
@@ -180,7 +180,7 @@ class ConditionVisual:
     value: Optional[str] = None
     value_label: str = ""
     unit: str = ""
-    detail: Optional[str] = None
+    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -192,11 +192,23 @@ class ActionSpec:
     category: str
     builder: str
     fields: tuple[FieldSpec, ...] = ()
-    actor_required: bool = True
+    #: What the action acts on. ``actor`` actions are performed *by* a vehicle
+    #: and belong to its track; ``environment`` actions change the world around
+    #: every vehicle -- traffic lights, for instance -- and belong to the
+    #: environment track. The distinction is the action type's, not the
+    #: author's: giving a traffic light an actor used to move its card into that
+    #: vehicle's lane while the runtime, which never reads the field, went on
+    #: setting the same lights.
+    scope: Literal["actor", "environment"] = "actor"
     #: ``instant`` renders as a diamond on the swimlane, ``continuous`` as a bar.
     visual_kind: Literal["instant", "continuous"] = "instant"
     default_timing: Literal["pre_tick", "post_tick"] = "pre_tick"
     description: str = ""
+
+    @property
+    def actor_required(self) -> bool:
+        """Whether this action needs a vehicle to perform it."""
+        return self.scope == "actor"
 
 
 @dataclass(frozen=True)
@@ -432,7 +444,7 @@ register_action_spec(
         title="Set Traffic Signal",
         category="Environment",
         builder="build_traffic_signal_action",
-        actor_required=False,
+        scope="environment",
         visual_kind="instant",
         fields=(
             FieldSpec(
@@ -699,6 +711,7 @@ register_condition_spec(
             subject="entity",
             target="lanelet_id",
             target_prefix="Lanelet",
+            details=("s_min", "s_max", "t_min", "t_max"),
             value_label="inside",
         ),
         fields=(
@@ -715,11 +728,48 @@ register_condition_spec(
                     "address a road directly."
                 ),
             ),
+            FieldSpec(
+                name="s_min",
+                label="s from",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help=(
+                    "Along the lane from its start.  Leave both empty to accept "
+                    "the whole length."
+                ),
+            ),
+            FieldSpec(
+                name="s_max",
+                label="s to",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="t_min",
+                label="t from",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help="Across the lane. Positive is left of the road direction.",
+            ),
+            FieldSpec(
+                name="t_max",
+                label="t to",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+            ),
         ),
         description=(
-            "The entity is on the lane a Lanelet2 lanelet describes.  Pick this "
-            "when you are thinking in lanelets; everything else on the canvas "
-            "already is."
+            "The entity is on the lane a Lanelet2 lanelet describes, optionally "
+            "only over a stretch of it.  Pick this when you are thinking in "
+            "lanelets; everything else on the canvas already is."
         ),
     )
 )
@@ -738,7 +788,7 @@ register_condition_spec(
             subject="entity",
             target="road_id",
             target_prefix="Road",
-            detail="lane_id",
+            details=("lane_id", "s_min", "s_max", "t_min", "t_max"),
             value_label="inside",
         ),
         fields=(
@@ -762,10 +812,48 @@ register_condition_spec(
                     "the road will do."
                 ),
             ),
+            FieldSpec(
+                name="s_min",
+                label="s from",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help=(
+                    "Along the road from its start.  Leave both empty to accept "
+                    "the whole length."
+                ),
+            ),
+            FieldSpec(
+                name="s_max",
+                label="s to",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="t_min",
+                label="t from",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help="Across the road. Positive is left of the road direction.",
+            ),
+            FieldSpec(
+                name="t_max",
+                label="t to",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+            ),
         ),
         description=(
-            "The entity is on an OpenDRIVE road, optionally on one of its "
-            "lanes.  Road and lane together are what address a lane uniquely."
+            "The entity is on an OpenDRIVE road, optionally on one of its lanes "
+            "and only over a stretch of it.  Road and lane together are what "
+            "address a lane uniquely."
         ),
     )
 )

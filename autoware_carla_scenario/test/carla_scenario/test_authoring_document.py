@@ -29,7 +29,11 @@ from autoware_carla_scenario.authoring.persistence import (
     load_document,
     save_document,
 )
-from autoware_carla_scenario.authoring.registry import FieldSpec, SelectOption
+from autoware_carla_scenario.authoring.registry import (
+    FieldSpec,
+    SelectOption,
+    action_specs,
+)
 from autoware_carla_scenario.authoring.starter import blank_document, new_document
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
@@ -124,6 +128,25 @@ class TestLayoutIsPresentationOnly:
         assert npc is not None and ego is not None
         assert npc.spawn.lanelet_id != target
         assert ego.spawn.lanelet_id == target
+
+    def test_every_lane_numbers_its_steps_the_same_way(self) -> None:
+        """A step number must mean the same column on every track.
+
+        Actor tracks used to carry a leading spawn column the World and verdict
+        lanes did not, so "step 3" pointed at different columns depending on
+        which row you read.
+        """
+        document = new_document()
+        widest = max(
+            [len(document.action_slots(e.id)) for e in document.ordered_entities()]
+            + [
+                len(document.action_slots(None)),
+                len(document.assertions.pass_conditions),
+                len(document.assertions.fail_conditions),
+            ]
+        )
+        # One trailing column for the "add" control, and nothing else.
+        assert document.step_count() == widest + 1
 
     def test_a_step_holds_every_action_placed_in_it(self) -> None:
         """A step is a set, not a slot.
@@ -392,3 +415,66 @@ class TestParameterCoercion:
         fields = (FieldSpec("values", "Values", "int_list_or_ref", []),)
         result = coerce_params(fields, {"values": "${map.no_3d_model_lanelet_ids}"})
         assert result["values"] == "${map.no_3d_model_lanelet_ids}"
+
+
+class TestEnvironmentTrack:
+    """Which track an action is drawn in is the action type's business.
+
+    A traffic light is set by the world, not by a car, and nothing in the build
+    reads ``actor`` for one. Honouring the field anyway put the card in some
+    vehicle's lane and claimed a relationship the run does not have.
+    """
+
+    @staticmethod
+    def _document() -> ScenarioDocument:
+        document = ScenarioDocument(
+            title="t",
+            id="t",
+            entities=[
+                Entity(id="ego", kind="ego", spawn=SpawnSpec(lanelet_id=1)),
+            ],
+            actions=[
+                ActionNode(
+                    id="swerve",
+                    type="lane_change",
+                    title="Swerve",
+                    actor="ego",
+                    params={"direction": "right"},
+                ),
+                ActionNode(
+                    id="lights",
+                    type="traffic_signal",
+                    title="Lights",
+                    actor="ego",  # a lie the editor used to let you tell
+                    params={"state": "red", "target": "all"},
+                ),
+            ],
+        )
+        document.sync_layout()
+        return document
+
+    def test_an_environment_action_leaves_the_actor_track(self) -> None:
+        document = self._document()
+        assert [a.id for a in document.actions_for("ego")] == ["swerve"]
+        assert [a.id for a in document.environment_actions()] == ["lights"]
+
+    def test_a_stale_actor_is_dropped_rather_than_kept(self) -> None:
+        """So the saved YAML stops naming a vehicle that does nothing."""
+        document = self._document()
+        lights = document.action("lights")
+        assert lights is not None
+        assert lights.actor is None
+
+    def test_an_action_with_no_actor_yet_stays_reachable(self) -> None:
+        """It is invalid, and a card nothing draws cannot be corrected."""
+        document = self._document()
+        document.actions.append(
+            ActionNode(id="orphan", type="lane_change", title="?", actor=None)
+        )
+        document.sync_layout()
+        assert "orphan" in [a.id for a in document.environment_actions()]
+
+    def test_the_scope_is_what_actor_required_means(self) -> None:
+        """One source of truth: the two cannot drift apart."""
+        for spec in action_specs():
+            assert spec.actor_required == (spec.scope == "actor")

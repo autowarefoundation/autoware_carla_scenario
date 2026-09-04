@@ -31,25 +31,42 @@ the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
 The main view is a **swimlane DAG drawn as a DAW arrangement**: one track per
 actor, with the horizontal axis reading as *scenario progression*, not time.
-Actions that act on the environment rather than a vehicle get a **World** track
-of their own.
+Under the actors sits the **Environment** track, for actions no vehicle
+performs.
 
 ```
-STEP >   | 1          | 2                 | 3
----------+------------+-------------------+------------------
-Ego      | [SPAWN]    | Drive             |
----------+------------+-------------------+------------------
-NPC1     | [SPAWN]    | Follow            | # Lane Change Left
-         |            |                   |         ^
-         |            |                   |   +-----+-----+
-         |            |                   |   |    ALL    |
-         |            |                   |  NPC1->Ego  NPC1->Ego
-         |            |                   |  Distance   TTC
-         |            |                   |  < 20 m     < 4 s
----------+------------+-------------------+------------------
-PASS     | NPC1 enters the ego lane
-FAIL     | Collision  | Timeout 30 s
+STEP >      | 1          | 2                 | 3
+------------+------------+-------------------+------------------
+Ego         | Drive      |                   |
+------------+------------+-------------------+------------------
+NPC1        | Follow     |                   | # Lane Change Left
+            |            |                   |         ^
+            |            |                   |   +-----+-----+
+            |            |                   |   |    ALL    |
+            |            |                   |  NPC1->Ego  NPC1->Ego
+            |            |                   |  Distance   TTC
+            |            |                   |  < 20 m     < 4 s
+------------+------------+-------------------+------------------
+Environment |            | Set Traffic Signal|
+------------+------------+-------------------+------------------
+PASS        | NPC1 enters the ego lane
+FAIL        | Collision  | Timeout 30 s
 ```
+
+### Which track an action belongs to
+
+The **action type** decides, never the author. `ActionSpec.scope` is either
+`actor` or `environment`, and an environment action -- setting traffic lights,
+for instance -- is drawn in the Environment track whatever its `actor` field
+says. Nothing reads that field when such an action is built, so honouring it
+put the card in some vehicle's lane and claimed a relationship the run does not
+have. The editor no longer offers the field for one, refuses it on the way in,
+and drops a stale value on the next save; each track's *+ action* menu offers
+only the actions that belong in it.
+
+The Environment track is drawn even when it is empty, because it is where you
+go to add the first one. An action that merely has no actor *yet* is drawn
+there too: it is invalid, and a card nothing draws cannot be corrected.
 
 The sequencer furniture is what makes the direction readable: track headers
 down the left, a numbered ruler across the top, a bar line before every slot
@@ -90,6 +107,17 @@ and the canvas draws it that way:
 That makes the step axis mean exactly one thing: **left of** is "already
 finished, and something here is waiting on it". It still says nothing about
 *how much* earlier.
+
+A step number means the same column on every lane, so there is no leading
+column an actor track has and the Environment or verdict lanes do not. A spawn is not
+a step -- it is the state a track starts in -- so it is stated in the lane head
+rather than given a slot on the ruler.
+
+**An action with no trigger fires on the first tick, wherever it is drawn.**
+`BaseAction` defaults to `AlwaysTrueCondition`, so a card in step 5 with an
+empty trigger runs immediately and its position is simply wrong about it. The
+canvas writes "fires immediately" under the card, and the validator warns --
+never errors, because a position is presentation.
 
 Three rules make it readable:
 
@@ -174,6 +202,13 @@ need different fields:
 | --- | --- | --- |
 | **Position (Lanelet2)** | a lanelet | `NPC1 -> Lanelet 183 \| Position \| inside` |
 | **Position (OpenDRIVE)** | a road, optionally a lane | `NPC1 -> Road 80 \| Position \| lane 2 \| inside` |
+
+Either can be narrowed to **a stretch of that lane** with `s from` / `s to` and
+`t from` / `t to`. The runtime has always accepted these comparisons; the editor
+used to discard them. They are the abstract way to say "in the last 20 m before
+the junction": unlike an absolute region, `s` and `t` are measured along and
+across the lane, so the condition keeps its meaning wherever a constraint sweep
+puts the entity.
 
 A **lanelet already names one lane**, so the Lanelet2 condition resolves it to
 an OpenDRIVE road *and* lane and there is nothing further to pin. An
@@ -296,6 +331,25 @@ built rather than committed. Point `SCENARIO_EDITOR_MAP_VIEWER` at the output of
 `simple_lanelet2`'s `tools/build_web.sh` to serve it yourself. When it cannot be
 fetched the panel says so; the match count and the matched-ID list come from the
 server and are unaffected.
+
+### The map is parsed once
+
+htmx replaces the whole inspector on every edit, and the preview then re-renders
+itself, so the server sends a brand-new, empty map frame each time. Mounting
+that frame refetched the `.osm` and parsed it again in wasm — one fetch per
+edit, for a map that had not changed.
+
+The frame that already holds the parsed scene carries a `data-viewer-key`, and
+`reuseMap()` in `editor.js` swaps it back in over the fresh one, copying across
+only what actually differs: which entity the preview is for, and which lanelets
+are outlined. The whole frame moves rather than the canvas inside it — the
+viewer keeps a reference to the element it was constructed with and observes it
+for resizes, so lifting the canvas out would leave it measuring a node that is
+no longer on the page. Panning and zooming survive an edit as a consequence,
+which re-mounting had been silently throwing away.
+
+A picker has no key. It is mounted when someone opens it and destroyed when they
+close it, which is already once per deliberate act.
 
 It is the **only** renderer. A server-rendered SVG used to sit behind it as an
 offline fallback, but the page loads htmx from a CDN and every control here is an
