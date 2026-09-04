@@ -307,7 +307,6 @@ classDiagram
     class TrafficSignalCondition
 
     class EntityLanePositionCondition
-    class EntityInAreaCondition
     class SpeedCondition
     class StandstillCondition
     class TemporaryStopCondition
@@ -326,7 +325,6 @@ classDiagram
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- EntityLanePositionCondition
-    BaseCondition <|-- EntityInAreaCondition
     BaseCondition <|-- SpeedCondition
     BaseCondition <|-- StandstillCondition
     BaseCondition <|-- TemporaryStopCondition
@@ -347,7 +345,7 @@ classDiagram
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
-| **Position** | `EntityLanePositionCondition`, `EntityInAreaCondition`, `WaypointCondition` | Road/lane position, spatial region, waypoint crossing |
+| **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Velocity** | `SpeedCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
