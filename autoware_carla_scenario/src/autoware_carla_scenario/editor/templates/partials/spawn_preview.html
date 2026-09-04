@@ -61,7 +61,8 @@
            data-map-src="/draft/{{ draft.id }}/map.osm"
            data-entity="{{ entity.id if entity else '' }}"
            data-draft="{{ draft.id }}"
-           data-highlight="{{ preview.highlight_ids|join(',') }}">
+           data-highlight="{{ preview.highlight_ids|join(',') }}"
+           data-picks-layer="{{ lanelet_pick_layers }}">
         <noscript>The map viewer needs JavaScript; the ID list below still works.</noscript>
       </div>
 

@@ -81,6 +81,20 @@ class _RevalidatedStatics(StaticFiles):
         return response
 
 
+#: The viewer layers a click may land on to count as naming a lanelet.
+#:
+#: A Lanelet2 map draws more than lanelets and the layers overlap: a click on a
+#: road usually hits the *direction* arrow, sometimes the fill, and a hair to
+#: the side hits a ``bound`` -- which reports the id of a **linestring**, not of
+#: the lanelet it borders.  Accepting only the layers whose id is the lanelet's
+#: own is what stops a boundary id being saved as a lanelet id.
+#:
+#: These are the renderer's names, not the scenario vocabulary, so they live
+#: here rather than on a :class:`~autoware_carla_scenario.authoring.registry.FieldSpec`:
+#: the compiler and the validator have no idea what a viewer layer is.
+LANELET_PICK_LAYERS = ("lanelet_fill", "centerline", "direction")
+
+
 def map_viewer_url() -> str:
     """Return the URL the spawn preview loads the map viewer from."""
     return os.environ.get(MAP_VIEWER_ENV, DEFAULT_MAP_VIEWER_URL).strip()
@@ -134,6 +148,8 @@ def create_app(
         get_condition_spec=registry.get_condition_spec,
         get_constraint_spec=registry.get_constraint_spec,
         get_binding_spec=registry.get_binding_spec,
+        # Which map layers a lanelet pick may land on, for every picker.
+        lanelet_pick_layers=",".join(LANELET_PICK_LAYERS),
         # Which actions a condition waits on -- the canvas draws its causal
         # links from these, not from where the cards happen to sit.
         condition_actions=condition_actions,

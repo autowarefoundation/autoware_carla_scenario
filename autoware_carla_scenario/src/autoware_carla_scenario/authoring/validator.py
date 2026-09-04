@@ -21,6 +21,8 @@ from .models import (
     ScenarioDocument,
 )
 from .registry import (
+    INT_KINDS,
+    INT_LIST_KINDS,
     ConditionSpec,
     FieldSpec,
     get_action_spec,
@@ -145,7 +147,7 @@ def _check_field(
             out.error(f"{path}.{spec.name}", f"{spec.label} is required.", object_id)
         return
 
-    if spec.kind in ("int", "lanelet"):
+    if spec.kind in INT_KINDS:
         if not _coercible_int(value):
             out.error(
                 f"{path}.{spec.name}",
@@ -179,7 +181,7 @@ def _check_field(
                 f"{spec.label} references unknown action {value!r}.",
                 object_id,
             )
-    elif spec.kind in ("int_list", "lanelet_list"):
+    elif spec.kind in INT_LIST_KINDS:
         if not _is_int_list(value):
             out.error(
                 f"{path}.{spec.name}",
@@ -407,28 +409,38 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
 
 
 def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
-    """Every action must sit in a later step than what its trigger waits on.
+    """Warn when a stored layout draws an order the runtime cannot honour.
 
     A step is a set of actions that nothing orders -- they are all armed from
     the first tick -- so an action level with, or ahead of, its own dependency
-    draws a sequence the runtime cannot honour.  The editor repairs the layout
-    on every save; this catches a hand-edited ``ui`` block that says otherwise.
+    is a picture of a sequence that does not exist.  The editor repairs this on
+    every save; this catches a hand-edited ``ui`` block that says otherwise.
+
+    A **warning**, never an error, and only for actions whose column the
+    document actually states.  ``ui`` is presentation: deleting the block must
+    not change what the scenario does, and :func:`compile_document` and
+    :func:`export_package` both validate without normalising the layout first,
+    so an error here would stop a perfectly good scenario from being exported
+    for saying nothing about where to draw it.
     """
-    columns = {a.id: document.ui.column_of(a.id) for a in document.actions}
+    stated = {
+        action.id: document.ui.nodes[action.id].column_hint
+        for action in document.actions
+        if action.id in document.ui.nodes
+    }
     titles = {a.id: a.title or a.type for a in document.actions}
     for action_id, needs in document.action_dependencies().items():
-        if action_id not in columns:
+        if action_id not in stated:
             continue
         for need in sorted(needs):
-            if need not in columns:
-                continue  # a dangling reference, already reported as an error
-            if columns[action_id] > columns[need]:
+            if need not in stated or stated[action_id] > stated[need]:
                 continue
-            out.error(
+            out.warn(
                 f"ui.nodes.{action_id}.column_hint",
                 f"{titles[action_id]!r} waits on {titles[need]!r} but is drawn "
-                f"in step {columns[action_id] + 1}, not after step "
-                f"{columns[need] + 1}. Nothing inside a step is ordered.",
+                f"in step {stated[action_id] + 1}, not after step "
+                f"{stated[need] + 1}. Nothing inside a step is ordered; the "
+                f"canvas repairs this on the next save.",
                 action_id,
             )
 

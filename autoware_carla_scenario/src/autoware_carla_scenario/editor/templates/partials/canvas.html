@@ -100,15 +100,11 @@
 
 {# A whole step: every card in it, or an empty slot holding the grid open. #}
 {% macro step_column(slot, draft, selected, document) %}
-  {% if slot %}
-    <div class="ed-column">
-      {% for action in slot %}
-        {{ action_card(action, draft, selected, document) }}
-      {% endfor %}
-    </div>
-  {% else %}
-    <div class="ed-column" aria-hidden="true"></div>
-  {% endif %}
+  <div class="ed-column" {% if not slot %}aria-hidden="true"{% endif %}>
+    {% for action in slot %}
+      {{ action_card(action, draft, selected, document) }}
+    {% endfor %}
+  </div>
 {% endmacro %}
 
 {% macro verdict_lane(kind, label, hint, glyph, conditions, draft, selected, document) %}
@@ -150,19 +146,6 @@
     </form>
   </div>
 
-  {# The ruler has to be as long as the busiest track, or the lane that runs
-     past its last numbered step would have unlabelled slots. #}
-  {%- set widest = namespace(steps=1) -%}
-  {%- for entity in document.ordered_entities() -%}
-    {%- set count = 2 + document.action_slots(entity.id)|length -%}
-    {%- if count > widest.steps %}{% set widest.steps = count %}{% endif -%}
-  {%- endfor -%}
-  {%- for count in [document.action_slots(none)|length + 1,
-                    document.assertions.pass_conditions|length + 1,
-                    document.assertions.fail_conditions|length + 1] -%}
-    {%- if count > widest.steps %}{% set widest.steps = count %}{% endif -%}
-  {%- endfor -%}
-
   <div class="ed-canvas-scroll">
     <svg class="ed-links" aria-hidden="true"></svg>
 
@@ -171,7 +154,7 @@
         <span>Step</span>{{ ic.icon('right', 11) }}
       </div>
       <div class="ed-ruler-track">
-        {% for step in range(widest.steps) %}
+        {% for step in range(document.step_count()) %}
           <div class="ed-ruler-step"><span>{{ step + 1 }}</span></div>
         {% endfor %}
       </div>

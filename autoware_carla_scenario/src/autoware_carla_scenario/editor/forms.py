@@ -10,7 +10,13 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Sequence
 
-from ..authoring.registry import REFERENCE_PATTERN, TRUTHY_VALUES, FieldSpec
+from ..authoring.registry import (
+    INT_KINDS,
+    INT_LIST_KINDS,
+    REFERENCE_PATTERN,
+    TRUTHY_VALUES,
+    FieldSpec,
+)
 
 __all__ = ["parse_int_list", "parse_params", "parse_value"]
 
@@ -51,11 +57,11 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
     if text == "":
         return spec.default if spec.required else None
 
-    if spec.kind in ("int", "lanelet"):
+    if spec.kind in INT_KINDS:
         return int(text)
     if spec.kind == "number":
         return float(text)
-    if spec.kind in ("int_list", "int_list_or_ref", "lanelet_list"):
+    if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
         return parse_int_list(text)
     return text
 

@@ -21,8 +21,7 @@
         hx-post="/draft/{{ draft.id }}/export"
         hx-target="#export-result" hx-swap="innerHTML"
         hx-indicator="#export-spinner">
-    <div>
-      <div style="display:flex; flex-direction:column; gap:9px">
+    <div style="display:flex; flex-direction:column; gap:9px">
         <label class="ed-check">
           <input type="checkbox" name="lock" value="on" checked>
           <span>Generate <code>uv.lock</code>
@@ -41,7 +40,6 @@
           <span>Development export
             <span class="ed-help">Depends on the local framework checkout by path. Not portable.</span></span>
         </label>
-      </div>
     </div>
     <div style="display:flex; align-items:center; gap:12px; margin-top:14px">
       <button type="submit" class="ed-btn-primary">{{ ic.icon('package', 14) }} Export Package</button>

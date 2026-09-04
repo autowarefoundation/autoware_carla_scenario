@@ -198,6 +198,24 @@ def build_standstill_condition(
     )
 
 
+def _entity_lane_condition(
+    compiled: "CompiledCondition", road_id: str, lane_id: "int | None"
+) -> "BaseCondition":
+    """Build the runtime position condition from an OpenDRIVE address.
+
+    Both position conditions end here; only where the address comes from
+    differs, so the constructor is written once.
+    """
+    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
+
+    return EntityLanePositionCondition(
+        entity_name=compiled.params["entity"],
+        road_id=road_id,
+        lane_id=lane_id,
+        label=compiled.label,
+    )
+
+
 def build_entity_lane_position_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",
@@ -208,16 +226,9 @@ def build_entity_lane_position_condition(
     A lanelet names one lane, so both halves of the OpenDRIVE address are
     derived from it and neither is left for the author to contradict.
     """
-    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
-
     params = compiled.params
     road_id, lane_id = _opendrive_lane_for_lanelet(int(params["lanelet_id"]))
-    return EntityLanePositionCondition(
-        entity_name=params["entity"],
-        road_id=road_id,
-        lane_id=lane_id,
-        label=compiled.label,
-    )
+    return _entity_lane_condition(compiled, road_id, lane_id)
 
 
 def build_entity_road_position_condition(
@@ -230,15 +241,12 @@ def build_entity_road_position_condition(
     Road and lane are passed through untouched -- this is the frame the runtime
     already speaks, so nothing is resolved and nothing can disagree.
     """
-    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
-
     params = compiled.params
     lane_id = params.get("lane_id")
-    return EntityLanePositionCondition(
-        entity_name=params["entity"],
-        road_id=str(params["road_id"]),
-        lane_id=int(lane_id) if lane_id is not None else None,
-        label=compiled.label,
+    return _entity_lane_condition(
+        compiled,
+        str(params["road_id"]),
+        int(lane_id) if lane_id is not None else None,
     )
 
 

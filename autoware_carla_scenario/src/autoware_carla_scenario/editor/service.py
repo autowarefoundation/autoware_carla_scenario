@@ -26,6 +26,7 @@ from ..authoring.models import (
     Entity,
     ScenarioDocument,
     SpawnSpec,
+    condition_refs,
 )
 from ..authoring.persistence import Draft, DraftStore
 from ..authoring.registry import (
@@ -466,13 +467,6 @@ class EditorService:
         action = document.action(action_id)
         if action is None:
             raise EditorError(f"No action named {action_id!r}.")
-        lane = (
-            document.actions_for(action.actor)
-            if action.actor
-            else document.world_actions()
-        )
-        if action not in lane:
-            return
         column = document.ui.column_of(action.id)
         target = max(0, column + delta)
         if target == column:
@@ -640,50 +634,22 @@ def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:
 
 
 def condition_actions(node: ConditionNode) -> list[str]:
-    """Return the action ids *node* itself names, in field order.
+    """Return the action ids *node* waits on, for the canvas's causal links.
 
-    This is the canvas's link data, and it is read straight out of the document:
-    an ``action_completed`` condition stores the id of the action it waits on,
-    so the line drawn from that action to this card states a fact the scenario
-    actually contains.  Card positions are not consulted -- they are
-    ``ui.column_hint``, which the compiler never reads, so inferring causality
-    from them would draw a line that moving a card could silently invent or
-    erase.
-
-    Only this node's own parameters are read, never its children's, so a link
-    lands on the leaf that names the action rather than on the ``ALL`` wrapped
-    around it.  Action-typed fields are discovered from the spec, so a newly
-    registered condition needs no change here.
+    A thin name over :func:`~autoware_carla_scenario.authoring.models.condition_refs`
+    so the template global reads as what the canvas wants.  The link data is the
+    document's own reference: card positions are ``ui.column_hint``, which the
+    compiler never reads, so inferring causality from them would draw a line
+    that moving a card could invent or erase.
     """
-    spec = get_condition_spec(node.type)
-    if spec is None:
-        return []
-    found: list[str] = []
-    for field_spec in spec.fields:
-        if field_spec.kind != "action":
-            continue
-        value = str(node.params.get(field_spec.name) or "")
-        if value and value not in found:
-            found.append(value)
-    return found
+    return condition_refs(node, "action")
 
 
 def _references_entity(node: ConditionNode, entity_id: str) -> bool:
-    """Whether any node in this subtree names *entity_id*.
-
-    Entity-typed parameters are discovered from the spec, so this keeps working
-    when a new condition introduces a differently named entity field.
-    """
-    for candidate in node.walk():
-        spec = get_condition_spec(candidate.type)
-        if spec is None:
-            continue
-        for field_spec in spec.fields:
-            if field_spec.kind != "entity":
-                continue
-            if str(candidate.params.get(field_spec.name) or "") == entity_id:
-                return True
-    return False
+    """Whether any node in this subtree names *entity_id*."""
+    return any(
+        entity_id in condition_refs(candidate, "entity") for candidate in node.walk()
+    )
 
 
 def _attach_trigger(

@@ -83,6 +83,14 @@ class LaneChangeAction(BaseAction):
         #: ``(road_id, lane_id)`` the vehicle was on when the command went out,
         #: or ``None`` when the manoeuvre could not be started.
         self._start_lane: _Optional[tuple[int, int]] = None
+        #: The actor and the map, kept from :meth:`execute`.  ``is_finished``
+        #: runs on every frame until the manoeuvre completes -- which, by
+        #: design, may be never -- and CARLA rebuilds the map object on each
+        #: ``get_map()`` call while ``find_actor_by_role_name`` fetches the
+        #: whole actor list, so looking either up per tick is a server round
+        #: trip for something that cannot change.
+        self._actor: _Optional["carla.Actor"] = None
+        self._map: _Optional["carla.Map"] = None
 
     # ------------------------------------------------------------------
     # BaseAction interface
@@ -96,9 +104,11 @@ class LaneChangeAction(BaseAction):
             self._start_lane = None
             return
 
+        self._actor = actor
+        self._map = world.get_map()
         # Recorded before the command, because "which lane did it leave" is the
         # only way to tell afterwards that it went anywhere.
-        self._start_lane = _lane_key(world, actor)
+        self._start_lane = _lane_key_at(self._map, actor.get_location())
 
         tm = self._client.get_trafficmanager(self._tm_port)
         tm.force_lane_change(actor, self._direction.to_carla_bool())
@@ -134,27 +144,24 @@ class LaneChangeAction(BaseAction):
             :data:`~autoware_carla_scenario.constants.LANE_CHANGE_HEADING_TOLERANCE_DEG`
             of its heading.
         """
-        if self._start_lane is None:
+        if self._start_lane is None or self._actor is None or self._map is None:
             return False
 
-        actor = find_actor_by_role_name(world, self._entity_name)
-        if actor is None:
-            return False
-
-        waypoint = world.get_map().get_waypoint(
-            actor.get_location(), project_to_road=True
-        )
+        # One RPC per tick: the transform carries both the location the map is
+        # queried with and the heading the check needs.
+        transform = self._actor.get_transform()
+        waypoint = self._map.get_waypoint(transform.location, project_to_road=True)
         if waypoint is None or _lane_key_of(waypoint) == self._start_lane:
             return False
 
         # ``get_waypoint`` projects onto the lane centre, so the distance to it
         # is the lateral offset.
-        offset = actor.get_location().distance(waypoint.transform.location)
+        offset = transform.location.distance(waypoint.transform.location)
         if offset > LANE_CHANGE_CENTER_TOLERANCE_M:
             return False
 
         heading_error = _heading_error_deg(
-            actor.get_transform().rotation.yaw, waypoint.transform.rotation.yaw
+            transform.rotation.yaw, waypoint.transform.rotation.yaw
         )
         if heading_error > LANE_CHANGE_HEADING_TOLERANCE_DEG:
             return False
@@ -172,13 +179,15 @@ class LaneChangeAction(BaseAction):
 # ---------------------------------------------------------------------------
 
 
-def _lane_key(world: "carla.World", actor: "carla.Actor") -> _Optional[tuple[int, int]]:
-    """Return the ``(road_id, lane_id)`` under *actor*, or ``None``.
+def _lane_key_at(
+    carla_map: "carla.Map", location: "carla.Location"
+) -> _Optional[tuple[int, int]]:
+    """Return the ``(road_id, lane_id)`` under *location*, or ``None``.
 
     The road id is carried too: lane ids restart per road, so comparing lane ids
     alone would read a road change as a lane change.
     """
-    waypoint = world.get_map().get_waypoint(actor.get_location(), project_to_road=True)
+    waypoint = carla_map.get_waypoint(location, project_to_road=True)
     return None if waypoint is None else _lane_key_of(waypoint)
 
 

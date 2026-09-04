@@ -190,32 +190,21 @@ class TestSelectFieldDefaults:
             + ", ".join(offenders)
         )
 
-    def test_a_picker_only_accepts_layers_that_report_a_lanelet(self) -> None:
+    def test_only_lanelet_owned_layers_count_as_a_lanelet_pick(self) -> None:
         """A Lanelet2 map draws more than lanelets, and the layers overlap.
 
         A click a hair off the lane lands on a ``bound``, which reports the id
         of a linestring.  Saving that as a lanelet id would compile and then
-        fail at scenario setup, so which layers count is part of the field's
-        declaration.
+        fail at scenario setup, so the accepted layers are pinned here --
+        ``bound`` deliberately absent.
         """
-        # `bound` is deliberately absent: it reports a linestring id, not the
-        # id of either lanelet it separates.
-        lanelet_owned = {"lanelet_fill", "centerline", "direction"}
-        for specs in (
-            registry.condition_specs(),
-            registry.action_specs(),
-            registry.constraint_specs(),
-            registry.binding_specs(),
-        ):
-            for spec in specs:
-                for field in spec.fields:
-                    if field.kind not in ("lanelet", "lanelet_list"):
-                        continue
-                    assert field.picks, f"{spec.type_id}.{field.name} picks nothing"
-                    assert set(field.picks) <= lanelet_owned, (
-                        f"{spec.type_id}.{field.name} accepts {field.picks!r}, "
-                        "which includes a layer whose id is not a lanelet's"
-                    )
+        from autoware_carla_scenario.editor.app import LANELET_PICK_LAYERS
+
+        assert set(LANELET_PICK_LAYERS) == {
+            "lanelet_fill",
+            "centerline",
+            "direction",
+        }
 
     def test_default_params_covers_every_field(self) -> None:
         for spec in registry.condition_specs():

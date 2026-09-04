@@ -129,7 +129,7 @@
     if (viewerModule === false) return Promise.resolve(null);
     if (viewerModule) return viewerModule;
     viewerModule = import(/* webpackIgnore: true */ url).catch(function (error) {
-      console.warn('Lanelet2 map viewer unavailable, keeping the SVG preview:', error);
+      console.warn('Lanelet2 map viewer unavailable:', error);
       viewerModule = false;
       return null;
     });
@@ -145,7 +145,7 @@
     // Captured now, while this fragment is certainly in the DOM, and scoped to
     // this preview rather than the whole page: an async callback looking these
     // up later can run against a fragment htmx has already replaced.
-    var preview = frame.closest('.ed-preview') || document;
+    var preview = frame.closest('.ed-preview, .ed-modal-body') || document;
     var key = preview.querySelector('[data-viewer-hint]');
     var unavailable = preview.querySelector('[data-viewer-unavailable]');
 
@@ -181,10 +181,7 @@
         // decides what it means — the matches under a constraint search, the
         // pinned lanelet under a fixed spawn — so the drawing and the caption
         // below it cannot disagree.
-        var highlight = (frame.dataset.highlight || '')
-          .split(',')
-          .map(function (v) { return parseInt(v, 10); })
-          .filter(function (v) { return !isNaN(v); });
+        var highlight = ids(frame.dataset.highlight);
         if (highlight.length) viewer.setHighlight(highlight);
       });
 
@@ -196,23 +193,24 @@
         var picked = detail.id;
         if (!picked) return;
 
+        // A Lanelet2 map draws more than lanelets, and the layers overlap: a
+        // click on a road usually lands on the direction arrow, sometimes on
+        // the fill, and a hair to the side lands on a `bound` — which reports
+        // the id of a *linestring*, not of the lanelet it borders. Refused
+        // before the pick is routed anywhere, so both the field picker and the
+        // spawn preview are covered: a boundary id must never be saved as a
+        // lanelet id by either.
+        var want = (frame.dataset.picksLayer || '').split(',');
+        if (detail.layer && want.indexOf(detail.layer) < 0) {
+          say(frame, 'That is a ' + detail.layer.replace('_', ' ') +
+            ', not a lanelet. Click the lane itself.');
+          return;
+        }
+
         var into = frame.dataset.picksInto;
         if (into) {
           var input = document.getElementById(into);
           if (!input) return;
-
-          // A Lanelet2 map draws more than lanelets, and the layers overlap: a
-          // click on a road usually lands on the direction arrow, sometimes on
-          // the fill, and a hair to the side lands on a `bound` — which reports
-          // the id of a *linestring*, not of the lanelet it borders. Only the
-          // layers whose id is the lanelet's own are accepted, so a boundary id
-          // can never be saved as a lanelet id.
-          var want = (frame.dataset.picksLayer || '').split(',');
-          if (detail.layer && want.indexOf(detail.layer) < 0) {
-            say(frame, 'That is a ' + detail.layer.replace('_', ' ') +
-              ', not a lanelet. Click the lane itself.');
-            return;
-          }
 
           if (frame.dataset.picksMany) {
             // Toggling, so a set is built by clicking rather than by typing a
@@ -228,7 +226,6 @@
           }
 
           input.value = String(picked);
-          viewer.setHighlight([Number(picked)]);
           closePickers();
           // Dispatched last: the form's `change` trigger re-renders the whole
           // inspector, taking this modal with it.

@@ -25,6 +25,13 @@ the editor process, which never talks to a simulator.
 from __future__ import annotations
 
 import re
+
+# Free to import: `action_state` holds nothing but the enum, which is why it
+# is a top-level module. Spelling these values out again -- as the comparison
+# and traffic-light mirrors below have to, because their sources drag in CARLA
+# -- would let a renamed state leave a dead option in the editor that only
+# fails when the scenario is built.
+from ..action_state import ActionState
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -34,6 +41,8 @@ __all__ = [
     "ConditionSpec",
     "ConstraintSpec",
     "FieldKind",
+    "INT_KINDS",
+    "INT_LIST_KINDS",
     "FieldSpec",
     "ConditionVisual",
     "REFERENCE_PATTERN",
@@ -69,7 +78,7 @@ FieldKind = Literal[
     # and an ``int_list`` everywhere except the inspector, which replaces the
     # text box with the map: an id is not something anyone knows by heart, and
     # picking one off the drawing is the only way to choose it that does not
-    # involve a second window.  :attr:`FieldSpec.picks` says which primitive.
+    # involve a second window.
     "lanelet",
     "lanelet_list",
     # Names another action in the document by id.  The only field kind that
@@ -80,6 +89,16 @@ FieldKind = Literal[
     "int_list",
     "int_list_or_ref",
 ]
+
+#: Field kinds that hold one whole number, and those that hold a list of them.
+#:
+#: Named here because the compiler, the form parser and the validator each have
+#: to branch on the same grouping: adding a kind meant editing three inline
+#: tuples in lockstep, and missing one let an un-coerced string reach a builder,
+#: or left the field unchecked entirely, with nothing to say which difference
+#: was deliberate.
+INT_KINDS: tuple[FieldKind, ...] = ("int", "lanelet")
+INT_LIST_KINDS: tuple[FieldKind, ...] = ("int_list", "lanelet_list")
 
 #: Values a checked HTML checkbox may submit, and the strings a hand-edited
 #: document may spell a ``bool`` field with.  One set, so form parsing and
@@ -121,13 +140,6 @@ class FieldSpec:
         unit: Unit suffix shown after the control (e.g. ``m``, ``s``).
         help: One-line hint rendered under the control.
         required: Whether the compiler rejects a missing/empty value.
-        picks: For ``lanelet`` and ``lanelet_list`` fields, the viewer layers a
-            click may land on.  A Lanelet2 map draws more than lanelets and the
-            layers overlap: a click on a road usually hits the *direction*
-            arrow, sometimes the fill, and a hair to the side hits a ``bound``
-            -- which reports the id of a **linestring**, not of the lanelet it
-            borders.  Accepting only the layers whose id is the lanelet's own
-            is what stops a boundary id being saved as a lanelet id.
     """
 
     name: str
@@ -138,7 +150,6 @@ class FieldSpec:
     unit: str = ""
     help: str = ""
     required: bool = True
-    picks: tuple[str, ...] = ("lanelet_fill", "centerline", "direction")
 
 
 @dataclass(frozen=True)
@@ -924,13 +935,21 @@ register_condition_spec(
                 name="state",
                 label="State",
                 kind="select",
-                default="completeState",
+                default=ActionState.COMPLETE.value,
                 options=(
-                    SelectOption("standbyState", "Standby -- waiting to be triggered"),
-                    SelectOption("startTransition", "Start -- the tick it fired on"),
-                    SelectOption("runningState", "Running -- under way"),
-                    SelectOption("endTransition", "End -- the tick it finished on"),
-                    SelectOption("completeState", "Complete -- finished"),
+                    SelectOption(
+                        ActionState.STANDBY.value, "Standby -- waiting to be triggered"
+                    ),
+                    SelectOption(
+                        ActionState.START_TRANSITION.value,
+                        "Start -- the tick it fired on",
+                    ),
+                    SelectOption(ActionState.RUNNING.value, "Running -- under way"),
+                    SelectOption(
+                        ActionState.END_TRANSITION.value,
+                        "End -- the tick it finished on",
+                    ),
+                    SelectOption(ActionState.COMPLETE.value, "Complete -- finished"),
                 ),
                 help=(
                     "OpenSCENARIO storyboard element states.  Complete means the "

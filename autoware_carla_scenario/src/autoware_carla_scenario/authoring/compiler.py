@@ -28,6 +28,8 @@ from typing import Any, Optional
 from ..constants import EGO_ROLE_NAME
 from .models import ActionNode, ConditionNode, Entity, ScenarioDocument
 from .registry import (
+    INT_KINDS,
+    INT_LIST_KINDS,
     TRUTHY_VALUES,
     ActionSpec,
     ConditionSpec,
@@ -77,7 +79,7 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     if value is None or (isinstance(value, str) and not value.strip()):
         return spec.default
 
-    if spec.kind in ("int", "lanelet"):
+    if spec.kind in INT_KINDS:
         return int(str(value).strip())
     if spec.kind == "number":
         return float(str(value).strip())
@@ -85,7 +87,7 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in TRUTHY_VALUES
-    if spec.kind in ("int_list", "int_list_or_ref", "lanelet_list"):
+    if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
         if isinstance(value, str):
             # A reference such as ${map.no_3d_model_lanelet_ids} passes through
             # untouched; the sweep YAML resolves it.

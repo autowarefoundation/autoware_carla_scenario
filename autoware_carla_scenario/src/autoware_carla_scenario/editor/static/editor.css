@@ -139,9 +139,7 @@ svg { display: block; }
 .ed-panel-title { font-size: 13px; font-weight: 650; color: var(--ink); letter-spacing: -0.01em; }
 .ed-panel-sub { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px; }
 
-/* Named apart from `.ed-legend`, the spawn preview's map key: that one draws
- * solid colour swatches and is defined further down, so sharing the class made
- * the later rules quietly restyle these connector samples. */
+/* The connector key under the canvas heading: a line sample per link type. */
 .ed-links-legend {
   display: flex;
   gap: 14px;
@@ -151,6 +149,7 @@ svg { display: block; }
 }
 .ed-links-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .ed-links-legend i { width: 16px; height: 0; border-top: 1.75px solid var(--accent-line); }
+.ed-links-legend .ed-legend-fires { border-top-color: var(--accent-line); }
 .ed-links-legend .ed-legend-causes {
   border-top-style: dashed;
   border-top-color: var(--ink-muted);
@@ -1045,11 +1044,11 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
 
 .ed-map-full { height: 100%; }
 
-/* While the viewer is mounting it needs a laid-out box to size its canvas
- * against, but it must not be on screen: the SVG fallback is still up, and two
- * drawings of the same map is worse than either alone.  `visibility` keeps the
- * geometry that `hidden` would take away, and taking it out of flow stops the
- * placeholder pushing the fallback down. */
+/* The viewer sizes its canvas against a laid-out box, so it cannot be mounted
+ * into a `display: none` one -- but an empty 260px box where a map should be is
+ * worse than no box, so it must not be on screen either.  `visibility` keeps
+ * the geometry that `hidden` would take away, and taking it out of flow stops
+ * the placeholder pushing what follows down while it mounts. */
 .ed-map-frame.is-mounting {
   position: absolute;
   left: 0;

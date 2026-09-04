@@ -33,8 +33,7 @@
     </select>
   {% elif spec.kind in ('lanelet', 'lanelet_list') %}
     {{ lanelet_picker(name, current, draft, spec.label,
-                      many=(spec.kind == 'lanelet_list'),
-                      picks=spec.picks|join(',')) }}
+                      many=(spec.kind == 'lanelet_list')) }}
   {% elif spec.kind == 'action' %}
     {# Actions are listed by track, because "which one is Cut in" is a question
        about whose track it sits on as much as about its title. #}
@@ -68,9 +67,7 @@
    and by the spawn section, which is hand-written because a spawn is not a
    `params` mapping. One macro, or the two drift: the entity inspector kept a
    plain text box for months after the conditions stopped having one. #}
-{% macro lanelet_picker(name, current, draft, label='Lanelet',
-                        many=false,
-                        picks='lanelet_fill,centerline,direction') %}
+{% macro lanelet_picker(name, current, draft, label='Lanelet', many=false) %}
   {%- set shown = (current if current is string
                    else (current or [])|join(', ')) if many
                   else ('' if current is none else current) -%}
@@ -132,7 +129,7 @@
                data-map-src="/draft/{{ draft.id }}/map.osm"
                data-highlight="{{ shown|replace(' ', '') }}"
                data-picks-into="pick-{{ name }}"
-               data-picks-layer="{{ picks }}"
+               data-picks-layer="{{ lanelet_pick_layers }}"
                {% if many %}data-picks-many="1"{% endif %}>
             <noscript>The map picker needs JavaScript.</noscript>
           </div>

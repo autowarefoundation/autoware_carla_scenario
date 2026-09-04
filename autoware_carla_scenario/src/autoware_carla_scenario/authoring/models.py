@@ -259,6 +259,34 @@ class ConditionNode(_Node):
         return False
 
 
+def condition_refs(node: "ConditionNode", kind: str) -> list[str]:
+    """Return the ids *node* itself names through fields of *kind*, in order.
+
+    The one place that knows how a condition points at something else.  Which
+    parameters are references is the spec's business, so a newly registered
+    condition is picked up without changing any caller, and the canvas, the step
+    ordering and the delete path cannot come to disagree about what a reference
+    is -- a disagreement that shows up as a causal arrow drawn for a dependency
+    the layout rules never saw.
+
+    Only this node is read, never its children, so a caller gets the leaf that
+    actually names the id rather than the composition wrapped around it.
+    """
+    from .registry import get_condition_spec  # noqa: PLC0415
+
+    spec = get_condition_spec(node.type)
+    if spec is None:
+        return []
+    found: list[str] = []
+    for field in spec.fields:
+        if field.kind != kind:
+            continue
+        value = str(node.params.get(field.name) or "")
+        if value and value not in found:
+            found.append(value)
+    return found
+
+
 class Assertions(_Node):
     """The scenario's verdict: what makes it pass and what makes it fail."""
 
@@ -429,28 +457,18 @@ class ScenarioDocument(_Node):
     def action_dependencies(self) -> dict[str, set[str]]:
         """Action id -> the ids of the actions its trigger waits on.
 
-        Discovered from the condition specs' action-typed fields, so a newly
-        registered condition that names an action is picked up without changing
-        this method.  Only triggers are walked: an assertion waiting on an
-        action says nothing about when the action runs.
+        Only triggers are walked: an assertion that waits on an action says
+        nothing about when the action runs.
         """
-        from .registry import get_condition_spec  # noqa: PLC0415
-
         found: dict[str, set[str]] = {}
         for action in self.actions:
             if action.trigger is None:
                 continue
-            needs: set[str] = set()
-            for node in action.trigger.walk():
-                spec = get_condition_spec(node.type)
-                if spec is None:
-                    continue
-                for field in spec.fields:
-                    if field.kind != "action":
-                        continue
-                    value = str(node.params.get(field.name) or "")
-                    if value:
-                        needs.add(value)
+            needs = {
+                ref
+                for node in action.trigger.walk()
+                for ref in condition_refs(node, "action")
+            }
             if needs:
                 found[action.id] = needs
         return found
@@ -478,6 +496,27 @@ class ScenarioDocument(_Node):
             slots[column].append(action)
         return slots
 
+    def step_count(self) -> int:
+        """Return how many steps the ruler has to number.
+
+        As long as the busiest track, or the lane that runs past the last
+        numbered step would have unlabelled slots.  An actor's track carries two
+        columns that are not steps of its own -- the spawn marker and the "add
+        action" control -- and the world and verdict lanes carry only the
+        latter.
+        """
+        actor_extras, other_extras = 2, 1
+        widths = [
+            len(self.action_slots(entity.id)) + actor_extras
+            for entity in self.ordered_entities()
+        ]
+        widths += [
+            len(self.action_slots(None)) + other_extras,
+            len(self.assertions.pass_conditions) + other_extras,
+            len(self.assertions.fail_conditions) + other_extras,
+        ]
+        return max([1, *widths])
+
     def enforce_dependency_order(self) -> None:
         """Push actions right until every trigger's dependencies are behind it.
 
@@ -499,8 +538,6 @@ class ScenarioDocument(_Node):
         for _ in range(len(self.actions) + 1):
             moved = False
             for action_id, needs in dependencies.items():
-                if action_id not in columns:
-                    continue
                 floor = max(
                     (columns[need] for need in needs if need in columns), default=-1
                 )
@@ -513,7 +550,8 @@ class ScenarioDocument(_Node):
             return
 
         for action_id, column in columns.items():
-            self.ui.set_column(action_id, column)
+            if column != self.ui.column_of(action_id):
+                self.ui.set_column(action_id, column)
 
     def sync_layout(self) -> None:
         """Make :attr:`ui` consistent with the semantic content.
