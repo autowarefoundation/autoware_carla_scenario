@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
@@ -58,6 +59,28 @@ MAP_VIEWER_ENV = "SCENARIO_EDITOR_MAP_VIEWER"
 DEFAULT_MAP_VIEWER_URL = "https://hakuturu583.github.io/simple_lanelet2/viewer.js"
 
 
+class _RevalidatedStatics(StaticFiles):
+    """Static files a browser must check for freshness on every request.
+
+    ``StaticFiles`` sends an ``ETag`` and a ``Last-Modified`` but no
+    ``Cache-Control``, which leaves the browser to invent a freshness lifetime
+    of its own and serve ``editor.js`` from cache **without asking**.  On a tool
+    whose stylesheet and script change while it is being used, that shows up as
+    an editor that is missing a feature the server is already serving -- with
+    nothing in the page to say so.
+
+    ``no-cache`` does not mean "do not store": the ETag still turns the check
+    into a 304 with no body.  The same header is on the map route for the same
+    reason.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        """Return the file with revalidation forced."""
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def map_viewer_url() -> str:
     """Return the URL the spawn preview loads the map viewer from."""
     return os.environ.get(MAP_VIEWER_ENV, DEFAULT_MAP_VIEWER_URL).strip()
@@ -94,7 +117,9 @@ def create_app(
         A configured :class:`FastAPI` application.
     """
     application = FastAPI(title="Scenario Editor")
-    application.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    application.mount(
+        "/static", _RevalidatedStatics(directory=str(_STATIC_DIR)), name="static"
+    )
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     # The templates render primitives from their metadata rather than branching
