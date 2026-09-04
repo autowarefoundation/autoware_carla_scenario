@@ -969,6 +969,60 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="temporary_stop",
+        title="Temporary stop",
+        category="Entity",
+        builder="build_temporary_stop_condition",
+        visual=ConditionVisual(
+            metric="Stops at",
+            subject="entity",
+            target="stop_lanelets",
+            target_prefix="Lanelet",
+            value="stop_duration",
+            unit="s",
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="stop_lanelets",
+                label="Stop lanelets",
+                kind="lanelet_list",
+                default=[],
+                help="Stopping at any one of them is enough.",
+            ),
+            FieldSpec(
+                name="s_margin",
+                label="Margin",
+                kind="number",
+                default=5.0,
+                unit="m",
+                help="How far either side of a lanelet's start still counts.",
+            ),
+            FieldSpec(
+                name="stop_duration",
+                label="Held for",
+                kind="number",
+                default=1.0,
+                unit="s",
+            ),
+            FieldSpec(
+                name="speed_threshold",
+                label="Counts as stopped below",
+                kind="number",
+                default=0.1,
+                unit="m/s",
+            ),
+        ),
+        description=(
+            "The entity came to a stop at one of these lanelets.  The editor "
+            "offers the start of a lanelet, widened by the margin; the runtime "
+            "condition itself accepts any pose."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="always_true",
         title="Always",
         category="World",

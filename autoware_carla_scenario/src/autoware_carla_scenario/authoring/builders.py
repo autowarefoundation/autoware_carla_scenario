@@ -357,6 +357,35 @@ def build_action_state_condition(
     )
 
 
+def build_temporary_stop_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TemporaryStopCondition` from a set of lanelets.
+
+    The runtime condition accepts any pose; the editor offers the *start* of a
+    lanelet, which the condition's own ``s_margin`` then widens.  That is the
+    same reduction the rest of the canvas makes -- authors think in lanelets --
+    and it is why the margin is an editable field rather than a constant.
+    """
+    from ..conditions import TemporaryStopCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    params = compiled.params
+    return TemporaryStopCondition(
+        entity_name=params["entity"],
+        stop_positions=[
+            Lanelet2Pose(lanelet_id=int(lanelet_id), s=0.0)
+            for lanelet_id in params["stop_lanelets"]
+        ],
+        s_margin=params["s_margin"],
+        speed_threshold=params["speed_threshold"],
+        stop_duration=params["stop_duration"],
+        label=compiled.label,
+    )
+
+
 def build_always_true_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",

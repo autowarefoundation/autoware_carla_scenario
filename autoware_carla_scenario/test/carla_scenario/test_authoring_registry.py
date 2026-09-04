@@ -22,6 +22,81 @@ class TestSpecCoverage:
                 "which does not exist"
             )
 
+    def test_every_runtime_condition_is_reachable_from_the_editor(self) -> None:
+        """A new condition class must be exposed, or say why it is not.
+
+        The existing checks only look one way -- every spec has a builder --
+        so a condition added to the runtime and never registered simply never
+        appears in the editor, and nothing says so.  A document naming it
+        cannot be validated, compiled or exported: `validate_document` reports
+        "Unknown condition type" and the inspector shows it as unknown.
+
+        This is the other direction.  Adding a class and forgetting the spec
+        fails here, with the two ways to make it pass spelled out.
+        """
+        from autoware_carla_scenario import conditions
+        from autoware_carla_scenario.conditions.base import BaseCondition
+
+        # Deliberately runtime-only.  A polygon is a list of poses, and no
+        # `FieldSpec` kind can say that -- exposing it means first giving the
+        # field vocabulary a way to pick a shape off the map, which is a
+        # feature, not a missing line in the registry.
+        runtime_only = {"EntityInAreaCondition"}
+        self._assert_every_class_is_built(
+            conditions, BaseCondition, runtime_only, "condition"
+        )
+
+    def test_every_runtime_action_is_reachable_from_the_editor(self) -> None:
+        """The same guarantee for actions."""
+        from autoware_carla_scenario import actions
+        from autoware_carla_scenario.actions.base import BaseAction
+
+        # Sensors are attached by a scenario's own setup, not authored as a
+        # step on the canvas: they are rig configuration, not something an
+        # actor does at a point in the story.
+        runtime_only = {
+            "AttachCameraSensorAction",
+            "AttachCarlaCameraSensorAction",
+            "AttachLidarSensorAction",
+        }
+        self._assert_every_class_is_built(actions, BaseAction, runtime_only, "action")
+
+    @staticmethod
+    def _assert_every_class_is_built(
+        module: object, base: type, runtime_only: set[str], noun: str
+    ) -> None:
+        """Fail unless every exported subclass of *base* is built or excused.
+
+        Membership is read from the builders' own imports rather than from a
+        second list, so there is nothing extra to keep in step: a builder that
+        constructs a class necessarily imports it by name.
+        """
+        import ast
+        import inspect
+        import pathlib
+
+        from autoware_carla_scenario.authoring import builders
+
+        tree = ast.parse(pathlib.Path(builders.__file__).read_text())
+        built = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.level == 2
+            for alias in node.names
+        }
+        exported = {
+            name
+            for name, obj in vars(module).items()
+            if inspect.isclass(obj) and issubclass(obj, base) and obj is not base
+        }
+        missing = sorted(exported - built - runtime_only)
+        assert not missing, (
+            f"these {noun}s exist in the runtime but no builder constructs them, "
+            f"so a document naming one cannot be edited, validated or exported: "
+            f"{missing}. Register a {noun} spec and a builder, or add the class "
+            f"to `runtime_only` in this test with the reason it is not editable."
+        )
+
     def test_every_condition_has_a_builder(self) -> None:
         for spec in registry.condition_specs():
             assert hasattr(builders, spec.builder), (
@@ -177,8 +252,12 @@ class TestSelectFieldDefaults:
         ):
             for spec in specs:
                 for field in spec.fields:
-                    blob = f"{field.name} {field.label} {field.help}".lower()
-                    if "lanelet" not in blob:
+                    # Name and label only.  Prose mentions lanelets without
+                    # holding one -- a margin measured from a lanelet's start
+                    # is a distance, not an id -- and matching on help text
+                    # made the guard fire on exactly that.
+                    named = f"{field.name} {field.label}".lower()
+                    if "lanelet" not in named:
                         continue
                     if field.kind in ("lanelet", "lanelet_list"):
                         continue
