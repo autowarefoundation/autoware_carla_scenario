@@ -14,7 +14,6 @@ from .collision import CollisionCondition
 from .comparison import ComparisonRule, ScalarComparisonRule, compare
 from .composition import (
     EntityDistanceCondition,
-    EntityInAreaCondition,
     EntityLanePositionCondition,
     SpeedCondition,
     SpeedCoordinateSystem,
@@ -46,7 +45,6 @@ __all__ = [
     "ElapsedTimeCondition",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
-    "EntityInAreaCondition",
     "EntityLanePositionCondition",
     "NotCondition",
     "OrCondition",

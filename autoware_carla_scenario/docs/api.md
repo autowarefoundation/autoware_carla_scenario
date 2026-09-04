@@ -65,7 +65,6 @@ These build on `CompositionCondition`, which composes a child condition
 tree internally:
 
 - `EntityLanePositionCondition`
-- `EntityInAreaCondition`
 - `SpeedCondition`, `SpeedDirection`, `SpeedCoordinateSystem`
 - `StandstillCondition`
 - `TemporaryStopCondition`

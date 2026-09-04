@@ -37,14 +37,12 @@ class TestSpecCoverage:
         from autoware_carla_scenario import conditions
         from autoware_carla_scenario.conditions.base import BaseCondition
 
-        # Deliberately runtime-only.  A polygon is a list of poses, and no
-        # `FieldSpec` kind can say that -- exposing it means first giving the
-        # field vocabulary a way to pick a shape off the map, which is a
-        # feature, not a missing line in the registry.
-        runtime_only = {"EntityInAreaCondition"}
-        self._assert_every_class_is_built(
-            conditions, BaseCondition, runtime_only, "condition"
-        )
+        # Empty on purpose, as for actions: every condition the runtime has is
+        # authorable.  The last exception, `EntityInAreaCondition`, was removed
+        # rather than excused -- its polygon lived in absolute world
+        # coordinates, so it could not survive a constraint sweep and had no
+        # place in an abstract scenario.
+        self._assert_every_class_is_built(conditions, BaseCondition, set(), "condition")
 
     def test_every_runtime_action_is_reachable_from_the_editor(self) -> None:
         """The same guarantee for actions."""
