@@ -44,10 +44,13 @@
   </div>
 {% endmacro %}
 
-{% macro action_column(action, draft, selected, document) %}
+{# One card. The column around it is the caller's, because a step holds a set
+   of actions: everything is armed from the first tick, so actions that nothing
+   sequences run alongside each other and are stacked to say so. #}
+{% macro action_card(action, draft, selected, document) %}
   {%- set spec = get_action_spec(action.type) -%}
   {%- set hue = CATEGORY_HUES.get(spec.category, 'var(--accent)') if spec else 'var(--fail)' -%}
-  <div class="ed-column">
+  <div class="ed-step-item">
     <div class="ed-action {% if selected == action.id %}is-selected{% endif %}"
          style="--action-hue: {{ hue }}"
          tabindex="0" role="button" id="node-{{ action.id }}"
@@ -92,6 +95,20 @@
       {{ pred.add(draft, 'trigger:' ~ action.id) }}
     </div>
   </div>
+{% endmacro %}
+
+
+{# A whole step: every card in it, or an empty slot holding the grid open. #}
+{% macro step_column(slot, draft, selected, document) %}
+  {% if slot %}
+    <div class="ed-column">
+      {% for action in slot %}
+        {{ action_card(action, draft, selected, document) }}
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="ed-column" aria-hidden="true"></div>
+  {% endif %}
 {% endmacro %}
 
 {% macro verdict_lane(kind, label, hint, glyph, conditions, draft, selected, document) %}
@@ -188,12 +205,8 @@
 
         <div class="ed-lane-track">
           <div class="ed-column"><div class="ed-origin">Spawn</div></div>
-          {% for action in document.action_slots(entity.id) %}
-            {% if action %}
-              {{ action_column(action, draft, selected, document) }}
-            {% else %}
-              <div class="ed-column" aria-hidden="true"></div>
-            {% endif %}
+          {% for slot in document.action_slots(entity.id) %}
+            {{ step_column(slot, draft, selected, document) }}
           {% endfor %}
           {{ add_action(draft, entity.id) }}
         </div>
@@ -216,12 +229,8 @@
           </div>
         </div>
         <div class="ed-lane-track">
-          {% for action in world %}
-            {% if action %}
-              {{ action_column(action, draft, selected, document) }}
-            {% else %}
-              <div class="ed-column" aria-hidden="true"></div>
-            {% endif %}
+          {% for slot in world %}
+            {{ step_column(slot, draft, selected, document) }}
           {% endfor %}
           {{ add_action(draft, '') }}
         </div>

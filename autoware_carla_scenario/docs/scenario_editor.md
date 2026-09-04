@@ -56,12 +56,47 @@ down the left, a numbered ruler across the top, a bar line before every slot
 and every other slot shaded. The ruler counts **steps and not seconds**, which
 is the whole reason it is a step ruler -- see the first rule below.
 
+### What a step is
+
+Nothing in Python has a "step". The runtime arms **every** action from the
+first tick and ticks them all every frame:
+
+```python
+for action in scenario._pre_tick_actions:
+    action.tick(world, elapsed)
+```
+
+An action fires when its own trigger says so, not when its column comes up, and
+an action with no trigger gets `AlwaysTrueCondition` -- so it fires on tick 1
+however far right it is drawn. `column_hint` is read by nothing outside this
+editor: `compiler.py`, `declarative.py` and the exporters contain no reference
+to `ui` at all.
+
+So a step is not a point in time. It is **a set of actions nothing orders**,
+and the canvas draws it that way:
+
+* **Several actions can share one step**, stacked in the same column. That is
+  the honest picture of two actions that are both armed and neither waiting on
+  the other -- spreading them across two columns would draw a sequence the
+  runtime does not have.
+* **An action may not share a step with anything its trigger waits on.** Within
+  a step nothing is ordered, so a dependency has to be visibly earlier. Adding
+  an `action_state` trigger pushes the dependent right on the spot, moving a
+  dependency right carries its dependents with it, and a move that would break
+  the rule is repaired rather than refused -- the card lands as close to where
+  it was aimed as its dependencies allow. `validator.py` reports a hand-edited
+  `ui` block that says otherwise.
+
+That makes the step axis mean exactly one thing: **left of** is "already
+finished, and something here is waiting on it". It still says nothing about
+*how much* earlier.
+
 Three rules make it readable:
 
 * **The distance between cards means nothing.** Column position is
   `ui.column_hint`, which is presentation only and never reaches the runtime.
-  A clip in step 3 happens after one in step 2; how much later is not on screen
-  because the document does not know.
+  A clip in step 3 may only start after one in step 2 if something says so;
+  how much later is not on screen because the document does not know.
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
   the action it fires and joined to it by a solid line, so cause and effect are
   next to each other instead of being correlated across the screen.

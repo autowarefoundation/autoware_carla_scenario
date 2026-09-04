@@ -406,6 +406,33 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
+    """Every action must sit in a later step than what its trigger waits on.
+
+    A step is a set of actions that nothing orders -- they are all armed from
+    the first tick -- so an action level with, or ahead of, its own dependency
+    draws a sequence the runtime cannot honour.  The editor repairs the layout
+    on every save; this catches a hand-edited ``ui`` block that says otherwise.
+    """
+    columns = {a.id: document.ui.column_of(a.id) for a in document.actions}
+    titles = {a.id: a.title or a.type for a in document.actions}
+    for action_id, needs in document.action_dependencies().items():
+        if action_id not in columns:
+            continue
+        for need in sorted(needs):
+            if need not in columns:
+                continue  # a dangling reference, already reported as an error
+            if columns[action_id] > columns[need]:
+                continue
+            out.error(
+                f"ui.nodes.{action_id}.column_hint",
+                f"{titles[action_id]!r} waits on {titles[need]!r} but is drawn "
+                f"in step {columns[action_id] + 1}, not after step "
+                f"{columns[need] + 1}. Nothing inside a step is ordered.",
+                action_id,
+            )
+
+
 def validate_document(document: ScenarioDocument) -> ValidationReport:
     """Return every problem found in *document*.
 
@@ -443,6 +470,8 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
             out.error(path, f"Duplicate action id {action.id!r}.", action.id)
         seen_actions.add(action.id)
         _check_action(out, path, action, refs)
+
+    _check_step_order(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)

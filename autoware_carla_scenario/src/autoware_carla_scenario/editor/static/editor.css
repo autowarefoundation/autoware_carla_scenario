@@ -644,6 +644,11 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
 }
 .ed-column-add { align-items: flex-start; }
 
+/* Cards sharing a step stack, with a gap wide enough to read as "these two,
+ * together" rather than as two steps. */
+.ed-step-item { display: flex; flex-direction: column; gap: 7px; }
+.ed-step-item + .ed-step-item { margin-top: 14px; }
+
 /* The start marker, drawn like a sequencer's locator: a flag on the bar line
  * rather than another card, because nothing happens *at* step 1 but a spawn. */
 .ed-origin {

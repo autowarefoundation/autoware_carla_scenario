@@ -448,14 +448,20 @@ class EditorService:
     ) -> None:
         """Shift an action one step along its lane.
 
-        This writes ``ui.column_hint`` only -- causal progression is presentation,
-        so moving a card never changes what the scenario does.
+        This writes ``ui.column_hint`` only -- what an action does and when it
+        fires are its own type and trigger, so moving a card never changes what
+        the scenario does.
 
-        A card moves into an *empty* step rather than being packed against its
-        neighbours: a reaction has to be placeable after the action on another
-        track that provokes it, and its own track is usually empty in between.
-        Landing on a step another card already holds swaps the two, which is the
-        only sensible reading when the target is occupied.
+        A card moves into any step, empty or occupied.  A step is a *set* of
+        actions rather than a slot for one: everything is armed from the first
+        tick, so actions that nothing sequences really do run alongside each
+        other, and they are drawn stacked to say so.
+
+        The one thing a move may not do is put an action level with, or ahead
+        of, something its trigger waits on -- within a step nothing is ordered,
+        so that would draw a dependency the runtime cannot honour.  The layout
+        is repaired afterwards rather than the move refused, so a card lands as
+        close to where it was aimed as its dependencies allow.
         """
         action = document.action(action_id)
         if action is None:
@@ -471,17 +477,8 @@ class EditorService:
         target = max(0, column + delta)
         if target == column:
             return
-        occupant = next(
-            (
-                other
-                for other in lane
-                if other.id != action.id and document.ui.column_of(other.id) == target
-            ),
-            None,
-        )
-        if occupant is not None:
-            document.ui.set_column(occupant.id, column)
         document.ui.set_column(action.id, target)
+        document.enforce_dependency_order()
 
     def reorder_actors(self, document: ScenarioDocument, order: list[str]) -> None:
         """Set the swimlane order.  Presentation only."""

@@ -426,25 +426,94 @@ class ScenarioDocument(_Node):
         unowned = [a for a in self.actions if not a.actor]
         return sorted(unowned, key=lambda a: (self.ui.column_of(a.id), a.id))
 
-    def action_slots(self, entity_id: Optional[str]) -> list[Optional["ActionNode"]]:
-        """Return one slot per step for a lane, ``None`` where a step is empty.
+    def action_dependencies(self) -> dict[str, set[str]]:
+        """Action id -> the ids of the actions its trigger waits on.
 
-        Column hints are deliberately sparse.  A reaction belongs in a later
-        step than the action that provokes it even when its own actor does
-        nothing in between -- an ego that swerves *after* NPC1 cuts in reads as
-        a reaction only if its card is further right than the cut-in.  Emitting
-        the empty steps is what lets two tracks be read against one ruler.
+        Discovered from the condition specs' action-typed fields, so a newly
+        registered condition that names an action is picked up without changing
+        this method.  Only triggers are walked: an assertion waiting on an
+        action says nothing about when the action runs.
+        """
+        from .registry import get_condition_spec  # noqa: PLC0415
 
-        Ties and overlaps cannot be represented, so a card whose hint is already
-        taken is pushed to the next free step rather than drawn on top.
+        found: dict[str, set[str]] = {}
+        for action in self.actions:
+            if action.trigger is None:
+                continue
+            needs: set[str] = set()
+            for node in action.trigger.walk():
+                spec = get_condition_spec(node.type)
+                if spec is None:
+                    continue
+                for field in spec.fields:
+                    if field.kind != "action":
+                        continue
+                    value = str(node.params.get(field.name) or "")
+                    if value:
+                        needs.add(value)
+            if needs:
+                found[action.id] = needs
+        return found
+
+    def action_slots(self, entity_id: Optional[str]) -> "list[list[ActionNode]]":
+        """Return the lane as one list of actions per step, empty steps included.
+
+        A step is a *set* of actions, not one action: every action is armed from
+        the first tick and fires when its own trigger says so, so actions that
+        nothing sequences really do run alongside each other.  Drawing them
+        stacked in one column says that; spreading them across columns would
+        draw an order the runtime does not have.
+
+        The gaps matter too.  A reaction belongs in a later step than the action
+        that provokes it even when its own actor does nothing in between -- an
+        ego that swerves *after* NPC1 cuts in reads as a reaction only if its
+        card is further right.
         """
         lane = self.actions_for(entity_id) if entity_id else self.world_actions()
-        slots: list[Optional[ActionNode]] = []
+        slots: list[list[ActionNode]] = []
         for action in lane:
-            column = max(len(slots), self.ui.column_of(action.id))
-            slots.extend([None] * (column - len(slots)))
-            slots.append(action)
+            column = self.ui.column_of(action.id)
+            while len(slots) <= column:
+                slots.append([])
+            slots[column].append(action)
         return slots
+
+    def enforce_dependency_order(self) -> None:
+        """Push actions right until every trigger's dependencies are behind it.
+
+        The step axis only means something if a dependency is visibly earlier
+        than what waits on it: an action triggered by "the cut-in has completed"
+        cannot share a step with the cut-in, because within one step nothing is
+        ordered.  Actions are only ever moved *later*, so a layout is repaired
+        rather than rearranged.
+
+        A cycle -- two actions each waiting on the other, which can never fire
+        at runtime either -- leaves the layout untouched for
+        :mod:`.validator` to report.
+        """
+        dependencies = self.action_dependencies()
+        if not dependencies:
+            return
+
+        columns = {a.id: self.ui.column_of(a.id) for a in self.actions}
+        for _ in range(len(self.actions) + 1):
+            moved = False
+            for action_id, needs in dependencies.items():
+                if action_id not in columns:
+                    continue
+                floor = max(
+                    (columns[need] for need in needs if need in columns), default=-1
+                )
+                if columns[action_id] <= floor:
+                    columns[action_id] = floor + 1
+                    moved = True
+            if not moved:
+                break
+        else:
+            return
+
+        for action_id, column in columns.items():
+            self.ui.set_column(action_id, column)
 
     def sync_layout(self) -> None:
         """Make :attr:`ui` consistent with the semantic content.
@@ -465,6 +534,7 @@ class ScenarioDocument(_Node):
             ):
                 if action.id not in self.ui.nodes:
                     self.ui.set_column(action.id, column)
+        self.enforce_dependency_order()
 
     # -- serialisation --------------------------------------------------
 

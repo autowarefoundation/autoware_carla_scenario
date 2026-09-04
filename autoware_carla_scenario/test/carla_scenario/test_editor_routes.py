@@ -241,6 +241,66 @@ class TestPages:
         body = client.get(f"/draft/{draft_id}/inspector/{ttc}").text
         assert "ed-map-picker" not in body
 
+    def test_a_dependent_action_cannot_be_moved_onto_its_dependency(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Within a step nothing is ordered, so a dependency cannot share one.
+
+        The move is repaired rather than refused: the card lands as close to
+        where it was aimed as its dependencies allow.
+        """
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        cut_in = document["actions"][0]["id"]
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "npc1"}
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        reaction = document["actions"][-1]["id"]
+
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": f"trigger:{reaction}", "type_id": "action_state"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["actions"][-1]["trigger"]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition/{node}",
+            data={"action": cut_in, "state": "completeState"},
+        )
+
+        stored = _document(store, draft_id)
+        assert stored.ui.column_of(reaction) > stored.ui.column_of(cut_in)
+
+        client.post(f"/draft/{draft_id}/action/{reaction}/move", data={"delta": "-1"})
+        stored = _document(store, draft_id)
+        assert stored.ui.column_of(reaction) > stored.ui.column_of(cut_in)
+
+    def test_moving_a_dependency_carries_its_dependents(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        cut_in = document["actions"][0]["id"]
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        reaction = document["actions"][-1]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": f"trigger:{reaction}", "type_id": "action_state"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["actions"][-1]["trigger"]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition/{node}",
+            data={"action": cut_in, "state": "completeState"},
+        )
+
+        client.post(f"/draft/{draft_id}/action/{cut_in}/move", data={"delta": "2"})
+        stored = _document(store, draft_id)
+        assert stored.ui.column_of(cut_in) == 2
+        assert stored.ui.column_of(reaction) == 3
+
     def test_a_condition_reads_as_subject_target_metric_value(
         self, client: TestClient, draft_id: str
     ) -> None:
@@ -430,10 +490,12 @@ class TestActionEditing:
 
         client.post(f"/draft/{draft_id}/action/{before[1]}/move", data={"delta": "-1"})
         after_document = _document(store, draft_id)
-        assert [a.id for a in after_document.actions_for("npc1")] == [
-            before[1],
-            before[0],
-        ]
+        # Nothing sequences these two, so they may share a step -- moving one
+        # onto the other no longer pushes it aside.
+        assert after_document.ui.column_of(before[0]) == after_document.ui.column_of(
+            before[1]
+        )
+        assert len(after_document.action_slots("npc1")[0]) == 2
         # The semantic content is untouched: same actions, same triggers.
         assert {a.id for a in after_document.actions} == {
             a.id for a in document.actions

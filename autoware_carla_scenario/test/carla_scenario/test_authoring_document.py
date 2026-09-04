@@ -109,9 +109,15 @@ class TestLayoutIsPresentationOnly:
         action = document.actions[0]
         document.ui.set_column(action.id, 2)
         slots = document.action_slots("npc1")
-        assert slots == [None, None, action]
+        assert slots == [[], [], [action]]
 
-    def test_action_slots_never_stack_two_cards_on_one_step(self) -> None:
+    def test_a_step_holds_every_action_placed_in_it(self) -> None:
+        """A step is a set, not a slot.
+
+        Both are armed from the first tick and neither waits on the other, so
+        they really do run alongside each other; spreading them across two
+        columns would draw an order the runtime does not have.
+        """
         document = new_document()
         first = document.actions[0]
         second = ActionNode(id="a_second", type="lane_change", actor="npc1")
@@ -119,7 +125,75 @@ class TestLayoutIsPresentationOnly:
         document.ui.set_column(first.id, 1)
         document.ui.set_column(second.id, 1)
         slots = document.action_slots("npc1")
-        assert [s.id if s else None for s in slots] == [None, first.id, second.id]
+        assert [[a.id for a in slot] for slot in slots] == [[], [first.id, second.id]]
+
+    def test_a_dependent_action_is_pushed_past_what_it_waits_on(self) -> None:
+        """Nothing inside a step is ordered, so a dependency cannot share one."""
+        document = new_document()
+        cut_in = document.actions[0]
+        reaction = ActionNode(
+            id="a_reaction",
+            type="lane_change",
+            actor="ego",
+            trigger=ConditionNode(
+                type="action_state",
+                params={"action": cut_in.id, "state": "completeState"},
+            ),
+        )
+        document.actions.append(reaction)
+        document.ui.set_column(cut_in.id, 0)
+        document.ui.set_column(reaction.id, 0)
+
+        document.enforce_dependency_order()
+        assert document.ui.column_of(reaction.id) > document.ui.column_of(cut_in.id)
+
+    def test_moving_a_dependency_carries_what_waits_on_it(self) -> None:
+        document = new_document()
+        cut_in = document.actions[0]
+        reaction = ActionNode(
+            id="a_reaction",
+            type="lane_change",
+            actor="ego",
+            trigger=ConditionNode(
+                type="action_state",
+                params={"action": cut_in.id, "state": "completeState"},
+            ),
+        )
+        document.actions.append(reaction)
+        document.ui.set_column(cut_in.id, 4)
+        document.ui.set_column(reaction.id, 1)
+
+        document.enforce_dependency_order()
+        assert document.ui.column_of(reaction.id) == 5
+
+    def test_a_cycle_leaves_the_layout_alone(self) -> None:
+        """Two actions waiting on each other can never fire, in any layout.
+
+        Pushing them apart forever is not a repair, so the validator is left to
+        report it.
+        """
+        document = new_document()
+        first = document.actions[0]
+        second = ActionNode(
+            id="a_second",
+            type="lane_change",
+            actor="ego",
+            trigger=ConditionNode(
+                type="action_state",
+                params={"action": first.id, "state": "completeState"},
+            ),
+        )
+        first.trigger = ConditionNode(
+            type="action_state",
+            params={"action": second.id, "state": "completeState"},
+        )
+        document.actions.append(second)
+        document.ui.set_column(first.id, 0)
+        document.ui.set_column(second.id, 0)
+
+        document.enforce_dependency_order()
+        assert document.ui.column_of(first.id) == 0
+        assert document.ui.column_of(second.id) == 0
 
     def test_sync_layout_drops_stale_entries(self) -> None:
         document = new_document()
