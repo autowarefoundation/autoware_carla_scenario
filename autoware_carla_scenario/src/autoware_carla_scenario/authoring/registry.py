@@ -65,6 +65,13 @@ FieldKind = Literal[
     "bool",
     "select",
     "entity",
+    # Ids of Lanelet2 primitives, singly or as a set.  They behave as an ``int``
+    # and an ``int_list`` everywhere except the inspector, which replaces the
+    # text box with the map: an id is not something anyone knows by heart, and
+    # picking one off the drawing is the only way to choose it that does not
+    # involve a second window.  :attr:`FieldSpec.picks` says which primitive.
+    "lanelet",
+    "lanelet_list",
     # Names another action in the document by id.  The only field kind that
     # makes an edge *between* two nodes of the AST rather than describing one,
     # which is what lets "after NPC1 finished cutting in" be a fact the document
@@ -114,6 +121,13 @@ class FieldSpec:
         unit: Unit suffix shown after the control (e.g. ``m``, ``s``).
         help: One-line hint rendered under the control.
         required: Whether the compiler rejects a missing/empty value.
+        picks: For ``lanelet`` and ``lanelet_list`` fields, the viewer layers a
+            click may land on.  A Lanelet2 map draws more than lanelets and the
+            layers overlap: a click on a road usually hits the *direction*
+            arrow, sometimes the fill, and a hair to the side hits a ``bound``
+            -- which reports the id of a **linestring**, not of the lanelet it
+            borders.  Accepting only the layers whose id is the lanelet's own
+            is what stops a boundary id being saved as a lanelet id.
     """
 
     name: str
@@ -124,6 +138,7 @@ class FieldSpec:
     unit: str = ""
     help: str = ""
     required: bool = True
+    picks: tuple[str, ...] = ("lanelet_fill", "centerline", "direction")
 
 
 @dataclass(frozen=True)
@@ -134,15 +149,27 @@ class ConditionVisual:
     the node's current parameter values.  ``value_label`` supplies constant
     text for conditions whose right-hand side is not a number (``inside``,
     ``occurred``).  ``rule`` names the field holding the comparison operator.
+
+    ``target_prefix`` says what a target that is not an entity *is*.  A bare
+    number on a card is unreadable in a framework that speaks two coordinate
+    systems: ``NPC1 -> 183`` could be a Lanelet2 lanelet or an OpenDRIVE road,
+    and those are different things that happen to be written the same way.
+
+    ``detail`` names a further field to show beside the metric, labelled by its
+    own :class:`FieldSpec`.  It is for the part of a condition that would
+    otherwise be invisible on the canvas -- two conditions differing only in an
+    unshown parameter must not render identically.
     """
 
     metric: str
     subject: Optional[str] = None
     target: Optional[str] = None
+    target_prefix: str = ""
     rule: Optional[str] = None
     value: Optional[str] = None
     value_label: str = ""
     unit: str = ""
+    detail: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -653,13 +680,14 @@ register_condition_spec(
 register_condition_spec(
     ConditionSpec(
         type_id="entity_lane_position",
-        title="Position",
+        title="Position (Lanelet2)",
         category="Entity",
         builder="build_entity_lane_position_condition",
         visual=ConditionVisual(
             metric="Position",
             subject="entity",
             target="lanelet_id",
+            target_prefix="Lanelet",
             value_label="inside",
         ),
         fields=(
@@ -667,20 +695,67 @@ register_condition_spec(
             FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
-                kind="int",
+                kind="lanelet",
                 default=0,
-                help="Resolved to its OpenDRIVE road at scenario setup.",
+                help=(
+                    "Resolved to its OpenDRIVE road *and lane* at scenario "
+                    "setup. A lanelet already names one lane, so there is "
+                    "nothing further to pin -- use Position (OpenDRIVE) to "
+                    "address a road directly."
+                ),
+            ),
+        ),
+        description=(
+            "The entity is on the lane a Lanelet2 lanelet describes.  Pick this "
+            "when you are thinking in lanelets; everything else on the canvas "
+            "already is."
+        ),
+    )
+)
+
+# A separate condition rather than a coordinate-system switch on the one above:
+# the two frames need different fields, and offering both at once is what let a
+# Lanelet2 lanelet and an OpenDRIVE lane be set to contradict each other.
+register_condition_spec(
+    ConditionSpec(
+        type_id="entity_road_position",
+        title="Position (OpenDRIVE)",
+        category="Entity",
+        builder="build_entity_road_position_condition",
+        visual=ConditionVisual(
+            metric="Position",
+            subject="entity",
+            target="road_id",
+            target_prefix="Road",
+            detail="lane_id",
+            value_label="inside",
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="road_id",
+                label="Road",
+                kind="text",
+                default="",
+                help="OpenDRIVE road ID, as written in the .xodr.",
             ),
             FieldSpec(
                 name="lane_id",
-                label="OpenDRIVE lane ID",
+                label="Lane",
                 kind="int",
                 default=None,
                 required=False,
-                help="Leave empty to accept any lane of the road.",
+                help=(
+                    "A road carries several lanes, so a road on its own does "
+                    "not name a place: leave this empty only when any lane of "
+                    "the road will do."
+                ),
             ),
         ),
-        description="The entity is on the road a lanelet belongs to.",
+        description=(
+            "The entity is on an OpenDRIVE road, optionally on one of its "
+            "lanes.  Road and lane together are what address a lane uniquely."
+        ),
     )
 )
 
@@ -803,7 +878,10 @@ register_condition_spec(
         category="World",
         builder="build_traffic_signal_condition",
         visual=ConditionVisual(
-            metric="Signal", target="lanelet2_regulatory_element_id", value="state"
+            metric="Signal",
+            target="lanelet2_regulatory_element_id",
+            target_prefix="Regulatory element",
+            value="state",
         ),
         fields=(
             FieldSpec(
@@ -811,6 +889,11 @@ register_condition_spec(
                 label="Lanelet2 regulatory element ID",
                 kind="int",
                 default=0,
+                help=(
+                    "Typed, not picked: the viewer's regulatory layer reports "
+                    "the linestring that draws a sign, not the id of the "
+                    "regulatory element itself."
+                ),
             ),
             FieldSpec(
                 name="state",

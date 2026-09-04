@@ -169,6 +169,78 @@ class TestPages:
         document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
         assert document["ui"]["nodes"][action_id]["column_hint"] == 2
 
+    def test_a_lanelet_field_gets_a_map_to_pick_from(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Nobody knows lanelet ids by heart, so the map is part of the control.
+
+        The picker writes into the very input the form submits, so a picked id
+        and a typed one are saved by the same path.
+        """
+        import yaml as _yaml
+
+        document = _yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["assertions"]["pass"][0]["children"][0]["id"]
+        body = client.get(f"/draft/{draft_id}/inspector/{node}").text
+
+        assert 'id="pick-lanelet_id"' in body
+        assert 'data-picks-into="pick-lanelet_id"' in body
+        # The map is the only editor: a typed id would be a second way in to
+        # keep in step with the picked one.
+        assert "readonly" in body.split('id="pick-lanelet_id"')[1].split(">")[0]
+        assert 'data-open-picker="picker-lanelet_id"' in body
+        assert f'data-map-src="/draft/{draft_id}/map.osm"' in body
+        # The current value is highlighted, or the map cannot show what is set.
+        assert 'data-highlight="183"' in body
+
+    def test_the_spawn_lanelet_uses_the_same_picker(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The spawn section is hand-written, so it can drift from the rest.
+
+        It did: conditions stopped having a text box for a lanelet id while the
+        entity inspector kept one. Both now render the same macro.
+        """
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        assert 'id="pick-spawn_lanelet_id"' in body
+        assert 'data-open-picker="picker-spawn_lanelet_id"' in body
+        assert 'data-picks-into="pick-spawn_lanelet_id"' in body
+        field = body.split('id="pick-spawn_lanelet_id"')[0].rsplit("<input", 1)[1]
+        assert "ed-input-locked" in field
+
+    def test_the_scenario_exclusion_list_is_picked_too(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Hand-written sections drift; this one is a set, not a single id."""
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'id="pick-map_no_3d_model_lanelet_ids"' in body
+        assert "data-picks-many" in body
+
+    def test_a_picker_ships_the_layers_a_click_may_land_on(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Refusing a bad click needs the accepted layers on the client.
+
+        A `bound` reports a linestring id, so accepting it would save a
+        boundary as a lanelet.
+        """
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        layers = body.split('data-picks-layer="')[1].split('"')[0].split(",")
+        assert "direction" in layers, "a click on a road lands on the arrow"
+        assert "bound" not in layers
+
+    def test_only_a_lanelet_field_gets_a_map(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A plain number must not drag a wasm map into the inspector."""
+        import yaml as _yaml
+
+        document = _yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        # The cut-in trigger's TTC condition is seconds, not a lanelet.
+        ttc = document["actions"][0]["trigger"]["children"][1]["id"]
+        body = client.get(f"/draft/{draft_id}/inspector/{ttc}").text
+        assert "ed-map-picker" not in body
+
     def test_a_condition_reads_as_subject_target_metric_value(
         self, client: TestClient, draft_id: str
     ) -> None:

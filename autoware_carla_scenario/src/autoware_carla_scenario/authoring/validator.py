@@ -145,7 +145,7 @@ def _check_field(
             out.error(f"{path}.{spec.name}", f"{spec.label} is required.", object_id)
         return
 
-    if spec.kind in ("int",):
+    if spec.kind in ("int", "lanelet"):
         if not _coercible_int(value):
             out.error(
                 f"{path}.{spec.name}",
@@ -179,7 +179,7 @@ def _check_field(
                 f"{spec.label} references unknown action {value!r}.",
                 object_id,
             )
-    elif spec.kind == "int_list":
+    elif spec.kind in ("int_list", "lanelet_list"):
         if not _is_int_list(value):
             out.error(
                 f"{path}.{spec.name}",

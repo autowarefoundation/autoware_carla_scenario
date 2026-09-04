@@ -314,6 +314,25 @@ class TestRoundTripOpenDrive:
 
 
 class TestCrossSystem:
+    def test_a_road_is_not_a_lane(self, map_manager):
+        """Neighbouring lanelets share one OpenDRIVE road.
+
+        This is why the editor's Lanelet2 position condition resolves a lanelet
+        to a road *and* a lane: on this map lanelets 183 and 184 are two lanes
+        of the same road, so checking only the road would make "NPC1 is on
+        lanelet 183" true while NPC1 is still in the neighbouring lane -- the
+        cut-in example would pass without the cut-in ever happening.
+        """
+        from autoware_carla_scenario.authoring.builders import (
+            _opendrive_lane_for_lanelet,
+        )
+
+        road, lane = _opendrive_lane_for_lanelet(183)
+        neighbour_road, neighbour_lane = _opendrive_lane_for_lanelet(184)
+
+        assert road == neighbour_road
+        assert lane != neighbour_lane
+
     def test_lanelet2_to_opendrive_and_back(self, map_manager):
         """Lanelet2 → CARLA → OpenDRIVE → CARLA: position should be close."""
         lanelet_id = next(iter(map_manager.lanelet_map.laneletLayer)).id

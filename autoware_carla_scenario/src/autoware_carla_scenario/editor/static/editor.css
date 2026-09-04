@@ -770,8 +770,11 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
 
 .cond-subject {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: baseline;
+  /* A named frame makes this line long enough to wrap in a step-wide card, so
+   * it wraps between the subject and the target rather than inside either. */
+  flex-wrap: wrap;
+  gap: 0 4px;
   font-size: 11px;
   font-weight: 620;
   color: var(--ink);
@@ -783,6 +786,12 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
 .cond-actor { color: var(--ref-hue, var(--ink)); font-weight: 660; }
 .cond-world { color: var(--ink-faint); font-weight: 500; }
 .cond-metric { font-size: 10.5px; color: var(--ink-muted); margin-top: 1px; }
+/* The coordinate system a bare id belongs to, and any parameter that would
+ * otherwise not appear on the card at all. Quieter than the value itself: it
+ * says what the number is, not what it is being compared against. */
+.cond-frame { color: var(--ink-faint); font-weight: 500; }
+.cond-ref { white-space: nowrap; }
+.cond-detail { font-size: 10.5px; color: var(--ink-faint); }
 .cond-value {
   font-size: 13px;
   font-weight: 650;
@@ -975,6 +984,61 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   overflow: hidden;
   background: var(--surface-sunken);
 }
+
+.ed-pick-row { display: flex; align-items: center; gap: 8px; }
+/* A readout, not an input: a lanelet id is only ever set by picking one off
+ * the map, so the field shows what is set and the button is the way to change
+ * it. Styled as inert so it does not invite a keystroke that goes nowhere. */
+.ed-input-locked {
+  background: var(--surface-sunken);
+  color: var(--ink-body);
+  cursor: default;
+}
+.ed-input-locked:hover { border-color: var(--line-strong); }
+.ed-pick-row .ed-input { flex: 1; min-width: 0; }
+.ed-pick-row .ed-btn-sm { flex: none; }
+
+/* The picker takes the viewport. Picking a lanelet out of a city means seeing
+ * the city, and the inspector column is 384px wide -- a map that size is a
+ * thumbnail, not a control.
+ *
+ * This z-index only works because editor.js moves the element to <body> first:
+ * the inspector sits inside a `position: sticky` wrapper, and sticky creates a
+ * stacking context regardless of its own z-index, so a z-index left in place
+ * would rank against nothing that matters and the canvas would paint over it. */
+.ed-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  padding: 24px;
+  background: rgba(18, 20, 26, 0.55);
+}
+.ed-modal-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+  overflow: hidden;
+}
+.ed-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+  flex: none;
+}
+/* Anchors the mounting frame, which positions itself absolutely while it is
+ * still invisible. */
+.ed-modal-body { position: relative; flex: 1; min-height: 0; padding: 12px; }
+
+.ed-map-full { height: 100%; }
 
 /* While the viewer is mounting it needs a laid-out box to size its canvas
  * against, but it must not be on screen: the SVG fallback is still up, and two

@@ -174,11 +174,14 @@ def new_document(
                     ConditionNode(
                         type="sticky",
                         children=[
+                            # The lanelet names the ego's lane, and now pins
+                            # it: lanelets 183 and 184 share one OpenDRIVE
+                            # road, so a road-only check would already hold
+                            # while NPC1 sat in its own lane.
                             _condition(
                                 "entity_lane_position",
                                 entity="npc1",
                                 lanelet_id=183,
-                                lane_id=None,
                             )
                         ],
                     )

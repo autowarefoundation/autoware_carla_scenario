@@ -51,11 +51,11 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
     if text == "":
         return spec.default if spec.required else None
 
-    if spec.kind == "int":
+    if spec.kind in ("int", "lanelet"):
         return int(text)
     if spec.kind == "number":
         return float(text)
-    if spec.kind in ("int_list", "int_list_or_ref"):
+    if spec.kind in ("int_list", "int_list_or_ref", "lanelet_list"):
         return parse_int_list(text)
     return text
 

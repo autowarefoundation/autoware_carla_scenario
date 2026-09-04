@@ -38,8 +38,7 @@
   </div>
   <div class="ed-field">
     <label class="ed-label">Lanelet ID</label>
-    <input type="number" step="1" name="spawn_lanelet_id" class="ed-input"
-           id="spawn-lanelet-input" value="{{ target.spawn.lanelet_id }}">
+    {{ f.lanelet_picker('spawn_lanelet_id', target.spawn.lanelet_id, draft, 'Lanelet ID') }}
   </div>
 
   <h4 class="ed-subheading">{{ ic.icon('bar', 12) }} Position on the matched lanelet</h4>
@@ -81,7 +80,7 @@
         {% endif %}
       </div>
       {% if binding_spec %}
-        {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_') }}
+        {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
       {% endif %}
     </div>
   {% endif %}

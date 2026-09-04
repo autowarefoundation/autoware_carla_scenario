@@ -100,6 +100,123 @@ class TestSelectFieldDefaults:
                         f"{field_spec.default!r}, not one of {sorted(allowed)}"
                     )
 
+    def test_a_non_entity_target_says_what_frame_it_is_in(self) -> None:
+        """A bare id on a card belongs to no coordinate system on sight.
+
+        This framework speaks both Lanelet2 and OpenDRIVE, and their ids are
+        written the same way, so any target that is not an actor has to name
+        what it is.
+        """
+        for spec in registry.condition_specs():
+            target = spec.visual.target
+            if target is None:
+                continue
+            field = next((f for f in spec.fields if f.name == target), None)
+            if field is None or field.kind == "entity":
+                continue
+            assert spec.visual.target_prefix, (
+                f"{spec.type_id} targets {target!r}, which is not an entity, "
+                "without saying what it is"
+            )
+
+    def test_a_visual_detail_names_a_real_field(self) -> None:
+        for spec in registry.condition_specs():
+            if spec.visual.detail is None:
+                continue
+            assert any(f.name == spec.visual.detail for f in spec.fields), (
+                f"{spec.type_id} shows a detail named {spec.visual.detail!r} "
+                "that it has no field for"
+            )
+
+    def test_the_two_position_conditions_do_not_mix_frames(self) -> None:
+        """Each frame gets its own condition, so neither can contradict itself.
+
+        A lanelet already names one lane; an OpenDRIVE road does not, and needs
+        a lane beside it. Offering all three fields at once let an author pin a
+        lanelet and an unrelated lane on the same condition.
+        """
+        lanelet = registry.get_condition_spec("entity_lane_position")
+        opendrive = registry.get_condition_spec("entity_road_position")
+        assert lanelet is not None and opendrive is not None
+        assert {f.name for f in lanelet.fields} == {"entity", "lanelet_id"}
+        assert {f.name for f in opendrive.fields} == {"entity", "road_id", "lane_id"}
+
+    def test_every_lanelet2_id_is_picked_off_the_map(self) -> None:
+        """Nothing that names a Lanelet2 primitive may be a plain text box.
+
+        Ids are not memorable, so typing one is guesswork; the map answers it
+        exactly.  This test is the management: a new field naming a lanelet
+        either declares a picker kind or is listed here with a reason, and
+        adding one without doing either fails.
+        """
+        # Fields whose value is *not only* a Lanelet2 id, so a picker cannot
+        # express the whole domain.  Each needs its escape spelled out before
+        # it can be converted.
+        allowed_text = {
+            # "any" matches every lanelet -- a sentinel, not an id, and the
+            # sweeper parses that exact string.
+            ("equals", "value"),
+            # Accepts ${map.no_3d_model_lanelet_ids}: a reference resolved at
+            # sweep time, which is not a set of ids the map could highlight.
+            ("in_set", "values"),
+            # Measured, not assumed: the viewer's `regulatory` layer reports
+            # the id of the linestring that draws a sign
+            # ("linestring 1357 · traffic_sign/unknown"), not of the regulatory
+            # element.  A picker there would save a confidently wrong number,
+            # which is worse than a text box.
+            ("traffic_signal", "lanelet2_regulatory_element_id"),
+            ("traffic_signal", "lanelet2_traffic_light_ids"),
+        }
+
+        offenders = []
+        for kind, specs in (
+            ("condition", registry.condition_specs()),
+            ("action", registry.action_specs()),
+            ("constraint", registry.constraint_specs()),
+            ("binding", registry.binding_specs()),
+        ):
+            for spec in specs:
+                for field in spec.fields:
+                    blob = f"{field.name} {field.label} {field.help}".lower()
+                    if "lanelet" not in blob:
+                        continue
+                    if field.kind in ("lanelet", "lanelet_list"):
+                        continue
+                    if (spec.type_id, field.name) in allowed_text:
+                        continue
+                    offenders.append(f"{kind} {spec.type_id}.{field.name}")
+        assert not offenders, (
+            "these name a Lanelet2 primitive but cannot be picked off the map: "
+            + ", ".join(offenders)
+        )
+
+    def test_a_picker_only_accepts_layers_that_report_a_lanelet(self) -> None:
+        """A Lanelet2 map draws more than lanelets, and the layers overlap.
+
+        A click a hair off the lane lands on a ``bound``, which reports the id
+        of a linestring.  Saving that as a lanelet id would compile and then
+        fail at scenario setup, so which layers count is part of the field's
+        declaration.
+        """
+        # `bound` is deliberately absent: it reports a linestring id, not the
+        # id of either lanelet it separates.
+        lanelet_owned = {"lanelet_fill", "centerline", "direction"}
+        for specs in (
+            registry.condition_specs(),
+            registry.action_specs(),
+            registry.constraint_specs(),
+            registry.binding_specs(),
+        ):
+            for spec in specs:
+                for field in spec.fields:
+                    if field.kind not in ("lanelet", "lanelet_list"):
+                        continue
+                    assert field.picks, f"{spec.type_id}.{field.name} picks nothing"
+                    assert set(field.picks) <= lanelet_owned, (
+                        f"{spec.type_id}.{field.name} accepts {field.picks!r}, "
+                        "which includes a layer whose id is not a lanelet's"
+                    )
+
     def test_default_params_covers_every_field(self) -> None:
         for spec in registry.condition_specs():
             params = registry.default_params(spec.fields)

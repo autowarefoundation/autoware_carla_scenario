@@ -77,7 +77,7 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     if value is None or (isinstance(value, str) and not value.strip()):
         return spec.default
 
-    if spec.kind == "int":
+    if spec.kind in ("int", "lanelet"):
         return int(str(value).strip())
     if spec.kind == "number":
         return float(str(value).strip())
@@ -85,7 +85,7 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in TRUTHY_VALUES
-    if spec.kind in ("int_list", "int_list_or_ref"):
+    if spec.kind in ("int_list", "int_list_or_ref", "lanelet_list"):
         if isinstance(value, str):
             # A reference such as ${map.no_3d_model_lanelet_ids} passes through
             # untouched; the sweep YAML resolves it.

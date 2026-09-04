@@ -44,7 +44,7 @@
           {% endfor %}
         </select>
       </div>
-      {% if spec %}{{ f.fields(spec.fields, target.params, document) }}{% endif %}
+      {% if spec %}{{ f.fields(spec.fields, target.params, document, '', draft) }}{% endif %}
       <div class="ed-field">
         <label class="ed-label">Tick phase</label>
         <select name="timing" class="ed-input">
@@ -73,7 +73,7 @@
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
       {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
       {% if spec and spec.fields %}
-        {{ f.fields(spec.fields, target.params, document) }}
+        {{ f.fields(spec.fields, target.params, document, '', draft) }}
       {% elif spec %}
         <p class="ed-help" style="margin-bottom:14px">This condition has no parameters.</p>
       {% endif %}
@@ -100,7 +100,7 @@
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
       {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
       {% if spec and spec.fields %}
-        {{ f.fields(spec.fields, target.params, document) }}
+        {{ f.fields(spec.fields, target.params, document, '', draft) }}
       {% else %}
         <p class="ed-help" style="margin-bottom:14px">This constraint has no parameters.</p>
       {% endif %}

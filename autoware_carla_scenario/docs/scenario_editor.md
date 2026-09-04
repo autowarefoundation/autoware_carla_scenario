@@ -125,6 +125,78 @@ cause on another track, and its own track is usually empty in between.
 
 Every condition reads as `subject -> target | metric | rule value`, e.g.
 `NPC1 -> Ego | Distance | < 20 m` or `Ego -> Lanelet 183 | Position | inside`.
+
+A target that is not an actor is **named for the coordinate system it is in**.
+This framework speaks both Lanelet2 and OpenDRIVE and their ids are written the
+same way, so `Ego -> 183` would say nothing about which `183` is meant.
+
+### Position: pick a frame, not a mixture
+
+There are two position conditions, one per coordinate system, because the two
+need different fields:
+
+| | Address | Reads as |
+| --- | --- | --- |
+| **Position (Lanelet2)** | a lanelet | `NPC1 -> Lanelet 183 \| Position \| inside` |
+| **Position (OpenDRIVE)** | a road, optionally a lane | `NPC1 -> Road 80 \| Position \| lane 2 \| inside` |
+
+A **lanelet already names one lane**, so the Lanelet2 condition resolves it to
+an OpenDRIVE road *and* lane and there is nothing further to pin. An
+**OpenDRIVE road does not**: a road carries several lanes, so road and lane
+together are what address a place uniquely, and a road left without a lane says
+so on the card (`any lane`) rather than looking like a precise address.
+
+### Lanelet2 ids are picked, never typed
+
+Every field naming a Lanelet2 lanelet is edited **only on the map**. The number beside it is a
+readout, not an input: nobody knows lanelet ids by heart, so typing one is
+guesswork the map answers exactly, and making the map the single editor leaves
+one path a value can arrive by instead of two to keep in step. **Edit** opens
+the viewer over the whole window -- the inspector column is 384px wide, and a
+city map that size cannot be picked from -- and clicking a lanelet fills the
+field and closes it. This comes from the field's declared kind (`lanelet`), so
+any field naming a lanelet gets the picker without touching a template.
+
+There is no "type it instead" fallback for a viewer that will not load, for the
+same reason the SVG map fallback was removed: the page fetches htmx from a CDN
+too, so an editor that cannot reach the network has no working controls at all.
+
+Three fields still take typed ids, each because their value is **not only** a
+lanelet id, and a test in `test_authoring_registry.py` fails if a new one
+appears without being listed there with its reason:
+
+| Field | Why it is not picked |
+| --- | --- |
+| `equals.value` (spawn constraint) | `any` matches every lanelet -- a sentinel the sweeper parses, not an id |
+| `in_set.values` (spawn constraint) | accepts `${map.no_3d_model_lanelet_ids}`, a reference resolved at sweep time |
+| `traffic_signal` regulatory element ids | the viewer's `regulatory` layer reports the id of the *linestring* that draws a sign, not of the regulatory element -- a picker there would save a confidently wrong number |
+
+Two implementation notes, both of which cost an afternoon to find:
+
+* The picker is **moved to `<body>`** before it is shown. The inspector sits
+  inside a `position: sticky` wrapper, and sticky creates a stacking context
+  whatever its own `z-index` is -- so a `z-index` left in place ranks only
+  against its siblings, and the canvas lanes (`z-index: 2`) paint straight over
+  a modal asking for 80.
+* A **set** of lanelets works the same way, toggling on each click, and saves
+  when the picker is closed -- sending the form on every toggle would re-render
+  the inspector and tear the map down mid-selection.
+* Which viewer layers a click may land on is part of the field's declaration
+  (`FieldSpec.picks`). The layers overlap: a click on a road usually lands on
+  the direction arrow, and a hair to the side lands on a `bound`, **which
+  reports the id of a linestring, not of either lanelet it separates**. Only
+  the layers whose id is the lanelet's own are accepted.
+* `/static` is served with `Cache-Control: no-cache`. `StaticFiles` sends an
+  `ETag` but no `Cache-Control`, which lets a browser invent a freshness
+  lifetime and keep running an old `editor.js` **without asking** -- an editor
+  visibly missing a feature the server is already serving. The `ETag` still
+  makes the check a 304.
+
+They are separate conditions rather than one with a coordinate-system switch
+because offering a lanelet and a lane on the same condition is what let the two
+contradict each other: on the nishishinjuku map lanelets 183 and 184 are lanes
+2 and 1 of road 80, so pinning lanelet 183 and lane 1 asked for a place that
+does not exist.
 Compose them with `ALL`, `ANY`, `NOT`, `Sticky` and `Persistent`, which map onto
 `AndCondition`, `OrCondition`, `NotCondition`, `StickyCondition` and
 `PersistentCondition`.

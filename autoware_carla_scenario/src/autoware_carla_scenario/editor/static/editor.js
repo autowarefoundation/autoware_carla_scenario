@@ -188,11 +188,55 @@
         if (highlight.length) viewer.setHighlight(highlight);
       });
 
-      // Picking a lanelet on the map is the fastest way to set a spawn, and it
-      // goes through the same endpoint the number field does.
+      // Picking on the map is how a Lanelet2 id is chosen at all, and it writes
+      // into the field the form already submits — never a second code path
+      // that could save something different.
       viewer.addEventListener('select', function (event) {
-        var picked = event.detail && event.detail.id;
-        if (!picked || !window.htmx) return;
+        var detail = event.detail || {};
+        var picked = detail.id;
+        if (!picked) return;
+
+        var into = frame.dataset.picksInto;
+        if (into) {
+          var input = document.getElementById(into);
+          if (!input) return;
+
+          // A Lanelet2 map draws more than lanelets, and the layers overlap: a
+          // click on a road usually lands on the direction arrow, sometimes on
+          // the fill, and a hair to the side lands on a `bound` — which reports
+          // the id of a *linestring*, not of the lanelet it borders. Only the
+          // layers whose id is the lanelet's own are accepted, so a boundary id
+          // can never be saved as a lanelet id.
+          var want = (frame.dataset.picksLayer || '').split(',');
+          if (detail.layer && want.indexOf(detail.layer) < 0) {
+            say(frame, 'That is a ' + detail.layer.replace('_', ' ') +
+              ', not a lanelet. Click the lane itself.');
+            return;
+          }
+
+          if (frame.dataset.picksMany) {
+            // Toggling, so a set is built by clicking rather than by typing a
+            // comma-separated list nobody can check by eye.
+            var chosen = ids(input.value);
+            var at = chosen.indexOf(Number(picked));
+            if (at >= 0) chosen.splice(at, 1);
+            else chosen.push(Number(picked));
+            input.value = chosen.join(', ');
+            viewer.setHighlight(chosen);
+            say(frame, chosen.length + ' selected');
+            return;
+          }
+
+          input.value = String(picked);
+          viewer.setHighlight([Number(picked)]);
+          closePickers();
+          // Dispatched last: the form's `change` trigger re-renders the whole
+          // inspector, taking this modal with it.
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          return;
+        }
+
+        if (!window.htmx) return;
         var draft = frame.dataset.draft;
         var entity = frame.dataset.entity;
         if (!draft || !entity) return;
@@ -208,8 +252,91 @@
   }
 
   function mountMaps() {
-    document.querySelectorAll('.ed-map-frame[data-map-viewer]').forEach(mountMap);
+    document.querySelectorAll('.ed-map-frame[data-map-viewer]').forEach(function (frame) {
+      // A picker inside a closed modal is not on screen and must not pay for a
+      // wasm parse of the whole map until someone asks to see it.
+      if (frame.closest('.ed-modal[hidden]')) return;
+      mountMap(frame);
+    });
   }
+
+  /* ---------------------------------------------------------------------
+   * Lanelet picker
+   *
+   * The map opens over the viewport rather than under the field: the
+   * inspector column is 384px wide, and a city at that size cannot be picked
+   * from. Opening one mounts its viewer, which is the first time the map is
+   * fetched and parsed at all.
+   * ------------------------------------------------------------------- */
+
+  /* The picker is moved to <body> to be shown, and removed again when it is
+   * closed. It cannot simply be given a large z-index where it sits: the
+   * inspector lives inside a `position: sticky` wrapper, and sticky creates a
+   * stacking context whatever its own z-index is, so any z-index inside it
+   * only ranks against its siblings — the canvas lanes (z-index 2) still paint
+   * over it. Reparenting is what puts it in the root stacking context.
+   *
+   * Removing rather than hiding keeps ids unique: the next inspector render
+   * builds a fresh one, so a leftover copy would be a second element with the
+   * same id. */
+  /* Ids as written in a field: a comma-separated list, empty tolerated. */
+  function ids(text) {
+    return (text || '')
+      .split(',')
+      .map(function (v) { return parseInt(v, 10); })
+      .filter(function (v) { return !isNaN(v); });
+  }
+
+  /* Replaces the picker's subtitle. The map is the whole window while it is
+   * open, so this line is the only place a refused click can be explained. */
+  function say(frame, text) {
+    var modal = frame.closest('.ed-modal');
+    var status = modal && modal.querySelector('[data-picker-status]');
+    if (status) status.textContent = text;
+  }
+
+  function closePickers() {
+    document.querySelectorAll('[data-portalled]').forEach(function (modal) {
+      modal.remove();
+    });
+  }
+
+  /* A set is saved when the picker is closed, not on every click: sending the
+   * form on each toggle would re-render the inspector and tear the map down
+   * mid-selection. */
+  function commitAndClose() {
+    var pending = [];
+    document.querySelectorAll('[data-portalled] [data-picks-many]')
+      .forEach(function (frame) {
+        var input = document.getElementById(frame.dataset.picksInto);
+        if (input) pending.push(input);
+      });
+    closePickers();
+    pending.forEach(function (input) {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    var opener = event.target.closest && event.target.closest('[data-open-picker]');
+    if (opener) {
+      var modal = document.getElementById(opener.getAttribute('data-open-picker'));
+      if (modal) {
+        closePickers();
+        modal.dataset.portalled = '1';
+        document.body.appendChild(modal);
+        modal.hidden = false;
+        mountMaps();
+      }
+      return;
+    }
+    // The scrim is the modal element itself; a click that lands on it rather
+    // than on the panel inside is a click outside.
+    var closer = event.target.closest && event.target.closest('[data-close-picker]');
+    var scrim = event.target.classList &&
+      event.target.classList.contains('ed-modal');
+    if (closer || scrim) commitAndClose();
+  });
 
   /* ---------------------------------------------------------------------
    * Selection and keyboard navigation
@@ -252,6 +379,7 @@
         event.preventDefault();
       }
     } else if (event.key === 'Escape') {
+      commitAndClose();
       var panel = document.getElementById('export-panel');
       if (panel) panel.classList.add('hidden');
     }

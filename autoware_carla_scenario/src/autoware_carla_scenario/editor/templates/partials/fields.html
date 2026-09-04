@@ -1,10 +1,11 @@
+{% import "partials/icons.html" as ic %}
 {# Metadata-driven form controls.
 
    Every control is chosen from a FieldSpec's `kind`, never from the primitive's
    type, so registering a new action / condition / constraint in Python gives it
    a working inspector with no change to this file. #}
 
-{% macro control(spec, value, document, prefix='') %}
+{% macro control(spec, value, document, prefix='', draft=none) %}
   {%- set name = prefix ~ spec.name -%}
   {%- set current = spec.default if value is none else value -%}
   {% if spec.kind == 'bool' %}
@@ -30,6 +31,10 @@
         </option>
       {% endfor %}
     </select>
+  {% elif spec.kind in ('lanelet', 'lanelet_list') %}
+    {{ lanelet_picker(name, current, draft, spec.label,
+                      many=(spec.kind == 'lanelet_list'),
+                      picks=spec.picks|join(',')) }}
   {% elif spec.kind == 'action' %}
     {# Actions are listed by track, because "which one is Cut in" is a question
        about whose track it sits on as much as about its title. #}
@@ -59,7 +64,90 @@
 {% endmacro %}
 
 
-{% macro field(spec, params, document, prefix='') %}
+{# The control for a Lanelet2 lanelet id, shared by the metadata-driven fields
+   and by the spawn section, which is hand-written because a spawn is not a
+   `params` mapping. One macro, or the two drift: the entity inspector kept a
+   plain text box for months after the conditions stopped having one. #}
+{% macro lanelet_picker(name, current, draft, label='Lanelet',
+                        many=false,
+                        picks='lanelet_fill,centerline,direction') %}
+  {%- set shown = (current if current is string
+                   else (current or [])|join(', ')) if many
+                  else ('' if current is none else current) -%}
+  {# The map is the only way to set a lanelet: the number is a readout, not an
+     input. Nobody knows lanelet ids by heart, so typing one is guesswork that
+     the map answers exactly -- and making the map the single editor means
+     there is one path a value can arrive by, not two to keep in step.
+
+     There is no "type it instead" fallback for a viewer that will not load,
+     because the page fetches htmx from a CDN too: an editor that cannot reach
+     the network has no working controls at all, so the fallback would only
+     ever run when nothing else does.
+
+     It opens over the whole viewport rather than sitting under the field,
+     because the inspector column is 384px wide and a city map that size
+     cannot be picked from. Opening it is also the first time the map is
+     fetched and parsed, instead of on every inspector render. #}
+  <div class="ed-pick-row">
+    {# A text input even for a single id: `type=number` would let a browser
+       offer spinners on a field nothing may type into. #}
+    <input type="text" name="{{ name }}" class="ed-input ed-input-locked{{ ' mono' if many }}"
+           id="pick-{{ name }}" value="{{ shown }}"
+           placeholder="{{ 'none selected' if many else 'not set' }}"
+           readonly aria-readonly="true">
+    {% if draft %}
+      <button type="button" class="ed-btn-sm" data-open-picker="picker-{{ name }}">
+        {{ ic.icon('map', 13) }} Edit
+      </button>
+    {% endif %}
+  </div>
+  {% if draft %}
+    <div class="ed-modal" id="picker-{{ name }}" hidden>
+      <div class="ed-modal-panel">
+        <div class="ed-modal-head">
+          <div>
+            <div class="ed-panel-title">
+              {{ 'Pick ' ~ label }}
+            </div>
+            <div class="ed-panel-sub" data-picker-status>
+              {% if many %}
+                Click to add or remove. Done when finished.
+              {% else %}
+                Click a lanelet to set it.
+              {% endif %}
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px">
+            {% if many %}
+              <button type="button" class="ed-btn-primary" data-close-picker>Done</button>
+            {% endif %}
+            <button type="button" class="ed-btn-ghost" data-close-picker>
+              {{ ic.icon('x', 14) }}
+            </button>
+          </div>
+        </div>
+        <div class="ed-modal-body">
+          <div class="ed-map-frame ed-map-full" hidden
+               data-map-viewer="{{ map_viewer_url() }}"
+               data-map-src="/draft/{{ draft.id }}/map.osm"
+               data-highlight="{{ shown|replace(' ', '') }}"
+               data-picks-into="pick-{{ name }}"
+               data-picks-layer="{{ picks }}"
+               {% if many %}data-picks-many="1"{% endif %}>
+            <noscript>The map picker needs JavaScript.</noscript>
+          </div>
+          <p class="ed-help" data-viewer-unavailable hidden>
+            The Lanelet2 map viewer could not be loaded, so there is nothing to
+            pick from. Check that this scenario's Lanelet2 file path is right.
+          </p>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro field(spec, params, document, prefix='', draft=none) %}
   {%- set value = params.get(spec.name, spec.default) -%}
   <div class="ed-field">
     {% if spec.kind != 'bool' %}
@@ -67,19 +155,23 @@
         {{ spec.label }}{% if spec.unit %} <span class="unit">({{ spec.unit }})</span>{% endif %}
       </label>
     {% endif %}
-    {{ control(spec, value, document, prefix) }}
+    {{ control(spec, value, document, prefix, draft) }}
     {% if spec.help and spec.kind != 'bool' %}<p class="ed-help">{{ spec.help }}</p>{% endif %}
   </div>
 {% endmacro %}
 
 
-{% macro fields(specs, params, document, prefix='') %}
-  {% for spec in specs %}{{ field(spec, params, document, prefix) }}{% endfor %}
+{% macro fields(specs, params, document, prefix='', draft=none) %}
+  {% for spec in specs %}{{ field(spec, params, document, prefix, draft) }}{% endfor %}
 {% endmacro %}
 
 
 {# A condition rendered as `subject -> target | metric | <rule> value unit`,
-   which is the reading the swimlane is built around. #}
+   which is the reading the swimlane is built around.
+
+   A target that is not an actor carries the name of what it is -- `Lanelet 183`
+   rather than `183` -- because this framework speaks both Lanelet2 and
+   OpenDRIVE and a bare number belongs to neither on sight. #}
 {% macro condition_summary(node, document) %}
   {%- set spec = get_condition_spec(node.type) -%}
   {% if spec %}
@@ -89,14 +181,28 @@
     {%- set target = node.params.get(visual.target) if visual.target else none -%}
     {%- set value = node.params.get(visual.value) if visual.value else none -%}
     {%- set rule = node.params.get(visual.rule) if visual.rule else none -%}
+    {%- set detail = node.params.get(visual.detail) if visual.detail else none -%}
+    {#- The detail is labelled by the same FieldSpec the inspector renders, so
+        the card and the form cannot drift apart on what a value is called. -#}
+    {%- set detail_spec = (spec.fields | selectattr('name', 'equalto', visual.detail)
+                           | first | default(none, true)) if visual.detail else none -%}
     <div class="cond-subject">
       {% if subject_action %}{{ action_ref(subject_action, document) }}
       {% elif subject %}{{ entity_ref(subject, document) }}{% endif %}
       {% if subject and target is not none %}<span class="cond-arrow">&#8594;</span>{% endif %}
-      {% if target is not none %}{{ entity_ref(target, document) }}{% endif %}
+      {% if target is not none %}{{ entity_ref(target, document, visual.target_prefix) }}{% endif %}
       {% if not subject and target is none %}<span class="cond-world">world</span>{% endif %}
     </div>
     <div class="cond-metric">{{ visual.metric }}</div>
+    {#- An optional detail left unset is stated, not omitted: "Road 80" alone
+        looks like an address, and a road is not one until a lane is named. -#}
+    {%- if detail_spec %}
+      {%- if detail is not none %}
+        <div class="cond-detail">{{ detail_spec.label }} {{ detail }}</div>
+      {%- elif not detail_spec.required %}
+        <div class="cond-detail">any {{ detail_spec.label|lower }}</div>
+      {%- endif %}
+    {%- endif %}
     <div class="cond-value">
       {% if rule %}<span class="cond-op">{{ rule_symbol(rule) }}</span>{% endif %}
       {% if value is not none %}{{ value }}{% if visual.unit %} <span class="cond-unit">{{ visual.unit }}</span>{% endif %}
@@ -154,16 +260,21 @@
 {% endmacro %}
 
 
-{# A subject or target that names an actor is tinted; a lanelet id or a raw
-   value is left alone, because only actors have a track to point back at. #}
-{% macro entity_ref(value, document) %}
+{# A subject or target that names an actor is tinted; anything else is left
+   untinted, because only actors have a track to point back at -- but it is
+   prefixed with what it is, so a lanelet id is never mistaken for an OpenDRIVE
+   one. #}
+{% macro entity_ref(value, document, prefix='') %}
   {%- set hue = entity_hue(value, document)|trim -%}
   {%- if hue -%}
     <span class="cond-actor" style="--ref-hue: {{ hue }}">{{ entity_label(value, document) }}</span>
+  {%- elif prefix -%}
+    <span class="cond-ref"><span class="cond-frame">{{ prefix }}</span> {{ entity_label(value, document) }}</span>
   {%- else -%}
     <span>{{ entity_label(value, document) }}</span>
   {%- endif -%}
 {% endmacro %}
+
 
 
 {% macro rule_symbol(rule) %}
