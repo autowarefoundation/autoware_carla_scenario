@@ -79,15 +79,13 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
-| `AttachCameraSensorAction` | Attach a generic `CameraSensorBase` once a condition fires. |
-| `AttachCarlaCameraSensorAction` | CARLA-specific subclass that builds a `CarlaCameraSensor`. |
 
 ## Sensors (`autoware_carla_scenario.sensor`)
 
 | Symbol | Description |
 |--------|-------------|
 | `CameraSensorBase`, `CameraSensorConfig` | Provider-agnostic camera sensor interface. |
-| `CarlaCameraSensor`, `CarlaCameraSensorConfig` | CARLA RGB camera implementation, used by the video recorder and `AttachCarlaCameraSensorAction`. |
+| `CarlaCameraSensor`, `CarlaCameraSensorConfig` | CARLA RGB camera implementation, used by the video recorder and the driver rig. |
 
 ## External driver (`autoware_carla_scenario.driver`)
 
