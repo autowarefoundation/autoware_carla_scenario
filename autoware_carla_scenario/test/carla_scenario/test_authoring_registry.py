@@ -51,15 +51,8 @@ class TestSpecCoverage:
         from autoware_carla_scenario import actions
         from autoware_carla_scenario.actions.base import BaseAction
 
-        # Sensors are attached by a scenario's own setup, not authored as a
-        # step on the canvas: they are rig configuration, not something an
-        # actor does at a point in the story.
-        runtime_only = {
-            "AttachCameraSensorAction",
-            "AttachCarlaCameraSensorAction",
-            "AttachLidarSensorAction",
-        }
-        self._assert_every_class_is_built(actions, BaseAction, runtime_only, "action")
+        # Empty on purpose: every action the runtime has is authorable.
+        self._assert_every_class_is_built(actions, BaseAction, set(), "action")
 
     @staticmethod
     def _assert_every_class_is_built(
@@ -89,6 +82,17 @@ class TestSpecCoverage:
             for name, obj in vars(module).items()
             if inspect.isclass(obj) and issubclass(obj, base) and obj is not base
         }
+
+        # An excuse for a class that no longer exists silently weakens the
+        # guard: it would go on excusing a *future* class that happens to be
+        # given the same name.  Deleting the sensor attach actions left exactly
+        # this behind.
+        stale = sorted(runtime_only - exported)
+        assert not stale, (
+            f"these {noun}s are excused but no longer exist: {stale}. "
+            f"Remove them from `runtime_only`."
+        )
+
         missing = sorted(exported - built - runtime_only)
         assert not missing, (
             f"these {noun}s exist in the runtime but no builder constructs them, "
