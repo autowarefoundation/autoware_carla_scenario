@@ -75,8 +75,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .actions import (
-        AttachCameraSensorAction as AttachCameraSensorAction,
-        AttachCarlaCameraSensorAction as AttachCarlaCameraSensorAction,
         BaseAction as BaseAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
@@ -312,8 +310,6 @@ __all__ = [
     "RelativeAcceleration",
     "FrenetAcceleration",
     # Actions
-    "AttachCameraSensorAction",
-    "AttachCarlaCameraSensorAction",
     "BaseAction",
     "LaneChangeAction",
     "LaneChangeDirection",
@@ -339,8 +335,6 @@ __all__ = [
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
-    "AttachCameraSensorAction": (".actions", "AttachCameraSensorAction"),
-    "AttachCarlaCameraSensorAction": (".actions", "AttachCarlaCameraSensorAction"),
     "BaseAction": (".actions", "BaseAction"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "LaneChangeDirection": (".actions", "LaneChangeDirection"),
