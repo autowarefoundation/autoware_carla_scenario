@@ -360,6 +360,19 @@ class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. `test_authoring_registry.py` fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.
 
+### The map path is a document field
+
+`/draft/<id>/map.osm` serves the file the document names, and that name is
+typed by whoever is using the editor -- which binds `0.0.0.0` by default. Handed
+straight to a `FileResponse` it was an arbitrary local file read for anyone who
+could reach the port. A path is accepted only when it resolves **inside**
+`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) and names a
+`.osm`, so what the route can serve is bounded by where the editor was started
+rather than by what the process can read.
+
+That is a bound, not authentication: the editor still has none, so it belongs on
+a network you trust.
+
 ## Save Draft vs Export Package
 
 **Save Draft** writes the working document to `scenario_drafts/<id>.yaml`.
@@ -456,6 +469,7 @@ guess.
 | --- | --- | --- |
 | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
 | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's `.zip` is staged until the browser fetches it |
+| `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
 | `SCENARIO_EDITOR_HOST` | `0.0.0.0` | Bind address |
 | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
 | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |

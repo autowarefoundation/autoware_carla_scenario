@@ -80,9 +80,9 @@ class LaneChangeAction(BaseAction):
         self._direction = direction
         self._client = client
         self._tm_port = tm_port
-        #: ``(road_id, lane_id)`` the vehicle was on when the command went out,
-        #: or ``None`` when the manoeuvre could not be started.
-        self._start_lane: _Optional[tuple[int, int]] = None
+        #: ``(road_id, lane_id)`` of the lane the command aims at, or ``None``
+        #: when the manoeuvre could not be started.
+        self._target_lane: _Optional[tuple[int, int]] = None
         #: The actor and the map, kept from :meth:`execute`.  ``is_finished``
         #: runs on every frame until the manoeuvre completes -- which, by
         #: design, may be never -- and CARLA rebuilds the map object on each
@@ -101,14 +101,25 @@ class LaneChangeAction(BaseAction):
         actor = find_actor_by_role_name(world, self._entity_name)
         if actor is None:
             logger.warning("LaneChangeAction: actor '%s' not found", self._entity_name)
-            self._start_lane = None
+            self._target_lane = None
             return
 
         self._actor = actor
         self._map = world.get_map()
-        # Recorded before the command, because "which lane did it leave" is the
-        # only way to tell afterwards that it went anywhere.
-        self._start_lane = _lane_key_at(self._map, actor.get_location())
+        # The lane aimed at, not merely the one left behind.  "Not the lane it
+        # started on" is satisfied by simply driving onto the next road, whose
+        # ids differ without the vehicle having moved sideways at all -- that
+        # would report a lane change that never happened, and anything waiting
+        # on `completeState` would fire early.
+        self._target_lane = _adjacent_lane(
+            self._map, actor.get_location(), self._direction
+        )
+        if self._target_lane is None:
+            logger.warning(
+                "LaneChangeAction: no lane %s of '%s' to change into",
+                self._direction.value,
+                self._entity_name,
+            )
 
         tm = self._client.get_trafficmanager(self._tm_port)
         tm.force_lane_change(actor, self._direction.to_carla_bool())
@@ -126,12 +137,21 @@ class LaneChangeAction(BaseAction):
         diagonal across two lanes, and calling that finished would let a
         reaction fire mid-manoeuvre.
 
+        Completion is the *target* lane, resolved when the command went out --
+        not merely "a different lane id from before".  Lane ids are scoped to a
+        road, so a vehicle that reaches a continuation road before moving
+        sideways gets a different ``(road_id, lane_id)`` without having changed
+        lane at all.
+
         A manoeuvre the TrafficManager never makes simply never finishes, and
         the action stays
         :attr:`~autoware_carla_scenario.actions.base.ActionState.RUNNING`.  That
         is OpenSCENARIO's behaviour, and it is what keeps ``completeState`` from
         being reachable by a lane change that did not happen; ending the run on
-        a timer is the scenario timeout's job, not this action's.
+        a timer is the scenario timeout's job, not this action's.  The same
+        applies when the vehicle crosses onto a continuation road mid-manoeuvre
+        and the recorded target no longer names its lane: the action reports
+        nothing rather than reporting the wrong thing.
 
         Args:
             world: The CARLA world instance.
@@ -144,14 +164,14 @@ class LaneChangeAction(BaseAction):
             :data:`~autoware_carla_scenario.constants.LANE_CHANGE_HEADING_TOLERANCE_DEG`
             of its heading.
         """
-        if self._start_lane is None or self._actor is None or self._map is None:
+        if self._target_lane is None or self._actor is None or self._map is None:
             return False
 
         # One RPC per tick: the transform carries both the location the map is
         # queried with and the heading the check needs.
         transform = self._actor.get_transform()
         waypoint = self._map.get_waypoint(transform.location, project_to_road=True)
-        if waypoint is None or _lane_key_of(waypoint) == self._start_lane:
+        if waypoint is None or _lane_key_of(waypoint) != self._target_lane:
             return False
 
         # ``get_waypoint`` projects onto the lane centre, so the distance to it
@@ -179,16 +199,25 @@ class LaneChangeAction(BaseAction):
 # ---------------------------------------------------------------------------
 
 
-def _lane_key_at(
-    carla_map: "carla.Map", location: "carla.Location"
+def _adjacent_lane(
+    carla_map: "carla.Map",
+    location: "carla.Location",
+    direction: LaneChangeDirection,
 ) -> _Optional[tuple[int, int]]:
-    """Return the ``(road_id, lane_id)`` under *location*, or ``None``.
+    """Return the ``(road_id, lane_id)`` beside *location* in *direction*.
 
-    The road id is carried too: lane ids restart per road, so comparing lane ids
-    alone would read a road change as a lane change.
+    ``None`` when there is no lane that way, which is the honest answer to a
+    lane change that cannot happen.
     """
     waypoint = carla_map.get_waypoint(location, project_to_road=True)
-    return None if waypoint is None else _lane_key_of(waypoint)
+    if waypoint is None:
+        return None
+    neighbour = (
+        waypoint.get_right_lane()
+        if direction is LaneChangeDirection.RIGHT
+        else waypoint.get_left_lane()
+    )
+    return None if neighbour is None else _lane_key_of(neighbour)
 
 
 def _lane_key_of(waypoint: "carla.Waypoint") -> tuple[int, int]:

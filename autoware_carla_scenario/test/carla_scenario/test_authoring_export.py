@@ -319,3 +319,28 @@ class TestExportSelfCheck:
         # Build output must not travel with the package.
         assert not (result.root / ".venv").exists()
         assert not (result.root / ".pytest_cache").exists()
+
+
+class TestFreeFormTextReachesTheManifest:
+    """Titles and descriptions are prose, and prose ends up in TOML."""
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            'NPC1 cuts in "hard" on the ego',
+            "line one\nline two",
+            "back\\slash",
+        ],
+    )
+    def test_a_description_survives_into_a_parsable_pyproject(
+        self, tmp_path: Path, description: str
+    ) -> None:
+        import tomli
+
+        document = new_document()
+        document.description = description
+        result = export_package(
+            document, tmp_path, dev_mode=True, lock=False, verify=False, run_tests=False
+        )
+        parsed = tomli.loads((result.root / "pyproject.toml").read_text())
+        assert parsed["project"]["description"] == description

@@ -15,6 +15,7 @@ breaking the page.
 from __future__ import annotations
 
 import logging
+import os
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +27,7 @@ from ..authoring.validator import MAP_EXCLUSION_REF
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "MAP_ROOTS_ENV",
     "PreviewResult",
     "clear_cache",
     "evaluate_spawn",
@@ -131,17 +133,63 @@ def materialize_constraints(
 # ---------------------------------------------------------------------------
 
 
+#: Environment variable listing the directories a map may be read from,
+#: separated by :data:`os.pathsep`.  Defaults to the working directory the
+#: editor was started in, which is what document paths are written relative to.
+MAP_ROOTS_ENV = "SCENARIO_EDITOR_MAP_ROOTS"
+
+
+def map_roots() -> tuple[Path, ...]:
+    """Return the directories a Lanelet2 map may be loaded from."""
+    configured = os.environ.get(MAP_ROOTS_ENV, "")
+    roots = [
+        Path(part).expanduser().resolve()
+        for part in configured.split(os.pathsep)
+        if part.strip()
+    ]
+    return tuple(roots) or (Path.cwd().resolve(),)
+
+
 def lanelet2_source(document: ScenarioDocument) -> Optional[Path]:
     """Return the document's Lanelet2 file, if it is configured and readable.
 
     The wasm viewer renders the map itself, so the editor only has to hand it
-    the ``.osm``; this is the one place that decides which file that is.
+    the ``.osm``; this is the one place that decides which file that is -- and
+    therefore the one place that has to refuse the wrong one.
+
+    The path comes from a document field anyone using the editor can type, and
+    the editor binds ``0.0.0.0`` by default.  Handed straight to a
+    ``FileResponse`` that made ``/draft/<id>/map.osm`` an arbitrary local file
+    read for anyone who could reach the port: create a draft, point it at
+    ``/etc/passwd``, download it.  A path is accepted only when it resolves
+    inside one of :func:`map_roots` and names a ``.osm``, so what the route can
+    serve is bounded by where the editor was started rather than by what the
+    process can read.
     """
     configured = document.map.lanelet2_path
     if not configured:
         return None
     path = Path(configured).expanduser()
-    return path if path.is_file() else None
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+
+    # ``resolve()`` first, so `..` cannot walk out of a root it started in.
+    roots = map_roots()
+    if not any(resolved == root or root in resolved.parents for root in roots):
+        logger.warning(
+            "Refusing map outside %s: %s",
+            os.pathsep.join(str(r) for r in roots),
+            resolved,
+        )
+        return None
+    if resolved.suffix.lower() != ".osm":
+        logger.warning("Refusing map that is not a .osm file: %s", resolved)
+        return None
+    return resolved if resolved.is_file() else None
 
 
 def _cache_key(document: ScenarioDocument) -> Optional[tuple[str, str]]:

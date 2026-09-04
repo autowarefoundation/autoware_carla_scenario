@@ -579,6 +579,7 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `VIEWER_PORT` | viewer | Viewer server listen port |
 | `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
 | `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
+| `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |
 | `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address |
 | `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port |
 | `SCENARIO_EDITOR_MAP_VIEWER` | scenario editor | URL of a self-hosted `simple_lanelet2` map viewer |

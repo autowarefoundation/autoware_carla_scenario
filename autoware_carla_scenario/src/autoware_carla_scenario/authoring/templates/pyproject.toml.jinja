@@ -1,7 +1,7 @@
 [project]
 name = "{{ distribution_name }}"
 version = "{{ package_version }}"
-description = "{{ description }}"
+description = {{ description | toml_string }}
 # Matches the framework's own requirement: the CARLA client wheel is what caps
 # the interpreter, so a scenario package cannot be looser than the framework.
 requires-python = "{{ requires_python }}"

@@ -436,12 +436,35 @@ class EditorService:
         action.params.update(_parse(spec.fields, form))
 
     def delete_action(self, document: ScenarioDocument, action_id: str) -> None:
-        """Remove an action and its trigger."""
+        """Remove an action, its trigger, and every condition that waited on it.
+
+        Leaving a dangling reference behind would turn a delete into a
+        validation error the user did not cause -- and one that blocks
+        compilation and export until they hunt down each dependent condition by
+        hand.  Entity deletion already drops its references; an action
+        reference is no different.
+        """
         action = document.action(action_id)
         if action is None:
             raise EditorError(f"No action named {action_id!r}.")
         document.actions.remove(action)
         document.ui.nodes.pop(action_id, None)
+
+        for other in document.actions:
+            if other.trigger is not None and _references_action(
+                other.trigger, action_id
+            ):
+                other.trigger = None
+        document.assertions.pass_conditions = [
+            c
+            for c in document.assertions.pass_conditions
+            if not _references_action(c, action_id)
+        ]
+        document.assertions.fail_conditions = [
+            c
+            for c in document.assertions.fail_conditions
+            if not _references_action(c, action_id)
+        ]
         document.sync_layout()
 
     def move_action(
@@ -647,9 +670,17 @@ def condition_actions(node: ConditionNode) -> list[str]:
 
 def _references_entity(node: ConditionNode, entity_id: str) -> bool:
     """Whether any node in this subtree names *entity_id*."""
-    return any(
-        entity_id in condition_refs(candidate, "entity") for candidate in node.walk()
-    )
+    return _references(node, "entity", entity_id)
+
+
+def _references_action(node: ConditionNode, action_id: str) -> bool:
+    """Whether any node in this subtree waits on *action_id*."""
+    return _references(node, "action", action_id)
+
+
+def _references(node: ConditionNode, kind: str, target: str) -> bool:
+    """Whether any node in this subtree names *target* through a *kind* field."""
+    return any(target in condition_refs(candidate, kind) for candidate in node.walk())
 
 
 def _attach_trigger(

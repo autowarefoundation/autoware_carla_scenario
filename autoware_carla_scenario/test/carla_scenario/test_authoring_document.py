@@ -111,6 +111,20 @@ class TestLayoutIsPresentationOnly:
         slots = document.action_slots("npc1")
         assert slots == [[], [], [action]]
 
+    def test_the_cut_in_npc_does_not_start_in_the_lane_it_must_reach(self) -> None:
+        """Without a sweep the fallback spawn is what runs.
+
+        Starting NPC1 on the lanelet the PASS assertion names would satisfy the
+        verdict before the lane change ran -- a reported successful cut-in that
+        never happened.
+        """
+        document = new_document()
+        target = document.assertions.pass_conditions[0].children[0].params["lanelet_id"]
+        npc, ego = document.entity("npc1"), document.entity("ego")
+        assert npc is not None and ego is not None
+        assert npc.spawn.lanelet_id != target
+        assert ego.spawn.lanelet_id == target
+
     def test_a_step_holds_every_action_placed_in_it(self) -> None:
         """A step is a set, not a slot.
 

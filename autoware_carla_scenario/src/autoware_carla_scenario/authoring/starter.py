@@ -109,7 +109,13 @@ def new_document(
         initial_speed_kmh=25.0,
         spawn=SpawnSpec(
             mode="constraint_search",
-            lanelet_id=183,
+            # The lane the ego is *not* in.  A run without a sweep falls back to
+            # this id, and starting NPC1 on the ego's own lanelet would satisfy
+            # the PASS assertion below before the cut-in ran at all -- the
+            # scenario would report a successful cut-in that never happened.
+            # 184's left neighbour is 183, which is what the left lane change
+            # and the `has_adjacent left` constraint below are describing.
+            lanelet_id=184,
             s=SValue(
                 mode="derived",
                 value=10.0,

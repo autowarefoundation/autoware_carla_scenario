@@ -24,6 +24,7 @@ from autoware_carla_scenario.authoring.models import (
     ScenarioDocument,
 )
 from autoware_carla_scenario.authoring.persistence import Draft, DraftStore
+from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.editor.app import create_app
 from autoware_carla_scenario.editor.service import EditorError, EditorService
 
@@ -168,6 +169,58 @@ class TestPages:
         client.post(f"/draft/{draft_id}/action/{action_id}/move", data={"delta": "2"})
         document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
         assert document["ui"]["nodes"][action_id]["column_hint"] == 2
+
+    def test_the_map_route_refuses_a_file_outside_its_roots(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The map path is a document field, and the editor binds 0.0.0.0.
+
+        Handed straight to a FileResponse it made this route an arbitrary local
+        file read for anyone who could reach the port.
+        """
+        draft = _draft(store, draft_id)
+        for path in ("/etc/hostname", "../../../../etc/hosts", "pyproject.toml"):
+            draft.document.map.lanelet2_path = path
+            store.save(draft)
+            assert client.get(f"/draft/{draft_id}/map.osm").status_code == 404, path
+
+    def test_the_map_route_still_serves_a_map_inside_its_roots(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        assert client.get(f"/draft/{draft_id}/map.osm").status_code == 200
+
+    def test_deleting_an_action_drops_what_waited_on_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A dangling reference would block compilation and export.
+
+        The user would have to hunt down every dependent condition by hand for
+        a delete they did not know was destructive.
+        """
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        cut_in = document["actions"][0]["id"]
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        reaction = document["actions"][-1]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": f"trigger:{reaction}", "type_id": "action_state"},
+        )
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        node = document["actions"][-1]["trigger"]["id"]
+        client.post(
+            f"/draft/{draft_id}/condition/{node}",
+            data={"action": cut_in, "state": "completeState"},
+        )
+
+        client.post(f"/draft/{draft_id}/action/{cut_in}/delete")
+        stored = _document(store, draft_id)
+        survivor = stored.action(reaction)
+        assert survivor is not None, "the dependent action survives"
+        assert survivor.trigger is None
+        assert validate_document(stored).ok
 
     def test_a_lanelet_field_gets_a_map_to_pick_from(
         self, client: TestClient, draft_id: str
