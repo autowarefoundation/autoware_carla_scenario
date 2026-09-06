@@ -20,9 +20,9 @@ from autoware_carla_scenario.coordinate import (
     to_lanelet2,
     to_opendrive,
 )
-from autoware_carla_scenario.coordinate.map_manager import (
-    _parse_geo_reference,
-    _read_projector_type,
+from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
+from autoware_carla_scenario.coordinate.projection import (
+    read_projector_type as _read_projector_type,
 )
 from autoware_carla_scenario.coordinate.transform import (
     _carla_to_lanelet2,

@@ -21,7 +21,8 @@ has half of its geometry land in the neighbouring square, tens of kilometres
 away from the rest.
 
 Which projection a map wants is not a guess: Autoware ships it next to the map,
-in ``map_projector_info.yaml``, and that is what this module reads.  A ``Local``
+in ``map_projector_info.yaml``, and :mod:`.projection` -- which every loader in
+this package shares -- is what reads it.  A ``Local``
 map -- the CARLA towns again -- is read with ``UtmProjector`` at the map origin,
 which reproduces the ``local_x``/``local_y`` the file stores and makes the
 offset above zero.
@@ -34,84 +35,14 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
-# autoware_lanelet2_extension_python must be imported before lanelet2 to register
-# Autoware-specific regulatory elements (road_marking, detection_area, etc.)
-from autoware_lanelet2_extension_python.projection import (
-    MGRSProjector,
-    TransverseMercatorProjector,
-)
 import lanelet2.core
 import lanelet2.io
-import lanelet2.projection
 from pyxodr.road_objects.network import RoadNetwork
-import yaml  # type: ignore[import-untyped]
 
+from .projection import resolve_projector
 from .road_lanelet_mapping import RoadLaneletMapping
 
 logger = logging.getLogger(__name__)
-
-
-#: Autoware's projection descriptor, written next to the Lanelet2 map.
-_PROJECTOR_INFO_FILENAME = "map_projector_info.yaml"
-
-#: Lanelet2 projector to read each Autoware ``projector_type`` with.
-#:
-#: ``Local`` maps store the map frame in the ``local_x``/``local_y`` tags and
-#: derive their lat/lon from it; ``UtmProjector`` at the map origin reproduces
-#: those metres exactly (checked against a CARLA town to the centimetre), and
-#: it is the only one of these that stays continuous across a UTM zone
-#: boundary, which is where a CARLA geoReference of (0, 0) sits.
-_PROJECTOR_BY_AUTOWARE_TYPE = {
-    "Local": "utm",
-    "LocalCartesian": "local_cartesian",
-    "LocalCartesianUTM": "local_cartesian",
-    "MGRS": "mgrs",
-    "TransverseMercator": "transverse_mercator",
-}
-
-#: Used when no descriptor is found, which is what every map did before this
-#: module read one.
-_DEFAULT_PROJECTOR = "mgrs"
-
-
-def _read_projector_type(lanelet2_path: Path) -> Optional[str]:
-    """Return the projector named by the map's ``map_projector_info.yaml``.
-
-    ``None`` when there is no descriptor beside the map, or it names a
-    projection this module cannot read the map with.
-    """
-    info_path = lanelet2_path.parent / _PROJECTOR_INFO_FILENAME
-    if not info_path.is_file():
-        return None
-    try:
-        info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        logger.warning("Could not read %s; falling back", info_path, exc_info=True)
-        return None
-    if not isinstance(info, dict):
-        logger.warning(
-            "%s is not a mapping (%s); falling back",
-            info_path,
-            type(info).__name__,
-        )
-        return None
-    autoware_type = info.get("projector_type")
-    projector = (
-        _PROJECTOR_BY_AUTOWARE_TYPE.get(autoware_type)
-        if isinstance(autoware_type, str)
-        else None
-    )
-    if projector is None:
-        logger.warning(
-            "%s names projector_type %r, which this module does not read; "
-            "falling back to %s",
-            info_path,
-            autoware_type,
-            _DEFAULT_PROJECTOR,
-        )
-        return None
-    logger.info("%s says projector_type %s", info_path.name, autoware_type)
-    return projector
 
 
 class MapManager:
@@ -220,21 +151,9 @@ class MapManager:
 
         # Load Lanelet2 map using the same origin as the XODR
         origin = lanelet2.io.Origin(lat, lon)
-        if projector_type is None:
-            projector_type = _read_projector_type(lanelet2_path) or _DEFAULT_PROJECTOR
-        if projector_type == "mgrs":
-            projector: Any = MGRSProjector(origin)
-        elif projector_type == "utm":
-            projector = lanelet2.projection.UtmProjector(origin)
-        elif projector_type == "local_cartesian":
-            projector = lanelet2.projection.LocalCartesianProjector(origin)
-        elif projector_type == "transverse_mercator":
-            projector = TransverseMercatorProjector(origin)
-        else:
-            raise ValueError(
-                f"Unknown projector_type {projector_type!r}; expected one of "
-                f"{sorted(set(_PROJECTOR_BY_AUTOWARE_TYPE.values()))}"
-            )
+        projector, projector_type = resolve_projector(
+            lanelet2_path, origin, projector_type
+        )
         logger.info(
             "Loading %s with the %s projection", lanelet2_path.name, projector_type
         )
