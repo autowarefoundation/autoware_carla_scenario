@@ -18,6 +18,7 @@ from autoware_carla_scenario.coordinate import (
     OpenDrivePose,
     to_carla_world,
     to_lanelet2,
+    to_map_frame,
     to_opendrive,
 )
 from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
@@ -437,3 +438,56 @@ class TestPublicAPI:
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError):
             to_carla_world("invalid")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# TestToMapFrame – the frame Autoware's own map_loader produces
+# ---------------------------------------------------------------------------
+
+
+class TestToMapFrame:
+    """A map-frame pose is the Lanelet2 frame, not the CARLA/XODR one.
+
+    Autoware reads the same Lanelet2 file with the same projector, so the pose
+    it is handed has to be expressed the way that file is -- offset and all.
+    On nishishinjuku (MGRS) the offset is tens of kilometres, so a pose left in
+    CARLA coordinates would land in a different part of Tokyo.
+    """
+
+    def test_a_lanelet_centerline_point_maps_back_onto_itself(self, map_manager):
+        lanelet_id = next(iter(map_manager.lanelet_map.laneletLayer)).id
+        centerline = map_manager.lanelet_map.laneletLayer[lanelet_id].centerline
+        start = centerline[0]
+
+        pose = to_map_frame(Lanelet2Pose(lanelet_id=lanelet_id, s=0.0))
+
+        assert pose.position.x == pytest.approx(start.x, abs=1e-6)
+        assert pose.position.y == pytest.approx(start.y, abs=1e-6)
+        assert pose.position.z == pytest.approx(start.z, abs=1e-6)
+
+    def test_the_offset_is_added_back(self, map_manager):
+        lanelet_id = next(iter(map_manager.lanelet_map.laneletLayer)).id
+        carla_pose = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=0.0))
+
+        pose = to_map_frame(carla_pose)
+
+        offset_x, offset_y = map_manager.mgrs_offset
+        assert pose.position.x == pytest.approx(carla_pose.x + offset_x)
+        assert pose.position.y == pytest.approx(-carla_pose.y + offset_y)
+        assert pose.position.z == pytest.approx(carla_pose.z + map_manager.z_offset)
+        # An MGRS map's own coordinates are far outside the town's extent.
+        assert abs(pose.position.x) > _MAP_EXTENT_M
+
+    def test_the_heading_flips_with_the_handedness(self, map_manager):
+        pose = to_map_frame(CarlaWorldPose(x=0.0, y=0.0, z=0.0, yaw=90.0))
+
+        # CARLA yaw +90 deg (clockwise from East) is -90 deg in the map frame.
+        yaw = 2.0 * math.atan2(pose.rotation.z, pose.rotation.w)
+        assert yaw == pytest.approx(-math.pi / 2)
+
+    def test_pitch_and_roll_survive_the_conversion(self, map_manager):
+        # A pose snapped onto a ramp carries pitch; dropping it would have
+        # Autoware initialize localization in an attitude the vehicle is not in.
+        flat = to_map_frame(CarlaWorldPose(x=0.0, y=0.0, z=0.0))
+        tilted = to_map_frame(CarlaWorldPose(x=0.0, y=0.0, z=0.0, pitch=10.0, roll=5.0))
+        assert tilted.rotation != flat.rotation

@@ -245,3 +245,82 @@ class TestCreateEgo:
             _SimpleScenario(_make_ego_config()).create_ego().termination_requested
             is False
         )
+
+
+# ---------------------------------------------------------------------------
+# TestConfigureAutowareMission – a packaged scenario has to supply a mission
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureAutowareMission:
+    """``ego.entity=autoware`` gives the scenario an ego that plans a route.
+
+    Autoware localizes at an initial pose and drives to a goal; without both it
+    never moves.  The scenario owns those poses because only it knows where the
+    ego spawns and where the run is meant to end, so ``_setup_ego_spawn()``
+    hands them over -- and a config that selected this entity without a goal is
+    refused during setup rather than at the start of the run.
+    """
+
+    @staticmethod
+    def _autoware_entity():
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        return AutowareEgoEntity(bridge=FakeAutowareBridge())
+
+    @staticmethod
+    def _initial_pose():
+        from autoware_carla_scenario.coordinate import CarlaWorldPose
+
+        return CarlaWorldPose(x=1.0, y=2.0, z=3.0, yaw=45.0)
+
+    def test_an_ego_that_drives_itself_needs_no_mission(self) -> None:
+        # An autopilot or driver ego is unaffected, goal or no goal.
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.configure_autoware_mission(self._initial_pose())
+        assert scenario.goal_pose is None
+
+    def test_an_autoware_ego_without_a_goal_is_refused(self) -> None:
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = self._autoware_entity()
+        with pytest.raises(ValueError, match="goal_lanelet_id"):
+            scenario.configure_autoware_mission(self._initial_pose())
+
+    def test_the_mission_reaches_the_entity_in_the_map_frame(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario import scenario_base
+        from autoware_carla_scenario.autoware_bridge import BridgePose
+        from autoware_carla_scenario.coordinate import CarlaWorldPose, Lanelet2Pose
+
+        goal_carla = CarlaWorldPose(x=40.0, y=50.0, z=1.0, yaw=-90.0)
+        monkeypatch.setattr(
+            scenario_base, "to_opendrive", lambda pose: pose, raising=True
+        )
+        monkeypatch.setattr(
+            scenario_base,
+            "snap_to_carla_road",
+            lambda pose, world, ground_projection: goal_carla,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            scenario_base,
+            "to_map_frame",
+            lambda pose: BridgePose.from_yaw(pose.x, -pose.y, pose.z, 0.0),
+            raising=True,
+        )
+
+        entity = self._autoware_entity()
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = entity
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=123, s=4.0)
+        scenario.set_client(MagicMock())
+
+        scenario.configure_autoware_mission(self._initial_pose())
+
+        # Poses are handed over in the map frame, not CARLA's: the y-flip is
+        # the visible half of that, and the entity now has a mission to start
+        # the run with.
+        assert entity._initial_pose == BridgePose.from_yaw(1.0, -2.0, 3.0, 0.0)
+        assert entity._goal_pose == BridgePose.from_yaw(40.0, -50.0, 1.0, 0.0)

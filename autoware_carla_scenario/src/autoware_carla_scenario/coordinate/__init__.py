@@ -28,6 +28,7 @@ from .transform import (
     to_carla_location,
     to_carla_world,
     to_lanelet2,
+    to_map_frame,
     to_opendrive,
 )
 
@@ -48,5 +49,6 @@ __all__ = [
     "to_carla_location",
     "to_carla_world",
     "to_lanelet2",
+    "to_map_frame",
     "to_opendrive",
 ]

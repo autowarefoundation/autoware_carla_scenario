@@ -94,7 +94,9 @@ class IntersectionPassingScenario(BaseScenario):
 
     The scenario:
 
-    1. Snaps a Lanelet2 pose to the CARLA road surface for the ego spawn.
+    1. Snaps a Lanelet2 pose to the CARLA road surface for the ego spawn, and
+       routes an ego that plans for itself (an Autoware one) to the last
+       lanelet of ``expected_route_lanelet_ids`` unless a goal is configured.
     2. Sets every traffic light in the world to green so the ego proceeds
        without stopping.
     3. If ``turn_direction`` is set, registers a :class:`TurnAction` to steer
@@ -124,6 +126,16 @@ class IntersectionPassingScenario(BaseScenario):
         """Snap ego spawn to CARLA road, set lights to green, register conditions."""
         world = self.world
         cfg = self._config
+
+        # --- Route an ego that plans for itself to the end of that route ---
+        # An Autoware ego needs a goal or it never moves, and this scenario
+        # already declares where the ego is meant to end up: the last lanelet of
+        # the route it asserts.  Its start is where the pass condition latches,
+        # so that is the finish line.  A goal given in the config wins.
+        if self.goal_pose is None and cfg.expected_route_lanelet_ids:
+            self.goal_pose = Lanelet2Pose(
+                lanelet_id=cfg.expected_route_lanelet_ids[-1], s=0.0
+            )
 
         # --- Compute ego spawn from Lanelet2Pose via OpenDrivePose ---
         self._setup_ego_spawn()

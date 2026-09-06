@@ -143,6 +143,12 @@ class AutowareEgoEntity(EgoVehicle):
         spawn snapped onto the road surface, say -- cannot pass them to the
         constructor.  It builds the entity first and calls this from ``setup()``.
 
+        The built-in scenarios reach this through
+        :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.configure_autoware_mission`,
+        which ``_setup_ego_spawn()`` calls with the snapped spawn and the
+        scenario's ``goal_pose``; calling this directly is for a scenario that
+        derives its mission some other way.
+
         Args:
             initial_pose: Map-frame pose Autoware initializes localization at.
             goal_pose: Map-frame goal pose Autoware plans the route to.
@@ -246,9 +252,11 @@ class AutowareEgoEntity(EgoVehicle):
         if self._initial_pose is None or self._goal_pose is None:
             raise ValueError(
                 "AutowareEgoEntity has no mission: Autoware needs an initial pose "
-                "and a goal pose to localize and route. Call set_mission() from "
-                "the scenario's setup(), where poses snapped onto the live map "
-                "exist, or pass them to the constructor."
+                "and a goal pose to localize and route. A scenario that calls "
+                "BaseScenario._setup_ego_spawn() gets this from its goal_pose "
+                "(ego.goal_lanelet_id in the config); one that does not must call "
+                "set_mission() from its setup(), where poses snapped onto the live "
+                "map exist, or pass them to the constructor."
             )
         # The transport is brought up here rather than at construction: a batch
         # of scenarios is built before the first one runs, and two bridges

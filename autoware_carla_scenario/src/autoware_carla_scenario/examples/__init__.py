@@ -20,6 +20,7 @@ from .configs import (
 )
 from .run import (
     build_ego_and_spawn,
+    build_goal_pose,
     build_scenario,
     run_scenario,
     run_scenario_with_queue,
@@ -35,6 +36,7 @@ __all__ = [
     "TrafficLightComplianceConfig",
     # Scenario registry (Issue #420)
     "build_ego_and_spawn",
+    "build_goal_pose",
     "build_scenario",
     "get_conf_dirs",
     "get_scenario_registry",

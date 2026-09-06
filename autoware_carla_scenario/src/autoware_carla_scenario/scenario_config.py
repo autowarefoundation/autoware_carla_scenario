@@ -134,6 +134,14 @@ class EgoVehicleConfig:
     #: Longitudinal offset along the lanelet centerline.
     spawn_s: float = 25.0
 
+    #: Lanelet the ego is routed to.  Autoware plans a route from the spawn
+    #: pose to this one and does not move without it, so ``entity: autoware``
+    #: requires it; the other entities drive themselves and ignore it.
+    goal_lanelet_id: int | None = None
+
+    #: Longitudinal offset along the goal lanelet centerline.
+    goal_s: float = 0.0
+
     #: Which ego entity drives the vehicle.
     #:
     #: * ``"autopilot"`` -- CARLA's TrafficManager (default).

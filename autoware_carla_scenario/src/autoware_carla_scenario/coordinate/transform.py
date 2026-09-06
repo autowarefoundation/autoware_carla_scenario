@@ -10,6 +10,9 @@ Coordinate systems
 Lanelet2 (MGRS absolute, right-hand):  x=East, y=North, z=Up
 OpenDRIVE / CARLA (XODR-relative):     origin = geoReference (lat_0, lon_0)
 CARLA world (left-hand):               x≈East, y≈South, z=Up  (y flipped from XODR)
+Autoware ``map`` (right-hand):         the Lanelet2 frame -- Autoware's own
+                                       map_loader reads the same file with the
+                                       same projector (see :func:`to_map_frame`)
 
 Key relationships
 -----------------
@@ -27,10 +30,13 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
 import carla
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..autoware_bridge.base import BridgePose
 
 # autoware_lanelet2_extension_python must be imported before lanelet2
 from autoware_lanelet2_extension_python.projection import MGRSProjector as _  # noqa: F401
@@ -173,6 +179,51 @@ def to_lanelet2(pose: Union[OpenDrivePose, CarlaWorldPose]) -> Lanelet2Pose:
             return direct
         return _carla_to_lanelet2(_opendrive_to_carla(pose))
     raise TypeError(f"Unsupported pose type: {type(pose)}")
+
+
+def to_map_frame(pose: AnyPose) -> "BridgePose":
+    """Convert any pose to a 6-DoF pose in Autoware's ``map`` frame.
+
+    Autoware's ``map`` frame is the frame its own ``map_loader`` produces: the
+    Lanelet2 file read with the projector named in ``map_projector_info.yaml``.
+    That is exactly the frame this module calls "Lanelet2 absolute" -- so the
+    conversion from CARLA world coordinates is the inverse of
+    :func:`_lanelet2_to_carla`: undo the y-flip, add the projector offset back,
+    and restore the absolute elevation.
+
+    Orientation follows the CARLA (left-handed, degrees) to ROS (right-handed,
+    radians) convention: ``roll`` keeps its sign, ``pitch`` and ``yaw`` flip.
+    A pose that carries pitch/roll -- one snapped onto a ramp or a banked
+    segment, say -- keeps them, so what Autoware initializes localization at is
+    the pose the vehicle actually stands in.
+
+    Args:
+        pose: A Lanelet2, OpenDRIVE or CARLA world pose.  The first two are
+            converted through :func:`to_carla_world` first, which leaves
+            pitch/roll at zero.
+
+    Returns:
+        The map-frame :class:`~autoware_carla_scenario.autoware_bridge.base.BridgePose`
+        to hand Autoware as an initial pose or a goal.
+    """
+    from ..autoware_bridge.base import BridgePose  # noqa: PLC0415
+
+    carla_pose = (
+        to_carla_world(pose)
+        if isinstance(pose, (Lanelet2Pose, OpenDrivePose))
+        else pose
+    )
+
+    mm = MapManager.get_instance()
+    offset_x, offset_y = mm.mgrs_offset
+    return BridgePose.from_rpy(
+        x=carla_pose.x + offset_x,
+        y=-carla_pose.y + offset_y,
+        z=carla_pose.z + mm.z_offset,
+        roll=math.radians(carla_pose.roll),
+        pitch=-math.radians(carla_pose.pitch),
+        yaw=-math.radians(carla_pose.yaw),
+    )
 
 
 # ---------------------------------------------------------------------------

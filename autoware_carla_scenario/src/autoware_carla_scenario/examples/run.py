@@ -138,6 +138,22 @@ def build_ego_and_spawn(
     return ego, spawn_pose, ground_projection
 
 
+def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
+    """Extract the ego's goal pose from ``ego.goal_lanelet_id`` / ``ego.goal_s``.
+
+    Returns ``None`` when no goal is configured -- the ordinary case, since only
+    an ego that plans its own route (``ego.entity=autoware``) needs one.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    goal_lanelet_id = ego_cfg.get("goal_lanelet_id")
+    if goal_lanelet_id is None:
+        return None
+    return Lanelet2Pose(
+        lanelet_id=int(goal_lanelet_id),
+        s=float(ego_cfg.get("goal_s", 0.0)),
+    )
+
+
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     """Build the ego entity selected by ``cfg.ego.entity``.
 
@@ -158,10 +174,11 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     if entity == "autoware":
         # The closed-loop entity: it attaches to the ego the interface node
         # spawns and hands Autoware the scenario's mission over the bridge the
-        # framework hosts.  The mission itself comes from the scenario, which
-        # calls ``AutowareEgoEntity.set_mission`` in its ``setup()`` -- the poses
-        # are snapped onto the live map, so they do not exist before then, and a
-        # scenario that never sets one is refused when the run starts.
+        # framework hosts.  The mission itself comes from the scenario, whose
+        # ``setup()`` calls ``BaseScenario.configure_autoware_mission`` with the
+        # spawn and ``ego.goal_lanelet_id`` snapped onto the live map -- poses
+        # that do not exist before then.  A config that selects this entity
+        # without a goal is refused there, during setup.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,
@@ -212,16 +229,26 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     raise ValueError(msg)
 
 
-def _apply_ego_entity(cfg: DictConfig, scenario: BaseScenario) -> None:
-    """Attach the configured ego entity, keeping one the scenario built itself.
+def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Attach the configured ego entity and goal, keeping what the scenario set.
 
-    ``ego.entity=autopilot`` (the default) yields no entity, and overwriting
-    ``scenario.ego_entity`` with ``None`` there would throw away an entity the
-    scenario constructed in its own ``__init__``.
+    ``ego.entity=autopilot`` (the default) yields no entity and no goal, and
+    overwriting ``scenario.ego_entity`` with ``None`` there would throw away an
+    entity the scenario constructed in its own ``__init__``.  The goal follows
+    the same rule: a scenario that already knows where it is sending the ego
+    keeps its own.
+
+    The goal is set here rather than passed to the builder because
+    :data:`~autoware_carla_scenario.registry.ScenarioBuilder` is a published
+    signature that external scenario packages implement.
     """
     entity = build_ego_entity(cfg)
     if entity is not None:
         scenario.ego_entity = entity
+
+    goal_pose = build_goal_pose(cfg)
+    if goal_pose is not None:
+        scenario.goal_pose = goal_pose
 
 
 def run_scenario_with_queue(
@@ -451,12 +478,18 @@ def _log_batch_plan(
         logger.info("  map         : %s", cfg.map.name)
         logger.info("  server      : %s:%s", cfg.server.host, cfg.server.port)
         logger.info("  TM port     : %s", cfg.traffic_manager.port)
+        goal_pose = build_goal_pose(cfg)
         logger.info(
-            "  ego         : %s (%.1f km/h) spawn=lanelet:%d s:%.1f",
+            "  ego         : %s (%.1f km/h) spawn=lanelet:%d s:%.1f goal=%s",
             cfg.ego.vehicle_type,
             cfg.ego.initial_speed_kmh,
             cfg.ego.spawn_lanelet_id,
             cfg.ego.spawn_s,
+            (
+                f"lanelet:{goal_pose.lanelet_id} s:{goal_pose.s:.1f}"
+                if goal_pose is not None
+                else "none"
+            ),
         )
         # Log all scenario-specific parameters.
         logger.info("  scenario parameters:")
@@ -571,7 +604,7 @@ def build_scenario(
     """
     if build_scenario_fn is not None:
         ego, scenario = build_scenario_fn(cfg)
-        _apply_ego_entity(cfg, scenario)
+        _apply_ego_config(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -588,7 +621,7 @@ def build_scenario(
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario_dict = _to_dict(cfg.scenario)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
-    _apply_ego_entity(cfg, scenario)
+    _apply_ego_config(cfg, scenario)
     return ego, scenario
 
 
