@@ -591,7 +591,17 @@ class ScenarioRunner:
                 self._pace_tick()
                 world.tick()
 
-            # Enable autopilot on vehicles managed by TrafficManager.
+            # Let the ego entity bring up whatever it needs now that the actor
+            # exists and physics have settled (e.g. sensors and an external
+            # driver session).
+            ego.on_scenario_start(world)
+
+            self._wait_for_ego(world, ego, scenario_name)
+
+            # Autopilot last, and only now: the world has been ticking through
+            # the wait above, and a car under TrafficManager would have spent
+            # that time driving -- away from the scenario it was placed for,
+            # before its own pre-tick actions had said how it should drive.
             # When the ego opts out (e.g. AutowareEntity), its actor is
             # excluded so external control can drive it instead.
             skip_ids: set[int] = set()
@@ -605,24 +615,16 @@ class ScenarioRunner:
                 actor.set_autopilot(True, self._tm_port)
                 n_autopilot += 1
             if n_autopilot:
-                logger.info(
-                    "Autopilot enabled on %d vehicle(s) after %d warm-up ticks",
-                    n_autopilot,
-                    scenario.STABILIZE_TICKS,
-                )
+                logger.info("Autopilot enabled on %d vehicle(s)", n_autopilot)
             if skip_ids:
                 logger.info(
                     "Autopilot skipped for ego (id=%s) — external control expected",
                     ", ".join(str(i) for i in skip_ids),
                 )
 
-            # Apply initial speeds after warm-up stabilisation
+            # Initial speeds last of all, so they are the speeds the scenario
+            # starts at rather than ones a long wait has bled off.
             scenario.set_initial_speed(ego_actor)
-
-            # Let the ego entity bring up whatever it needs now that the actor
-            # exists and physics have settled (e.g. sensors and an external
-            # driver session).
-            ego.on_scenario_start(world)
 
             _vehicle_entity_module._warmup_done = True
 
@@ -647,8 +649,6 @@ class ScenarioRunner:
             scenario.register_fail_condition(
                 TimeoutCondition(self.timeout_seconds, label="default_timeout")
             )
-
-            self._wait_for_ego(world, ego, scenario_name)
 
             logger.info("[%s] === Tick loop start ===", scenario_name)
             # The clock starts here, after the ego is ready: an entity that
