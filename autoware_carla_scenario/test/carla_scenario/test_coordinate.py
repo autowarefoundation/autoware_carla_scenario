@@ -144,6 +144,12 @@ class TestReadProjectorType:
         map_path = self._map_with_info(tmp_path, "projector_type: [unclosed\n")
         assert _read_projector_type(map_path) is None
 
+    def test_a_descriptor_that_is_not_a_mapping_is_ignored(self, tmp_path):
+        # Valid YAML, wrong shape: .get() on a list would be an AttributeError
+        # rather than the documented fallback.
+        map_path = self._map_with_info(tmp_path, "- projector_type: Local\n")
+        assert _read_projector_type(map_path) is None
+
 
 # ---------------------------------------------------------------------------
 # TestMapManagerInit – verify map loaded successfully

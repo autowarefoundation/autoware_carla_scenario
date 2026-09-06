@@ -84,9 +84,16 @@ def _read_projector_type(lanelet2_path: Path) -> Optional[str]:
     if not info_path.is_file():
         return None
     try:
-        info = yaml.safe_load(info_path.read_text(encoding="utf-8")) or {}
+        info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         logger.warning("Could not read %s; falling back", info_path, exc_info=True)
+        return None
+    if not isinstance(info, dict):
+        logger.warning(
+            "%s is not a mapping (%s); falling back",
+            info_path,
+            type(info).__name__,
+        )
         return None
     autoware_type = info.get("projector_type")
     projector = (
