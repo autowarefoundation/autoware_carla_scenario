@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..utils.traffic_light import (
+from ..coordinate.traffic_light import (
     get_signal_ids_for_controller,
     lanelet2_traffic_light_id_to_opendrive_controller_id,
 )

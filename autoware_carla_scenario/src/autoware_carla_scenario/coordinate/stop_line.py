@@ -3,17 +3,49 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import lanelet2
 
 from ..utils.stop_line import (
-    get_stop_line_linestrings,
-    get_stop_line_linestrings_with_following,
+    get_stop_line_linestrings as _linestrings_of,
+    get_stop_line_linestrings_with_following as _linestrings_of_with_following,
 )
 from .map_manager import MapManager
 from .poses import Lanelet2Pose
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# The ambient map
+#
+# `utils.stop_line` reads whatever map it is given, which is what keeps it
+# underneath this package rather than on top of it. Supplying the map a run
+# happens to have loaded is this module's job, because `MapManager` is this
+# package's singleton.
+# ---------------------------------------------------------------------------
+
+
+def get_stop_line_linestrings(lanelet_id: int) -> list[Any]:
+    """Return stop line linestrings for *lanelet_id* in the loaded map.
+
+    Requires :class:`MapManager` to be initialised.  Pass a map explicitly to
+    :func:`..utils.stop_line.get_stop_line_linestrings` to avoid that.
+    """
+    return _linestrings_of(MapManager.get_instance().lanelet_map, lanelet_id)
+
+
+def get_stop_line_linestrings_with_following(
+    lanelet_id: int,
+) -> list[tuple[int, Any]]:
+    """Return stop lines for *lanelet_id* and its successors in the loaded map.
+
+    Requires :class:`MapManager` to be initialised.
+    """
+    return _linestrings_of_with_following(
+        MapManager.get_instance().lanelet_map, lanelet_id
+    )
 
 
 def _linestring_to_pose(ls: object, lanelet_id: int) -> Lanelet2Pose | None:

@@ -1,15 +1,8 @@
-"""Utility helpers for autoware_carla_scenario."""
+"""Pure helpers, imported by module path.
 
-from .stop_line import get_stop_line_linestrings
-from .traffic_light import (
-    find_nearest_traffic_light,
-    get_signal_ids_for_controller,
-    lanelet2_traffic_light_id_to_opendrive_controller_id,
-)
-
-__all__ = [
-    "find_nearest_traffic_light",
-    "get_signal_ids_for_controller",
-    "get_stop_line_linestrings",
-    "lanelet2_traffic_light_id_to_opendrive_controller_id",
-]
+Nothing is re-exported here.  Each module in this package reads whatever it is
+handed -- a Lanelet2 map, an OpenDRIVE road network -- and the ambient forms,
+which fetch those from the :class:`~..coordinate.map_manager.MapManager`
+singleton, live in :mod:`..coordinate` alongside it.  Re-exporting the pure
+names beside the ambient ones would put one name on two signatures.
+"""

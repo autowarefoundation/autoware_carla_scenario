@@ -1,71 +1,36 @@
-"""Traffic light utility functions for CARLA scenarios."""
+"""Traffic light lookups in an OpenDRIVE road network.
+
+Pure XML reading: the caller supplies the ``RoadNetwork``.  Reaching
+:class:`~..coordinate.map_manager.MapManager` for it instead would put this
+module on top of ``coordinate``, which is the package that owns the singleton
+and the CARLA conversions -- and ``coordinate`` imports this one.
+
+:mod:`..coordinate.traffic_light` wraps these for the ambient run, where the
+network is the singleton's.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Tuple, Union
-
-from ..coordinate.map_manager import MapManager
-from ..coordinate.poses import AnyPose
-from ..coordinate.transform import to_carla_location
-
-if TYPE_CHECKING:
-    import carla
-
-
-def find_nearest_traffic_light(
-    world: "carla.World",
-    location: Union[AnyPose, "carla.Location"],
-    max_distance: float = 150.0,
-) -> Tuple[Optional["carla.TrafficLight"], float]:
-    """Return the nearest traffic light to *location* within *max_distance*.
-
-    All ``traffic.traffic_light`` actors are retrieved from *world*
-    automatically.
-
-    Args:
-        world: The CARLA world instance used to enumerate traffic lights.
-        location: The reference position to measure distances from.
-            Accepts any pose type (``Lanelet2Pose``, ``OpenDrivePose``,
-            ``CarlaWorldPose``) or a raw ``carla.Location``.
-        max_distance: Maximum search radius in metres.  Traffic lights
-            farther than this are ignored.
-
-    Returns:
-        A ``(traffic_light, distance)`` tuple.  If no traffic light is found
-        within *max_distance*, returns ``(None, float('inf'))``.
-    """
-    loc = to_carla_location(location)
-    nearest: Optional["carla.TrafficLight"] = None
-    nearest_dist = float("inf")
-
-    for actor in world.get_actors():
-        if not actor.type_id.startswith("traffic.traffic_light"):
-            continue
-        dist: float = actor.get_transform().location.distance(loc)
-        if dist < nearest_dist and dist < max_distance:
-            nearest = actor
-            nearest_dist = dist
-
-    return nearest, nearest_dist
+from typing import Any, Optional
 
 
 def lanelet2_traffic_light_id_to_opendrive_controller_id(
+    road_network: Any,
     lanelet2_tl_id: int,
 ) -> Optional[int]:
     """Return the OpenDRIVE controller ID for a Lanelet2 traffic light ID.
 
     The mapping is derived from the ``<controller name="Controller_TL_{lanelet2_id}">``
-    naming convention used during Lanelet2-to-OpenDRIVE conversion.  The XODR
-    XML is read from the :class:`MapManager` singleton's loaded road network.
+    naming convention used during Lanelet2-to-OpenDRIVE conversion.
 
     Args:
+        road_network: The loaded OpenDRIVE road network to read.
         lanelet2_tl_id: Lanelet2 regulatory element ID of the traffic light.
 
     Returns:
         OpenDRIVE controller ID, or ``None`` if no matching controller is found.
     """
-    mm = MapManager.get_instance()
-    root = mm.road_network.root
+    root = road_network.root
     expected_name = f"Controller_TL_{lanelet2_tl_id}"
 
     for ctrl_elem in root.iter("controller"):
@@ -74,14 +39,17 @@ def lanelet2_traffic_light_id_to_opendrive_controller_id(
     return None
 
 
-def get_signal_ids_for_controller(controller_id: int) -> list[str]:
+def get_signal_ids_for_controller(road_network: Any, controller_id: int) -> list[str]:
     """Return the signal IDs controlled by an OpenDRIVE controller.
 
     Parses ``<control signalId="...">`` children of the ``<controller>``
     element whose ``id`` matches *controller_id*.
+
+    Args:
+        road_network: The loaded OpenDRIVE road network to read.
+        controller_id: The OpenDRIVE controller ID to look up.
     """
-    mm = MapManager.get_instance()
-    root = mm.road_network.root
+    root = road_network.root
     for ctrl_elem in root.iter("controller"):
         if ctrl_elem.get("id") == str(controller_id):
             return [
