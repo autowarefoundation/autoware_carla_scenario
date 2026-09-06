@@ -65,6 +65,7 @@ class ScenarioQueue:
         server_extra_args: Optional[List[str]] = None,
         cooldown_seconds: float = 0.0,
         cooldown_max_retries: int = 0,
+        max_tick_rate_hz: Optional[float] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -91,6 +92,9 @@ class ScenarioQueue:
             cooldown_seconds: Wait time (seconds) between consecutive scenario
                 runs.  Gives the CARLA server time to finish cleanup before the
                 next scenario connects.  0 disables the cooldown.
+            max_tick_rate_hz: Upper bound on how fast the runner steps the
+                world, or *None* to step as fast as the server allows.  Cap it
+                to the rate of the slowest client reading the simulation.
             cooldown_max_retries: Maximum number of retries when a scenario run
                 fails (e.g. due to CARLA communication errors).  After each
                 failed attempt a cooldown wait is inserted before the next
@@ -117,6 +121,7 @@ class ScenarioQueue:
         self._output_dir = output_dir
         self._cooldown_seconds = cooldown_seconds
         self._cooldown_max_retries = cooldown_max_retries
+        self._max_tick_rate_hz = max_tick_rate_hz
 
         self._scenarios: List[BaseScenario] = []
         self._results: List[ScenarioResult] = []
@@ -241,6 +246,7 @@ class ScenarioQueue:
             tm_port=self._tm_port,
             timeout_seconds=self._timeout_seconds,
             output_dir=self._output_dir,
+            max_tick_rate_hz=self._max_tick_rate_hz,
         )
         if self._xodr_path is not None and self._map_name is None:
             raise ValueError(

@@ -66,6 +66,16 @@ class ServerConfig:
     #: 0 means no retries -- a failure is immediately propagated.
     cooldown_max_retries: int = 0
 
+    #: Upper bound (Hz) on how fast the tick loop steps the world, or *None*
+    #: for as fast as the server allows.  The world only advances when the
+    #: runner ticks it, so every client that reads the simulation -- an
+    #: external Autoware stack above all -- has to service each tick to see
+    #: continuous ``fixed_delta_seconds`` steps.  A client that is slower than
+    #: the loop misses ticks and sees the simulation jump instead, which its
+    #: own timeout checks read as sensor dropouts.  Capping the rate here
+    #: trades wall-clock time for those clients keeping up.
+    max_tick_rate_hz: float | None = None
+
 
 @dataclass
 class MapConfig:

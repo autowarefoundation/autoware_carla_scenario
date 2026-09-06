@@ -229,6 +229,7 @@ class ScenarioRunner:
         tm_port: int = DEFAULT_TM_PORT,
         timeout_seconds: float = 60.0,
         output_dir: Path = Path("scenario_outputs"),
+        max_tick_rate_hz: Optional[float] = None,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -239,16 +240,46 @@ class ScenarioRunner:
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default timeout applied to every scenario.
             output_dir: Directory where CARLA recording logs are saved.
+            max_tick_rate_hz: Upper bound on how fast the tick loop steps the
+                world, or *None* to step as fast as the server allows.  Slow
+                that down to the rate of the slowest client reading the
+                simulation: a client that cannot service every tick sees the
+                world jump, not step.
         """
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
         self._tm_port = tm_port
+        self._min_tick_interval = (
+            1.0 / max_tick_rate_hz
+            if max_tick_rate_hz is not None and max_tick_rate_hz > 0.0
+            else 0.0
+        )
+        self._next_tick_at = 0.0
 
         self._client = carla.Client(host, port)
         # Loading a town on CARLA 0.10 (UE5) takes ~25 s, so a 10 s client
         # timeout fails the load with a bare 'std::exception'.
         self._client.set_timeout(60.0)
         self._world: Optional["carla.World"] = None
+
+    # ------------------------------------------------------------------
+    # Tick pacing
+    # ------------------------------------------------------------------
+
+    def _pace_tick(self) -> None:
+        """Sleep until the next tick is due under ``max_tick_rate_hz``.
+
+        No-op when the rate is uncapped.  The schedule is kept in absolute
+        time so that a tick which overruns its slot does not push every later
+        tick back with it.
+        """
+        if self._min_tick_interval <= 0.0:
+            return
+        now = time.monotonic()
+        if now < self._next_tick_at:
+            time.sleep(self._next_tick_at - now)
+            now = self._next_tick_at
+        self._next_tick_at = now + self._min_tick_interval
 
     # ------------------------------------------------------------------
     # Map loading
@@ -486,6 +517,7 @@ class ScenarioRunner:
             # Warm-up ticks: let physics and TrafficManager stabilise
             # before the main loop begins.
             for _ in range(scenario.STABILIZE_TICKS):
+                self._pace_tick()
                 world.tick()
 
             # Enable autopilot on vehicles managed by TrafficManager.
@@ -561,6 +593,7 @@ class ScenarioRunner:
                 for cb in scenario._pre_tick_callbacks:
                     cb(world)
 
+                self._pace_tick()
                 world.tick()
 
                 # Give the ego entity a chance to drive itself before the
