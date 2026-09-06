@@ -874,12 +874,12 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
-        type_id="waypoint",
-        title="Road ends ahead",
+        type_id="lane_ends",
+        title="Lane ends ahead",
         category="Entity",
         builder="build_waypoint_condition",
         visual=ConditionVisual(
-            metric="Waypoints ahead", subject="entity", value_label="none"
+            metric="Lane ahead", subject="entity", value_label="none"
         ),
         fields=(
             _entity_field("entity", "Subject"),
@@ -891,7 +891,12 @@ register_condition_spec(
                 unit="m",
             ),
         ),
-        description="No CARLA waypoint exists the given distance ahead.",
+        description=(
+            "No lane continues the given distance ahead -- a dead end, the edge "
+            "of the map, or a lane that merges away. It follows the entity's own "
+            "lane and never considers a lane change, so the *road* may well go "
+            "on without it."
+        ),
     )
 )
 
