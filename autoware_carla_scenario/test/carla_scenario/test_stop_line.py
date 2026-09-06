@@ -78,36 +78,35 @@ def _make_arc_coordinates(length: float) -> MagicMock:
 
 
 class TestGetStopLineLinestrings:
-    """Tests for get_stop_line_linestrings() (regulatory element traversal)."""
+    """Tests for get_stop_line_linestrings() (regulatory element traversal).
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_lanelet_not_found_raises(self, mock_mm_cls: MagicMock) -> None:
+    The map is an argument, so a test supplies one directly rather than
+    standing up the ``MapManager`` singleton and patching it into place.
+    """
+
+    def test_lanelet_not_found_raises(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(
             side_effect=KeyError("not found")
         )
 
         with pytest.raises(ValueError, match="Lanelet ID 999 not found"):
-            get_stop_line_linestrings(999)
+            get_stop_line_linestrings(lanelet_map, 999)
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_no_stop_lines_returns_empty(self, mock_mm_cls: MagicMock) -> None:
+    def test_no_stop_lines_returns_empty(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         lanelet = MagicMock()
         lanelet.regulatoryElements = []
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
 
-        assert get_stop_line_linestrings(100) == []
+        assert get_stop_line_linestrings(lanelet_map, 100) == []
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_traffic_light_stop_line(self, mock_mm_cls: MagicMock) -> None:
+    def test_traffic_light_stop_line(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         stop_ls = _make_linestring(10, [(1.0, 2.0)])
@@ -116,16 +115,14 @@ class TestGetStopLineLinestrings:
         lanelet = MagicMock()
         lanelet.regulatoryElements = [reg_elem]
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
 
-        result = get_stop_line_linestrings(100)
+        result = get_stop_line_linestrings(lanelet_map, 100)
         assert len(result) == 1
         assert result[0].id == 10
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_traffic_sign_ref_line(self, mock_mm_cls: MagicMock) -> None:
+    def test_traffic_sign_ref_line(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         stop_ls = _make_linestring(20, [(5.0, 6.0)], attrs={"type": "stop_line"})
@@ -136,16 +133,14 @@ class TestGetStopLineLinestrings:
         lanelet = MagicMock()
         lanelet.regulatoryElements = [reg_elem]
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
 
-        result = get_stop_line_linestrings(200)
+        result = get_stop_line_linestrings(lanelet_map, 200)
         assert len(result) == 1
         assert result[0].id == 20
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_road_marking_refers(self, mock_mm_cls: MagicMock) -> None:
+    def test_road_marking_refers(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         stop_ls = _make_linestring(30, [(7.0, 8.0)], attrs={"type": "stop_line"})
@@ -156,16 +151,14 @@ class TestGetStopLineLinestrings:
         lanelet = MagicMock()
         lanelet.regulatoryElements = [reg_elem]
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
 
-        result = get_stop_line_linestrings(300)
+        result = get_stop_line_linestrings(lanelet_map, 300)
         assert len(result) == 1
         assert result[0].id == 30
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_duplicate_stop_lines_deduplicated(self, mock_mm_cls: MagicMock) -> None:
+    def test_duplicate_stop_lines_deduplicated(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         stop_ls = _make_linestring(10, [(1.0, 2.0)])
@@ -175,14 +168,12 @@ class TestGetStopLineLinestrings:
         lanelet = MagicMock()
         lanelet.regulatoryElements = [re1, re2]
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
 
-        assert len(get_stop_line_linestrings(100)) == 1
+        assert len(get_stop_line_linestrings(lanelet_map, 100)) == 1
 
-    @patch("autoware_carla_scenario.utils.stop_line.MapManager")
-    def test_multiple_different_stop_lines(self, mock_mm_cls: MagicMock) -> None:
+    def test_multiple_different_stop_lines(self) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         stop_ls1 = _make_linestring(10, [(1.0, 2.0)])
@@ -193,11 +184,10 @@ class TestGetStopLineLinestrings:
         lanelet = MagicMock()
         lanelet.regulatoryElements = [re1, re2]
 
-        mm = MagicMock()
-        mock_mm_cls.get_instance.return_value = mm
-        mm.lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
+        lanelet_map = MagicMock()
+        lanelet_map.laneletLayer.__getitem__ = MagicMock(return_value=lanelet)
 
-        result = get_stop_line_linestrings(100)
+        result = get_stop_line_linestrings(lanelet_map, 100)
         assert len(result) == 2
 
 
