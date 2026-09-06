@@ -33,7 +33,7 @@ from autoware_lanelet2_extension_python.projection import (
 )
 import lanelet2.io
 import lanelet2.projection
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

@@ -67,9 +67,7 @@ def load_lanelet2_map(
     lat, lon, _alt = _parse_geo_reference(xodr_content)
 
     origin = lanelet2.io.Origin(lat, lon)
-    projector, projector_type = resolve_projector(
-        lanelet2_path, origin, projector_type
-    )
+    projector, projector_type = resolve_projector(lanelet2_path, origin, projector_type)
     lanelet_map = lanelet2.io.load(str(lanelet2_path), projector)
 
     logger.info(
