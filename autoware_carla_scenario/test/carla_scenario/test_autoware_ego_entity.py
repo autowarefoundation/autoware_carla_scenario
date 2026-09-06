@@ -169,7 +169,9 @@ def test_on_scenario_start_requires_poses() -> None:
     entity = AutowareEgoEntity(bridge=FakeAutowareBridge())  # no poses
     entity.spawn(world, config=None)  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match="initial_pose and goal_pose"):
+    # The message has to name the way out: the poses come from the scenario's
+    # setup(), which is the only place they exist.
+    with pytest.raises(ValueError, match="set_mission"):
         entity.on_scenario_start(world)
 
 

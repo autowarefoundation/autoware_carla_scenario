@@ -71,26 +71,17 @@ class AutowareEgoEntity(EgoVehicle):
     here) and skips ``set_autopilot(True)`` for this actor, leaving it under
     Autoware's control.
 
-    .. warning::
+    Two things about a run are different because the ego is someone else's:
 
-       Not yet wired into :class:`ScenarioRunner` - this class is the foundation
-       only.  Two runner-side gaps must be closed before an Autoware scenario can
-       run end to end (tracked separately):
-
-       * ``ScenarioRunner._destroy_all_dynamic_actors`` destroys every vehicle
-         before ``ego.spawn()``, so it would remove the interface-spawned ego and
-         :meth:`spawn` would only expire at ``attach_timeout``.  The runner must
-         exempt the interface-owned actor (and its sensors) or create the ego
-         after cleanup.
-       * The runner evaluates pass/fail conditions from the first tick without
-         waiting for :attr:`is_initialized`, so a condition already true near the
-         initial pose could record a result before Autoware is ready.  The runner
-         must gate scenario timing and condition evaluation on
-         :attr:`is_initialized`.
-
-       This entity already exposes the hooks (:attr:`is_initialized`,
-       :attr:`termination_requested`) the runner needs; the wiring itself is a
-       follow-up.
+    * The actor is not the scenario's to destroy.
+      :attr:`~EgoVehicle.attaches_to_existing_actor` is ``True``, which keeps it
+      (and its sensors) out of the cleanup :class:`ScenarioRunner` does before a
+      run -- otherwise the interface-spawned ego would be destroyed and
+      :meth:`spawn` would only expire at ``attach_timeout``.
+    * The scenario cannot be judged until Autoware is driving.  The runner holds
+      the scenario clock and its conditions until :attr:`is_initialized`, so a
+      condition that is already true near the initial pose -- standing still,
+      say -- cannot record a result while Autoware is still localizing.
 
     Pose feedback to the scenario is read directly from the CARLA actor, not the
     bridge: because :meth:`spawn` attaches this entity's
@@ -118,6 +109,9 @@ class AutowareEgoEntity(EgoVehicle):
 
     #: Autoware drives; TrafficManager must keep its hands off this actor.
     use_autopilot: bool = False
+
+    #: The interface node spawns the ego and owns its lifecycle.
+    attaches_to_existing_actor: bool = True
 
     def __init__(
         self,
@@ -251,9 +245,15 @@ class AutowareEgoEntity(EgoVehicle):
             )
         if self._initial_pose is None or self._goal_pose is None:
             raise ValueError(
-                "AutowareEgoEntity requires both initial_pose and goal_pose "
-                "before Autoware can be configured."
+                "AutowareEgoEntity has no mission: Autoware needs an initial pose "
+                "and a goal pose to localize and route. Call set_mission() from "
+                "the scenario's setup(), where poses snapped onto the live map "
+                "exist, or pass them to the constructor."
             )
+        # The transport is brought up here rather than at construction: a batch
+        # of scenarios is built before the first one runs, and two bridges
+        # cannot hold the same address at once.
+        self._bridge.start()
         self._bridge.configure(self._initial_pose, self._goal_pose)
         self._configured = True
 

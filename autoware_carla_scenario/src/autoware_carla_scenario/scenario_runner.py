@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Optional
 import carla
 
 if TYPE_CHECKING:
+    from .entity.ego import EgoVehicle
     from .scenario_base import SpectatorCameraConfig
 
 from .camera_recorder import CameraRecorder
@@ -191,11 +192,31 @@ def _unique_path(path: Path) -> Path:
         counter += 1
 
 
-def _destroy_all_dynamic_actors(world: "carla.World", scenario_name: str) -> None:
-    """Destroy all vehicles and sensors in the world for a clean state."""
-    destroyed = 0
+def _destroy_all_dynamic_actors(
+    world: "carla.World",
+    scenario_name: str,
+    keep_role_names: "frozenset[str]" = frozenset(),
+) -> None:
+    """Destroy the vehicles and sensors in the world for a clean state.
+
+    *keep_role_names* spares actors this scenario does not own -- an ego spawned
+    by an ``autoware_carla_interface`` node, say, which the scenario only
+    attaches to. Their sensors are spared with them: destroying those would
+    leave the owner driving blind.
+    """
     actors = world.get_actors()
+    kept_ids = {
+        actor.id
+        for actor in actors.filter("vehicle.*")
+        if actor.attributes.get("role_name") in keep_role_names
+    }
+    destroyed = 0
     for actor in [*actors.filter("vehicle.*"), *actors.filter("sensor.*")]:
+        if actor.id in kept_ids:
+            continue
+        parent = getattr(actor, "parent", None)
+        if parent is not None and parent.id in kept_ids:
+            continue
         try:
             actor.destroy()
             destroyed += 1
@@ -280,6 +301,44 @@ class ScenarioRunner:
             time.sleep(self._next_tick_at - now)
             now = self._next_tick_at
         self._next_tick_at = now + self._min_tick_interval
+
+    # ------------------------------------------------------------------
+    # Ego readiness
+    # ------------------------------------------------------------------
+
+    def _wait_for_ego(
+        self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
+    ) -> None:
+        """Tick the world until the ego is ready to be judged.
+
+        An entity backed by a whole autonomy stack is not ready when its actor
+        appears: localization, routing and engagement come minutes later, and
+        that stack only makes progress while simulation time advances -- so this
+        waits by ticking, not by sleeping. Running the scenario's conditions
+        during that time would judge a vehicle that has not been asked to move
+        yet, and a condition already true at the initial pose (standing still,
+        for one) would record a result before the run began.
+
+        Returns as soon as the entity reports readiness, or when it gives up
+        waiting: the tick loop reads ``termination_requested`` and ends the run.
+        Entities that are ready with their actor (the default) return here
+        immediately.
+        """
+        if ego.is_initialized:
+            return
+        logger.info("[%s] Waiting for the ego to be ready ...", scenario_name)
+        waited_ticks = 0
+        while not ego.is_initialized and not ego.termination_requested:
+            self._pace_tick()
+            world.tick()
+            ego.on_tick(world, 0.0)
+            waited_ticks += 1
+        logger.info(
+            "[%s] Ego %s after %d tick(s)",
+            scenario_name,
+            "is ready" if ego.is_initialized else "gave up waiting",
+            waited_ticks,
+        )
 
     # ------------------------------------------------------------------
     # Map loading
@@ -470,10 +529,23 @@ class ScenarioRunner:
         world = self._world
         scenario_name = type(scenario).__name__
 
+        # The ego is built before the cleanup, not after it: an entity that
+        # attaches to an actor someone else spawned has to be able to say so
+        # before that actor would be destroyed.
+        ego = scenario.create_ego()
+
         # Destroy any leftover actors from a previous scenario that may
         # have survived a failed reload_world().  On a clean world this
         # is a no-op.
-        _destroy_all_dynamic_actors(world, scenario_name)
+        _destroy_all_dynamic_actors(
+            world,
+            scenario_name,
+            keep_role_names=(
+                frozenset({str(EGO_ROLE_NAME)})
+                if ego.attaches_to_existing_actor
+                else frozenset()
+            ),
+        )
 
         # Enable synchronous mode so we control the simulation tick rate.
         # Original settings are not saved because reload_world() at the
@@ -490,7 +562,6 @@ class ScenarioRunner:
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(scenario.random_seed)
 
-        ego = scenario.create_ego()
         recording_started = False
         tick_count = 0
         result: Optional[ScenarioResult] = None
@@ -577,7 +648,12 @@ class ScenarioRunner:
                 TimeoutCondition(self.timeout_seconds, label="default_timeout")
             )
 
+            self._wait_for_ego(world, ego, scenario_name)
+
             logger.info("[%s] === Tick loop start ===", scenario_name)
+            # The clock starts here, after the ego is ready: an entity that
+            # needs a stack to come up would otherwise spend most of the
+            # scenario's timeout booting.
             start_time = time.monotonic()
 
             # Tick loop
