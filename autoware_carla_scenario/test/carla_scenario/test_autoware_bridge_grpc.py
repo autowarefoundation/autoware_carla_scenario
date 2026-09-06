@@ -154,6 +154,32 @@ def test_bind_failure_raises() -> None:
         first.close()
 
 
+def test_autostart_false_binds_nothing_until_started() -> None:
+    # A batch builds every scenario before it runs the first one, so two bridges
+    # for the same address exist at once; only the one whose scenario is running
+    # may hold it.
+    first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    address = f"localhost:{first.port}"
+    try:
+        deferred = GrpcAutowareBridgeServer(
+            AutowareBridgeConfig(address=address), autostart=False
+        )
+        assert deferred.port is None
+        first.close()
+        deferred.start()
+        assert deferred.port == int(address.rsplit(":", 1)[-1])
+        deferred.start()  # idempotent
+        deferred.close()
+    finally:
+        first.close()
+
+
+def test_close_without_start_is_harmless() -> None:
+    GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address="localhost:0"), autostart=False
+    ).close()
+
+
 def test_implements_autoware_bridge_contract(
     bridge: GrpcAutowareBridgeServer,
 ) -> None:

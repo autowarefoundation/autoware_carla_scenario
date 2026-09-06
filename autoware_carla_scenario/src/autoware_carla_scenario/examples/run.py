@@ -158,23 +158,32 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     if entity == "autoware":
         # The closed-loop entity: it attaches to the ego the interface node
         # spawns and hands Autoware the scenario's mission over the bridge the
-        # framework hosts.  The scenario fills the mission in via
-        # ``AutowareEgoEntity.set_mission`` once the world is up.
+        # framework hosts.  The mission itself comes from the scenario, which
+        # calls ``AutowareEgoEntity.set_mission`` in its ``setup()`` -- the poses
+        # are snapped onto the live map, so they do not exist before then, and a
+        # scenario that never sets one is refused when the run starts.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,
             GrpcAutowareBridgeServer,
         )
 
+        autoware_cfg = cfg.get("autoware")
         bridge_cfg = AutowareBridgeConfig(
             **{
                 key: value
-                for key, value in (_to_dict(cfg.get("autoware")) or {}).items()
+                for key, value in (
+                    _to_dict(autoware_cfg) if autoware_cfg is not None else {}
+                ).items()
                 if key in AutowareBridgeConfig.__dataclass_fields__
             }
         )
+        # autostart=False: in a batch every scenario is built before the first
+        # one runs, and two bridges cannot hold the same address at once.  The
+        # entity starts this one when its own scenario starts.
         return AutowareEgoEntity(
-            bridge_cfg, bridge=GrpcAutowareBridgeServer(bridge_cfg)
+            bridge_cfg,
+            bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
         )
 
     if entity == "carla_driver":

@@ -161,6 +161,14 @@ class AutowareBridge(ABC):
         Must be non-blocking so it can be polled once per world tick.
         """
 
+    def start(self) -> None:
+        """Bring the transport up.  A bridge that needs nothing does nothing.
+
+        Called by the ego entity when the scenario starts, so a transport that
+        holds a scarce resource -- a TCP port, say -- can take it then rather
+        than when the scenario was built.
+        """
+
     def close(self) -> None:
         """Release any transport resources.  Must be idempotent.
 
