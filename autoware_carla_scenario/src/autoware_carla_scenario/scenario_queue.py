@@ -66,6 +66,7 @@ class ScenarioQueue:
         cooldown_seconds: float = 0.0,
         cooldown_max_retries: int = 0,
         max_tick_rate_hz: Optional[float] = None,
+        projector_type: Optional[str] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -92,6 +93,8 @@ class ScenarioQueue:
             cooldown_seconds: Wait time (seconds) between consecutive scenario
                 runs.  Gives the CARLA server time to finish cleanup before the
                 next scenario connects.  0 disables the cooldown.
+            projector_type: Overrides the projection the Lanelet2 map is read
+                with; the map's ``map_projector_info.yaml`` decides when unset.
             max_tick_rate_hz: Upper bound on how fast the runner steps the
                 world, or *None* to step as fast as the server allows.  Cap it
                 to the rate of the slowest client reading the simulation.
@@ -122,6 +125,7 @@ class ScenarioQueue:
         self._cooldown_seconds = cooldown_seconds
         self._cooldown_max_retries = cooldown_max_retries
         self._max_tick_rate_hz = max_tick_rate_hz
+        self._projector_type = projector_type
 
         self._scenarios: List[BaseScenario] = []
         self._results: List[ScenarioResult] = []
@@ -268,6 +272,7 @@ class ScenarioQueue:
                 xodr_path=self._xodr_path,
                 lanelet2_path=self._lanelet2_path,
                 carla_world=self._runner._world,
+                projector_type=self._projector_type,
             )
 
     def stop(self) -> None:

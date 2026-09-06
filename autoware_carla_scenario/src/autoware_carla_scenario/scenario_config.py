@@ -90,6 +90,12 @@ class MapConfig:
     #: Optional path to a Lanelet2 (.osm) file for coordinate transforms.
     lanelet2_path: str | None = None
 
+    #: Overrides the projection the Lanelet2 map is read with -- ``mgrs``,
+    #: ``utm``, ``local_cartesian`` or ``transverse_mercator``.  Leave it unset
+    #: to take it from the map's own ``map_projector_info.yaml``, which is where
+    #: Autoware reads it from too.
+    projector_type: str | None = None
+
 
 @dataclass
 class EntityConfig:

@@ -229,6 +229,7 @@ def run_scenario_with_queue(
     output_dir: Path = Path("scenario_outputs"),
     timeout_seconds: float = 60.0,
     max_tick_rate_hz: float | None = None,
+    projector_type: str | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -254,6 +255,7 @@ def run_scenario_with_queue(
         output_dir=output_dir,
         timeout_seconds=timeout_seconds,
         max_tick_rate_hz=max_tick_rate_hz,
+        projector_type=projector_type,
     )
     queue.add(scenario)
     with queue:
@@ -264,6 +266,11 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def _optional_str(value: object) -> str | None:
+    """Read an optional string config value that may be absent or null."""
+    return None if value is None else str(value)
 
 
 def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
@@ -520,6 +527,7 @@ def run_batch(
         # localize, route and engage.
         timeout_seconds=float(first_cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
+        projector_type=_optional_str(first_cfg.map.get("projector_type")),
     )
 
     for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
@@ -626,6 +634,7 @@ def run_scenario(
         # an Autoware stack needs to localize, route and engage.
         timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
+        projector_type=_optional_str(cfg.map.get("projector_type")),
     )
 
     status = "PASSED" if result.passed else "FAILED"
