@@ -245,7 +245,9 @@ class ScenarioRunner:
         self._tm_port = tm_port
 
         self._client = carla.Client(host, port)
-        self._client.set_timeout(10.0)
+        # Loading a town on CARLA 0.10 (UE5) takes ~25 s, so a 10 s client
+        # timeout fails the load with a bare 'std::exception'.
+        self._client.set_timeout(60.0)
         self._world: Optional["carla.World"] = None
 
     # ------------------------------------------------------------------
@@ -524,9 +526,19 @@ class ScenarioRunner:
             # Start native CARLA recorder
             output_path = self.output_dir / f"{scenario_name}.log"
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            self._client.start_recorder(str(output_path))
-            recording_started = True
-            logger.info("[%s] Recording to %s", scenario_name, output_path)
+            try:
+                self._client.start_recorder(str(output_path))
+            except RuntimeError as error:
+                # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
+                # log must not fail an otherwise healthy scenario run.
+                logger.warning(
+                    "[%s] CARLA recorder unavailable (%s); continuing without a replay log",
+                    scenario_name,
+                    error,
+                )
+            else:
+                recording_started = True
+                logger.info("[%s] Recording to %s", scenario_name, output_path)
 
             # Register default timeout fail condition
             scenario.register_fail_condition(

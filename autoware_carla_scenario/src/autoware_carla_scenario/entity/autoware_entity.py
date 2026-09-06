@@ -138,6 +138,25 @@ class AutowareEgoEntity(EgoVehicle):
         self._termination_requested: bool = False
 
     # ------------------------------------------------------------------
+    # Mission
+    # ------------------------------------------------------------------
+
+    def set_mission(self, initial_pose: "BridgePose", goal_pose: "BridgePose") -> None:
+        """Set the mission before :meth:`on_scenario_start` hands it over.
+
+        ``ScenarioRunner`` calls ``BaseScenario.create_ego()`` *before*
+        ``setup()``, so a scenario whose poses come from the live world -- a
+        spawn snapped onto the road surface, say -- cannot pass them to the
+        constructor.  It builds the entity first and calls this from ``setup()``.
+
+        Args:
+            initial_pose: Map-frame pose Autoware initializes localization at.
+            goal_pose: Map-frame goal pose Autoware plans the route to.
+        """
+        self._initial_pose = initial_pose
+        self._goal_pose = goal_pose
+
+    # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 

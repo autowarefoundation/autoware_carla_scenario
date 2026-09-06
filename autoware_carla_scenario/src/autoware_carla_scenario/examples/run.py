@@ -156,9 +156,26 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         return None
 
     if entity == "autoware":
-        from autoware_carla_scenario import AutowareEntity  # noqa: PLC0415
+        # The closed-loop entity: it attaches to the ego the interface node
+        # spawns and hands Autoware the scenario's mission over the bridge the
+        # framework hosts.  The scenario fills the mission in via
+        # ``AutowareEgoEntity.set_mission`` once the world is up.
+        from autoware_carla_scenario import (  # noqa: PLC0415
+            AutowareBridgeConfig,
+            AutowareEgoEntity,
+            GrpcAutowareBridgeServer,
+        )
 
-        return AutowareEntity()
+        bridge_cfg = AutowareBridgeConfig(
+            **{
+                key: value
+                for key, value in (_to_dict(cfg.get("autoware")) or {}).items()
+                if key in AutowareBridgeConfig.__dataclass_fields__
+            }
+        )
+        return AutowareEgoEntity(
+            bridge_cfg, bridge=GrpcAutowareBridgeServer(bridge_cfg)
+        )
 
     if entity == "carla_driver":
         from autoware_carla_scenario import CarlaDriverEntity  # noqa: PLC0415
@@ -186,6 +203,18 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     raise ValueError(msg)
 
 
+def _apply_ego_entity(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Attach the configured ego entity, keeping one the scenario built itself.
+
+    ``ego.entity=autopilot`` (the default) yields no entity, and overwriting
+    ``scenario.ego_entity`` with ``None`` there would throw away an entity the
+    scenario constructed in its own ``__init__``.
+    """
+    entity = build_ego_entity(cfg)
+    if entity is not None:
+        scenario.ego_entity = entity
+
+
 def run_scenario_with_queue(
     scenario: BaseScenario,
     *,
@@ -198,6 +227,7 @@ def run_scenario_with_queue(
     cooldown_seconds: float = 0.0,
     cooldown_max_retries: int = 0,
     output_dir: Path = Path("scenario_outputs"),
+    timeout_seconds: float = 60.0,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -221,6 +251,7 @@ def run_scenario_with_queue(
         cooldown_seconds=cooldown_seconds,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
+        timeout_seconds=timeout_seconds,
     )
     queue.add(scenario)
     with queue:
@@ -477,6 +508,10 @@ def run_batch(
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
+        # The runner's own fail-safe: without this the queue default (60 s)
+        # caps every run, which is shorter than an Autoware stack needs to
+        # localize, route and engage.
+        timeout_seconds=float(first_cfg.scenario.get("timeout_seconds", 60.0)),
     )
 
     for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
@@ -511,7 +546,7 @@ def build_scenario(
     """
     if build_scenario_fn is not None:
         ego, scenario = build_scenario_fn(cfg)
-        scenario.ego_entity = build_ego_entity(cfg)
+        _apply_ego_entity(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -528,7 +563,7 @@ def build_scenario(
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario_dict = _to_dict(cfg.scenario)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
-    scenario.ego_entity = build_ego_entity(cfg)
+    _apply_ego_entity(cfg, scenario)
     return ego, scenario
 
 
@@ -579,6 +614,9 @@ def run_scenario(
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
+        # The runner's own fail-safe: the queue default (60 s) is shorter than
+        # an Autoware stack needs to localize, route and engage.
+        timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
     )
 
     status = "PASSED" if result.passed else "FAILED"
