@@ -303,11 +303,20 @@ def _make_world_with_actor(
 # ---------------------------------------------------------------------------
 
 
+def _address(road: str = "1", lane: int = -1) -> OpenDrivePose:
+    """An address for the condition under test.
+
+    Only ``road_id`` and ``lane_id`` are read -- ``s`` names where along the
+    lane, which these tests state with rules instead.
+    """
+    return OpenDrivePose(road_id=road, lane_id=lane, s=0.0)
+
+
 class TestEntityLanePositionCondition:
     def test_entity_on_matching_road_lane_returns_pass(self) -> None:
         """Condition triggers when entity is on the specified road and lane."""
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, label="test_lane_pos"
+            "npc1", _address(), label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -328,7 +337,7 @@ class TestEntityLanePositionCondition:
     def test_entity_on_different_road_returns_none(self) -> None:
         """Condition does not trigger when entity is on a different road."""
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, label="test_lane_pos"
+            "npc1", _address(), label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -344,7 +353,7 @@ class TestEntityLanePositionCondition:
     def test_entity_on_different_lane_returns_none(self) -> None:
         """Condition does not trigger when entity is on a different lane."""
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, label="test_lane_pos"
+            "npc1", _address(), label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -360,7 +369,7 @@ class TestEntityLanePositionCondition:
     def test_entity_not_found_returns_none(self) -> None:
         """Condition returns None when the entity does not exist in the world."""
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, label="test_lane_pos"
+            "npc1", _address(), label="test_lane_pos"
         )
         world = _make_world_with_actor("other_actor", x=100.0, y=200.0)
 
@@ -370,7 +379,7 @@ class TestEntityLanePositionCondition:
     def test_result_elapsed_seconds(self) -> None:
         """Elapsed time is correctly recorded in the result."""
         condition = EntityLanePositionCondition(
-            "npc1", road_id="5", lane_id=1, label="test_lane_pos"
+            "npc1", _address("5", 1), label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=0.0, y=0.0)
 
@@ -386,8 +395,8 @@ class TestEntityLanePositionCondition:
 
     def test_lane_id_none_matches_any_lane_on_same_road(self) -> None:
         """When lane_id is None, any lane on the matching road triggers pass."""
-        condition = EntityLanePositionCondition(
-            "npc1", road_id="1", label="test_lane_pos"
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "npc1", "1", label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -407,8 +416,8 @@ class TestEntityLanePositionCondition:
 
     def test_lane_id_none_different_road_returns_none(self) -> None:
         """When lane_id is None, a different road still returns None."""
-        condition = EntityLanePositionCondition(
-            "npc1", road_id="1", label="test_lane_pos"
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "npc1", "1", label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -427,7 +436,7 @@ class TestEntityLanePositionCondition:
         """s > 30 with actual s=50 → pass."""
         rules = [ScalarComparisonRule("s", ComparisonRule.GREATER_THAN, 30.0)]
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, rules=rules, label="test_lane_pos"
+            "npc1", _address(), rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -445,7 +454,7 @@ class TestEntityLanePositionCondition:
         """s > 30 with actual s=10 → None."""
         rules = [ScalarComparisonRule("s", ComparisonRule.GREATER_THAN, 30.0)]
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, rules=rules, label="test_lane_pos"
+            "npc1", _address(), rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -462,7 +471,7 @@ class TestEntityLanePositionCondition:
         """t < 0 with actual t=-1.5 → pass."""
         rules = [ScalarComparisonRule("t", ComparisonRule.LESS_THAN, 0.0)]
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, rules=rules, label="test_lane_pos"
+            "npc1", _address(), rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -480,7 +489,7 @@ class TestEntityLanePositionCondition:
         """t < 0 with actual t=1.5 → None."""
         rules = [ScalarComparisonRule("t", ComparisonRule.LESS_THAN, 0.0)]
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, rules=rules, label="test_lane_pos"
+            "npc1", _address(), rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -500,7 +509,7 @@ class TestEntityLanePositionCondition:
             ScalarComparisonRule("t", ComparisonRule.LESS_THAN, 0.0),
         ]
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, rules=rules, label="test_lane_pos"
+            "npc1", _address(), rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -521,7 +530,7 @@ class TestEntityLanePositionCondition:
             ScalarComparisonRule("t", ComparisonRule.LESS_THAN, 0.0),
         ]
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, rules=rules, label="test_lane_pos"
+            "npc1", _address(), rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -538,14 +547,14 @@ class TestEntityLanePositionCondition:
         """A rule with field='z' raises ValueError."""
         rules = [ScalarComparisonRule("z", ComparisonRule.GREATER_THAN, 0.0)]
         with pytest.raises(ValueError, match="must be 's' or 't'"):
-            EntityLanePositionCondition(
-                "npc1", road_id="1", rules=rules, label="test_lane_pos"
+            EntityLanePositionCondition.anywhere_on_road(
+                "npc1", "1", rules=rules, label="test_lane_pos"
             )
 
     def test_lane_id_none_without_rules_does_not_call_project(self) -> None:
         """When lane_id is None and no rules, project_onto_road is not called."""
-        condition = EntityLanePositionCondition(
-            "npc1", road_id="1", label="test_lane_pos"
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "npc1", "1", label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -565,8 +574,8 @@ class TestEntityLanePositionCondition:
     def test_lane_id_none_with_rules_uses_project_for_st(self) -> None:
         """When lane_id is None with rules, project_onto_road provides s/t."""
         rules = [ScalarComparisonRule("s", ComparisonRule.GREATER_THAN, 10.0)]
-        condition = EntityLanePositionCondition(
-            "npc1", road_id="1", rules=rules, label="test_lane_pos"
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "npc1", "1", rules=rules, label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
@@ -590,7 +599,7 @@ class TestEntityLanePositionCondition:
     def test_rules_none_preserves_existing_behavior(self) -> None:
         """No rules = existing behavior unchanged."""
         condition = EntityLanePositionCondition(
-            "npc1", road_id="1", lane_id=-1, label="test_lane_pos"
+            "npc1", _address(), label="test_lane_pos"
         )
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 

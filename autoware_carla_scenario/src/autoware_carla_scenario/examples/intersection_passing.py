@@ -204,9 +204,9 @@ class IntersectionPassingScenario(BaseScenario):
         # --- Register sticky lane-position conditions ---
         sticky_conditions = [
             StickyCondition(
-                EntityLanePositionCondition(
-                    entity_name=EGO_ROLE_NAME,
-                    road_id=rid,
+                EntityLanePositionCondition.anywhere_on_road(
+                    EGO_ROLE_NAME,
+                    rid,
                     label=f"ego_on_road_{rid}",
                 )
             )

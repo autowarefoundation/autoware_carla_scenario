@@ -84,7 +84,7 @@ class TemporaryStopCondition(CompositionCondition):
 
         persistent_conditions: list[PersistentCondition] = []
         for pose in stop_positions:
-            od_pose = self._to_od(pose)
+            od_pose = to_opendrive(pose)
 
             # Build position conditions spanning multiple roads if needed
             position_conds = self._build_position_conditions(
@@ -142,7 +142,7 @@ class TemporaryStopCondition(CompositionCondition):
         clamped_min = max(0.0, s_min)
         clamped_max = min(road_length, s_max)
         conditions.append(
-            cls._make_lane_condition(
+            cls._make_road_segment_condition(
                 entity_name, od_pose.road_id, clamped_min, clamped_max, label=label
             )
         )
@@ -168,7 +168,9 @@ class TemporaryStopCondition(CompositionCondition):
                     lo = 0.0
                     hi = min(overflow, pred_length)
                 conditions.append(
-                    cls._make_lane_condition(entity_name, pred_id, lo, hi, label=label)
+                    cls._make_road_segment_condition(
+                        entity_name, pred_id, lo, hi, label=label
+                    )
                 )
                 logger.info(
                     "  + predecessor road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
@@ -193,7 +195,9 @@ class TemporaryStopCondition(CompositionCondition):
                     lo = max(0.0, succ_length - overflow)
                     hi = succ_length
                 conditions.append(
-                    cls._make_lane_condition(entity_name, succ_id, lo, hi, label=label)
+                    cls._make_road_segment_condition(
+                        entity_name, succ_id, lo, hi, label=label
+                    )
                 )
                 logger.info(
                     "  + successor road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
@@ -207,7 +211,7 @@ class TemporaryStopCondition(CompositionCondition):
         return conditions
 
     @staticmethod
-    def _make_lane_condition(
+    def _make_road_segment_condition(
         entity_name: Union[EntityRole, str],
         road_id: str,
         s_lo: float,
@@ -215,10 +219,14 @@ class TemporaryStopCondition(CompositionCondition):
         *,
         label: str,
     ) -> EntityLanePositionCondition:
-        """Create an EntityLanePositionCondition for a road segment."""
-        return EntityLanePositionCondition(
-            entity_name=entity_name,
-            road_id=road_id,
+        """Create an EntityLanePositionCondition for a road segment.
+
+        The lane is deliberately not part of it: a stop is at an ``s`` along the
+        road, and which lane the vehicle waits in is not being asserted.
+        """
+        return EntityLanePositionCondition.anywhere_on_road(
+            entity_name,
+            road_id,
             rules=[
                 ScalarComparisonRule(
                     field="s",
@@ -286,13 +294,6 @@ class TemporaryStopCondition(CompositionCondition):
                 exc_info=True,
             )
         return results
-
-    @staticmethod
-    def _to_od(pose: AnyPose) -> OpenDrivePose:
-        """Convert any pose to OpenDrivePose."""
-        if isinstance(pose, OpenDrivePose):
-            return pose
-        return to_opendrive(pose)
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result once the child condition fires.

@@ -22,7 +22,17 @@ from .frames import CoordinateFrame, FrameMismatchError, frame_of
 from .map_manager import MapManager
 from .poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .snap import GroundProjectionConfig, snap_to_carla_road
-from .stop_line import get_stop_line_poses, get_stop_line_poses_with_following
+from .traffic_light import (
+    find_nearest_traffic_light,
+    get_signal_ids_for_controller,
+    lanelet2_traffic_light_id_to_opendrive_controller_id,
+)
+from .stop_line import (
+    get_stop_line_linestrings,
+    get_stop_line_linestrings_with_following,
+    get_stop_line_poses,
+    get_stop_line_poses_with_following,
+)
 from .transform import (
     project_onto_road,
     to_carla_location,
@@ -42,8 +52,13 @@ __all__ = [
     "OpenDrivePose",
     "MapManager",
     "frame_of",
+    "find_nearest_traffic_light",
+    "get_signal_ids_for_controller",
+    "get_stop_line_linestrings",
+    "get_stop_line_linestrings_with_following",
     "get_stop_line_poses",
     "get_stop_line_poses_with_following",
+    "lanelet2_traffic_light_id_to_opendrive_controller_id",
     "project_onto_road",
     "snap_to_carla_road",
     "to_carla_location",
