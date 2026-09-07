@@ -83,18 +83,19 @@ class TrafficLightComplianceScenario(BaseScenario):
 
     def setup(self) -> None:
         """Snap ego spawn, set lights to red, register conditions."""
-        world = self.world
         cfg = self._config
 
         # --- Compute ego spawn from Lanelet2Pose ---
         self._setup_ego_spawn()
 
         # --- Set all traffic lights to RED ---
-        TrafficSignalAction(
-            state=carla.TrafficLightState.Red,
-            lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
-            label="set_all_red",
-        ).execute(world)
+        self.register_init(
+            TrafficSignalAction(
+                state=carla.TrafficLightState.Red,
+                lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                label="set_all_red",
+            )
+        )
 
         # --- Register action to switch lights to green after delay ---
         green_action = TrafficSignalAction(

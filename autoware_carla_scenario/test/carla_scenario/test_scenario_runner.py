@@ -178,3 +178,47 @@ class TestWaitForEgo:
         runner._wait_for_ego(world, ego, "S")
         assert world.tick.call_count == 2
         assert not ego.is_initialized
+
+
+class TestInitPhaseOrdering:
+    """Init actions run before the ego is asked to start, and before the clock.
+
+    The order is what makes the phase useful: an ego that plans its own route
+    is handed its mission by an init action, and the runner then asks it to
+    start and waits for it to be ready.  Registering the hand-over on the tick
+    loop instead could never work -- the loop begins after that wait, and the
+    wait is for a stack that has not been told where to go.
+    """
+
+    def test_init_runs_before_on_scenario_start_and_the_wait(self):
+        import carla
+
+        from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
+
+        order: list[str] = []
+
+        class _Scenario(BaseScenario):
+            def setup(self) -> None:
+                self.register_init(lambda _w: order.append("init"))
+
+            def is_done(self) -> bool:
+                return True
+
+        scenario = _Scenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                )
+            )
+        )
+        scenario.setup()
+
+        ego = _FakeEgo(ready_after=1)
+        ego.on_scenario_start = lambda _w: order.append("on_scenario_start")  # type: ignore[method-assign]
+
+        world = MagicMock()
+        scenario.run_init(world)
+        ego.on_scenario_start(world)
+        _make_runner(None)._wait_for_ego(world, ego, "S")
+
+        assert order == ["init", "on_scenario_start"]

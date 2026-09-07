@@ -591,6 +591,15 @@ class ScenarioRunner:
                 self._pace_tick()
                 world.tick()
 
+            # The scenario's initialization phase: the actor exists and
+            # physics have settled, but the clock has not started and no
+            # condition has been evaluated.  Everything registered with
+            # register_init() runs here -- putting the world in the state the
+            # run starts from, and handing an ego that plans its own route the
+            # mission it needs before the wait below asks whether it is ready.
+            logger.info("[%s] === Init actions ===", scenario_name)
+            scenario.run_init(world)
+
             # Let the ego entity bring up whatever it needs now that the actor
             # exists and physics have settled (e.g. sensors and an external
             # driver session).
