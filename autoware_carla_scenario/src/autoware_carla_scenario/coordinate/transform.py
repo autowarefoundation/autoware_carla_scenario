@@ -133,13 +133,25 @@ def to_opendrive(pose: Lanelet2Pose) -> OpenDrivePose: ...
 def to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose: ...
 
 
-def to_opendrive(pose: Union[Lanelet2Pose, CarlaWorldPose]) -> OpenDrivePose:
-    """Convert a Lanelet2Pose or CarlaWorldPose to an OpenDrivePose.
+@overload
+def to_opendrive(pose: OpenDrivePose) -> OpenDrivePose: ...
+
+
+def to_opendrive(pose: AnyPose) -> OpenDrivePose:
+    """Convert any pose to an OpenDrivePose.
+
+    OpenDRIVE is the frame the runtime works in, so this is the normalisation
+    every caller that accepts an author's address runs first.  An
+    :class:`OpenDrivePose` is returned unchanged: it is already in frame, and
+    saying so here means a caller does not have to special-case it and, more
+    to the point, does not need a loaded map to pass one through.
 
     When a lanelet-to-road mapping is available, Lanelet2 -> OpenDRIVE uses a
     direct path (no CARLA y-flip, no O(n) road search).  Falls back to the
     indirect path through CARLA world coordinates otherwise.
     """
+    if isinstance(pose, OpenDrivePose):
+        return pose
     if isinstance(pose, CarlaWorldPose):
         return _carla_to_opendrive(pose)
     if isinstance(pose, Lanelet2Pose):

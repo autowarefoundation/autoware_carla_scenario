@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.poses import CarlaWorldPose
+from ...coordinate.poses import AnyPose, CarlaWorldPose
 from ...coordinate.transform import project_onto_road, to_opendrive
 from ...entity_role import EntityRole
 from ..base import ScenarioResult, find_actor_by_role_name
@@ -29,26 +29,46 @@ class EntityLanePositionCondition(CompositionCondition):
     specified values, and all optional comparison *rules* on ``s`` / ``t`` are
     satisfied.
 
-    When ``lane_id`` is ``None``, only the ``road_id`` is checked; the entity may
-    be on any lane of that road.  When comparison *rules* are also specified,
-    :func:`project_onto_road` is used to obtain accurate ``s``/``t`` values on
-    the confirmed road.
+    The lane is named by a *position* in whichever frame the author thinks in.
+    A scenario is written in Lanelet2 -- that is the map an author reads and the
+    frame the constraint sweeper resolves spawns in -- while the runtime works
+    in OpenDRIVE, so the address is normalised once here, at construction, by
+    :func:`~autoware_carla_scenario.coordinate.transform.to_opendrive`.  Doing
+    it here rather than in each caller is deliberate: an OpenDRIVE road is *not*
+    a lane, and a caller that resolved only the road turned "the entity is on
+    lanelet 183" into "the entity is anywhere on road 80" -- which is also true
+    while it sits in the neighbouring lane 184, so a cut-in scenario passed
+    without the cut-in.
+
+    A condition that means *any* lane of a road is built with
+    :meth:`anywhere_on_road`, which takes a road and no lane at all.  It has its
+    own constructor rather than a lane the caller leaves out, because those are
+    different statements: an address is either complete or it is not this
+    class's business, and "I could not work out the lane" must not be spelled
+    the same way as "the lane does not matter here".  When comparison *rules*
+    are also specified, :func:`project_onto_road` is used to obtain accurate
+    ``s``/``t`` values on the confirmed road.
 
     An :class:`EntityExistenceCondition` guard ensures the entity is present
     before the position check runs.
 
     .. note::
-        :class:`~autoware_carla_scenario.coordinate.map_manager.MapManager` must be
-        initialised before the first call to :meth:`check`, since the conversion from
-        CARLA world coordinates to OpenDRIVE coordinates requires map data.
+        :class:`~autoware_carla_scenario.coordinate.map_manager.MapManager` must
+        be initialised before :meth:`check`, and before *this constructor* when
+        *position* is anything but an :class:`OpenDrivePose` -- resolving a
+        lanelet to a road and lane reads the map.  Conditions are built inside
+        the scenario's ``setup()``, against a live world, so that holds there;
+        an :class:`OpenDrivePose` needs no map and can be built anywhere.
 
     Args:
         entity_name: The ``role_name`` attribute of the actor to track.
-        road_id: The OpenDRIVE road ID that the entity must be on.
-        lane_id: The OpenDRIVE lane ID that the entity must be on.
-            If ``None``, any lane on the specified road is accepted.
+        position: Where the entity must be, as a Lanelet2, OpenDRIVE or CARLA
+            world pose.  Only the lane it names is used -- say *where along it*
+            with *rules*, which are what the runtime compares ``s``/``t``
+            against.
         rules: Optional comparison rules applied to the ``s`` and/or ``t``
             coordinates of the resolved :class:`OpenDrivePose`.
+        label: Human-readable name for the condition.
 
     Raises:
         ValueError: If any rule has a ``field`` other than ``'s'`` or ``'t'``.
@@ -57,12 +77,63 @@ class EntityLanePositionCondition(CompositionCondition):
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
-        road_id: str,
-        lane_id: Optional[int] = None,
+        position: AnyPose,
         rules: Optional[list[ScalarComparisonRule]] = None,
         *,
         label: str,
     ) -> None:
+        address = to_opendrive(position)
+        self._init(
+            entity_name,
+            road_id=address.road_id,
+            lane_id=address.lane_id,
+            rules=rules,
+            label=label,
+        )
+
+    @classmethod
+    def anywhere_on_road(
+        cls,
+        entity_name: Union[EntityRole, str],
+        road_id: str,
+        rules: Optional[list[ScalarComparisonRule]] = None,
+        *,
+        label: str,
+    ) -> "EntityLanePositionCondition":
+        """Build a condition satisfied on any lane of *road_id*.
+
+        A road is not a place a scenario can usually mean -- a road carries
+        several lanes going both ways -- so reach for this only where the lane
+        genuinely does not matter.  Stopping short of a stop line is the case
+        that motivated it: the stop is at an ``s`` along the road, and which
+        lane the vehicle waits in is not part of the assertion.
+
+        Args:
+            entity_name: The ``role_name`` attribute of the actor to track.
+            road_id: The OpenDRIVE road the entity must be on.
+            rules: Optional comparison rules on ``s`` and/or ``t``.
+            label: Human-readable name for the condition.
+        """
+        condition = cls.__new__(cls)
+        condition._init(
+            entity_name, road_id=road_id, lane_id=None, rules=rules, label=label
+        )
+        return condition
+
+    def _init(
+        self,
+        entity_name: Union[EntityRole, str],
+        *,
+        road_id: str,
+        lane_id: Optional[int],
+        rules: Optional[list[ScalarComparisonRule]],
+        label: str,
+    ) -> None:
+        """Shared construction for both entry points.
+
+        ``lane_id`` is ``None`` only for :meth:`anywhere_on_road`; every pose
+        that reaches :meth:`__init__` names a lane.
+        """
         super().__init__(entity_name=entity_name, label=label)
         self._road_id = road_id
         self._lane_id = lane_id
@@ -138,9 +209,10 @@ class EntityLanePositionCondition(CompositionCondition):
             )
             return None
 
-        # When lane_id is None and we have rules, use project_onto_road() for
-        # accurate s/t on the specific road (to_opendrive() may pick a slightly
-        # different nearest point when roads are close together).
+        # Without a lane to pin it -- anywhere_on_road() -- and with rules to
+        # satisfy, use project_onto_road() for accurate s/t on the specific road
+        # (to_opendrive() may pick a slightly different nearest point when roads
+        # are close together).
         if self._lane_id is None and self._rules:
             od_pose = project_onto_road(carla_pose, self._road_id)
 

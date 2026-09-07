@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
@@ -11,17 +12,29 @@ import pytest
 from autoware_carla_scenario import (
     AndCondition,
     BaseCondition,
+    EntityLanePositionCondition,
     OrCondition,
     PersistentCondition,
     ScenarioResult,
     StandstillCondition,
     TemporaryStopCondition,
 )
+from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import (
     CarlaWorldPose,
     Lanelet2Pose,
     OpenDrivePose,
 )
+
+#: The converter's fixture map, which both packages' tests share.
+_CONVERTER_TEST_DATA = (
+    Path(__file__).resolve().parents[3]
+    / "autoware_lanelet2_to_opendrive"
+    / "test"
+    / "data"
+)
+XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
+OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
 
 
 # ---------------------------------------------------------------------------
@@ -385,10 +398,84 @@ class TestTemporaryStopCondition:
         assert isinstance(cond._child, PersistentCondition)
 
     def test_opendrive_pose_not_converted(self) -> None:
-        """OpenDrivePose is used directly without calling to_opendrive."""
+        """An OpenDrivePose reaches the road unchanged, consulting no map.
+
+        This used to be asserted as "to_opendrive is never called", back when
+        the identity case was a local short-circuit here.  It now lives inside
+        `to_opendrive` itself, so the call happens and returns the pose as it
+        stands -- the guarantee worth pinning is the road it produces, which is
+        what would break if the identity case were dropped.
+        """
         od = OpenDrivePose(road_id="1", lane_id=-1, s=50.0)
-        with patch(
-            "autoware_carla_scenario.conditions.composition.temporary_stop.to_opendrive"
-        ) as mock_to_od:
-            TemporaryStopCondition("ego", stop_positions=[od], label="test_temp_stop")
-            mock_to_od.assert_not_called()
+        MapManager.reset()
+
+        cond = TemporaryStopCondition(
+            "ego", stop_positions=[od], label="test_temp_stop"
+        )
+
+        assert isinstance(cond._child, PersistentCondition)
+
+
+# ---------------------------------------------------------------------------
+# TestEntityLanePositionAddress – a lanelet names a lane, not a road
+# ---------------------------------------------------------------------------
+
+
+class TestEntityLanePositionAddress:
+    """The address an author writes must survive the trip into the runtime.
+
+    An OpenDRIVE road is not a lane.  On this map lanelets 183 and 184 are lanes
+    2 and 1 of the same road 80, so a resolution that kept only the road turned
+    "the entity is on lanelet 183" into "the entity is anywhere on road 80" --
+    true as well while it sits in the neighbouring lane, which let a cut-in
+    scenario pass without the cut-in.
+    """
+
+    @pytest.fixture(scope="class")
+    def loaded_map(self) -> Generator[None, None, None]:
+        MapManager.reset()
+        MapManager.get_instance().initialize(XODR_PATH, OSM_PATH)
+        yield
+        MapManager.reset()
+
+    @pytest.mark.parametrize(("lanelet_id", "lane_id"), [(183, 2), (184, 1)])
+    def test_neighbouring_lanelets_keep_their_own_lanes(
+        self, loaded_map: None, lanelet_id: int, lane_id: int
+    ) -> None:
+        condition = EntityLanePositionCondition(
+            "ego", Lanelet2Pose(lanelet_id=lanelet_id, s=0.0), label="ego_lane"
+        )
+
+        details = condition.get_details()
+        assert details["road_id"] == "80"
+        assert details["lane_id"] == lane_id
+
+    def test_anywhere_on_road_names_no_lane(self) -> None:
+        """The road-only case says so by name, rather than by omitting a lane."""
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "ego", "80", label="ego_road"
+        )
+
+        details = condition.get_details()
+        assert details["road_id"] == "80"
+        assert details["lane_id"] is None
+
+
+class TestAnOpenDriveAddressNeedsNoMap:
+    """An address already in the runtime's frame is passed straight through.
+
+    This is what keeps the constructor usable without a loaded map, which the
+    unit tests above and every hand-written scenario written in OpenDRIVE rely
+    on: only a Lanelet2 or CARLA address has to be resolved against a map.
+    """
+
+    def test_no_map_is_consulted(self) -> None:
+        MapManager.reset()
+
+        condition = EntityLanePositionCondition(
+            "ego", OpenDrivePose(road_id="80", lane_id=2, s=0.0), label="ego_lane"
+        )
+
+        details = condition.get_details()
+        assert details["road_id"] == "80"
+        assert details["lane_id"] == 2
