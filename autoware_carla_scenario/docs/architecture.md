@@ -880,9 +880,9 @@ Complex pass/fail criteria are built by composing atomic conditions:
 pass_condition = AndCondition(
     label="all_roads_visited",
     children=[
-        StickyCondition(EntityLanePositionCondition(road_id="5", ...)),
-        StickyCondition(EntityLanePositionCondition(road_id="12", ...)),
-        StickyCondition(EntityLanePositionCondition(road_id="8", ...)),
+        StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "5", ...)),
+        StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "12", ...)),
+        StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "8", ...)),
     ],
 )
 ```

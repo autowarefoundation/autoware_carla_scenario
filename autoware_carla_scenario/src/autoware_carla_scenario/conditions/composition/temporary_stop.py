@@ -142,7 +142,7 @@ class TemporaryStopCondition(CompositionCondition):
         clamped_min = max(0.0, s_min)
         clamped_max = min(road_length, s_max)
         conditions.append(
-            cls._make_lane_condition(
+            cls._make_road_segment_condition(
                 entity_name, od_pose.road_id, clamped_min, clamped_max, label=label
             )
         )
@@ -168,7 +168,9 @@ class TemporaryStopCondition(CompositionCondition):
                     lo = 0.0
                     hi = min(overflow, pred_length)
                 conditions.append(
-                    cls._make_lane_condition(entity_name, pred_id, lo, hi, label=label)
+                    cls._make_road_segment_condition(
+                        entity_name, pred_id, lo, hi, label=label
+                    )
                 )
                 logger.info(
                     "  + predecessor road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
@@ -193,7 +195,9 @@ class TemporaryStopCondition(CompositionCondition):
                     lo = max(0.0, succ_length - overflow)
                     hi = succ_length
                 conditions.append(
-                    cls._make_lane_condition(entity_name, succ_id, lo, hi, label=label)
+                    cls._make_road_segment_condition(
+                        entity_name, succ_id, lo, hi, label=label
+                    )
                 )
                 logger.info(
                     "  + successor road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
@@ -207,7 +211,7 @@ class TemporaryStopCondition(CompositionCondition):
         return conditions
 
     @staticmethod
-    def _make_lane_condition(
+    def _make_road_segment_condition(
         entity_name: Union[EntityRole, str],
         road_id: str,
         s_lo: float,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.poses import AnyPose, CarlaWorldPose
+from ...coordinate.poses import AnyPose, CarlaWorldPose, OpenDrivePose
 from ...coordinate.transform import project_onto_road, to_opendrive
 from ...entity_role import EntityRole
 from ..base import ScenarioResult, find_actor_by_role_name
@@ -41,13 +41,9 @@ class EntityLanePositionCondition(CompositionCondition):
     without the cut-in.
 
     A condition that means *any* lane of a road is built with
-    :meth:`anywhere_on_road`, which takes a road and no lane at all.  It has its
-    own constructor rather than a lane the caller leaves out, because those are
-    different statements: an address is either complete or it is not this
-    class's business, and "I could not work out the lane" must not be spelled
-    the same way as "the lane does not matter here".  When comparison *rules*
-    are also specified, :func:`project_onto_road` is used to obtain accurate
-    ``s``/``t`` values on the confirmed road.
+    :meth:`anywhere_on_road` instead.  When comparison *rules* are also
+    specified, :func:`project_onto_road` is used to obtain accurate ``s``/``t``
+    values on the confirmed road.
 
     An :class:`EntityExistenceCondition` guard ensures the entity is present
     before the position check runs.
@@ -83,13 +79,16 @@ class EntityLanePositionCondition(CompositionCondition):
         label: str,
     ) -> None:
         address = to_opendrive(position)
-        self._init(
-            entity_name,
-            road_id=address.road_id,
-            lane_id=address.lane_id,
-            rules=rules,
-            label=label,
-        )
+        super().__init__(entity_name=entity_name, label=label)
+        self._road_id = address.road_id
+        self._lane_id: Optional[int] = address.lane_id
+        self._rules: list[ScalarComparisonRule] = rules or []
+
+        for rule in self._rules:
+            if rule.field not in _VALID_FIELDS:
+                raise ValueError(
+                    f"ScalarComparisonRule field must be 's' or 't', got '{rule.field}'"
+                )
 
     @classmethod
     def anywhere_on_road(
@@ -102,11 +101,16 @@ class EntityLanePositionCondition(CompositionCondition):
     ) -> "EntityLanePositionCondition":
         """Build a condition satisfied on any lane of *road_id*.
 
-        A road is not a place a scenario can usually mean -- a road carries
-        several lanes going both ways -- so reach for this only where the lane
-        genuinely does not matter.  Stopping short of a stop line is the case
-        that motivated it: the stop is at an ``s`` along the road, and which
-        lane the vehicle waits in is not part of the assertion.
+        A road is rarely a place a scenario means -- it carries several lanes,
+        going both ways -- so reach for this only where the lane genuinely does
+        not matter.  Stopping short of a stop line is the case that motivated
+        it: the stop is at an ``s`` along the road, and which lane the vehicle
+        waits in is not being asserted.
+
+        It exists as its own constructor rather than as a lane the caller
+        leaves out, so that "I could not work out the lane" -- the mistake this
+        class is built to prevent -- cannot be spelled the same way as "the
+        lane does not matter here".
 
         Args:
             entity_name: The ``role_name`` attribute of the actor to track.
@@ -114,36 +118,17 @@ class EntityLanePositionCondition(CompositionCondition):
             rules: Optional comparison rules on ``s`` and/or ``t``.
             label: Human-readable name for the condition.
         """
-        condition = cls.__new__(cls)
-        condition._init(
-            entity_name, road_id=road_id, lane_id=None, rules=rules, label=label
+        # An address always names a lane, so one is supplied and then dropped:
+        # the road is what this condition matches on.  Going through __init__
+        # rather than around it keeps one construction path.
+        condition = cls(
+            entity_name,
+            OpenDrivePose(road_id=road_id, lane_id=0, s=0.0),
+            rules,
+            label=label,
         )
+        condition._lane_id = None
         return condition
-
-    def _init(
-        self,
-        entity_name: Union[EntityRole, str],
-        *,
-        road_id: str,
-        lane_id: Optional[int],
-        rules: Optional[list[ScalarComparisonRule]],
-        label: str,
-    ) -> None:
-        """Shared construction for both entry points.
-
-        ``lane_id`` is ``None`` only for :meth:`anywhere_on_road`; every pose
-        that reaches :meth:`__init__` names a lane.
-        """
-        super().__init__(entity_name=entity_name, label=label)
-        self._road_id = road_id
-        self._lane_id = lane_id
-        self._rules: list[ScalarComparisonRule] = rules or []
-
-        for rule in self._rules:
-            if rule.field not in _VALID_FIELDS:
-                raise ValueError(
-                    f"ScalarComparisonRule field must be 's' or 't', got '{rule.field}'"
-                )
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()

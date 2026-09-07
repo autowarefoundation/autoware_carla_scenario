@@ -125,18 +125,6 @@ def to_carla_world(pose: Union[Lanelet2Pose, OpenDrivePose]) -> CarlaWorldPose:
     raise TypeError(f"Unsupported pose type: {type(pose)}")
 
 
-@overload
-def to_opendrive(pose: Lanelet2Pose) -> OpenDrivePose: ...
-
-
-@overload
-def to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose: ...
-
-
-@overload
-def to_opendrive(pose: OpenDrivePose) -> OpenDrivePose: ...
-
-
 def to_opendrive(pose: AnyPose) -> OpenDrivePose:
     """Convert any pose to an OpenDrivePose.
 
