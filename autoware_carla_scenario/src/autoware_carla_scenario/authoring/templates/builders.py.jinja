@@ -1,0 +1,76 @@
+"""Builders derived from the runtime constructors -- GENERATED, DO NOT EDIT.
+
+Every function here is rendered from the ``target`` of a spec in
+:mod:`autoware_carla_scenario.authoring.registry` and the signature of the
+runtime class it names.  Editing this file by hand is pointless: the next
+regeneration overwrites it, and CI fails when the two disagree.
+
+Regenerate with::
+
+    uv run python -m autoware_carla_scenario.authoring.codegen
+
+Builders that are *not* a plain constructor call -- the ones that assemble a
+pose, or pick between two constructors -- stay hand-written in
+:mod:`autoware_carla_scenario.authoring.builders`.
+
+Module-level imports stay free of CARLA and lanelet2, exactly as in the
+hand-written module: the editor process imports this package without a
+simulator, so every runtime import happens inside a builder.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..actions import BaseAction
+    from ..conditions import BaseCondition
+    from .compiler import BuildContext, CompiledAction, CompiledCondition
+
+__all__ = [
+{% for b in builders %}
+    "{{ b.name }}",
+{% endfor %}
+]
+{% for b in builders %}
+
+
+def {{ b.name }}(
+{% if b.node == "Condition" %}
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+{% else %}
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+{% endif %}
+    """Build {{ b.article }} :class:`{{ b.cls }}`."""
+{% for imp in b.imports %}
+    {{ imp }}  # noqa: PLC0415
+{% endfor %}
+
+{% if b.needs_actor_assert %}
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+{% endif %}
+{% if b.uses_params %}
+    params = compiled.params
+{% endif %}
+{% for choice in b.choices %}
+    {{ choice.kwarg }}: Any
+{% for case in choice.cases %}
+    {{ "if" if loop.first else "elif" }} params["{{ choice.discriminator }}"] == {{ case.when }}:
+        {{ choice.kwarg }} = {{ case.expr }}
+{% endfor %}
+    else:  # pragma: no cover -- the generator checks the cases are exhaustive
+        {{ choice.raise_line }}
+{% endfor %}
+    return {{ b.cls }}(
+{% for kwarg, expr in b.args %}
+        {{ kwarg }}={{ expr }},
+{% endfor %}
+    )
+{% endfor %}

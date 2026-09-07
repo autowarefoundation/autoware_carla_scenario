@@ -4,6 +4,12 @@ These tests pin the parts a template or a builder relies on: that every
 registered primitive has a builder, that a condition's visual actually names
 fields the primitive has, and that the option lists spelled out in the registry
 still match the runtime enums they mirror.
+
+They also guard the generated half.  Most builders are rendered from the
+constructor a spec targets, so the committed module has to stay what the
+generator would write -- the same guarantee ``test_proto_generated`` gives the
+compiled protobufs, for the same reason: a stale generated file is a file that
+disagrees with its source and nothing else notices.
 """
 
 from __future__ import annotations
@@ -13,14 +19,21 @@ import pytest
 from autoware_carla_scenario.authoring import builders, registry
 from autoware_carla_scenario.conditions.comparison import ComparisonRule
 
+#: Every primitive that has a builder, actions and conditions alike.  The two
+#: spec types share no base class, so the annotation is what lets a test read
+#: `spec.choices` off the joined list.
+_ALL_SPECS: list[registry.ActionSpec | registry.ConditionSpec] = [
+    *registry.action_specs(),
+    *registry.condition_specs(),
+]
+
 
 class TestSpecCoverage:
     def test_every_action_has_a_builder(self) -> None:
         for spec in registry.action_specs():
-            assert hasattr(builders, spec.builder), (
-                f"action {spec.type_id!r} names builder {spec.builder!r}, "
-                "which does not exist"
-            )
+            # Through `_resolve`, because a builder may be hand-written or
+            # generated and the spec deliberately does not say which.
+            builders._resolve(spec.builder)
 
     def test_every_runtime_condition_is_reachable_from_the_editor(self) -> None:
         """A new condition class must be exposed, or say why it is not.
@@ -66,12 +79,14 @@ class TestSpecCoverage:
         import inspect
         import pathlib
 
-        from autoware_carla_scenario.authoring import builders
+        from autoware_carla_scenario.authoring import _builders_generated, builders
 
-        tree = ast.parse(pathlib.Path(builders.__file__).read_text())
         built = {
             alias.name
-            for node in ast.walk(tree)
+            for source in (builders, _builders_generated)
+            for node in ast.walk(
+                ast.parse(pathlib.Path(str(source.__file__)).read_text())
+            )
             if isinstance(node, ast.ImportFrom) and node.level == 2
             for alias in node.names
         }
@@ -101,10 +116,9 @@ class TestSpecCoverage:
 
     def test_every_condition_has_a_builder(self) -> None:
         for spec in registry.condition_specs():
-            assert hasattr(builders, spec.builder), (
-                f"condition {spec.type_id!r} names builder {spec.builder!r}, "
-                "which does not exist"
-            )
+            # Through `_resolve`, because a builder may be hand-written or
+            # generated and the spec deliberately does not say which.
+            builders._resolve(spec.builder)
 
     def test_specs_are_unique_and_titled(self) -> None:
         for specs in (
@@ -317,3 +331,70 @@ class TestConstraintVocabulary:
 
         registered = {s.type_id for s in registry.binding_specs()}
         assert registered <= set(_BINDING_REGISTRY)
+
+
+class TestGeneratedBuilders:
+    """The committed builders must stay what the generator would write."""
+
+    def test_committed_module_is_not_stale(self) -> None:
+        """A spec change that is not regenerated is a spec change with no effect.
+
+        The diff is printed rather than a bare "out of date" because the useful
+        question on a failure is *which* primitive moved.
+        """
+        codegen = pytest.importorskip(
+            "autoware_carla_scenario.authoring.codegen",
+            reason="the generator introspects the runtime, which needs CARLA",
+        )
+        stale = codegen.diff_against_disk(codegen.generate())
+        assert not stale, (
+            "_builders_generated.py disagrees with the registry. Regenerate it:\n"
+            "    uv run python -m autoware_carla_scenario.authoring.codegen\n\n"
+            f"{stale}"
+        )
+
+    @pytest.mark.parametrize(
+        "spec",
+        _ALL_SPECS,
+        ids=lambda s: s.type_id,
+    )
+    def test_a_spec_is_generated_or_hand_written_but_not_both(
+        self, spec: registry.ActionSpec | registry.ConditionSpec
+    ) -> None:
+        """A ``target`` and a hand-written builder would both claim the name.
+
+        ``_resolve`` searches the generated module first, so a hand-written
+        builder shadowed by a generated one of the same name would simply never
+        run -- and would go on looking like the code that does.
+        """
+        from autoware_carla_scenario.authoring import builders as hand_written
+
+        hand = getattr(hand_written, spec.builder, None)
+        assert bool(spec.target) != callable(hand), (
+            f"{spec.type_id!r} must either name a target (and be generated) or "
+            f"define {spec.builder!r} by hand, not both and not neither"
+        )
+
+    @pytest.mark.parametrize(
+        "spec",
+        [spec for spec in _ALL_SPECS if spec.choices],
+        ids=lambda s: s.type_id,
+    )
+    def test_every_choice_covers_every_option(
+        self, spec: registry.ActionSpec | registry.ConditionSpec
+    ) -> None:
+        """Guards the check itself, not just its result.
+
+        Exhaustiveness is enforced inside the generator, where a gap raises
+        rather than falling through to a wrong value.  Asserting it here too
+        means a future option added without a case fails on the spec that is
+        wrong, not on a diff in a generated file.
+        """
+        fields = {field.name: field for field in spec.fields}
+        for choice in spec.choices:
+            options = {o.value for o in fields[choice.discriminator].options}
+            cased = {case.when for case in choice.cases}
+            assert cased == options, (
+                f"{spec.type_id!r}: {choice.kwarg!r} has cases for {sorted(cased)} "
+                f"but {choice.discriminator!r} offers {sorted(options)}"
+            )
