@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
@@ -11,17 +12,64 @@ import pytest
 from autoware_carla_scenario import (
     AndCondition,
     BaseCondition,
+    EntityLanePositionCondition,
     OrCondition,
     PersistentCondition,
     ScenarioResult,
     StandstillCondition,
     TemporaryStopCondition,
 )
+from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import (
     CarlaWorldPose,
     Lanelet2Pose,
     OpenDrivePose,
 )
+
+#: The converter's fixture map, which both packages' tests share.
+_CONVERTER_TEST_DATA = (
+    Path(__file__).resolve().parents[3]
+    / "autoware_lanelet2_to_opendrive"
+    / "test"
+    / "data"
+)
+XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
+OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
+
+
+@pytest.fixture
+def without_a_map() -> Generator[None, None, None]:
+    """Run a test with no MapManager, and give back the one that was there.
+
+    Resolving an address with no map raises, which is what makes "no map was
+    consulted" assertable.  The instance is restored afterwards because tests
+    are handed to xdist workers individually: a worker may be holding a map
+    another module's fixture loaded, and that fixture will not run again.
+    """
+    saved = MapManager._instance
+    MapManager._instance = None
+    yield
+    MapManager._instance = saved
+
+
+def _road_ids_of(condition: BaseCondition) -> list[str]:
+    """Return the roads a condition tree ended up watching.
+
+    Read off the summary the conditions publish themselves, so this does not
+    have to know how the tree is nested.
+    """
+
+    def walk(node: object) -> Generator[str, None, None]:
+        if isinstance(node, dict):
+            if "road_id" in node:
+                yield str(node["road_id"])
+            for value in node.values():
+                yield from walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from walk(item)
+
+    return list(walk(condition.to_summary_dict()))
 
 
 # ---------------------------------------------------------------------------
@@ -384,11 +432,95 @@ class TestTemporaryStopCondition:
         mock_to_od.assert_called_once_with(cwp)
         assert isinstance(cond._child, PersistentCondition)
 
-    def test_opendrive_pose_not_converted(self) -> None:
-        """OpenDrivePose is used directly without calling to_opendrive."""
+    def test_opendrive_pose_not_converted(self, without_a_map: None) -> None:
+        """An OpenDrivePose reaches the road unchanged, consulting no map.
+
+        This used to be asserted as "to_opendrive is never called", back when
+        the identity case was a local short-circuit here.  It now lives inside
+        `to_opendrive` itself, so the call happens and returns the pose as it
+        stands.  With no map loaded, any real resolution would raise -- so
+        reaching the right road is the guarantee, and it is asserted rather
+        than the child's type, which the test above already covers.
+        """
         od = OpenDrivePose(road_id="1", lane_id=-1, s=50.0)
-        with patch(
-            "autoware_carla_scenario.conditions.composition.temporary_stop.to_opendrive"
-        ) as mock_to_od:
-            TemporaryStopCondition("ego", stop_positions=[od], label="test_temp_stop")
-            mock_to_od.assert_not_called()
+
+        cond = TemporaryStopCondition(
+            "ego", stop_positions=[od], label="test_temp_stop"
+        )
+
+        assert _road_ids_of(cond) == ["1"]
+
+
+# ---------------------------------------------------------------------------
+# TestEntityLanePositionAddress – a lanelet names a lane, not a road
+# ---------------------------------------------------------------------------
+
+
+class TestEntityLanePositionAddress:
+    """The address an author writes must survive the trip into the runtime.
+
+    An OpenDRIVE road is not a lane.  On this map lanelets 183 and 184 are lanes
+    2 and 1 of the same road 80, so a resolution that kept only the road turned
+    "the entity is on lanelet 183" into "the entity is anywhere on road 80" --
+    true as well while it sits in the neighbouring lane, which let a cut-in
+    scenario pass without the cut-in.
+    """
+
+    @pytest.fixture(scope="class")
+    def loaded_map(self) -> Generator[None, None, None]:
+        MapManager.reset()
+        mm = MapManager.get_instance()
+        mm.initialize(XODR_PATH, OSM_PATH)
+        yield
+        # Release lanelet2/pyxodr objects explicitly during teardown so they are
+        # destroyed while the C++ runtime is still in a valid state, not during
+        # Python interpreter shutdown (which can trigger std::terminate).
+        mm._lanelet_map = None
+        mm._road_network = None
+        mm._geo_origin = None
+        mm._mgrs_offset = None
+        MapManager.reset()
+
+    def test_neighbouring_lanelets_keep_their_own_lanes(self, loaded_map: None) -> None:
+        # Both lanelets in one test rather than one each: what is being pinned
+        # is that they *differ* while sharing a road, and loading the map costs
+        # about two seconds -- which xdist would pay once per parametrised case,
+        # since it hands them to different workers.
+        addresses = {
+            lanelet_id: EntityLanePositionCondition(
+                "ego", Lanelet2Pose(lanelet_id=lanelet_id, s=0.0), label="ego_lane"
+            ).get_details()
+            for lanelet_id in (183, 184)
+        }
+
+        assert addresses[183]["road_id"] == addresses[184]["road_id"] == "80"
+        assert addresses[183]["lane_id"] == 2
+        assert addresses[184]["lane_id"] == 1
+
+    def test_anywhere_on_road_names_no_lane(self) -> None:
+        """The road-only case says so by name, rather than by omitting a lane."""
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "ego", "80", label="ego_road"
+        )
+
+        details = condition.get_details()
+        assert details["road_id"] == "80"
+        assert details["lane_id"] is None
+
+
+class TestAnOpenDriveAddressNeedsNoMap:
+    """An address already in the runtime's frame is passed straight through.
+
+    This is what keeps the constructor usable without a loaded map, which the
+    unit tests above and every hand-written scenario written in OpenDRIVE rely
+    on: only a Lanelet2 or CARLA address has to be resolved against a map.
+    """
+
+    def test_no_map_is_consulted(self, without_a_map: None) -> None:
+        condition = EntityLanePositionCondition(
+            "ego", OpenDrivePose(road_id="80", lane_id=2, s=0.0), label="ego_lane"
+        )
+
+        details = condition.get_details()
+        assert details["road_id"] == "80"
+        assert details["lane_id"] == 2
