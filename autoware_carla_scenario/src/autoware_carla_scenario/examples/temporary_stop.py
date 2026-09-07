@@ -75,7 +75,6 @@ class TemporaryStopScenario(BaseScenario):
 
     def setup(self) -> None:
         """Snap ego spawn to CARLA road, register temporary stop condition."""
-        world = self.world
         cfg = self._config
 
         # --- Compute ego spawn from Lanelet2Pose via OpenDrivePose ---
@@ -83,11 +82,13 @@ class TemporaryStopScenario(BaseScenario):
         assert self._spawn_pose is not None  # narrow type for mypy
 
         # --- Set all traffic lights to green ---
-        TrafficSignalAction(
-            state=carla.TrafficLightState.Green,
-            lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
-            label="set_all_green",
-        ).execute(world)
+        self.register_init(
+            TrafficSignalAction(
+                state=carla.TrafficLightState.Green,
+                lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                label="set_all_green",
+            )
+        )
 
         # --- Auto-detect stop line from spawn lanelet + following lanelets ---
         spawn_lanelet_id = self._spawn_pose.lanelet_id

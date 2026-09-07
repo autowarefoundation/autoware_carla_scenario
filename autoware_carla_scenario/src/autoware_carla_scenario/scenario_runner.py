@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Optional
 import carla
 
 if TYPE_CHECKING:
+    from .entity.ego import EgoVehicle
     from .scenario_base import SpectatorCameraConfig
 
 from .camera_recorder import CameraRecorder
@@ -191,11 +192,31 @@ def _unique_path(path: Path) -> Path:
         counter += 1
 
 
-def _destroy_all_dynamic_actors(world: "carla.World", scenario_name: str) -> None:
-    """Destroy all vehicles and sensors in the world for a clean state."""
-    destroyed = 0
+def _destroy_all_dynamic_actors(
+    world: "carla.World",
+    scenario_name: str,
+    keep_role_names: "frozenset[str]" = frozenset(),
+) -> None:
+    """Destroy the vehicles and sensors in the world for a clean state.
+
+    *keep_role_names* spares actors this scenario does not own -- an ego spawned
+    by an ``autoware_carla_interface`` node, say, which the scenario only
+    attaches to. Their sensors are spared with them: destroying those would
+    leave the owner driving blind.
+    """
     actors = world.get_actors()
+    kept_ids = {
+        actor.id
+        for actor in actors.filter("vehicle.*")
+        if actor.attributes.get("role_name") in keep_role_names
+    }
+    destroyed = 0
     for actor in [*actors.filter("vehicle.*"), *actors.filter("sensor.*")]:
+        if actor.id in kept_ids:
+            continue
+        parent = getattr(actor, "parent", None)
+        if parent is not None and parent.id in kept_ids:
+            continue
         try:
             actor.destroy()
             destroyed += 1
@@ -229,6 +250,7 @@ class ScenarioRunner:
         tm_port: int = DEFAULT_TM_PORT,
         timeout_seconds: float = 60.0,
         output_dir: Path = Path("scenario_outputs"),
+        max_tick_rate_hz: Optional[float] = None,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -239,14 +261,84 @@ class ScenarioRunner:
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default timeout applied to every scenario.
             output_dir: Directory where CARLA recording logs are saved.
+            max_tick_rate_hz: Upper bound on how fast the tick loop steps the
+                world, or *None* to step as fast as the server allows.  Slow
+                that down to the rate of the slowest client reading the
+                simulation: a client that cannot service every tick sees the
+                world jump, not step.
         """
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
         self._tm_port = tm_port
+        self._min_tick_interval = (
+            1.0 / max_tick_rate_hz
+            if max_tick_rate_hz is not None and max_tick_rate_hz > 0.0
+            else 0.0
+        )
+        self._next_tick_at = 0.0
 
         self._client = carla.Client(host, port)
-        self._client.set_timeout(10.0)
+        # Loading a town on CARLA 0.10 (UE5) takes ~25 s, so a 10 s client
+        # timeout fails the load with a bare 'std::exception'.
+        self._client.set_timeout(60.0)
         self._world: Optional["carla.World"] = None
+
+    # ------------------------------------------------------------------
+    # Tick pacing
+    # ------------------------------------------------------------------
+
+    def _pace_tick(self) -> None:
+        """Sleep until the next tick is due under ``max_tick_rate_hz``.
+
+        No-op when the rate is uncapped.  The schedule is kept in absolute
+        time so that a tick which overruns its slot does not push every later
+        tick back with it.
+        """
+        if self._min_tick_interval <= 0.0:
+            return
+        now = time.monotonic()
+        if now < self._next_tick_at:
+            time.sleep(self._next_tick_at - now)
+            now = self._next_tick_at
+        self._next_tick_at = now + self._min_tick_interval
+
+    # ------------------------------------------------------------------
+    # Ego readiness
+    # ------------------------------------------------------------------
+
+    def _wait_for_ego(
+        self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
+    ) -> None:
+        """Tick the world until the ego is ready to be judged.
+
+        An entity backed by a whole autonomy stack is not ready when its actor
+        appears: localization, routing and engagement come minutes later, and
+        that stack only makes progress while simulation time advances -- so this
+        waits by ticking, not by sleeping. Running the scenario's conditions
+        during that time would judge a vehicle that has not been asked to move
+        yet, and a condition already true at the initial pose (standing still,
+        for one) would record a result before the run began.
+
+        Returns as soon as the entity reports readiness, or when it gives up
+        waiting: the tick loop reads ``termination_requested`` and ends the run.
+        Entities that are ready with their actor (the default) return here
+        immediately.
+        """
+        if ego.is_initialized:
+            return
+        logger.info("[%s] Waiting for the ego to be ready ...", scenario_name)
+        waited_ticks = 0
+        while not ego.is_initialized and not ego.termination_requested:
+            self._pace_tick()
+            world.tick()
+            ego.on_tick(world, 0.0)
+            waited_ticks += 1
+        logger.info(
+            "[%s] Ego %s after %d tick(s)",
+            scenario_name,
+            "is ready" if ego.is_initialized else "gave up waiting",
+            waited_ticks,
+        )
 
     # ------------------------------------------------------------------
     # Map loading
@@ -437,10 +529,23 @@ class ScenarioRunner:
         world = self._world
         scenario_name = type(scenario).__name__
 
+        # The ego is built before the cleanup, not after it: an entity that
+        # attaches to an actor someone else spawned has to be able to say so
+        # before that actor would be destroyed.
+        ego = scenario.create_ego()
+
         # Destroy any leftover actors from a previous scenario that may
         # have survived a failed reload_world().  On a clean world this
         # is a no-op.
-        _destroy_all_dynamic_actors(world, scenario_name)
+        _destroy_all_dynamic_actors(
+            world,
+            scenario_name,
+            keep_role_names=(
+                frozenset({str(EGO_ROLE_NAME)})
+                if ego.attaches_to_existing_actor
+                else frozenset()
+            ),
+        )
 
         # Enable synchronous mode so we control the simulation tick rate.
         # Original settings are not saved because reload_world() at the
@@ -457,7 +562,6 @@ class ScenarioRunner:
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(scenario.random_seed)
 
-        ego = scenario.create_ego()
         recording_started = False
         tick_count = 0
         result: Optional[ScenarioResult] = None
@@ -484,9 +588,29 @@ class ScenarioRunner:
             # Warm-up ticks: let physics and TrafficManager stabilise
             # before the main loop begins.
             for _ in range(scenario.STABILIZE_TICKS):
+                self._pace_tick()
                 world.tick()
 
-            # Enable autopilot on vehicles managed by TrafficManager.
+            # The scenario's initialization phase: the actor exists and
+            # physics have settled, but the clock has not started and no
+            # condition has been evaluated.  Everything registered with
+            # register_init() runs here -- putting the world in the state the
+            # run starts from, and handing an ego that plans its own route the
+            # mission it needs before the wait below asks whether it is ready.
+            logger.info("[%s] === Init actions ===", scenario_name)
+            scenario.run_init(world)
+
+            # Let the ego entity bring up whatever it needs now that the actor
+            # exists and physics have settled (e.g. sensors and an external
+            # driver session).
+            ego.on_scenario_start(world)
+
+            self._wait_for_ego(world, ego, scenario_name)
+
+            # Autopilot last, and only now: the world has been ticking through
+            # the wait above, and a car under TrafficManager would have spent
+            # that time driving -- away from the scenario it was placed for,
+            # before its own pre-tick actions had said how it should drive.
             # When the ego opts out (e.g. AutowareEntity), its actor is
             # excluded so external control can drive it instead.
             skip_ids: set[int] = set()
@@ -500,33 +624,35 @@ class ScenarioRunner:
                 actor.set_autopilot(True, self._tm_port)
                 n_autopilot += 1
             if n_autopilot:
-                logger.info(
-                    "Autopilot enabled on %d vehicle(s) after %d warm-up ticks",
-                    n_autopilot,
-                    scenario.STABILIZE_TICKS,
-                )
+                logger.info("Autopilot enabled on %d vehicle(s)", n_autopilot)
             if skip_ids:
                 logger.info(
                     "Autopilot skipped for ego (id=%s) — external control expected",
                     ", ".join(str(i) for i in skip_ids),
                 )
 
-            # Apply initial speeds after warm-up stabilisation
+            # Initial speeds last of all, so they are the speeds the scenario
+            # starts at rather than ones a long wait has bled off.
             scenario.set_initial_speed(ego_actor)
-
-            # Let the ego entity bring up whatever it needs now that the actor
-            # exists and physics have settled (e.g. sensors and an external
-            # driver session).
-            ego.on_scenario_start(world)
 
             _vehicle_entity_module._warmup_done = True
 
             # Start native CARLA recorder
             output_path = self.output_dir / f"{scenario_name}.log"
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            self._client.start_recorder(str(output_path))
-            recording_started = True
-            logger.info("[%s] Recording to %s", scenario_name, output_path)
+            try:
+                self._client.start_recorder(str(output_path))
+            except RuntimeError as error:
+                # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
+                # log must not fail an otherwise healthy scenario run.
+                logger.warning(
+                    "[%s] CARLA recorder unavailable (%s); continuing without a replay log",
+                    scenario_name,
+                    error,
+                )
+            else:
+                recording_started = True
+                logger.info("[%s] Recording to %s", scenario_name, output_path)
 
             # Register default timeout fail condition
             scenario.register_fail_condition(
@@ -534,6 +660,9 @@ class ScenarioRunner:
             )
 
             logger.info("[%s] === Tick loop start ===", scenario_name)
+            # The clock starts here, after the ego is ready: an entity that
+            # needs a stack to come up would otherwise spend most of the
+            # scenario's timeout booting.
             start_time = time.monotonic()
 
             # Tick loop
@@ -549,6 +678,7 @@ class ScenarioRunner:
                 for cb in scenario._pre_tick_callbacks:
                     cb(world)
 
+                self._pace_tick()
                 world.tick()
 
                 # Give the ego entity a chance to drive itself before the

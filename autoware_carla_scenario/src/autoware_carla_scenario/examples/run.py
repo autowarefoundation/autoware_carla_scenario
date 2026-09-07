@@ -138,6 +138,22 @@ def build_ego_and_spawn(
     return ego, spawn_pose, ground_projection
 
 
+def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
+    """Extract the ego's goal pose from ``ego.goal_lanelet_id`` / ``ego.goal_s``.
+
+    Returns ``None`` when no goal is configured -- the ordinary case, since only
+    an ego that plans its own route (``ego.entity=autoware``) needs one.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    goal_lanelet_id = ego_cfg.get("goal_lanelet_id")
+    if goal_lanelet_id is None:
+        return None
+    return Lanelet2Pose(
+        lanelet_id=int(goal_lanelet_id),
+        s=float(ego_cfg.get("goal_s", 0.0)),
+    )
+
+
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     """Build the ego entity selected by ``cfg.ego.entity``.
 
@@ -156,9 +172,36 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         return None
 
     if entity == "autoware":
-        from autoware_carla_scenario import AutowareEntity  # noqa: PLC0415
+        # The closed-loop entity: it attaches to the ego the interface node
+        # spawns and hands Autoware the scenario's mission over the bridge the
+        # framework hosts.  The mission itself comes from the scenario, whose
+        # ``setup()`` registers a ``RoutingAction`` for the spawn and
+        # ``ego.goal_lanelet_id`` snapped onto the live map -- poses that do not
+        # exist before then -- and the runner performs it in the init phase.  A
+        # config that selects this entity without a goal is refused during setup.
+        from autoware_carla_scenario import (  # noqa: PLC0415
+            AutowareBridgeConfig,
+            AutowareEgoEntity,
+            GrpcAutowareBridgeServer,
+        )
 
-        return AutowareEntity()
+        autoware_cfg = cfg.get("autoware")
+        bridge_cfg = AutowareBridgeConfig(
+            **{
+                key: value
+                for key, value in (
+                    _to_dict(autoware_cfg) if autoware_cfg is not None else {}
+                ).items()
+                if key in AutowareBridgeConfig.__dataclass_fields__
+            }
+        )
+        # autostart=False: in a batch every scenario is built before the first
+        # one runs, and two bridges cannot hold the same address at once.  The
+        # entity starts this one when its own scenario starts.
+        return AutowareEgoEntity(
+            bridge_cfg,
+            bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
+        )
 
     if entity == "carla_driver":
         from autoware_carla_scenario import CarlaDriverEntity  # noqa: PLC0415
@@ -186,6 +229,28 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     raise ValueError(msg)
 
 
+def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Attach the configured ego entity and goal, keeping what the scenario set.
+
+    ``ego.entity=autopilot`` (the default) yields no entity and no goal, and
+    overwriting ``scenario.ego_entity`` with ``None`` there would throw away an
+    entity the scenario constructed in its own ``__init__``.  The goal follows
+    the same rule: a scenario that already knows where it is sending the ego
+    keeps its own.
+
+    The goal is set here rather than passed to the builder because
+    :data:`~autoware_carla_scenario.registry.ScenarioBuilder` is a published
+    signature that external scenario packages implement.
+    """
+    entity = build_ego_entity(cfg)
+    if entity is not None:
+        scenario.ego_entity = entity
+
+    goal_pose = build_goal_pose(cfg)
+    if goal_pose is not None:
+        scenario.goal_pose = goal_pose
+
+
 def run_scenario_with_queue(
     scenario: BaseScenario,
     *,
@@ -198,6 +263,9 @@ def run_scenario_with_queue(
     cooldown_seconds: float = 0.0,
     cooldown_max_retries: int = 0,
     output_dir: Path = Path("scenario_outputs"),
+    timeout_seconds: float = 60.0,
+    max_tick_rate_hz: float | None = None,
+    projector_type: str | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -221,11 +289,24 @@ def run_scenario_with_queue(
         cooldown_seconds=cooldown_seconds,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
+        timeout_seconds=timeout_seconds,
+        max_tick_rate_hz=max_tick_rate_hz,
+        projector_type=projector_type,
     )
     queue.add(scenario)
     with queue:
         results = queue.run_all()
     return results[0]
+
+
+def _optional_float(value: object) -> float | None:
+    """Read an optional numeric config value that may be absent or null."""
+    return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def _optional_str(value: object) -> str | None:
+    """Read an optional string config value that may be absent or null."""
+    return None if value is None else str(value)
 
 
 def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
@@ -397,12 +478,18 @@ def _log_batch_plan(
         logger.info("  map         : %s", cfg.map.name)
         logger.info("  server      : %s:%s", cfg.server.host, cfg.server.port)
         logger.info("  TM port     : %s", cfg.traffic_manager.port)
+        goal_pose = build_goal_pose(cfg)
         logger.info(
-            "  ego         : %s (%.1f km/h) spawn=lanelet:%d s:%.1f",
+            "  ego         : %s (%.1f km/h) spawn=lanelet:%d s:%.1f goal=%s",
             cfg.ego.vehicle_type,
             cfg.ego.initial_speed_kmh,
             cfg.ego.spawn_lanelet_id,
             cfg.ego.spawn_s,
+            (
+                f"lanelet:{goal_pose.lanelet_id} s:{goal_pose.s:.1f}"
+                if goal_pose is not None
+                else "none"
+            ),
         )
         # Log all scenario-specific parameters.
         logger.info("  scenario parameters:")
@@ -477,6 +564,12 @@ def run_batch(
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
+        # The runner's own fail-safe: without this the queue default (60 s)
+        # caps every run, which is shorter than an Autoware stack needs to
+        # localize, route and engage.
+        timeout_seconds=float(first_cfg.scenario.get("timeout_seconds", 60.0)),
+        max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
+        projector_type=_optional_str(first_cfg.map.get("projector_type")),
     )
 
     for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
@@ -511,7 +604,7 @@ def build_scenario(
     """
     if build_scenario_fn is not None:
         ego, scenario = build_scenario_fn(cfg)
-        scenario.ego_entity = build_ego_entity(cfg)
+        _apply_ego_config(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -528,7 +621,7 @@ def build_scenario(
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario_dict = _to_dict(cfg.scenario)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
-    scenario.ego_entity = build_ego_entity(cfg)
+    _apply_ego_config(cfg, scenario)
     return ego, scenario
 
 
@@ -579,6 +672,11 @@ def run_scenario(
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
+        # The runner's own fail-safe: the queue default (60 s) is shorter than
+        # an Autoware stack needs to localize, route and engage.
+        timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
+        max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
+        projector_type=_optional_str(cfg.map.get("projector_type")),
     )
 
     status = "PASSED" if result.passed else "FAILED"

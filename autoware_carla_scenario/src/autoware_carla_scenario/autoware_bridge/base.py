@@ -104,7 +104,8 @@ class BridgePose:
     ramps and banked segments exactly.  The scenario already knows both from its
     snapped CARLA transform, so they are carried through rather than re-estimated.
 
-    Use :meth:`from_yaw` when only a planar heading is available.
+    Use :meth:`from_rpy` when the full orientation is known and
+    :meth:`from_yaw` when only a planar heading is available.
 
     Attributes:
         position: Map-frame position (metres).
@@ -113,6 +114,43 @@ class BridgePose:
 
     position: Vector3
     rotation: Quaternion
+
+    @classmethod
+    def from_rpy(
+        cls,
+        x: float,
+        y: float,
+        z: float,
+        roll: float,
+        pitch: float,
+        yaw: float,
+    ) -> "BridgePose":
+        """Build a pose from a position and roll/pitch/yaw (radians).
+
+        The angles are intrinsic ZYX (yaw, then pitch, then roll) about the
+        map frame's own axes -- the convention ROS uses, so the quaternion is
+        the one ``geometry_msgs/Pose`` would carry.
+
+        Args:
+            x: Position X in the map frame (metres).
+            y: Position Y in the map frame (metres).
+            z: Position Z in the map frame (metres).
+            roll: Rotation about the body X axis (radians).
+            pitch: Rotation about the body Y axis (radians).
+            yaw: Rotation about the map Z axis (radians).
+        """
+        cr, sr = math.cos(roll * 0.5), math.sin(roll * 0.5)
+        cp, sp = math.cos(pitch * 0.5), math.sin(pitch * 0.5)
+        cy, sy = math.cos(yaw * 0.5), math.sin(yaw * 0.5)
+        return cls(
+            Vector3(x, y, z),
+            Quaternion(
+                w=cr * cp * cy + sr * sp * sy,
+                x=sr * cp * cy - cr * sp * sy,
+                y=cr * sp * cy + sr * cp * sy,
+                z=cr * cp * sy - sr * sp * cy,
+            ),
+        )
 
     @classmethod
     def from_yaw(cls, x: float, y: float, z: float, yaw: float) -> "BridgePose":
@@ -159,6 +197,14 @@ class AutowareBridge(ABC):
         """Return ``True`` once Autoware is initialized, routed, engaged, and driving.
 
         Must be non-blocking so it can be polled once per world tick.
+        """
+
+    def start(self) -> None:
+        """Bring the transport up.  A bridge that needs nothing does nothing.
+
+        Called by the ego entity when the scenario starts, so a transport that
+        holds a scarce resource -- a TCP port, say -- can take it then rather
+        than when the scenario was built.
         """
 
     def close(self) -> None:

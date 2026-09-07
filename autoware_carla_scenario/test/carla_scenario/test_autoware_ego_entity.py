@@ -9,8 +9,10 @@ the no-destroy lifecycle, and the readiness wait driven through the
 
 from __future__ import annotations
 
+import math
 from typing import List
 
+import carla
 import pytest
 
 from autoware_carla_scenario.autoware_bridge import (
@@ -20,6 +22,32 @@ from autoware_carla_scenario.autoware_bridge import (
 )
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.entity import AutowareEgoEntity, AutowareEntity
+
+#: Where the fake ego actually stands, and the same pose in the map frame.
+_CARLA_SPAWN = carla.Transform(
+    carla.Location(x=1.0, y=-2.0, z=0.5), carla.Rotation(yaw=-28.6479)
+)
+
+
+@pytest.fixture(autouse=True)
+def _map_frame_without_a_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Convert CARLA poses to the map frame without loading a map.
+
+    The real :func:`to_map_frame` needs the projector offsets a loaded map
+    carries; what these tests are about is which pose the entity picks, so the
+    conversion is stood in for by the y-flip it reduces to on a map whose
+    offsets are zero.
+    """
+
+    def _flip_y(pose):
+        return BridgePose.from_yaw(
+            x=pose.x, y=-pose.y, z=pose.z, yaw=math.radians(-pose.yaw)
+        )
+
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.autoware_entity.to_map_frame", _flip_y
+    )
+
 
 _INITIAL = BridgePose.from_yaw(x=1.0, y=2.0, z=0.5, yaw=0.5)
 _GOAL = BridgePose.from_yaw(x=10.0, y=20.0, z=3.0, yaw=1.5)
@@ -31,10 +59,16 @@ _GOAL = BridgePose.from_yaw(x=10.0, y=20.0, z=3.0, yaw=1.5)
 
 
 class _FakeActor:
-    def __init__(self, actor_id: int, role_name: str) -> None:
+    def __init__(
+        self, actor_id: int, role_name: str, transform: "carla.Transform | None" = None
+    ) -> None:
         self.id = actor_id
         self.attributes = {"role_name": role_name}
         self.destroyed = False
+        self._transform = transform if transform is not None else _CARLA_SPAWN
+
+    def get_transform(self) -> "carla.Transform":
+        return self._transform
 
     def destroy(self) -> None:
         self.destroyed = True
@@ -62,6 +96,21 @@ def _make_entity(bridge=None, **config_kwargs) -> AutowareEgoEntity:
     return AutowareEgoEntity(
         config, bridge=bridge, initial_pose=_INITIAL, goal_pose=_GOAL
     )
+
+
+def _assert_pose_close(actual, expected) -> None:
+    """Compare two poses component-wise; the derived one is exact only to float."""
+    assert actual is not None
+    for got, want in (
+        (actual.position.x, expected.position.x),
+        (actual.position.y, expected.position.y),
+        (actual.position.z, expected.position.z),
+        (actual.rotation.w, expected.rotation.w),
+        (actual.rotation.x, expected.rotation.x),
+        (actual.rotation.y, expected.rotation.y),
+        (actual.rotation.z, expected.rotation.z),
+    ):
+        assert got == pytest.approx(want, abs=1e-6)
 
 
 def _drive_to_ready(entity: AutowareEgoEntity, world: _FakeWorld, max_ticks=50) -> None:
@@ -150,7 +199,7 @@ def test_lifecycle_configures_and_reaches_ready() -> None:
     assert entity.is_initialized
     assert not entity.termination_requested
     # Autoware was handed the mission once, then readiness was polled.
-    assert bridge.configured_initial_pose == _INITIAL
+    _assert_pose_close(bridge.configured_initial_pose, _INITIAL)
     assert bridge.configured_goal == _GOAL
     assert bridge.calls.count("configure") == 1
 
@@ -169,7 +218,9 @@ def test_on_scenario_start_requires_poses() -> None:
     entity = AutowareEgoEntity(bridge=FakeAutowareBridge())  # no poses
     entity.spawn(world, config=None)  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match="initial_pose and goal_pose"):
+    # The message has to name the way out: the poses come from the scenario's
+    # setup(), which is the only place they exist.
+    with pytest.raises(ValueError, match="set_mission"):
         entity.on_scenario_start(world)
 
 
@@ -207,3 +258,69 @@ def test_on_scenario_end_closes_bridge() -> None:
     entity.on_scenario_end(world)
 
     assert bridge.closed is True
+
+
+class TestInitialPoseIsCheckedAgainstTheEgo:
+    """Where the ego is is a different question from where it should be."""
+
+    def test_the_attached_actor_supplies_a_pose_no_one_set(self) -> None:
+        # A scenario knows its goal in setup(); the ego it will attach to does
+        # not exist yet, and its pose is chosen by whoever spawns it.
+        bridge = FakeAutowareBridge()
+        entity = AutowareEgoEntity(bridge=bridge, goal_pose=_GOAL)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+        entity.on_scenario_start(world)
+
+        _assert_pose_close(bridge.configured_initial_pose, _INITIAL)
+        assert bridge.configured_goal is _GOAL
+
+    def test_the_scenario_pose_wins_when_it_has_one(self) -> None:
+        # It is a spawn snapped onto the road surface -- what base_link means --
+        # while the actor's transform is measured from the actor's own origin.
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+        entity.on_scenario_start(world)
+
+        assert bridge.configured_initial_pose is _INITIAL
+
+    def test_a_matching_expectation_is_quiet(self, caplog) -> None:
+        entity = _make_entity()
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+        with caplog.at_level("WARNING"):
+            entity.on_scenario_start(world)
+
+        assert "where the scenario expected it" not in caplog.text
+
+    def test_an_ego_somewhere_else_is_reported(self, caplog) -> None:
+        # The interface node's spawn_point and the scenario's spawn are set on
+        # opposite sides of the run; when they disagree, that is said out loud
+        # instead of becoming a localization error nobody can place.
+        entity = _make_entity()
+        elsewhere = carla.Transform(carla.Location(x=50.0, y=-2.0, z=0.5))
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), elsewhere)])
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+        with caplog.at_level("WARNING"):
+            entity.on_scenario_start(world)
+
+        assert "49.00 m from where the scenario expected it" in caplog.text
+
+    def test_a_height_difference_alone_is_not_a_disagreement(self, caplog) -> None:
+        # The two heights are measured from different places: the scenario's
+        # from the road surface, the actor's from its own origin.
+        entity = _make_entity()
+        higher = carla.Transform(carla.Location(x=1.0, y=-2.0, z=2.0))
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), higher)])
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+        with caplog.at_level("WARNING"):
+            entity.on_scenario_start(world)
+
+        assert "where the scenario expected it" not in caplog.text

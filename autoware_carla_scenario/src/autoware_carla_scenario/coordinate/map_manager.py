@@ -13,6 +13,19 @@ The MGRS offset corrects for this:
     mgrs_xy = xodr_xy + mgrs_offset
 
 where ``mgrs_offset = MGRSProjector.forward(lat_0, lon_0)``.
+
+That correction is a single translation, so it only holds while the whole map
+projects into one continuous MGRS square.  A map whose geoReference sits on a
+100 km grid line -- or on the lon 0 UTM zone boundary, as the CARLA towns do --
+has half of its geometry land in the neighbouring square, tens of kilometres
+away from the rest.
+
+Which projection a map wants is not a guess: Autoware ships it next to the map,
+in ``map_projector_info.yaml``, and :mod:`.projection` -- which every loader in
+this package shares -- is what reads it.  A ``Local``
+map -- the CARLA towns again -- is read with ``UtmProjector`` at the map origin,
+which reproduces the ``local_x``/``local_y`` the file stores and makes the
+offset above zero.
 """
 
 from __future__ import annotations
@@ -22,13 +35,11 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
-# autoware_lanelet2_extension_python must be imported before lanelet2 to register
-# Autoware-specific regulatory elements (road_marking, detection_area, etc.)
-from autoware_lanelet2_extension_python.projection import MGRSProjector
 import lanelet2.core
 import lanelet2.io
 from pyxodr.road_objects.network import RoadNetwork
 
+from .projection import resolve_projector
 from .road_lanelet_mapping import RoadLaneletMapping
 
 logger = logging.getLogger(__name__)
@@ -92,6 +103,7 @@ class MapManager:
         xodr_path: Path,
         lanelet2_path: Path,
         carla_world: Any = None,
+        projector_type: Optional[str] = None,
     ) -> None:
         """Load both map files.
 
@@ -107,6 +119,12 @@ class MapManager:
             difference between Lanelet2 elevation and CARLA spawn-point
             elevation across all map spawn points.  When ``None``, a
             single-point fallback using the XODR reference line is used.
+        projector_type:
+            Which projection to read the Lanelet2 map with -- ``"mgrs"``,
+            ``"utm"``, ``"local_cartesian"`` or ``"transverse_mercator"``.
+            Leave it unset (the default) to take it from the map's own
+            ``map_projector_info.yaml``, the file Autoware reads for the same
+            purpose; ``mgrs`` is used when there is no such file.
 
         Raises
         ------
@@ -133,7 +151,12 @@ class MapManager:
 
         # Load Lanelet2 map using the same origin as the XODR
         origin = lanelet2.io.Origin(lat, lon)
-        projector = MGRSProjector(origin)
+        projector, projector_type = resolve_projector(
+            lanelet2_path, origin, projector_type
+        )
+        logger.info(
+            "Loading %s with the %s projection", lanelet2_path.name, projector_type
+        )
         self._lanelet_map = lanelet2.io.load(str(lanelet2_path), projector)
 
         # Compute MGRS offset: forward-project the geoReference origin.

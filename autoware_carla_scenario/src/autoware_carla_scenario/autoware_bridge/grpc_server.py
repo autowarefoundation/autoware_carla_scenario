@@ -86,6 +86,10 @@ class GrpcAutowareBridgeServer(AutowareBridge):
     interface node can begin polling ``GetMission`` before the scenario hands over
     a mission (it just gets ``available=False`` until :meth:`configure`).
 
+    ``autostart=False`` defers the bind to :meth:`start`, which is what a batch
+    of scenarios needs: they are all built before the first one runs, and two
+    servers cannot hold the same address at once.
+
     Args:
         config: Connection settings.  ``None`` uses
             :class:`~autoware_carla_scenario.autoware_bridge.base.AutowareBridgeConfig`
@@ -104,6 +108,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         *,
         # Only one client (the interface node) ever connects, so a small pool is plenty.
         max_workers: int = 4,
+        autostart: bool = True,
     ) -> None:
         self._config = config or AutowareBridgeConfig()
         self._lock = threading.Lock()
@@ -121,16 +126,25 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         pb2_grpc.add_AutowareBridgeServicer_to_server(
             _AutowareBridgeServicer(self), self._server
         )
-        self._port = self._server.add_insecure_port(self._config.address)
+        self._port: Optional[int] = None
+        if autostart:
+            self.start()
+
+    def start(self) -> None:
+        """Bind the configured address and start serving.  A no-op once started."""
+        if self._port is not None:
+            return
+        port = self._server.add_insecure_port(self._config.address)
         # add_insecure_port returns 0 both when it binds an ephemeral port (the
         # caller asked for ":0") and when the bind fails.  Only the latter is an
         # error, so branch on the requested port rather than the returned one.
         requested_port = self._config.address.rsplit(":", 1)[-1]
-        if self._port == 0 and requested_port != "0":
+        if port == 0 and requested_port != "0":
             raise RuntimeError(
                 f"Failed to bind the AutowareBridge server to "
                 f"{self._config.address!r} (port already in use?)."
             )
+        self._port = port
         self._server.start()
         logger.info("AutowareBridge server listening on port %d", self._port)
 
@@ -144,8 +158,8 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         return self._config
 
     @property
-    def port(self) -> int:
-        """Return the port the server is actually listening on."""
+    def port(self) -> Optional[int]:
+        """The port the server is listening on, or ``None`` before :meth:`start`."""
         return self._port
 
     # ------------------------------------------------------------------
@@ -198,6 +212,9 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         if self._closed:
             return
         self._closed = True
+        if self._port is None:
+            # Never bound: there is nothing listening to stop.
+            return
         # grace=None stops immediately; only one short-lived client ever connects.
         self._server.stop(grace=None)
         logger.info("AutowareBridge server on port %d stopped", self._port)

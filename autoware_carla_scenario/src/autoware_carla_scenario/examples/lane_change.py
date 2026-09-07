@@ -96,18 +96,19 @@ class LaneChangeScenario(BaseScenario):
 
     def setup(self) -> None:
         """Snap ego spawn to CARLA road, register lane-change action and conditions."""
-        world = self.world
         cfg = self._config
 
         # --- Compute ego spawn from Lanelet2Pose via OpenDrivePose ---
         od_pose = self._setup_ego_spawn()
 
         # --- Set all traffic lights to green ---
-        TrafficSignalAction(
-            state=carla.TrafficLightState.Green,
-            lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
-            label="set_all_green",
-        ).execute(world)
+        self.register_init(
+            TrafficSignalAction(
+                state=carla.TrafficLightState.Green,
+                lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                label="set_all_green",
+            )
+        )
 
         # --- Lane-change action (fires immediately) ---
         direction = _DIRECTION_MAP[cfg.direction]

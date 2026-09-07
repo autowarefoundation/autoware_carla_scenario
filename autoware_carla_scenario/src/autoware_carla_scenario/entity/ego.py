@@ -29,6 +29,12 @@ class EgoVehicle:
     #: TrafficManager autopilot on this actor after warm-up.
     use_autopilot: bool = True
 
+    #: When ``True``, the actor is not this entity's to create or destroy: it
+    #: belongs to something outside the scenario (an ``autoware_carla_interface``
+    #: node, say) and :meth:`spawn` only attaches to it.  :class:`ScenarioRunner`
+    #: reads this to leave that actor out of the cleanup it does before a run.
+    attaches_to_existing_actor: bool = False
+
     def __init__(self) -> None:
         self._vehicle: Optional["carla.Actor"] = None
 
@@ -40,6 +46,18 @@ class EgoVehicle:
     def actor(self) -> Optional["carla.Actor"]:
         """Return the spawned CARLA actor, or ``None`` before :meth:`spawn`."""
         return self._vehicle
+
+    @property
+    def is_initialized(self) -> bool:
+        """Whether the entity is ready for the scenario to be judged.
+
+        An entity that needs a stack to come up first -- localization, routing
+        and engagement, minutes of it -- returns ``False`` until it has, and
+        :class:`ScenarioRunner` holds the scenario clock and its conditions
+        until then.  An entity that is ready the moment its actor exists (the
+        default) says so.
+        """
+        return True
 
     @property
     def termination_requested(self) -> bool:
