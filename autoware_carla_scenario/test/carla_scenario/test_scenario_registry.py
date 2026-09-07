@@ -293,3 +293,46 @@ class TestBuildEgoAndSpawn:
         assert isinstance(ground_projection, GroundProjectionConfig)
         assert ground_projection.ray_distance_upper == 10.0
         assert ground_projection.ray_distance_lower == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Tests for build_goal_pose helper
+# ---------------------------------------------------------------------------
+
+
+class TestBuildGoalPose:
+    """``ego.goal_lanelet_id`` is what routes an ego that plans for itself."""
+
+    def test_a_configured_goal_becomes_a_lanelet2_pose(self) -> None:
+        from autoware_carla_scenario import Lanelet2Pose
+        from autoware_carla_scenario.examples.run import build_goal_pose
+
+        cfg = OmegaConf.create({"ego": {"goal_lanelet_id": 265, "goal_s": 12.5}})
+        goal = build_goal_pose(cfg)
+
+        assert isinstance(goal, Lanelet2Pose)
+        assert goal.lanelet_id == 265
+        assert goal.s == 12.5
+
+    def test_no_goal_configured_returns_none(self) -> None:
+        # The ordinary case: only an ego that routes itself needs a goal, so an
+        # unset one must not become lanelet 0.
+        from autoware_carla_scenario.examples.run import build_goal_pose
+
+        cfg = OmegaConf.create({"ego": {"spawn_lanelet_id": 242}})
+        assert build_goal_pose(cfg) is None
+
+    def test_missing_ego_group_returns_none(self) -> None:
+        from autoware_carla_scenario.examples.run import build_goal_pose
+
+        cfg = OmegaConf.create({"scenario": {"name": "whatever"}})
+        assert build_goal_pose(cfg) is None
+
+    def test_goal_s_defaults_to_the_start_of_the_lanelet(self) -> None:
+        from autoware_carla_scenario.examples.run import build_goal_pose
+
+        cfg = OmegaConf.create({"ego": {"goal_lanelet_id": 265}})
+        goal = build_goal_pose(cfg)
+
+        assert goal is not None
+        assert goal.s == 0.0

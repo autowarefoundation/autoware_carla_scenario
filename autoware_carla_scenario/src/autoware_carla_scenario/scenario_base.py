@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 import carla
 
-from .actions import BaseAction
+from .actions import BaseAction, RoutingAction
 from .conditions import BaseCondition, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .coordinate import (
@@ -21,7 +21,6 @@ from .coordinate import (
     Lanelet2Pose,
     OpenDrivePose,
     snap_to_carla_road,
-    to_map_frame,
     to_opendrive,
 )
 from .entity._spawn import SpawnLocation, SpawnTransform
@@ -111,7 +110,7 @@ class BaseScenario(ABC):
                 ego entity that plans its own route reads it -- an
                 :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
                 needs one and refuses to start without it (see
-                :meth:`configure_autoware_mission`).  Assigning
+                :meth:`register_route_to_goal`).  Assigning
                 ``scenario.goal_pose`` after construction works too, which is
                 how the CLI runner passes ``ego.goal_lanelet_id`` in.
             random_seed: Seed for the CARLA TrafficManager random device.
@@ -139,6 +138,8 @@ class BaseScenario(ABC):
         self._client: Optional["carla.Client"] = None
         self._tm_port: int = DEFAULT_TM_PORT
         self._entities: List[VehicleEntity] = []
+        self._init_callbacks: List[Callable[["carla.World"], None]] = []
+        self._init_actions: List[BaseAction] = []
         self._pre_tick_callbacks: List[Callable[["carla.World"], None]] = []
         self._post_tick_callbacks: List[Callable[["carla.World"], None]] = []
         self._pre_tick_actions: List[BaseAction] = []
@@ -222,8 +223,8 @@ class BaseScenario(ABC):
         and position-logging callbacks.
 
         The snapped pose is also the one an ego that plans its own route
-        localizes at, so this hands it to :meth:`configure_autoware_mission`
-        on the way out.
+        localizes at, so this hands it to :meth:`register_route_to_goal` on the
+        way out, which registers the hand-over as an init action.
 
         Returns:
             The intermediate :class:`OpenDrivePose` (useful for deriving
@@ -264,26 +265,32 @@ class BaseScenario(ABC):
         self.follow_with_spectator(ego_actor)
         self.log_actor_position(ego_actor, label="ego")
 
-        self.configure_autoware_mission(snapped)
+        self.register_route_to_goal(snapped)
 
         return od_pose
 
-    def configure_autoware_mission(self, initial_pose: CarlaWorldPose) -> None:
-        """Give an Autoware ego the mission it needs, or leave the ego alone.
+    def register_route_to_goal(
+        self, initial_pose: Optional[CarlaWorldPose] = None
+    ) -> None:
+        """Register the :class:`RoutingAction` that routes an ego to :attr:`goal_pose`.
 
         An :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
         does not drive itself anywhere: Autoware localizes at an initial pose,
         plans a route to a goal, and only then engages.  Neither pose can be
         passed to the entity's constructor, because the runner builds the ego
         *before* :meth:`setup` and both are snapped onto the live CARLA road
-        surface -- so the scenario hands them over here instead.
+        surface -- so the scenario registers the hand-over as an init action
+        here, and :meth:`run_init` performs it before the runner waits on the
+        ego.
 
-        Every other ego entity drives itself (TrafficManager, an external
-        driver policy) and has no mission to set, so this returns without
-        touching it.
+        Every other ego entity drives itself and has no mission to set; the
+        action is a no-op for it, so this registers unconditionally once a goal
+        exists.
 
         Args:
-            initial_pose: The snapped CARLA world pose the ego starts at.
+            initial_pose: The snapped CARLA world pose the ego is expected to
+                start at.  ``None`` leaves it to the entity, which reads the
+                attached actor.
 
         Raises:
             ValueError: If the ego needs a goal but :attr:`goal_pose` is
@@ -293,38 +300,27 @@ class BaseScenario(ABC):
         """
         from .entity.autoware_entity import AutowareEgoEntity  # noqa: PLC0415
 
-        ego = self.ego_entity
-        if not isinstance(ego, AutowareEgoEntity):
+        if self.goal_pose is None:
+            if isinstance(self.ego_entity, AutowareEgoEntity):
+                msg = (
+                    f"{type(self).__name__} selected an Autoware ego but set no "
+                    "goal. Autoware plans a route from the initial pose to a goal "
+                    "and will not move without one: set 'ego.goal_lanelet_id' (and "
+                    "optionally 'ego.goal_s') in the scenario config, or pass "
+                    "goal_pose= to the scenario constructor."
+                )
+                raise ValueError(msg)
             return
 
-        if self.goal_pose is None:
-            msg = (
-                f"{type(self).__name__} selected an Autoware ego but set no goal. "
-                "Autoware plans a route from the initial pose to a goal and will "
-                "not move without one: set 'ego.goal_lanelet_id' (and optionally "
-                "'ego.goal_s') in the scenario config, or pass goal_pose= to the "
-                "scenario constructor."
+        self.register_init(
+            RoutingAction(
+                lambda: self.ego_entity,
+                self.goal_pose,
+                initial_pose=initial_pose,
+                ground_projection=self._ground_projection,
+                label="route_ego_to_goal",
             )
-            raise ValueError(msg)
-
-        goal_snapped = snap_to_carla_road(
-            to_opendrive(self.goal_pose),
-            self.world,
-            ground_projection=self._ground_projection,
         )
-        logger.info(
-            "Autoware mission: start (%.1f, %.1f, %.1f) -> goal lanelet %d s=%.1f "
-            "= (%.1f, %.1f, %.1f)",
-            initial_pose.x,
-            initial_pose.y,
-            initial_pose.z,
-            self.goal_pose.lanelet_id,
-            self.goal_pose.s,
-            goal_snapped.x,
-            goal_snapped.y,
-            goal_snapped.z,
-        )
-        ego.set_mission(to_map_frame(initial_pose), to_map_frame(goal_snapped))
 
     @abstractmethod
     def setup(self) -> None:
@@ -364,6 +360,42 @@ class BaseScenario(ABC):
             actions.append(cb)
         else:
             callbacks.append(cb)
+
+    def register_init(
+        self, cb: Union[BaseAction, Callable[["carla.World"], None]]
+    ) -> None:
+        """Register a callback or action to run **once, before the tick loop**.
+
+        The scenario's initialization phase: the ego actor exists and physics
+        have settled, but the clock has not started and no condition has been
+        evaluated yet.  This is where a run is set up rather than driven --
+        putting the world in the state the scenario starts from, and handing an
+        ego that plans for itself the mission it needs before the runner waits
+        on it.
+
+        This is the counterpart to :meth:`register_pre_tick` /
+        :meth:`register_post_tick` for the phase before the loop, and it takes
+        the same two shapes: a :class:`BaseAction` (whose condition is
+        evaluated once, at ``elapsed=0``) or a plain callable receiving the
+        world.  An action registered here is never re-evaluated -- the
+        initialization phase happens once.
+
+        Args:
+            cb: A :class:`BaseAction` or a plain callable receiving the world.
+        """
+        self._register_tick(cb, self._init_actions, self._init_callbacks)
+
+    def run_init(self, world: "carla.World") -> None:
+        """Run everything registered with :meth:`register_init`.
+
+        Called by :class:`ScenarioRunner` after the ego is spawned and the
+        warm-up ticks are done, and before the ego is asked to start.  Plain
+        callbacks run first, then actions, each in registration order.
+        """
+        for cb in self._init_callbacks:
+            cb(world)
+        for action in self._init_actions:
+            action.tick(world, 0.0)
 
     def register_pre_tick(
         self, cb: Union[BaseAction, Callable[["carla.World"], None]]

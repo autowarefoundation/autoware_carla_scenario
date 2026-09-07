@@ -187,3 +187,54 @@ class TestBuildersProduceFrameworkObjects:
         )
         with pytest.raises(LookupError, match="build_nothing"):
             builders.instantiate_condition(broken, BuildContext(scenario=None))
+
+
+class TestRoutingActionBuilder:
+    """A goal card compiles into the action that hands the ego its mission.
+
+    Routing is the one action whose actor is not free: only the ego runs a
+    stack that plans a route, so naming another vehicle has to be refused at
+    compile time rather than compiling into an action that quietly does
+    nothing on the day.
+    """
+
+    @staticmethod
+    def _document_with_a_goal(actor: str):
+        from autoware_carla_scenario.authoring.models import ActionNode
+
+        document = new_document()
+        document.actions = [
+            ActionNode(
+                type="routing",
+                title="Drive to the far side",
+                actor=actor,
+                params={"goal_lanelet_id": 265, "goal_s": 4.0},
+            )
+        ]
+        return document
+
+    def test_a_goal_on_the_ego_becomes_a_routing_action(self) -> None:
+        from autoware_carla_scenario.actions import RoutingAction
+
+        class _Scenario:
+            ego_entity = None
+            _ground_projection = None
+
+        compiled = compile_document(self._document_with_a_goal("ego"))
+        ctx = BuildContext(scenario=_Scenario(), client=None)
+
+        action = instantiate_action(compiled.actions[0], ctx)
+
+        assert isinstance(action, RoutingAction)
+        assert action.goal.lanelet_id == 265
+        assert action.goal.s == 4.0
+        assert action.label == "Drive to the far side"
+
+    def test_routing_another_vehicle_is_refused(self) -> None:
+        # ``new_document()`` already carries an NPC, so this is a goal an
+        # author could really draw: a card on the wrong vehicle's track.
+        compiled = compile_document(self._document_with_a_goal("npc1"))
+        ctx = BuildContext(scenario=None, client=None)
+
+        with pytest.raises(ValueError, match="only the ego"):
+            instantiate_action(compiled.actions[0], ctx)

@@ -457,6 +457,49 @@ def build_turn_action(
     )
 
 
+def build_routing_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`RoutingAction`.
+
+    The actor field is read, not ignored: only the ego has a stack to plan a
+    route, so naming any other vehicle is refused here rather than compiling
+    into an action that silently does nothing.
+
+    The entity itself is resolved at execute time rather than captured now --
+    the runner may swap one in after the document is compiled, which is how
+    ``ego.entity`` reaches a run.
+    """
+    from ..actions import RoutingAction  # noqa: PLC0415
+    from ..constants import EGO_ROLE_NAME  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    if compiled.actor_role != str(EGO_ROLE_NAME):
+        msg = (
+            f"action {compiled.label!r} routes {compiled.actor_role!r}, but only "
+            f"the ego ({str(EGO_ROLE_NAME)!r}) plans its own route. Other "
+            "vehicles are driven by the TrafficManager and have no goal to set."
+        )
+        raise ValueError(msg)
+
+    params = compiled.params
+    scenario = ctx.scenario
+    return RoutingAction(
+        lambda: scenario.ego_entity,
+        Lanelet2Pose(
+            lanelet_id=int(params["goal_lanelet_id"]),
+            s=float(params.get("goal_s") or 0.0),
+        ),
+        ground_projection=getattr(scenario, "_ground_projection", None),
+        label=compiled.label,
+        condition=condition,
+    )
+
+
 def build_traffic_signal_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",

@@ -175,10 +175,10 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # The closed-loop entity: it attaches to the ego the interface node
         # spawns and hands Autoware the scenario's mission over the bridge the
         # framework hosts.  The mission itself comes from the scenario, whose
-        # ``setup()`` calls ``BaseScenario.configure_autoware_mission`` with the
-        # spawn and ``ego.goal_lanelet_id`` snapped onto the live map -- poses
-        # that do not exist before then.  A config that selects this entity
-        # without a goal is refused there, during setup.
+        # ``setup()`` registers a ``RoutingAction`` for the spawn and
+        # ``ego.goal_lanelet_id`` snapped onto the live map -- poses that do not
+        # exist before then -- and the runner performs it in the init phase.  A
+        # config that selects this entity without a goal is refused during setup.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,
