@@ -26,8 +26,10 @@ class StickyCondition(BaseCondition):
     sequence of states::
 
         pass_cond = AndCondition([
-            StickyCondition(EntityLanePositionCondition("npc", road_id="10")),
-            StickyCondition(EntityLanePositionCondition("npc", road_id="20")),
+            StickyCondition(EntityLanePositionCondition.anywhere_on_road(
+                "npc", "10", label="npc_on_10")),
+            StickyCondition(EntityLanePositionCondition.anywhere_on_road(
+                "npc", "20", label="npc_on_20")),
         ])
 
     Args:

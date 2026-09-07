@@ -113,7 +113,6 @@ from autoware_carla_scenario import (
     Lanelet2Pose,
     StickyCondition,
     TimeoutCondition,
-    to_opendrive,
 )
 
 from .configs import MyScenarioConfig
@@ -144,12 +143,12 @@ class MyScenario(BaseScenario):
         # 2. Build pass condition — "ego visited all expected roads"
         stickies = []
         for ll_id in cfg.expected_lanelet_ids:
-            od = to_opendrive(Lanelet2Pose(lanelet_id=ll_id, s=0.0))
             stickies.append(
                 StickyCondition(
                     EntityLanePositionCondition(
-                        entity_name=EGO_ROLE_NAME,
-                        road_id=od.road_id,
+                        EGO_ROLE_NAME,
+                        Lanelet2Pose(lanelet_id=ll_id, s=0.0),
+                        label=f"ego_on_lanelet_{ll_id}",
                     )
                 )
             )

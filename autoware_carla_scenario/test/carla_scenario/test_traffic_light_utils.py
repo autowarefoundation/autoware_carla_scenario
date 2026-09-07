@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List
+from xml.etree import ElementTree
 
 import pytest
 
-from autoware_carla_scenario.utils.traffic_light import (
+from autoware_carla_scenario.coordinate.traffic_light import (
     find_nearest_traffic_light,
+)
+from autoware_carla_scenario.utils.traffic_light import (
+    get_signal_ids_for_controller,
+    lanelet2_traffic_light_id_to_opendrive_controller_id,
 )
 
 
@@ -173,3 +178,65 @@ class TestFindNearestTrafficLight:
 
         assert nearest is tl
         assert dist == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# OpenDRIVE controller lookups
+#
+# These had no tests while they fetched the road network from the MapManager
+# singleton: covering them meant standing up a whole map. They read an XML root
+# now, so a few elements are enough.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRoadNetwork:
+    """Just enough of pyxodr's RoadNetwork: something with a `.root`."""
+
+    def __init__(self, xml: str) -> None:
+        self.root = ElementTree.fromstring(xml)
+
+
+_CONTROLLERS = """
+<OpenDRIVE>
+  <controller id="7" name="Controller_TL_1234">
+    <control signalId="700"/>
+    <control signalId="701"/>
+  </controller>
+  <controller id="8" name="Controller_TL_5678">
+    <control signalId="800"/>
+    <control/>
+  </controller>
+</OpenDRIVE>
+"""
+
+
+class TestControllerIdForLanelet2TrafficLight:
+    def test_the_naming_convention_is_followed_back(self) -> None:
+        network = _FakeRoadNetwork(_CONTROLLERS)
+        assert lanelet2_traffic_light_id_to_opendrive_controller_id(network, 1234) == 7
+        assert lanelet2_traffic_light_id_to_opendrive_controller_id(network, 5678) == 8
+
+    def test_an_unmapped_traffic_light_is_none(self) -> None:
+        network = _FakeRoadNetwork(_CONTROLLERS)
+        assert lanelet2_traffic_light_id_to_opendrive_controller_id(network, 1) is None
+
+    def test_a_prefix_match_is_not_a_match(self) -> None:
+        """`Controller_TL_123` must not answer for lanelet 1234, or vice versa."""
+        network = _FakeRoadNetwork(_CONTROLLERS)
+        assert (
+            lanelet2_traffic_light_id_to_opendrive_controller_id(network, 123) is None
+        )
+
+
+class TestSignalIdsForController:
+    def test_every_control_child_is_returned(self) -> None:
+        network = _FakeRoadNetwork(_CONTROLLERS)
+        assert get_signal_ids_for_controller(network, 7) == ["700", "701"]
+
+    def test_a_control_without_a_signal_id_is_dropped(self) -> None:
+        network = _FakeRoadNetwork(_CONTROLLERS)
+        assert get_signal_ids_for_controller(network, 8) == ["800"]
+
+    def test_an_unknown_controller_is_empty(self) -> None:
+        network = _FakeRoadNetwork(_CONTROLLERS)
+        assert get_signal_ids_for_controller(network, 99) == []

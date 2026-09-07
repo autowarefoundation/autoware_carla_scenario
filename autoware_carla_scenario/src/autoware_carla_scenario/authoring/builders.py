@@ -46,23 +46,6 @@ def _traffic_light_state(name: Any) -> Any:
     return getattr(carla.TrafficLightState, str(name))
 
 
-def _opendrive_lane_for_lanelet(lanelet_id: int) -> tuple[str, int]:
-    """Return the OpenDRIVE ``(road_id, lane_id)`` a lanelet occupies.
-
-    Scenario authors think in lanelets; ``EntityLanePositionCondition`` speaks
-    OpenDRIVE.  Both halves are carried because **an OpenDRIVE road is not a
-    lane**: on the nishishinjuku fixture, lanelets 183 and 184 are lanes 2 and 1
-    of the same road 80.  Resolving only the road would turn "the entity is on
-    lanelet 183" into "the entity is anywhere on road 80", which is also true
-    while it sits in the neighbouring lane -- so a cut-in scenario would pass
-    without the cut-in ever happening.
-    """
-    from ..coordinate import Lanelet2Pose, to_opendrive  # noqa: PLC0415
-
-    pose = to_opendrive(Lanelet2Pose(lanelet_id=int(lanelet_id), s=0.0))
-    return pose.road_id, int(pose.lane_id)
-
-
 # ---------------------------------------------------------------------------
 # Condition builders
 # ---------------------------------------------------------------------------
@@ -222,25 +205,6 @@ def _scalar_bounds(params: dict[str, Any]) -> "list[Any]":
     ]
 
 
-def _entity_lane_condition(
-    compiled: "CompiledCondition", road_id: str, lane_id: "int | None"
-) -> "BaseCondition":
-    """Build the runtime position condition from an OpenDRIVE address.
-
-    Both position conditions end here; only where the address comes from
-    differs, so the constructor is written once.
-    """
-    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
-
-    return EntityLanePositionCondition(
-        entity_name=compiled.params["entity"],
-        road_id=road_id,
-        lane_id=lane_id,
-        rules=_scalar_bounds(compiled.params),
-        label=compiled.label,
-    )
-
-
 def build_entity_lane_position_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",
@@ -248,12 +212,22 @@ def build_entity_lane_position_condition(
 ) -> "BaseCondition":
     """Build an :class:`EntityLanePositionCondition` from a Lanelet2 reference.
 
-    A lanelet names one lane, so both halves of the OpenDRIVE address are
-    derived from it and neither is left for the author to contradict.
+    The lanelet goes in whole rather than being reduced to a road and a lane
+    here.  A lanelet names one lane, and the condition resolves it -- which is
+    the only resolution left, so there is nothing for a second one to drift
+    from.  The pose carries ``s=0.0`` because it is an address: *where along*
+    the lane is said with the ``s``/``t`` bounds below.
     """
+    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
     params = compiled.params
-    road_id, lane_id = _opendrive_lane_for_lanelet(int(params["lanelet_id"]))
-    return _entity_lane_condition(compiled, road_id, lane_id)
+    return EntityLanePositionCondition(
+        params["entity"],
+        Lanelet2Pose(lanelet_id=int(params["lanelet_id"]), s=0.0),
+        rules=_scalar_bounds(params),
+        label=compiled.label,
+    )
 
 
 def build_entity_road_position_condition(
@@ -263,15 +237,26 @@ def build_entity_road_position_condition(
 ) -> "BaseCondition":
     """Build an :class:`EntityLanePositionCondition` from an OpenDRIVE address.
 
-    Road and lane are passed through untouched -- this is the frame the runtime
-    already speaks, so nothing is resolved and nothing can disagree.
+    This is the frame the runtime already speaks, so nothing is resolved.  A
+    lane the author left empty means the road alone is being asserted, which
+    the condition has its own constructor for.
     """
+    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
+    from ..coordinate import OpenDrivePose  # noqa: PLC0415
+
     params = compiled.params
+    rules = _scalar_bounds(params)
+    road_id = str(params["road_id"])
     lane_id = params.get("lane_id")
-    return _entity_lane_condition(
-        compiled,
-        str(params["road_id"]),
-        int(lane_id) if lane_id is not None else None,
+    if lane_id is None:
+        return EntityLanePositionCondition.anywhere_on_road(
+            params["entity"], road_id, rules=rules, label=compiled.label
+        )
+    return EntityLanePositionCondition(
+        params["entity"],
+        OpenDrivePose(road_id=road_id, lane_id=int(lane_id), s=0.0),
+        rules=rules,
+        label=compiled.label,
     )
 
 

@@ -29,6 +29,7 @@ With pytest — see ``test/carla_scenario/test_examples.py``.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 
 import carla
@@ -135,9 +136,8 @@ class LaneChangeScenario(BaseScenario):
 
         lane_position_condition = StickyCondition(
             EntityLanePositionCondition(
-                entity_name=EGO_ROLE_NAME,
-                road_id=od_pose.road_id,
-                lane_id=target_lane_id,
+                EGO_ROLE_NAME,
+                replace(od_pose, lane_id=target_lane_id),
                 label="ego_target_lane",
             )
         )

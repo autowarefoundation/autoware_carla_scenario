@@ -23,7 +23,6 @@ from autoware_carla_scenario import (
     Lanelet2Pose,
     StickyCondition,
     TimeoutCondition,
-    to_opendrive,
 )
 
 from .configs import {{ config_class }}
@@ -51,18 +50,20 @@ class {{ scenario_class }}(BaseScenario):
         self._setup_ego_spawn()
         cfg = self._config
 
-        # Pass condition: the ego reaches each goal road (latched via Sticky).
+        # Pass condition: the ego reaches each goal lanelet (latched via Sticky).
         stickies = []
+        logger.info("Goal lanelets: %s", list(cfg.goal_lanelet_ids))
         for lanelet_id in cfg.goal_lanelet_ids:
-            od = to_opendrive(Lanelet2Pose(lanelet_id=lanelet_id, s=0.0))
-            logger.info(
-                "Goal lanelet %d -> OpenDRIVE road '%s'", lanelet_id, od.road_id
-            )
+            # The lanelet goes in whole: it names one lane, and the condition
+            # resolves it.  Reducing it to a road here would assert only that
+            # the ego reached the road, which is also true in the lane beside
+            # the one the goal names.
             stickies.append(
                 StickyCondition(
                     EntityLanePositionCondition(
-                        entity_name=EGO_ROLE_NAME,
-                        road_id=od.road_id,
+                        EGO_ROLE_NAME,
+                        Lanelet2Pose(lanelet_id=lanelet_id, s=0.0),
+                        label=f"ego_on_lanelet_{lanelet_id}",
                     )
                 )
             )
