@@ -245,3 +245,143 @@ class TestCreateEgo:
             _SimpleScenario(_make_ego_config()).create_ego().termination_requested
             is False
         )
+
+
+# ---------------------------------------------------------------------------
+# TestConfigureAutowareMission – a packaged scenario has to supply a mission
+# ---------------------------------------------------------------------------
+
+
+class TestRouteToGoal:
+    """``ego.entity=autoware`` gives the scenario an ego that plans a route.
+
+    Autoware localizes at an initial pose and drives to a goal; without both it
+    never moves.  The scenario owns those poses because only it knows where the
+    ego spawns and where the run is meant to end, so ``_setup_ego_spawn()``
+    registers a :class:`RoutingAction` for them -- and a config that selected
+    this entity without a goal is refused during setup rather than at the start
+    of the run.
+
+    The hand-over is an init action rather than a direct call so that it sits
+    with the other things a scenario sets up before the loop, and so that the
+    runner performs it at one defined point.
+    """
+
+    @staticmethod
+    def _autoware_entity():
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        return AutowareEgoEntity(bridge=FakeAutowareBridge())
+
+    @staticmethod
+    def _initial_pose():
+        from autoware_carla_scenario.coordinate import CarlaWorldPose
+
+        return CarlaWorldPose(x=1.0, y=2.0, z=3.0, yaw=45.0)
+
+    def test_an_ego_that_drives_itself_registers_nothing(self) -> None:
+        # An autopilot or driver ego has no goal and no mission to set, so
+        # nothing is registered and no error is raised.
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_route_to_goal(self._initial_pose())
+        assert scenario.goal_pose is None
+        assert scenario._init_actions == []
+
+    def test_an_autoware_ego_without_a_goal_is_refused(self) -> None:
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = self._autoware_entity()
+        with pytest.raises(ValueError, match="goal_lanelet_id"):
+            scenario.register_route_to_goal(self._initial_pose())
+
+    def test_a_goal_registers_a_routing_action(self) -> None:
+        from autoware_carla_scenario import RoutingAction
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = self._autoware_entity()
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=123, s=4.0)
+
+        scenario.register_route_to_goal(self._initial_pose())
+
+        assert len(scenario._init_actions) == 1
+        action = scenario._init_actions[0]
+        assert isinstance(action, RoutingAction)
+        assert action.goal.lanelet_id == 123
+        # Registered, not performed: the runner runs init actions once the ego
+        # actor exists, and nothing has reached the entity yet.
+        assert scenario.ego_entity is not None
+        assert scenario.ego_entity._goal_pose is None  # type: ignore[union-attr]
+
+    def test_the_mission_reaches_the_entity_in_the_map_frame(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.actions import routing
+        from autoware_carla_scenario.autoware_bridge import BridgePose
+        from autoware_carla_scenario.coordinate import CarlaWorldPose, Lanelet2Pose
+
+        goal_carla = CarlaWorldPose(x=40.0, y=50.0, z=1.0, yaw=-90.0)
+        monkeypatch.setattr(routing, "to_opendrive", lambda pose: pose, raising=True)
+        monkeypatch.setattr(
+            routing,
+            "snap_to_carla_road",
+            lambda pose, world, ground_projection: goal_carla,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            routing,
+            "to_map_frame",
+            lambda pose: BridgePose.from_yaw(pose.x, -pose.y, pose.z, 0.0),
+            raising=True,
+        )
+
+        entity = self._autoware_entity()
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = entity
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=123, s=4.0)
+        scenario.set_client(MagicMock())
+        scenario.register_route_to_goal(self._initial_pose())
+
+        scenario.run_init(MagicMock())
+
+        # Poses are handed over in the map frame, not CARLA's: the y-flip is
+        # the visible half of that, and the entity now has a mission to start
+        # the run with.
+        assert entity._initial_pose == BridgePose.from_yaw(1.0, -2.0, 3.0, 0.0)
+        assert entity._goal_pose == BridgePose.from_yaw(40.0, -50.0, 1.0, 0.0)
+
+
+class TestInitPhase:
+    """``register_init`` is the phase before the loop, in the shape of the loop.
+
+    Same two forms as ``register_pre_tick`` -- an action or a plain callable --
+    but run once, by the runner, before the clock starts.
+    """
+
+    def test_callbacks_and_actions_both_run_once(self) -> None:
+        world = MagicMock()
+        calls: List[str] = []
+
+        class _RecordingAction(BaseAction):
+            def execute(self, world: object) -> None:
+                calls.append("action")
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_init(lambda _world: calls.append("callback"))
+        scenario.register_init(_RecordingAction(label="init_action"))
+
+        scenario.run_init(world)
+
+        assert calls == ["callback", "action"]
+
+    def test_an_init_action_does_not_run_on_the_tick_loop(self) -> None:
+        # The registration lists are separate: an init action is not a pre/post
+        # tick action, so the loop never sees it.
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_init(lambda _world: None)
+        assert scenario._pre_tick_callbacks == []
+        assert scenario._post_tick_callbacks == []
+
+    def test_nothing_registered_is_a_no_op(self) -> None:
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.run_init(MagicMock())

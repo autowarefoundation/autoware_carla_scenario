@@ -172,11 +172,13 @@ class IntersectionPassingScenario(BaseScenario):
             )
 
         # --- Set all traffic lights to green ---
-        TrafficSignalAction(
-            state=carla.TrafficLightState.Green,
-            lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
-            label="set_all_green",
-        ).execute(world)
+        self.register_init(
+            TrafficSignalAction(
+                state=carla.TrafficLightState.Green,
+                lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                label="set_all_green",
+            )
+        )
 
         # --- Optional turn action ---
         if cfg.turn_direction is not None:

@@ -156,6 +156,56 @@ def build_temporary_stop_condition(
 
 
 # ---------------------------------------------------------------------------
+# Action builders
+# ---------------------------------------------------------------------------
+
+
+def build_routing_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`RoutingAction`.
+
+    Hand-written because a signature cannot describe either half of it: the
+    goal is one pose assembled from two fields, and the entity is not a field
+    at all but the scenario's ego, resolved at execute time because the runner
+    may swap one in after the document is compiled -- which is how
+    ``ego.entity`` reaches a run.
+
+    The actor field is read, not decorative.  Only the ego runs a stack that
+    plans a route, so naming any other vehicle is refused here rather than
+    compiling into an action that silently does nothing on the day.
+    """
+    from ..actions import RoutingAction  # noqa: PLC0415
+    from ..constants import EGO_ROLE_NAME  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    if compiled.actor_role != str(EGO_ROLE_NAME):
+        msg = (
+            f"action {compiled.label!r} routes {compiled.actor_role!r}, but only "
+            f"the ego ({str(EGO_ROLE_NAME)!r}) plans its own route. Other "
+            "vehicles are driven by the TrafficManager and have no goal to set."
+        )
+        raise ValueError(msg)
+
+    params = compiled.params
+    scenario = ctx.scenario
+    return RoutingAction(
+        lambda: scenario.ego_entity,
+        Lanelet2Pose(
+            lanelet_id=int(params["goal_lanelet_id"]),
+            s=float(params.get("goal_s") or 0.0),
+        ),
+        ground_projection=getattr(scenario, "_ground_projection", None),
+        label=compiled.label,
+        condition=condition,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 

@@ -162,10 +162,10 @@ class AutowareEgoEntity(EgoVehicle):
         reported rather than silently localized away.
 
         The built-in scenarios reach this through
-        :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.configure_autoware_mission`,
-        which ``_setup_ego_spawn()`` calls with the snapped spawn and the
-        scenario's ``goal_pose``; calling this directly is for a scenario that
-        derives its mission some other way.
+        :class:`~autoware_carla_scenario.actions.routing.RoutingAction`, which
+        ``_setup_ego_spawn()`` registers as an init action from the snapped
+        spawn and the scenario's ``goal_pose``; calling this directly is for a
+        scenario that derives its mission some other way.
 
         Args:
             initial_pose: Map-frame pose Autoware initializes localization at,

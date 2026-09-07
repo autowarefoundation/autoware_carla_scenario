@@ -498,6 +498,44 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="routing",
+        title="Set Goal",
+        category="Vehicle / Motion",
+        builder="build_routing_action",
+        visual_kind="instant",
+        fields=(
+            FieldSpec(
+                name="goal_lanelet_id",
+                label="Goal lanelet",
+                kind="lanelet",
+                default=0,
+                help=(
+                    "Where the run is meant to end. Only an ego that plans its "
+                    "own route reads this -- an Autoware one -- and it will not "
+                    "move without it; an autopilot or driver ego ignores it."
+                ),
+            ),
+            FieldSpec(
+                name="goal_s",
+                label="s",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Along the goal lanelet from its start.",
+            ),
+        ),
+        description=(
+            "Give the ego a destination and let its stack plan the route. "
+            "Performed during initialization, before the run's clock starts: "
+            "an autonomy stack has to localize and route before it can drive, "
+            "so this cannot wait for a trigger on the timeline."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="traffic_signal",
         title="Set Traffic Signal",
         category="Environment",
