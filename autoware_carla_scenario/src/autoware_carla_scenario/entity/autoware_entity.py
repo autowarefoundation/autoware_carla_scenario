@@ -28,6 +28,7 @@ matches.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import TYPE_CHECKING, Optional
 
@@ -40,12 +41,20 @@ if TYPE_CHECKING:
 from ..autoware_bridge.base import AutowareBridgeConfig
 from ..conditions.base import find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
+from ..coordinate.poses import CarlaWorldPose
+from ..coordinate.transform import to_map_frame
 from .ego import EgoVehicle
 
 logger = logging.getLogger(__name__)
 
 #: Polling interval while waiting for the interface node to spawn the ego actor.
 _ATTACH_POLL_INTERVAL_S: float = 0.5
+
+#: How far, horizontally, the ego may be from where the scenario expected it
+#: before that disagreement is worth a warning.  Snapping a spawn onto the road
+#: surface moves it by centimetres; a spawn_point that does not match moves it
+#: by metres.
+_INITIAL_POSE_TOLERANCE_M: float = 1.0
 
 
 class AutowareEntity(EgoVehicle):
@@ -71,26 +80,17 @@ class AutowareEgoEntity(EgoVehicle):
     here) and skips ``set_autopilot(True)`` for this actor, leaving it under
     Autoware's control.
 
-    .. warning::
+    Two things about a run are different because the ego is someone else's:
 
-       Not yet wired into :class:`ScenarioRunner` - this class is the foundation
-       only.  Two runner-side gaps must be closed before an Autoware scenario can
-       run end to end (tracked separately):
-
-       * ``ScenarioRunner._destroy_all_dynamic_actors`` destroys every vehicle
-         before ``ego.spawn()``, so it would remove the interface-spawned ego and
-         :meth:`spawn` would only expire at ``attach_timeout``.  The runner must
-         exempt the interface-owned actor (and its sensors) or create the ego
-         after cleanup.
-       * The runner evaluates pass/fail conditions from the first tick without
-         waiting for :attr:`is_initialized`, so a condition already true near the
-         initial pose could record a result before Autoware is ready.  The runner
-         must gate scenario timing and condition evaluation on
-         :attr:`is_initialized`.
-
-       This entity already exposes the hooks (:attr:`is_initialized`,
-       :attr:`termination_requested`) the runner needs; the wiring itself is a
-       follow-up.
+    * The actor is not the scenario's to destroy.
+      :attr:`~EgoVehicle.attaches_to_existing_actor` is ``True``, which keeps it
+      (and its sensors) out of the cleanup :class:`ScenarioRunner` does before a
+      run -- otherwise the interface-spawned ego would be destroyed and
+      :meth:`spawn` would only expire at ``attach_timeout``.
+    * The scenario cannot be judged until Autoware is driving.  The runner holds
+      the scenario clock and its conditions until :attr:`is_initialized`, so a
+      condition that is already true near the initial pose -- standing still,
+      say -- cannot record a result while Autoware is still localizing.
 
     Pose feedback to the scenario is read directly from the CARLA actor, not the
     bridge: because :meth:`spawn` attaches this entity's
@@ -119,6 +119,9 @@ class AutowareEgoEntity(EgoVehicle):
     #: Autoware drives; TrafficManager must keep its hands off this actor.
     use_autopilot: bool = False
 
+    #: The interface node spawns the ego and owns its lifecycle.
+    attaches_to_existing_actor: bool = True
+
     def __init__(
         self,
         config: Optional["AutowareBridgeConfig"] = None,
@@ -136,6 +139,41 @@ class AutowareEgoEntity(EgoVehicle):
         self._ready: bool = False
         self._ready_ticks: int = 0
         self._termination_requested: bool = False
+
+    # ------------------------------------------------------------------
+    # Mission
+    # ------------------------------------------------------------------
+
+    def set_mission(
+        self, initial_pose: Optional["BridgePose"], goal_pose: "BridgePose"
+    ) -> None:
+        """Set the mission before :meth:`on_scenario_start` hands it over.
+
+        ``ScenarioRunner`` calls ``BaseScenario.create_ego()`` *before*
+        ``setup()``, so a scenario whose goal comes from the live map -- snapped
+        onto the road surface, say -- cannot pass it to the constructor.  It
+        builds the entity first and calls this from ``setup()``.
+
+        The goal is what a scenario knows then.  The initial pose is not: the
+        ego actor appears after ``setup()`` and its pose is chosen by whoever
+        spawned it, so ``None`` here means "wherever the ego turns out to be",
+        read off the attached actor when the scenario starts.  Passing one
+        anyway states where the ego is *expected* to be, and a disagreement is
+        reported rather than silently localized away.
+
+        The built-in scenarios reach this through
+        :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.configure_autoware_mission`,
+        which ``_setup_ego_spawn()`` calls with the snapped spawn and the
+        scenario's ``goal_pose``; calling this directly is for a scenario that
+        derives its mission some other way.
+
+        Args:
+            initial_pose: Map-frame pose Autoware initializes localization at,
+                or ``None`` to take it from the attached ego actor.
+            goal_pose: Map-frame goal pose Autoware plans the route to.
+        """
+        self._initial_pose = initial_pose
+        self._goal_pose = goal_pose
 
     # ------------------------------------------------------------------
     # Properties
@@ -219,24 +257,92 @@ class AutowareEgoEntity(EgoVehicle):
     # ------------------------------------------------------------------
 
     def on_scenario_start(self, world: "carla.World") -> None:
-        """Hand Autoware the initial pose and goal; readiness is awaited in ticks.
+        """Hand Autoware the mission; readiness is awaited in ticks.
+
+        Where the ego actually is is checked against where the scenario said it
+        would be: the pose is chosen by the ``spawn_point`` the interface node
+        was launched with, on the other side of the run, and the two agreeing is
+        otherwise left to whoever typed them.  A scenario that hands over no
+        initial pose gets the actor's.
 
         Raises:
             RuntimeError: If the ego actor has not been attached yet.
-            ValueError: If the initial pose or goal pose is missing.
+            ValueError: If the goal pose is missing.
         """
         del world
         if self.actor is None:
             raise RuntimeError(
                 "AutowareEgoEntity.on_scenario_start called before spawn()/attach"
             )
-        if self._initial_pose is None or self._goal_pose is None:
+        if self._goal_pose is None:
             raise ValueError(
-                "AutowareEgoEntity requires both initial_pose and goal_pose "
-                "before Autoware can be configured."
+                "AutowareEgoEntity has no goal: Autoware needs one to plan a "
+                "route. A scenario that calls BaseScenario._setup_ego_spawn() "
+                "gets it from its goal_pose (ego.goal_lanelet_id in the config); "
+                "one that does not must call set_mission() from its setup(), "
+                "where poses snapped onto the live map exist, or pass it to the "
+                "constructor."
             )
-        self._bridge.configure(self._initial_pose, self._goal_pose)
+        initial_pose = self._resolve_initial_pose()
+        # The transport is brought up here rather than at construction: a batch
+        # of scenarios is built before the first one runs, and two bridges
+        # cannot hold the same address at once.
+        self._bridge.start()
+        self._bridge.configure(initial_pose, self._goal_pose)
         self._configured = True
+
+    def _resolve_initial_pose(self) -> "BridgePose":
+        """Return the pose to initialize localization at, checked against the ego.
+
+        The scenario's pose wins when it has one: it is a spawn snapped onto the
+        road surface, which is what ``base_link`` means, while the actor's
+        transform is the actor's own origin -- a metre and a half above the road
+        on some vehicles.  What the actor is good for is saying whether the ego
+        is *where the scenario thinks*, which is a different question and the one
+        that goes wrong silently.
+
+        The comparison is horizontal for the same reason: the heights are
+        measured from different places and would disagree on every run.
+        """
+        assert self.actor is not None  # noqa: S101 - checked by the caller
+        transform = self.actor.get_transform()
+        actual = to_map_frame(
+            CarlaWorldPose(
+                x=transform.location.x,
+                y=transform.location.y,
+                z=transform.location.z,
+                roll=transform.rotation.roll,
+                pitch=transform.rotation.pitch,
+                yaw=transform.rotation.yaw,
+            )
+        )
+        expected = self._initial_pose
+        if expected is None:
+            logger.info(
+                "No initial pose was set; localizing at the ego's own pose "
+                "(%.2f, %.2f). Autoware fits the height to the map.",
+                actual.position.x,
+                actual.position.y,
+            )
+            return actual
+        offset = math.dist(
+            (expected.position.x, expected.position.y),
+            (actual.position.x, actual.position.y),
+        )
+        if offset > _INITIAL_POSE_TOLERANCE_M:
+            logger.warning(
+                "The ego is %.2f m from where the scenario expected it "
+                "(%.2f, %.2f) -- it is at (%.2f, %.2f). The interface node's "
+                "spawn_point and the scenario's spawn disagree; localization is "
+                "initialized at the scenario's pose, which is the one its goal "
+                "and conditions were written against.",
+                offset,
+                expected.position.x,
+                expected.position.y,
+                actual.position.x,
+                actual.position.y,
+            )
+        return expected
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Poll Autoware's readiness each tick until it is ready (or times out).

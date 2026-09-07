@@ -21,6 +21,7 @@ from autoware_carla_scenario.coordinate import (
     to_opendrive,
 )
 from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
+from autoware_carla_scenario.coordinate.projection import read_projector_type
 from autoware_carla_scenario.coordinate.transform import (
     _carla_to_lanelet2,
     _carla_to_opendrive,
@@ -99,6 +100,53 @@ class TestParseGeoReference:
         lat, lon, alt = _parse_geo_reference(xodr)
         assert lat == pytest.approx(10.0)
         assert lon == pytest.approx(20.0)
+
+
+# ---------------------------------------------------------------------------
+# TestReadProjectorType – the projection comes from the map, not from a guess
+# ---------------------------------------------------------------------------
+
+
+class TestReadProjectorType:
+    """Autoware writes the projection beside the map; this reads that file."""
+
+    @staticmethod
+    def _map_with_info(tmp_path, body: str):
+        """Write a map and its projector descriptor; return the map path."""
+        (tmp_path / "map_projector_info.yaml").write_text(body, encoding="utf-8")
+        map_path = tmp_path / "lanelet2_map.osm"
+        map_path.write_text("<osm/>", encoding="utf-8")
+        return map_path
+
+    def test_local_maps_are_read_with_utm(self, tmp_path):
+        # A Local map keeps the map frame in local_x/local_y, which UtmProjector
+        # at the map origin reproduces; MGRS would tear it apart at a zone
+        # boundary, which is exactly where the CARLA towns sit.
+        map_path = self._map_with_info(tmp_path, "projector_type: Local\n")
+        assert read_projector_type(map_path) == "utm"
+
+    def test_mgrs_maps_are_read_with_mgrs(self, tmp_path):
+        map_path = self._map_with_info(tmp_path, "projector_type: MGRS\n")
+        assert read_projector_type(map_path) == "mgrs"
+
+    def test_no_descriptor_leaves_the_choice_to_the_caller(self, tmp_path):
+        map_path = tmp_path / "lanelet2_map.osm"
+        map_path.write_text("<osm/>", encoding="utf-8")
+        assert read_projector_type(map_path) is None
+
+    def test_unreadable_projection_leaves_the_choice_to_the_caller(self, tmp_path):
+        map_path = self._map_with_info(tmp_path, "projector_type: Galactic\n")
+        assert read_projector_type(map_path) is None
+
+    def test_malformed_descriptor_leaves_the_choice_to_the_caller(self, tmp_path):
+        map_path = self._map_with_info(tmp_path, "projector_type: [unclosed\n")
+        assert read_projector_type(map_path) is None
+
+    def test_a_descriptor_that_is_not_a_mapping_is_ignored(self, tmp_path):
+        # Valid YAML, wrong shape: .get() on a list would be an AttributeError
+        # rather than the documented fallback.
+        map_path = self._map_with_info(tmp_path, "- projector_type: Local\n")
+        assert read_projector_type(map_path) is None
 
 
 # ---------------------------------------------------------------------------

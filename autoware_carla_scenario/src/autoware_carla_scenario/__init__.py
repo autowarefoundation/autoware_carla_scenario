@@ -38,6 +38,7 @@ Public API re-exported for convenience::
         to_carla_location,
         to_carla_world,
         to_lanelet2,
+        to_map_frame,
         to_opendrive,
         find_nearest_traffic_light,
         frame_of,
@@ -128,6 +129,7 @@ if TYPE_CHECKING:
         to_carla_location as to_carla_location,
         to_carla_world as to_carla_world,
         to_lanelet2 as to_lanelet2,
+        to_map_frame as to_map_frame,
         to_opendrive as to_opendrive,
     )
     from .driver import (
@@ -286,6 +288,7 @@ __all__ = [
     "to_carla_location",
     "to_carla_world",
     "to_lanelet2",
+    "to_map_frame",
     "to_opendrive",
     "find_nearest_traffic_light",
     "frame_of",
@@ -398,6 +401,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "to_carla_location": (".coordinate", "to_carla_location"),
     "to_carla_world": (".coordinate", "to_carla_world"),
     "to_lanelet2": (".coordinate", "to_lanelet2"),
+    "to_map_frame": (".coordinate", "to_map_frame"),
     "to_opendrive": (".coordinate", "to_opendrive"),
     # entity
     "AutowareEgoEntity": (".entity", "AutowareEgoEntity"),

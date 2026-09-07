@@ -16,10 +16,12 @@ from .actions import BaseAction
 from .conditions import BaseCondition, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .coordinate import (
+    CarlaWorldPose,
     GroundProjectionConfig,
     Lanelet2Pose,
     OpenDrivePose,
     snap_to_carla_road,
+    to_map_frame,
     to_opendrive,
 )
 from .entity._spawn import SpawnLocation, SpawnTransform
@@ -90,6 +92,7 @@ class BaseScenario(ABC):
         *,
         spawn_pose: Lanelet2Pose | None = None,
         ground_projection: GroundProjectionConfig | None = None,
+        goal_pose: Lanelet2Pose | None = None,
         random_seed: int = DEFAULT_RANDOM_SEED,
         ego_type: type[EgoVehicle] | None = None,
         ego_entity: EgoVehicle | None = None,
@@ -104,6 +107,13 @@ class BaseScenario(ABC):
             ground_projection: Ground-projection settings used when snapping
                 poses to the CARLA road surface.  Defaults to
                 :class:`GroundProjectionConfig` with default values.
+            goal_pose: Optional Lanelet2 pose the ego is routed to.  Only an
+                ego entity that plans its own route reads it -- an
+                :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
+                needs one and refuses to start without it (see
+                :meth:`configure_autoware_mission`).  Assigning
+                ``scenario.goal_pose`` after construction works too, which is
+                how the CLI runner passes ``ego.goal_lanelet_id`` in.
             random_seed: Seed for the CARLA TrafficManager random device.
                 Using a fixed seed ensures deterministic NPC behaviour across
                 runs.  Defaults to :attr:`DEFAULT_RANDOM_SEED` (``0``).
@@ -122,6 +132,7 @@ class BaseScenario(ABC):
         self.ego_config = ego_config
         self.ego_type = ego_type or _EgoVehicle
         self.ego_entity = ego_entity
+        self.goal_pose = goal_pose
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
         self.random_seed = random_seed
@@ -210,12 +221,17 @@ class BaseScenario(ABC):
         with the resulting spawn location, and registers spectator-follow
         and position-logging callbacks.
 
+        The snapped pose is also the one an ego that plans its own route
+        localizes at, so this hands it to :meth:`configure_autoware_mission`
+        on the way out.
+
         Returns:
             The intermediate :class:`OpenDrivePose` (useful for deriving
             target lane IDs, route conditions, etc.).
 
         Raises:
-            ValueError: If :attr:`_spawn_pose` is ``None``.
+            ValueError: If :attr:`_spawn_pose` is ``None``, or if the ego
+                entity needs a goal and :attr:`goal_pose` is ``None``.
         """
         if self._spawn_pose is None:
             msg = f"spawn_pose is required for {type(self).__name__}"
@@ -248,7 +264,67 @@ class BaseScenario(ABC):
         self.follow_with_spectator(ego_actor)
         self.log_actor_position(ego_actor, label="ego")
 
+        self.configure_autoware_mission(snapped)
+
         return od_pose
+
+    def configure_autoware_mission(self, initial_pose: CarlaWorldPose) -> None:
+        """Give an Autoware ego the mission it needs, or leave the ego alone.
+
+        An :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
+        does not drive itself anywhere: Autoware localizes at an initial pose,
+        plans a route to a goal, and only then engages.  Neither pose can be
+        passed to the entity's constructor, because the runner builds the ego
+        *before* :meth:`setup` and both are snapped onto the live CARLA road
+        surface -- so the scenario hands them over here instead.
+
+        Every other ego entity drives itself (TrafficManager, an external
+        driver policy) and has no mission to set, so this returns without
+        touching it.
+
+        Args:
+            initial_pose: The snapped CARLA world pose the ego starts at.
+
+        Raises:
+            ValueError: If the ego needs a goal but :attr:`goal_pose` is
+                ``None``.  Raised here, during setup, rather than at the start
+                of the run: the config that is missing a goal is the same one
+                that selected this entity.
+        """
+        from .entity.autoware_entity import AutowareEgoEntity  # noqa: PLC0415
+
+        ego = self.ego_entity
+        if not isinstance(ego, AutowareEgoEntity):
+            return
+
+        if self.goal_pose is None:
+            msg = (
+                f"{type(self).__name__} selected an Autoware ego but set no goal. "
+                "Autoware plans a route from the initial pose to a goal and will "
+                "not move without one: set 'ego.goal_lanelet_id' (and optionally "
+                "'ego.goal_s') in the scenario config, or pass goal_pose= to the "
+                "scenario constructor."
+            )
+            raise ValueError(msg)
+
+        goal_snapped = snap_to_carla_road(
+            to_opendrive(self.goal_pose),
+            self.world,
+            ground_projection=self._ground_projection,
+        )
+        logger.info(
+            "Autoware mission: start (%.1f, %.1f, %.1f) -> goal lanelet %d s=%.1f "
+            "= (%.1f, %.1f, %.1f)",
+            initial_pose.x,
+            initial_pose.y,
+            initial_pose.z,
+            self.goal_pose.lanelet_id,
+            self.goal_pose.s,
+            goal_snapped.x,
+            goal_snapped.y,
+            goal_snapped.z,
+        )
+        ego.set_mission(to_map_frame(initial_pose), to_map_frame(goal_snapped))
 
     @abstractmethod
     def setup(self) -> None:
