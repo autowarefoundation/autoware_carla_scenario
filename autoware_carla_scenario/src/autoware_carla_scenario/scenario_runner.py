@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .scenario_base import SpectatorCameraConfig
 
 from .camera_recorder import CameraRecorder
+from .entity.registry import clear_entities, register_entity
 from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
@@ -529,10 +530,17 @@ class ScenarioRunner:
         world = self._world
         scenario_name = type(scenario).__name__
 
+        # A batch runs several scenarios against one world, so the entities of
+        # the previous one are cleared before this one registers its own -- an
+        # entity from the last run still answering to "npc1" would be worse
+        # than no entity at all.
+        clear_entities()
+
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
         # before that actor would be destroyed.
         ego = scenario.create_ego()
+        register_entity(EGO_ROLE_NAME, ego)
 
         # Destroy any leftover actors from a previous scenario that may
         # have survived a failed reload_world().  On a clean world this

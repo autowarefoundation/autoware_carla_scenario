@@ -168,40 +168,26 @@ def build_routing_action(
 ) -> "BaseAction":
     """Build a :class:`RoutingAction`.
 
-    Hand-written because a signature cannot describe either half of it: the
-    goal is one pose assembled from two fields, and the entity is not a field
-    at all but the scenario's ego, resolved at execute time because the runner
-    may swap one in after the document is compiled -- which is how
-    ``ego.entity`` reaches a run.
-
-    The actor field is read, not decorative.  Only the ego runs a stack that
-    plans a route, so naming any other vehicle is refused here rather than
-    compiling into an action that silently does nothing on the day.
+    Hand-written because the goal is one pose assembled from two fields, which
+    a constructor signature cannot describe.  Everything else is the ordinary
+    shape: the action names its entity and looks it up when it runs.
     """
     from ..actions import RoutingAction  # noqa: PLC0415
-    from ..constants import EGO_ROLE_NAME  # noqa: PLC0415
     from ..coordinate import Lanelet2Pose  # noqa: PLC0415
 
+    del ctx  # The entity is named, not handed over.
     assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
-    if compiled.actor_role != str(EGO_ROLE_NAME):
-        msg = (
-            f"action {compiled.label!r} routes {compiled.actor_role!r}, but only "
-            f"the ego ({str(EGO_ROLE_NAME)!r}) plans its own route. Other "
-            "vehicles are driven by the TrafficManager and have no goal to set."
-        )
-        raise ValueError(msg)
-
     params = compiled.params
-    scenario = ctx.scenario
     return RoutingAction(
-        lambda: scenario.ego_entity,
+        compiled.actor_role,
         Lanelet2Pose(
             lanelet_id=int(params["goal_lanelet_id"]),
             s=float(params.get("goal_s") or 0.0),
         ),
-        ground_projection=getattr(scenario, "_ground_projection", None),
+        condition,
+        timing,
         label=compiled.label,
-        condition=condition,
+        once=compiled.node.once,
     )
 
 

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     import carla
 
     from ..autoware_bridge.base import AutowareBridge, BridgePose
+    from ..coordinate import GroundProjectionConfig, Lanelet2Pose
     from ..scenario_base import EgoConfig
 
 from ..autoware_bridge.base import AutowareBridgeConfig
@@ -174,6 +175,60 @@ class AutowareEgoEntity(EgoVehicle):
         """
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
+
+    def route_to(
+        self,
+        world: "carla.World",
+        goal: "Lanelet2Pose",
+        *,
+        initial_pose: Optional["CarlaWorldPose"] = None,
+        ground_projection: Optional["GroundProjectionConfig"] = None,
+    ) -> None:
+        """Send Autoware to *goal*: snap it, put it in the map frame, hand it over.
+
+        The whole of "how a destination is delivered to this stack" lives here
+        rather than in the action that asks for it.  The goal arrives as a
+        Lanelet2 pose -- what a scenario author writes -- and Autoware needs a
+        6-DoF pose in its own ``map`` frame, resolved against the road surface
+        the vehicle will actually drive on, so both steps happen here where the
+        stack's requirements are known.
+
+        Before the run starts this is the mission :meth:`on_scenario_start`
+        hands over; after it, it is a re-route, and the initial pose is left
+        alone because localization is already running.
+
+        Args:
+            world: The CARLA world, used to snap the goal onto the road.
+            goal: Lanelet2 pose to route to.
+            initial_pose: CARLA world pose to initialize localization at.
+                ``None`` leaves it to :meth:`_resolve_initial_pose`, which
+                reads the attached actor.
+            ground_projection: Settings used to snap the goal to the road
+                surface.  Defaults to :class:`GroundProjectionConfig`.
+        """
+        from ..coordinate import (  # noqa: PLC0415
+            GroundProjectionConfig,
+            snap_to_carla_road,
+            to_opendrive,
+        )
+
+        snapped = snap_to_carla_road(
+            to_opendrive(goal),
+            world,
+            ground_projection=ground_projection or GroundProjectionConfig(),
+        )
+        logger.info(
+            "Routing to lanelet %d s=%.1f -> CARLA (%.1f, %.1f, %.1f)",
+            goal.lanelet_id,
+            goal.s,
+            snapped.x,
+            snapped.y,
+            snapped.z,
+        )
+        self.set_mission(
+            None if initial_pose is None else to_map_frame(initial_pose),
+            to_map_frame(snapped),
+        )
 
     # ------------------------------------------------------------------
     # Properties

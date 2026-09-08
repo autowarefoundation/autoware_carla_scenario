@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     import carla
 
+    from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
     from ..scenario_base import EgoConfig
 
 from ..constants import EGO_ROLE_NAME
@@ -71,6 +72,37 @@ class EgoVehicle:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def route_to(
+        self,
+        world: "carla.World",
+        goal: "Lanelet2Pose",
+        *,
+        initial_pose: "Optional[CarlaWorldPose]" = None,
+        ground_projection: "Optional[GroundProjectionConfig]" = None,
+    ) -> None:
+        """Send this entity to *goal*, if it is the kind that plans a route.
+
+        A no-op here.  An entity driven by something that takes no destination
+        -- the TrafficManager, an external control policy -- has nothing to do
+        with a goal, and saying so costs nothing; an entity that runs its own
+        planner (see
+        :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`)
+        overrides this.
+
+        Routing lives on the entity rather than in the action that asks for it
+        because *how* a destination is delivered is the entity's business: one
+        stack takes a map-frame pose over a bridge, another might take a lane
+        sequence or nothing at all.  The action only says where and when.
+
+        Args:
+            world: The CARLA world, for resolving the goal against the road.
+            goal: Lanelet2 pose to route to.
+            initial_pose: Pose to initialize localization at, for a stack that
+                needs one.  ``None`` leaves it to the entity.
+            ground_projection: Settings used to snap the goal to the road.
+        """
+        del world, goal, initial_pose, ground_projection
 
     def spawn(self, world: "carla.World", config: EgoConfig) -> "carla.Actor":
         """Spawn the ego vehicle.

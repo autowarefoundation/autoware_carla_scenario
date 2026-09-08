@@ -510,9 +510,10 @@ register_action_spec(
                 kind="lanelet",
                 default=0,
                 help=(
-                    "Where the run is meant to end. Only an ego that plans its "
-                    "own route reads this -- an Autoware one -- and it will not "
-                    "move without it; an autopilot or driver ego ignores it."
+                    "Where this vehicle is being sent. Only one that plans its "
+                    "own route reads it -- an Autoware ego -- and it will not "
+                    "move without a goal; a TrafficManager or driver vehicle "
+                    "ignores it."
                 ),
             ),
             FieldSpec(
@@ -526,10 +527,11 @@ register_action_spec(
             ),
         ),
         description=(
-            "Give the ego a destination and let its stack plan the route. "
-            "Performed during initialization, before the run's clock starts: "
-            "an autonomy stack has to localize and route before it can drive, "
-            "so this cannot wait for a trigger on the timeline."
+            "Give a vehicle a destination and let its stack plan the route. "
+            "The ego is routed once during initialization whether or not a card "
+            "says so -- it cannot start driving until it has -- so a card is "
+            "for changing that destination, or for a vehicle that is not the "
+            "ego. Only a vehicle that plans its own route reads it."
         ),
     )
 )

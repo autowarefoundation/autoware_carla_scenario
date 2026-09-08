@@ -1,136 +1,119 @@
-"""Hand an ego that plans its own route the mission it needs.
+"""Tell an entity where to go and let it plan the route.
 
-An ego driven by a full autonomy stack is not told how to steer; it is told
-*where to go* and plans the rest itself.  That hand-over belongs to the
-scenario's initialization phase, alongside setting the traffic lights and
-placing the NPCs -- it describes the state the run starts from, not something
-the run does -- so :class:`RoutingAction` is registered with
-:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`
-rather than on the tick loop.
+An entity driven by a full autonomy stack is not told how to steer; it is told
+*where to go* and works the trajectory out itself.  This action says where and
+when; *how* the destination is delivered belongs to the entity, so this calls
+:meth:`~autoware_carla_scenario.entity.ego.EgoVehicle.route_to` and nothing
+else.  One stack takes a map-frame pose over a bridge, another might take a
+lane sequence or nothing at all, and none of that belongs in a timeline.
 
-It could not be a tick-loop action even if that read better: the runner waits
-for the ego to report ready *before* the loop starts, and an Autoware ego only
-becomes ready once it has localized, routed and engaged.  A goal delivered from
-inside the loop would never arrive.
+**When it runs is the caller's choice, with one hard constraint.**  The ego
+needs a goal at least once during initialization: the runner waits for it to
+report ready *before* the tick loop starts, and an Autoware ego only becomes
+ready once it has localized, routed and engaged, so a first goal delivered from
+inside the loop would never arrive.  That one is registered with
+:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`.
+
+Nothing else is bound to initialization.  Re-routing part-way through a run, or
+routing another entity once something has happened, is an ordinary tick-loop
+action: register it with ``register_pre_tick`` / ``register_post_tick`` and
+give it a condition like any other.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
-from ..coordinate import (
-    CarlaWorldPose,
-    GroundProjectionConfig,
-    Lanelet2Pose,
-    snap_to_carla_road,
-    to_map_frame,
-    to_opendrive,
-)
+from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
+from ..entity.registry import find_entity_by_role_name
+from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import carla
 
-    from ..entity.ego import EgoVehicle
+    from ..conditions import BaseCondition
 
 logger = logging.getLogger(__name__)
 
 
 class RoutingAction(BaseAction):
-    """Give the ego a goal to plan a route to, and a pose to localize at.
+    """Give an entity a goal to plan a route to, and a pose to localize at.
 
-    Mirrors OpenSCENARIO's routing actions: the scenario states a destination
-    and the stack works out the trajectory.  Only an ego that plans for itself
-    has a mission to set -- an
-    :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
-    today.  Every other entity drives itself (TrafficManager, an external driver
-    policy) and this is a no-op for it, so a scenario can register the action
-    unconditionally and let ``ego.entity`` decide whether it means anything.
+    Names the entity rather than holding it, as every other action does: the
+    lookup happens when the action runs, so an NPC registered during ``setup()``
+    or an ego swapped in after the action was built is still found.  Where
+    :class:`~autoware_carla_scenario.actions.lane_change.LaneChangeAction` and
+    friends resolve the CARLA *actor* a role names, this resolves the *entity*
+    -- a route is not something that can be applied to an actor.
 
-    The goal is snapped onto the CARLA road surface and converted into
-    Autoware's ``map`` frame here rather than by the caller, because that is the
-    same treatment the ego spawn gets and doing it anywhere else would put the
-    goal in the wrong frame.
+    Only an entity that plans its own route has a mission to set; for any other
+    :meth:`~autoware_carla_scenario.entity.ego.EgoVehicle.route_to` is a no-op,
+    so a scenario can register this unconditionally and let the entity decide
+    whether it means anything.
 
     Args:
-        ego: The ego entity, or a callable returning it.  A callable is the
-            useful form when the entity is swapped in after the scenario is
-            constructed, which is how ``ego.entity`` reaches a packaged
-            scenario.
-        goal: Lanelet2 pose the ego is routed to.
-        initial_pose: CARLA world pose the ego is expected to start at, used to
-            initialize localization.  ``None`` leaves it to the entity, which
-            reads the attached actor instead.
+        entity_name: Role name of the entity to route.
+        goal: Lanelet2 pose the entity is routed to.
+        condition: Condition gating the action.  Evaluated once during
+            initialization for an init action, or each tick for one on the loop.
+        timing: Which tick phase to run on, when registered on the loop.
+        label: Action label.
+        once: Whether the action fires at most once.  A re-routing action that
+            should fire every time its condition holds passes ``False``.
+        initial_pose: CARLA world pose the entity is expected to start at, used
+            to initialize localization.  ``None`` leaves it to the entity, which
+            reads the attached actor instead.  Only meaningful for the first
+            routing; a re-route leaves localization alone.
         ground_projection: Settings used to snap the goal to the road surface.
-        label: Action label.  Defaults to ``"routing"``.
-        condition: Optional condition, evaluated once during initialization.
     """
 
     def __init__(
         self,
-        ego: "EgoVehicle | Callable[[], Optional[EgoVehicle]]",
+        entity_name: Union[EntityRole, str],
         goal: Lanelet2Pose,
+        condition: Optional["BaseCondition"] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
         *,
+        label: str = "routing",
+        once: bool = True,
         initial_pose: Optional[CarlaWorldPose] = None,
         ground_projection: Optional[GroundProjectionConfig] = None,
-        label: str = "routing",
-        condition=None,  # noqa: ANN001 - BaseCondition, typed by the base class
     ) -> None:
         super().__init__(
             label=label,
             condition=condition,
-            timing=TickTiming.PRE_TICK,
-            once=True,
+            timing=timing,
+            once=once,
         )
-        self._ego = ego
+        self._entity_name = entity_name
         self._goal = goal
         self._initial_pose = initial_pose
-        self._ground_projection = ground_projection or GroundProjectionConfig()
+        self._ground_projection = ground_projection
 
     @property
     def goal(self) -> Lanelet2Pose:
-        """The Lanelet2 pose the ego is routed to."""
+        """The Lanelet2 pose the entity is routed to."""
         return self._goal
 
-    def _resolve_ego(self) -> Optional["EgoVehicle"]:
-        """Return the ego entity, calling the getter if one was given."""
-        return self._ego() if callable(self._ego) else self._ego
+    @property
+    def entity_name(self) -> Union[EntityRole, str]:
+        """Role name of the entity this routes."""
+        return self._entity_name
 
     def execute(self, world: "carla.World") -> None:
-        """Snap the goal, convert both poses to the map frame, hand them over."""
-        from ..entity.autoware_entity import AutowareEgoEntity  # noqa: PLC0415
-
-        ego = self._resolve_ego()
-        if not isinstance(ego, AutowareEgoEntity):
-            logger.debug(
-                "%s: the ego drives itself (%s); no mission to set.",
-                self.label,
-                type(ego).__name__,
+        """Hand the goal to the named entity."""
+        entity = find_entity_by_role_name(self._entity_name)
+        if entity is None:
+            logger.warning(
+                "RoutingAction: entity '%s' not found", str(self._entity_name)
             )
             return
 
-        goal_snapped = snap_to_carla_road(
-            to_opendrive(self._goal),
+        entity.route_to(
             world,
+            self._goal,
+            initial_pose=self._initial_pose,
             ground_projection=self._ground_projection,
-        )
-        logger.info(
-            "%s: goal lanelet %d s=%.1f -> CARLA (%.1f, %.1f, %.1f)%s",
-            self.label,
-            self._goal.lanelet_id,
-            self._goal.s,
-            goal_snapped.x,
-            goal_snapped.y,
-            goal_snapped.z,
-            (
-                ""
-                if self._initial_pose is None
-                else f", starting from ({self._initial_pose.x:.1f}, "
-                f"{self._initial_pose.y:.1f}, {self._initial_pose.z:.1f})"
-            ),
-        )
-        ego.set_mission(
-            None if self._initial_pose is None else to_map_frame(self._initial_pose),
-            to_map_frame(goal_snapped),
         )
