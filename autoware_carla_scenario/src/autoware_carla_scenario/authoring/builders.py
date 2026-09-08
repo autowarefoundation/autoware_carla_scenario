@@ -230,10 +230,17 @@ def instantiate_action(compiled: "CompiledAction", ctx: "BuildContext") -> "Base
     """Build the runtime action for *compiled*, including its trigger."""
     from ..actions import TickTiming  # noqa: PLC0415
 
+    from .models import TICK_PHASES  # noqa: PLC0415
+
     condition = (
         instantiate_condition(compiled.trigger, ctx)
         if compiled.trigger is not None
         else None
     )
-    timing = TickTiming(compiled.node.timing)
+    # An init action is performed once by `run_init`, which ticks it directly,
+    # so its tick position is never consulted; `TickTiming` has no member for a
+    # phase that is not a tick, and inventing one would put "init" in front of
+    # the loop's own dispatch.
+    phase = compiled.node.phase
+    timing = TickTiming(phase) if phase in TICK_PHASES else TickTiming.PRE_TICK
     return _resolve(compiled.spec.builder)(compiled, condition, timing, ctx)

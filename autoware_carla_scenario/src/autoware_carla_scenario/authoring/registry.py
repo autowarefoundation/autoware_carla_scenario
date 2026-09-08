@@ -49,7 +49,9 @@ __all__ = [
     "ConditionVisual",
     "REFERENCE_PATTERN",
     "SelectOption",
+    "ACTION_PHASES",
     "COMPARISON_RULES",
+    "PHASE_HELP",
     "rule_symbol",
     "TRAFFIC_LIGHT_STATES",
     "TRUTHY_VALUES",
@@ -253,7 +255,10 @@ class ActionSpec:
     scope: Literal["actor", "environment"] = "actor"
     #: ``instant`` renders as a diamond on the swimlane, ``continuous`` as a bar.
     visual_kind: Literal["instant", "continuous"] = "instant"
-    default_timing: Literal["pre_tick", "post_tick"] = "pre_tick"
+    #: The phase a freshly added card lands in.  ``init`` for anything the run
+    #: has to be set up with rather than driven by -- a goal, the starting state
+    #: of the lights.
+    default_phase: Literal["init", "pre_tick", "post_tick"] = "pre_tick"
     description: str = ""
 
     @property
@@ -331,6 +336,26 @@ class BindingSpec:
 #: importing ``autoware_carla_scenario.conditions`` pulls in CARLA, and the
 #: editor process has no simulator.  ``test_authoring_registry`` asserts the two
 #: stay in step.
+#: The phases an action can be placed in, in the order a run performs them.
+#: One table, so the inspector's select, the form parser and the canvas cannot
+#: disagree about which phases exist.
+ACTION_PHASES: tuple[SelectOption, ...] = (
+    SelectOption("init", "Initialization"),
+    SelectOption("pre_tick", "Pre-tick"),
+    SelectOption("post_tick", "Post-tick"),
+)
+
+#: What each phase means, for the one place that has room to say it.
+PHASE_HELP: dict[str, str] = {
+    "init": (
+        "Before the run: from the ego spawning until it reports ready. The "
+        "world ticks and sensors publish, but the clock has not started and no "
+        "condition has been evaluated."
+    ),
+    "pre_tick": "Each tick of the running scenario, before the world advances.",
+    "post_tick": "Each tick of the running scenario, after the world advances.",
+}
+
 COMPARISON_RULES: tuple[SelectOption, ...] = (
     SelectOption("less_than", "<"),
     SelectOption("less_than_or_equal", "≤"),
@@ -566,6 +591,10 @@ register_action_spec(
         category="Vehicle / Motion",
         builder="build_routing_action",
         visual_kind="instant",
+        # A goal is what an ego needs in order to become ready, and the runner
+        # waits for ready before the loop starts.  Landing this card on the tick
+        # loop would deliver the goal to a stack nobody is listening to any more.
+        default_phase="init",
         fields=(
             FieldSpec(
                 name="goal_lanelet_id",

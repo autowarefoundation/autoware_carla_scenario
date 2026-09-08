@@ -54,7 +54,7 @@ def _action(type_id: str, actor: str, title: str, **params: object) -> ActionNod
         title=title,
         actor=actor,
         params=merged,
-        timing=spec.default_timing,
+        phase=spec.default_phase,
     )
 
 

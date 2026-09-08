@@ -595,14 +595,14 @@ class TestActionEditing:
                 "actor": "ego",
                 "direction": "right",
                 "search_distance": "120",
-                "timing": "post_tick",
+                "phase": "post_tick",
                 "once": "on",
             },
         )
         updated = _action(store, draft_id, action.id)
         assert updated.title == "Turn right"
         assert updated.params == {"direction": "right", "search_distance": 120.0}
-        assert updated.timing == "post_tick"
+        assert updated.phase == "post_tick"
 
         client.post(f"/draft/{draft_id}/action/{action.id}/delete")
         assert _document(store, draft_id).action(action.id) is None

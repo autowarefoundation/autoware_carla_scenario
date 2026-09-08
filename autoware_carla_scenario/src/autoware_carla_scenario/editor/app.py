@@ -158,6 +158,8 @@ def create_app(
         condition_actions=condition_actions,
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
+        action_phases=registry.ACTION_PHASES,
+        phase_help=registry.PHASE_HELP,
     )
 
     application.state.templates = templates

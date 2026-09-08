@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from .registry import get_action_spec
 
@@ -43,7 +43,8 @@ __all__ = [
     "SpawnMode",
     "SpawnSpec",
     "SValue",
-    "TickTimingName",
+    "ActionPhaseName",
+    "TICK_PHASES",
     "UiLayout",
     "UiNode",
     "DOCUMENT_FORMAT_VERSION",
@@ -55,7 +56,20 @@ DOCUMENT_FORMAT_VERSION = 1
 
 EntityKind = Literal["ego", "vehicle"]
 SpawnMode = Literal["fixed", "constraint_search"]
-TickTimingName = Literal["pre_tick", "post_tick"]
+#: When in a run an action is performed.  ``init`` is the scenario's
+#: initialization phase -- from the ego spawning until it reports ready -- which
+#: is a phase and not a tick: the clock has not started and no condition has been
+#: evaluated.  The other two are positions within a tick of the running loop.
+#:
+#: The distinction is not cosmetic.  The runner waits for the ego to be ready
+#: *before* the loop starts, so anything the ego needs in order to become ready
+#: -- a goal, above all -- has to happen in ``init``; delivered from inside the
+#: loop it would never arrive.
+ActionPhaseName = Literal["init", "pre_tick", "post_tick"]
+
+#: Phases that are a position within a tick, as opposed to the phase before the
+#: loop.  The runtime ``TickTiming`` enum has members for exactly these.
+TICK_PHASES: frozenset[str] = frozenset({"pre_tick", "post_tick"})
 
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -334,13 +348,21 @@ class ActionNode(_Node):
     underneath the action card.
     """
 
+    # `extra="forbid"` would reject a draft written before the field was named
+    # `phase`, so the old name is still read.  Only the new one is written.
+    model_config = ConfigDict(
+        extra="forbid", validate_assignment=True, populate_by_name=True
+    )
+
     id: str = Field(default_factory=lambda: new_object_id("a"))
     type: str
     title: str = ""
     actor: Optional[str] = None
     params: dict[str, Any] = Field(default_factory=dict)
     trigger: Optional[ConditionNode] = None
-    timing: TickTimingName = "pre_tick"
+    phase: ActionPhaseName = Field(
+        default="pre_tick", validation_alias=AliasChoices("phase", "timing")
+    )
     once: bool = True
 
 
@@ -503,6 +525,18 @@ class ScenarioDocument(_Node):
                 found[action.id] = needs
         return found
 
+    def init_actions(self, entity_id: Optional[str]) -> list[ActionNode]:
+        """Return the lane's initialization actions, in a stable order.
+
+        The init phase has no steps: it runs once, from the ego spawning until
+        it reports ready, and nothing inside it is ordered by a column.  So the
+        cards are a set, drawn in one cell, and they are kept out of
+        :meth:`action_slots` -- a card cannot be in the phase before the loop
+        and at a step of it at the same time.
+        """
+        lane = self.actions_for(entity_id) if entity_id else self.environment_actions()
+        return [a for a in lane if a.phase == "init"]
+
     def action_slots(self, entity_id: Optional[str]) -> "list[list[ActionNode]]":
         """Return the lane as one list of actions per step, empty steps included.
 
@@ -520,6 +554,9 @@ class ScenarioDocument(_Node):
         lane = self.actions_for(entity_id) if entity_id else self.environment_actions()
         slots: list[list[ActionNode]] = []
         for action in lane:
+            if action.phase == "init":
+                # Drawn in the init cell instead; it is not a step of the run.
+                continue
             column = self.ui.column_of(action.id)
             while len(slots) <= column:
                 slots.append([])

@@ -261,7 +261,7 @@ class TestRoutingActionBuilder:
         assert action.entity_name == "npc1"
 
     def test_a_re_route_can_live_on_the_tick_loop(self) -> None:
-        """``timing`` and ``once`` come from the document, not from the action.
+        """The phase and ``once`` come from the document, not from the action.
 
         Only the ego's *first* goal has to be handed over during initialization;
         a later one is triggered like any other action.
@@ -269,7 +269,7 @@ class TestRoutingActionBuilder:
         from autoware_carla_scenario.actions import TickTiming
 
         document = self._document_with_a_goal("ego")
-        document.actions[0].timing = "post_tick"
+        document.actions[0].phase = "post_tick"
         document.actions[0].once = False
         compiled = compile_document(document)
 
@@ -277,3 +277,47 @@ class TestRoutingActionBuilder:
 
         assert action.timing is TickTiming.POST_TICK
         assert action._once is False
+
+
+class TestTheInitPhaseIsAPhaseAndNotATick:
+    """An init action is registered before the loop, not on it.
+
+    The runner waits for the ego to report ready before the tick loop starts,
+    and an Autoware ego only becomes ready once it has been routed.  A goal
+    registered on the loop would be delivered to a stack the runner is already
+    done waiting for, so which register_* an action reaches is the whole of
+    whether it works.
+    """
+
+    def test_routing_lands_in_init_by_default(self) -> None:
+        from autoware_carla_scenario.authoring.registry import get_action_spec
+
+        spec = get_action_spec("routing")
+        assert spec is not None
+        assert spec.default_phase == "init"
+
+    def test_an_init_action_is_kept_out_of_the_steps(self) -> None:
+        from autoware_carla_scenario.authoring.models import (
+            ActionNode,
+            ScenarioDocument,
+        )
+
+        document = ScenarioDocument(id="s", title="s")
+        document.actions.append(
+            ActionNode(id="a_init", type="routing", actor=None, phase="init")
+        )
+        document.actions.append(
+            ActionNode(id="a_step", type="traffic_signal", actor=None)
+        )
+
+        assert [a.id for a in document.init_actions(None)] == ["a_init"]
+        stepped = [a.id for slot in document.action_slots(None) for a in slot]
+        assert stepped == ["a_step"]
+
+    def test_a_draft_written_before_the_rename_still_loads(self) -> None:
+        from autoware_carla_scenario.authoring.models import ActionNode
+
+        # `extra="forbid"` would otherwise reject every draft on disk.
+        assert ActionNode.model_validate(
+            {"type": "t", "timing": "post_tick"}
+        ).phase == ("post_tick")

@@ -30,6 +30,7 @@ from ..authoring.models import (
 )
 from ..authoring.persistence import Draft, DraftStore
 from ..authoring.registry import (
+    ACTION_PHASES,
     default_params,
     get_action_spec,
     get_binding_spec,
@@ -403,7 +404,7 @@ class EditorService:
             # runtime actually acts on.
             actor=None if spec.scope == "environment" else (actor or None),
             params=default_params(spec.fields),
-            timing=spec.default_timing,
+            phase=spec.default_phase,
         )
         document.actions.append(action)
         document.sync_layout()
@@ -427,10 +428,10 @@ class EditorService:
             if actor and document.entity(actor) is None:
                 raise EditorError(f"No entity named {actor!r}.")
             action.actor = actor or None
-        if "timing" in form:
-            timing = str(form["timing"])
-            if timing in ("pre_tick", "post_tick"):
-                action.timing = timing  # type: ignore[assignment]
+        if "phase" in form:
+            phase = str(form["phase"])
+            if phase in {option.value for option in ACTION_PHASES}:
+                action.phase = phase  # type: ignore[assignment]
         action.once = "once" in form
         action.params.update(_parse(spec.fields, form))
 

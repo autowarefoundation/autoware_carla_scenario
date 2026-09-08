@@ -517,9 +517,9 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 0 10px 0 19px;
+  padding: 0 14px 0 19px;
   background: var(--surface);
-  border-right: 2px solid var(--line-strong);
+  border-right: 1px solid var(--line);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -527,6 +527,48 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   color: var(--ink-faint);
 }
 .ed-ruler-head svg { color: var(--accent); }
+
+/* ------------------------------------------------------- initialization */
+
+/* Everything left of the seam happens before the clock starts: the ego spawns,
+ * the world ticks so sensors publish, and the run is put in the state it starts
+ * from -- but no condition has been evaluated and nothing is driving yet.
+ * Every lane carries this cell, including the ones that can hold nothing in it,
+ * so a step number means the same column on all of them. */
+.ed-init,
+.ed-ruler-init {
+  flex: 0 0 13rem;
+  border-right: 2px solid var(--line-strong);
+  background: var(--surface-sunken);
+}
+
+.ed-ruler-init {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 10px 0 14px;
+}
+
+.ed-init {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 14px;
+}
+
+.ed-init-none {
+  color: var(--ink-faint);
+  font-size: 12px;
+  text-align: center;
+  padding-top: 4px;
+}
+
+/* The add control is a column of its own out on the track; in here it is just
+ * the last thing in the cell. */
+.ed-add-inline { display: flex; }
+.ed-add-inline .ed-add { width: 100%; }
 
 /* Sits against the seam and points across it: the label belongs to the line,
  * not to either column, because what it names is the transition. */
@@ -587,7 +629,7 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   left: 0;
   z-index: 3;
   background: var(--surface);
-  border-right: 2px solid var(--line-strong);
+  border-right: 1px solid var(--line);
   padding: 14px 14px 14px 16px;
   display: flex;
   flex-direction: column;

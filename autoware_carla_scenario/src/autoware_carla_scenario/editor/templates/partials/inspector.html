@@ -55,12 +55,17 @@
         </div>
       {% endif %}
       {% if spec %}{{ f.fields(spec.fields, target.params, document, '', draft) }}{% endif %}
+      {# Options come from the registry, so a phase cannot exist in the IR and
+         be missing from the only control that sets it. #}
       <div class="ed-field">
-        <label class="ed-label">Tick phase</label>
-        <select name="timing" class="ed-input">
-          <option value="pre_tick" {% if target.timing == 'pre_tick' %}selected{% endif %}>Pre-tick</option>
-          <option value="post_tick" {% if target.timing == 'post_tick' %}selected{% endif %}>Post-tick</option>
+        <label class="ed-label">Phase</label>
+        <select name="phase" class="ed-input">
+          {% for option in action_phases %}
+            <option value="{{ option.value }}"
+                    {% if target.phase == option.value %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
         </select>
+        <p class="ed-help">{{ phase_help.get(target.phase, '') }}</p>
       </div>
       <div class="ed-field">
         <label class="ed-check">

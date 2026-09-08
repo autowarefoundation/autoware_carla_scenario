@@ -185,15 +185,23 @@ class DeclarativeScenario(BaseScenario):
             # condition -- possibly one built earlier, in another action's
             # trigger -- can find it.
             ctx.actions[compiled_action.node.id] = action
-            if action.timing is TickTiming.POST_TICK:
+            # The phase is read from the document, not from the action: `init`
+            # is not a tick position, and an action that has to happen before
+            # the loop -- a goal the ego needs to become ready -- would never be
+            # performed if it were registered on the loop.
+            phase = compiled_action.node.phase
+            if phase == "init":
+                self.register_init(action)
+            elif action.timing is TickTiming.POST_TICK:
                 self.register_post_tick(action)
             else:
                 self.register_pre_tick(action)
             logger.info(
-                "Registered action %s (%s) on %s",
+                "Registered action %s (%s) on %s in %s",
                 action.label,
                 compiled_action.spec.type_id,
                 compiled_action.actor_role or "world",
+                phase,
             )
 
         for compiled_condition in self._compiled.pass_conditions:
