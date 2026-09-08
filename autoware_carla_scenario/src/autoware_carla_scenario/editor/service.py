@@ -26,11 +26,11 @@ from ..authoring.models import (
     Entity,
     ScenarioDocument,
     SpawnSpec,
+    as_action_phase,
     condition_refs,
 )
 from ..authoring.persistence import Draft, DraftStore
 from ..authoring.registry import (
-    ACTION_PHASES,
     default_params,
     get_action_spec,
     get_binding_spec,
@@ -385,9 +385,18 @@ class EditorService:
     # ------------------------------------------------------------------
 
     def add_action(
-        self, document: ScenarioDocument, type_id: str, actor: str | None
+        self,
+        document: ScenarioDocument,
+        type_id: str,
+        actor: str | None,
+        phase: str | None = None,
     ) -> ActionNode:
-        """Append an action to an actor's lane."""
+        """Append an action to an actor's lane, in *phase* or the spec's default.
+
+        The phase comes from the control that was used: the add button inside a
+        lane's init cell asks for ``init``, because a card added there that
+        landed on the tick loop would simply not appear where it was put.
+        """
         spec = get_action_spec(type_id)
         if spec is None:
             raise EditorError(f"Unknown action type {type_id!r}.")
@@ -404,7 +413,7 @@ class EditorService:
             # runtime actually acts on.
             actor=None if spec.scope == "environment" else (actor or None),
             params=default_params(spec.fields),
-            phase=spec.default_phase,
+            phase=as_action_phase(phase) or spec.default_phase,
         )
         document.actions.append(action)
         document.sync_layout()
@@ -429,9 +438,9 @@ class EditorService:
                 raise EditorError(f"No entity named {actor!r}.")
             action.actor = actor or None
         if "phase" in form:
-            phase = str(form["phase"])
-            if phase in {option.value for option in ACTION_PHASES}:
-                action.phase = phase  # type: ignore[assignment]
+            requested = as_action_phase(str(form["phase"]))
+            if requested is not None:
+                action.phase = requested
         action.once = "once" in form
         action.params.update(_parse(spec.fields, form))
 

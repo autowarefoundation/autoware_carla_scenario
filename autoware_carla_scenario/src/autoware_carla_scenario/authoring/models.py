@@ -24,7 +24,7 @@ be loaded, validated and compiled anywhere.
 from __future__ import annotations
 
 import re
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast, get_args
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
@@ -45,6 +45,8 @@ __all__ = [
     "SValue",
     "ActionPhaseName",
     "TICK_PHASES",
+    "ACTION_PHASE_VALUES",
+    "as_action_phase",
     "UiLayout",
     "UiNode",
     "DOCUMENT_FORMAT_VERSION",
@@ -70,6 +72,20 @@ ActionPhaseName = Literal["init", "pre_tick", "post_tick"]
 #: Phases that are a position within a tick, as opposed to the phase before the
 #: loop.  The runtime ``TickTiming`` enum has members for exactly these.
 TICK_PHASES: frozenset[str] = frozenset({"pre_tick", "post_tick"})
+
+#: Read off the Literal, so the values and the type cannot drift apart.
+ACTION_PHASE_VALUES: tuple[ActionPhaseName, ...] = get_args(ActionPhaseName)
+
+
+def as_action_phase(value: object) -> Optional[ActionPhaseName]:
+    """Return *value* as a phase name, or ``None`` if it does not name one.
+
+    The one place a phase arriving from outside -- a form field, a hand-edited
+    document -- is checked, so a caller cannot accept a phase the IR does not
+    have by forgetting to compare against the same list.
+    """
+    return cast(ActionPhaseName, value) if value in ACTION_PHASE_VALUES else None
+
 
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -484,13 +500,24 @@ class ScenarioDocument(_Node):
             key=lambda e: (order.get(e.id, fallback), 0 if e.kind == "ego" else 1),
         )
 
-    def actions_for(self, entity_id: str) -> list[ActionNode]:
-        """Return the actions *entity_id* performs, in column order."""
-        owned = [
+    def lane_members(self, entity_id: Optional[str]) -> list[ActionNode]:
+        """Return the actions drawn in a lane, in document order.
+
+        The lane is an actor's when *entity_id* names one, and the
+        environment's when it is ``None``.  Document order is insertion order,
+        which is what the init cell wants: its phase has no columns to sort by.
+        """
+        if entity_id is None:
+            return [a for a in self.actions if is_environment_action(a) or not a.actor]
+        return [
             a
             for a in self.actions
             if a.actor == entity_id and not is_environment_action(a)
         ]
+
+    def actions_for(self, entity_id: str) -> list[ActionNode]:
+        """Return the actions *entity_id* performs, in column order."""
+        owned = self.lane_members(entity_id)
         return sorted(owned, key=lambda a: (self.ui.column_of(a.id), a.id))
 
     def environment_actions(self) -> list[ActionNode]:
@@ -503,7 +530,7 @@ class ScenarioDocument(_Node):
         invalid and has to stay reachable, and a card nothing draws cannot be
         fixed.
         """
-        loose = [a for a in self.actions if is_environment_action(a) or not a.actor]
+        loose = self.lane_members(None)
         return sorted(loose, key=lambda a: (self.ui.column_of(a.id), a.id))
 
     def action_dependencies(self) -> dict[str, set[str]]:
@@ -534,8 +561,7 @@ class ScenarioDocument(_Node):
         :meth:`action_slots` -- a card cannot be in the phase before the loop
         and at a step of it at the same time.
         """
-        lane = self.actions_for(entity_id) if entity_id else self.environment_actions()
-        return [a for a in lane if a.phase == "init"]
+        return [a for a in self.lane_members(entity_id) if a.phase == "init"]
 
     def action_slots(self, entity_id: Optional[str]) -> "list[list[ActionNode]]":
         """Return the lane as one list of actions per step, empty steps included.
@@ -637,11 +663,16 @@ class ScenarioDocument(_Node):
             if is_environment_action(action):
                 action.actor = None
 
-        object_ids = {a.id for a in self.actions}
+        # An init action has no column: its phase runs once, before the loop and
+        # before any step exists.  Leaving it in the numbering gave it step 1
+        # and pushed the run's own first card to step 2, so the grid disagreed
+        # with the phase about what happens first.
+        stepped = [a for a in self.actions if a.phase != "init"]
+        object_ids = {a.id for a in stepped}
         self.ui.nodes = {k: v for k, v in self.ui.nodes.items() if k in object_ids}
         for owner in [*known, None]:
             for column, action in enumerate(
-                [a for a in self.actions if (a.actor or None) == owner]
+                [a for a in stepped if (a.actor or None) == owner]
             ):
                 if action.id not in self.ui.nodes:
                     self.ui.set_column(action.id, column)

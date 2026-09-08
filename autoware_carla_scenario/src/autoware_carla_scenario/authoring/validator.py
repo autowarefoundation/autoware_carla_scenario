@@ -418,10 +418,12 @@ def _check_untriggered_actions(out: _Collector, document: ScenarioDocument) -> N
     immediately" under the card, but the step number is louder.
 
     Only actions drawn past the first step are worth saying this about: one in
-    step 1 with no trigger is doing exactly what it looks like.
+    step 1 with no trigger is doing exactly what it looks like.  An init action
+    is not drawn in a step at all -- its phase runs once, before the loop -- so
+    firing without a trigger is what it is for, not a discrepancy.
     """
     for index, action in enumerate(document.actions):
-        if action.trigger is not None:
+        if action.trigger is not None or action.phase == "init":
             continue
         column = document.ui.column_of(action.id)
         if column <= 0:

@@ -478,3 +478,62 @@ class TestEnvironmentTrack:
         """One source of truth: the two cannot drift apart."""
         for spec in action_specs():
             assert spec.actor_required == (spec.scope == "actor")
+
+
+class TestAddingToTheInitPhase:
+    """A card added to the init cell stays in the init cell.
+
+    Reported from the editor: adding a second action to init made it vanish.
+    It had not vanished -- the add control's phase was dropped on the way in,
+    so the card was created on the tick loop and drawn out on the step track,
+    where it then warned about firing on the first tick.
+    """
+
+    @staticmethod
+    def _document():
+        from autoware_carla_scenario.authoring.models import Entity, ScenarioDocument
+
+        document = ScenarioDocument(id="s", title="s")
+        document.entities.append(Entity(id="npc1", kind="vehicle"))
+        return document
+
+    def test_the_requested_phase_is_honoured(self):
+        from autoware_carla_scenario.editor.service import EditorService
+
+        document = self._document()
+        service = EditorService.__new__(EditorService)
+
+        first = service.add_action(document, "lane_change", "npc1", "init")
+        second = service.add_action(document, "lane_change", "npc1", "init")
+
+        assert [first.phase, second.phase] == ["init", "init"]
+        assert [a.id for a in document.init_actions("npc1")] == [first.id, second.id]
+
+    def test_init_actions_take_no_step(self):
+        from autoware_carla_scenario.editor.service import EditorService
+
+        document = self._document()
+        service = EditorService.__new__(EditorService)
+
+        service.add_action(document, "lane_change", "npc1", "init")
+        stepped = service.add_action(document, "lane_change", "npc1", "pre_tick")
+        document.sync_layout()
+
+        # The run's own first card is step 1, not step 2.
+        assert document.ui.column_of(stepped.id) == 0
+        assert document.action_slots("npc1") == [[stepped]]
+
+    def test_an_init_action_is_not_warned_about_firing_immediately(self):
+        from autoware_carla_scenario.authoring.validator import validate_document
+        from autoware_carla_scenario.editor.service import EditorService
+
+        document = self._document()
+        service = EditorService.__new__(EditorService)
+        service.add_action(document, "lane_change", "npc1", "init")
+        service.add_action(document, "lane_change", "npc1", "init")
+        document.sync_layout()
+
+        report = validate_document(document)
+        assert not [
+            w for w in report.warnings if "fires on the first tick" in w.message
+        ]

@@ -307,6 +307,38 @@ class ScenarioRunner:
     # Ego readiness
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _hold_vehicles_still(world: "carla.World") -> None:
+        """Keep every vehicle stopped while the run is still being set up.
+
+        The init phase has to advance simulation time -- an autonomy stack only
+        localizes, routes and engages while the clock ticks, and its sensors
+        only publish then -- but nothing should have moved before the run
+        starts.  Two things would move otherwise: a car parked on a slope rolls,
+        and an ego engages partway through the wait and drives off before the
+        scenario has begun measuring anything.
+
+        The hold is the brakes, not frozen physics: a stopped car with its
+        handbrake on is a state the simulation and the stack both understand,
+        while a vehicle with physics disabled reports poses no suspension has
+        settled.  It is re-applied every tick because whatever drives the ego
+        applies its own control every tick too.
+        """
+        import carla  # noqa: PLC0415 -- the runner is CARLA-side by definition
+
+        stopped = carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True)
+        for actor in world.get_actors().filter("vehicle.*"):
+            actor.apply_control(stopped)
+
+    @staticmethod
+    def _release_vehicles(world: "carla.World") -> None:
+        """Let go of the brakes the init phase held on."""
+        import carla  # noqa: PLC0415
+
+        released = carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False)
+        for actor in world.get_actors().filter("vehicle.*"):
+            actor.apply_control(released)
+
     def _wait_for_ego(
         self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
     ) -> None:
@@ -330,6 +362,7 @@ class ScenarioRunner:
         logger.info("[%s] Waiting for the ego to be ready ...", scenario_name)
         waited_ticks = 0
         while not ego.is_initialized and not ego.termination_requested:
+            self._hold_vehicles_still(world)
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)
@@ -597,6 +630,7 @@ class ScenarioRunner:
             # Warm-up ticks: let physics and TrafficManager stabilise
             # before the main loop begins.
             for _ in range(scenario.STABILIZE_TICKS):
+                self._hold_vehicles_still(world)
                 self._pace_tick()
                 world.tick()
 
@@ -615,6 +649,11 @@ class ScenarioRunner:
             ego.on_scenario_start(world)
 
             self._wait_for_ego(world, ego, scenario_name)
+
+            # The init phase is over: the ego is ready and the clock is about to
+            # start, so the brakes that held everything still come off before
+            # anything is handed to TrafficManager or given a speed.
+            self._release_vehicles(world)
 
             # Autopilot last, and only now: the world has been ticking through
             # the wait above, and a car under TrafficManager would have spent

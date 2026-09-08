@@ -360,12 +360,13 @@ async def add_action(request: Request, draft_id: str) -> HTMLResponse:
     form = dict(await request.form())
     type_id = str(form.get("type_id", ""))
     actor = str(form.get("actor", "")) or None
+    phase = str(form.get("phase", "")) or None
     service = _service(request)
     return _apply(
         request,
         draft_id,
         "scenario",
-        lambda doc: service.add_action(doc, type_id, actor).id,
+        lambda doc: service.add_action(doc, type_id, actor, phase).id,
     )
 
 

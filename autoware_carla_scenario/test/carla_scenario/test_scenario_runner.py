@@ -222,3 +222,50 @@ class TestInitPhaseOrdering:
         _make_runner(None)._wait_for_ego(world, ego, "S")
 
         assert order == ["init", "on_scenario_start"]
+
+
+class TestNothingMovesDuringInit:
+    """The clock ticks through init, but no vehicle does anything with it.
+
+    Simulation time has to advance -- a stack localizes, routes and engages
+    only while it does, and its sensors only publish then -- so the phase
+    cannot be a pause.  What must not happen is a vehicle using that time: an
+    ego that engages partway through the wait, or a car rolling down a slope,
+    would both have moved before the run started measuring anything.
+    """
+
+    @staticmethod
+    def _vehicle() -> MagicMock:
+        actor = MagicMock()
+        actor.attributes = {"role_name": "npc1"}
+        return actor
+
+    def _world(self, vehicles: list) -> MagicMock:
+        world = MagicMock()
+        world.get_actors.return_value = _FakeActorList(vehicles, [])
+        return world
+
+    def test_the_wait_holds_every_vehicle(self):
+        vehicle = self._vehicle()
+        world = self._world([vehicle])
+        runner = ScenarioRunner.__new__(ScenarioRunner)
+        runner._pace_tick = lambda: None  # type: ignore[method-assign]
+
+        ego = _FakeEgo(ready_after=3)
+        runner._wait_for_ego(world, ego, "S")
+
+        assert vehicle.apply_control.call_count == 3
+        held = vehicle.apply_control.call_args[0][0]
+        assert held.hand_brake is True
+        assert held.brake == 1.0
+        assert held.throttle == 0.0
+
+    def test_the_hold_comes_off_again(self):
+        vehicle = self._vehicle()
+        world = self._world([vehicle])
+
+        ScenarioRunner._release_vehicles(world)
+
+        released = vehicle.apply_control.call_args[0][0]
+        assert released.hand_brake is False
+        assert released.brake == 0.0
