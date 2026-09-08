@@ -87,16 +87,21 @@
       </button>
     </div>
 
-    <div class="ed-trigger-wrap" data-links-to="node-{{ action.id }}">
-      <div class="ed-trigger {% if not action.trigger %}is-empty{% endif %}" id="trigger-{{ action.id }}">
-        {% if action.trigger %}
-          {{ pred.render(action.trigger, draft, selected, document) }}
-        {% else %}
-          fires immediately
-        {% endif %}
+    {# No trigger area in the init phase: it runs once and begins immediately,
+       so there is no later moment to wait for, and offering the control would
+       invite writing a condition the phase cannot honour. #}
+    {% if action.takes_trigger %}
+      <div class="ed-trigger-wrap" data-links-to="node-{{ action.id }}">
+        <div class="ed-trigger {% if not action.trigger %}is-empty{% endif %}" id="trigger-{{ action.id }}">
+          {% if action.trigger %}
+            {{ pred.render(action.trigger, draft, selected, document) }}
+          {% else %}
+            fires immediately
+          {% endif %}
+        </div>
+        {{ pred.add(draft, 'trigger:' ~ action.id) }}
       </div>
-      {{ pred.add(draft, 'trigger:' ~ action.id) }}
-    </div>
+    {% endif %}
   </div>
 {% endmacro %}
 

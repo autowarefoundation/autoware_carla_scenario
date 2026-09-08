@@ -381,6 +381,19 @@ class ActionNode(_Node):
     )
     once: bool = True
 
+    @property
+    def takes_trigger(self) -> bool:
+        """Whether this action can be gated by a trigger condition.
+
+        The init phase cannot.  It is one step that begins at once and happens
+        exactly once, so there is no later moment for a condition to be waiting
+        for: `run_init` would evaluate the trigger a single time, at elapsed
+        0.0, and an action whose trigger was not already true would silently
+        never run.  A phase with nothing to wait for should not offer a place
+        to write the waiting.
+        """
+        return self.phase != "init"
+
 
 # ---------------------------------------------------------------------------
 # Presentation (never read by the runtime)

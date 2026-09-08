@@ -437,6 +437,28 @@ def _check_untriggered_actions(out: _Collector, document: ScenarioDocument) -> N
         )
 
 
+def _check_init_triggers(out: _Collector, document: ScenarioDocument) -> None:
+    """An init action must not be gated by a trigger.
+
+    An error and not a warning: `run_init` evaluates a trigger once, at elapsed
+    0.0, so an action whose trigger is not already true at that instant never
+    runs at all.  A document that says "do this during initialization, but only
+    once X" describes something the phase cannot do, and exporting it would
+    ship a scenario with a step that quietly does not happen.
+    """
+    for index, action in enumerate(document.actions):
+        if action.trigger is None or action.takes_trigger:
+            continue
+        out.error(
+            f"actions[{index}].trigger",
+            f"{action.title or action.type!r} is in the initialization phase, "
+            "which runs once and begins immediately, so it cannot wait for a "
+            "condition. Remove the trigger, or move the action onto the tick "
+            "loop.",
+            action.id,
+        )
+
+
 def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
     """Warn when a stored layout draws an order the runtime cannot honour.
 
@@ -514,6 +536,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
 
     _check_step_order(out, document)
     _check_untriggered_actions(out, document)
+    _check_init_triggers(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)

@@ -537,3 +537,61 @@ class TestAddingToTheInitPhase:
         assert not [
             w for w in report.warnings if "fires on the first tick" in w.message
         ]
+
+
+class TestInitTakesNoCondition:
+    """The init phase has nothing to wait for, so it offers nowhere to wait.
+
+    It is one step that begins at once and happens once: `run_init` evaluates a
+    trigger a single time, at elapsed 0.0, so an action whose trigger was not
+    already true would silently never run.
+    """
+
+    @staticmethod
+    def _document_with_an_init_action():
+        from autoware_carla_scenario.authoring.models import Entity, ScenarioDocument
+        from autoware_carla_scenario.editor.service import EditorService
+
+        document = ScenarioDocument(id="s", title="s")
+        document.entities.append(Entity(id="npc1", kind="vehicle"))
+        service = EditorService.__new__(EditorService)
+        action = service.add_action(document, "lane_change", "npc1", "init")
+        return document, service, action
+
+    def test_a_condition_cannot_be_attached_to_one(self):
+        import pytest
+
+        from autoware_carla_scenario.editor.service import EditorError
+
+        document, service, action = self._document_with_an_init_action()
+
+        with pytest.raises(EditorError, match="initialization phase"):
+            service.add_condition(document, f"trigger:{action.id}", "elapsed_time")
+
+        assert action.trigger is None
+
+    def test_an_action_that_waits_cannot_move_into_init(self):
+        import pytest
+
+        from autoware_carla_scenario.editor.service import EditorError
+
+        document, service, action = self._document_with_an_init_action()
+        action.phase = "pre_tick"
+        service.add_condition(document, f"trigger:{action.id}", "elapsed_time")
+
+        with pytest.raises(EditorError, match="Remove the trigger first"):
+            service.update_action(document, action.id, {"phase": "init"})
+
+        # Refused, not silently repaired by deleting what the author wrote.
+        assert action.phase == "pre_tick"
+        assert action.trigger is not None
+
+    def test_a_hand_edited_document_is_rejected(self):
+        from autoware_carla_scenario.authoring.models import ConditionNode
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        document, _, action = self._document_with_an_init_action()
+        action.trigger = ConditionNode(type="elapsed_time", params={"duration": 1.0})
+
+        report = validate_document(document)
+        assert [i for i in report.errors if "initialization phase" in i.message]

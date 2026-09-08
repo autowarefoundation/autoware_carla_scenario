@@ -61,8 +61,13 @@
         <label class="ed-label">Phase</label>
         <select name="phase" class="ed-input">
           {% for option in action_phases %}
+            {# An action that waits for something cannot move into a phase with
+               nothing to wait for; saying so here beats refusing the change
+               after it has been made. #}
+            {% set blocked = option.value == 'init' and target.trigger %}
             <option value="{{ option.value }}"
-                    {% if target.phase == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% if target.phase == option.value %}selected{% endif %}
+                    {% if blocked %}disabled{% endif %}>{{ option.label }}{% if blocked %} — remove the trigger first{% endif %}</option>
           {% endfor %}
         </select>
         <p class="ed-help">{{ phase_help.get(target.phase, '') }}</p>

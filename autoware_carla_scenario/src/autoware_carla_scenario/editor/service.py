@@ -440,6 +440,15 @@ class EditorService:
         if "phase" in form:
             requested = as_action_phase(str(form["phase"]))
             if requested is not None:
+                # Refused rather than dropped: the trigger is something the
+                # author wrote, and deleting it to satisfy a phase change would
+                # be a silent edit they did not ask for.
+                if requested == "init" and action.trigger is not None:
+                    raise EditorError(
+                        f"{action.title or action.type} has a trigger, and the "
+                        "initialization phase runs once and begins immediately, "
+                        "so nothing there can wait. Remove the trigger first."
+                    )
                 action.phase = requested
         action.once = "once" in form
         action.params.update(_parse(spec.fields, form))
@@ -529,6 +538,13 @@ class EditorService:
             action = document.action(identifier)
             if action is None:
                 raise EditorError(f"No action named {identifier!r}.")
+            if not action.takes_trigger:
+                raise EditorError(
+                    f"{action.title or action.type} is in the initialization "
+                    "phase, which runs once and begins immediately, so there is "
+                    "nothing for a condition to wait for. Move it onto the tick "
+                    "loop to give it a trigger."
+                )
             action.trigger = _attach_trigger(action.trigger, node)
             return node
         if target == "node":
