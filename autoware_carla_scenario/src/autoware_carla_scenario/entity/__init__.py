@@ -25,6 +25,12 @@ from ._spawn import SpawnLocation, SpawnPointIndex, SpawnTransform
 from .autoware_entity import AutowareEgoEntity, AutowareEntity
 from .carla_driver_entity import CarlaDriverEntity
 from .ego import EgoVehicle
+from .registry import (
+    clear_entities,
+    find_entity_by_role_name,
+    register_entity,
+    unregister_entity,
+)
 from .vehicle_entity import VehicleEntity, VehicleEntityConfig
 
 __all__ = [
@@ -32,6 +38,10 @@ __all__ = [
     "AutowareEntity",
     "CarlaDriverEntity",
     "EgoVehicle",
+    "clear_entities",
+    "find_entity_by_role_name",
+    "register_entity",
+    "unregister_entity",
     "SpawnLocation",
     "SpawnPointIndex",
     "SpawnTransform",

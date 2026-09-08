@@ -11,6 +11,7 @@ integration suite; everything here runs against constructors only.
 
 from __future__ import annotations
 
+
 import carla
 import pytest
 
@@ -190,12 +191,13 @@ class TestBuildersProduceFrameworkObjects:
 
 
 class TestRoutingActionBuilder:
-    """A goal card compiles into the action that hands the ego its mission.
+    """A goal card compiles into the action that hands an entity its mission.
 
-    Routing is the one action whose actor is not free: only the ego runs a
-    stack that plans a route, so naming another vehicle has to be refused at
-    compile time rather than compiling into an action that quietly does
-    nothing on the day.
+    The ego needs a goal during initialization -- the runner waits for it to be
+    ready before the loop starts, and it is not ready until it has routed.  That
+    is a constraint on *the ego's first* routing, not on the action: re-routing
+    part-way through a run, or routing another entity once something has
+    happened, is an ordinary tick-loop action.
     """
 
     @staticmethod
@@ -216,25 +218,62 @@ class TestRoutingActionBuilder:
     def test_a_goal_on_the_ego_becomes_a_routing_action(self) -> None:
         from autoware_carla_scenario.actions import RoutingAction
 
-        class _Scenario:
-            ego_entity = None
-            _ground_projection = None
-
         compiled = compile_document(self._document_with_a_goal("ego"))
-        ctx = BuildContext(scenario=_Scenario(), client=None)
 
-        action = instantiate_action(compiled.actions[0], ctx)
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
 
         assert isinstance(action, RoutingAction)
         assert action.goal.lanelet_id == 265
         assert action.goal.s == 4.0
         assert action.label == "Drive to the far side"
 
-    def test_routing_another_vehicle_is_refused(self) -> None:
-        # ``new_document()`` already carries an NPC, so this is a goal an
-        # author could really draw: a card on the wrong vehicle's track.
-        compiled = compile_document(self._document_with_a_goal("npc1"))
-        ctx = BuildContext(scenario=None, client=None)
+    def test_the_action_names_its_entity_rather_than_holding_one(self) -> None:
+        """Like every other action, and for the same reason.
 
-        with pytest.raises(ValueError, match="only the ego"):
-            instantiate_action(compiled.actions[0], ctx)
+        The document is compiled before the scenario has spawned anything, so an
+        action handed an entity now would be handed nothing.  It carries the
+        role and looks the entity up when it runs.
+        """
+        from autoware_carla_scenario.actions import RoutingAction
+        from autoware_carla_scenario.constants import EGO_ROLE_NAME
+
+        compiled = compile_document(self._document_with_a_goal("ego"))
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert isinstance(action, RoutingAction)
+        assert action.entity_name == str(EGO_ROLE_NAME)
+
+    def test_the_card_carries_the_role_an_author_drew_it_on(self) -> None:
+        """Routing an NPC is allowed: the entity decides whether it means anything.
+
+        A TrafficManager NPC takes no destination, so ``route_to`` is a no-op
+        for it -- which is better than refusing the compile over a card that
+        simply does nothing.
+        """
+        from autoware_carla_scenario.actions import RoutingAction
+
+        compiled = compile_document(self._document_with_a_goal("npc1"))
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert isinstance(action, RoutingAction)
+        assert action.entity_name == "npc1"
+
+    def test_a_re_route_can_live_on_the_tick_loop(self) -> None:
+        """``timing`` and ``once`` come from the document, not from the action.
+
+        Only the ego's *first* goal has to be handed over during initialization;
+        a later one is triggered like any other action.
+        """
+        from autoware_carla_scenario.actions import TickTiming
+
+        document = self._document_with_a_goal("ego")
+        document.actions[0].timing = "post_tick"
+        document.actions[0].once = False
+        compiled = compile_document(document)
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert action.timing is TickTiming.POST_TICK
+        assert action._once is False

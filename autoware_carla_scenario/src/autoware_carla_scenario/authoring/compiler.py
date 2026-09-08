@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from ..constants import EGO_ROLE_NAME
+from ..constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .models import ActionNode, ConditionNode, Entity, ScenarioDocument
 from .registry import (
     INT_KINDS,
@@ -277,7 +277,7 @@ class BuildContext:
 
     scenario: Any
     client: Any = None
-    tm_port: int = 8000
+    tm_port: int = DEFAULT_TM_PORT
     #: Action id -> live action, filled in as each one is instantiated.  An
     #: ``action_completed`` condition keeps this mapping rather than an action,
     #: so a trigger may name an action that is built after it.

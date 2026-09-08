@@ -37,6 +37,8 @@ from typing import Any, Literal, Optional
 
 __all__ = [
     "ActionSpec",
+    "ArgumentCase",
+    "ArgumentChoice",
     "BindingSpec",
     "ConditionSpec",
     "ConstraintSpec",
@@ -184,6 +186,43 @@ class ConditionVisual:
 
 
 @dataclass(frozen=True)
+class ArgumentCase:
+    """One branch of a discriminated constructor argument.
+
+    Exactly one of ``constant`` and ``field`` says where the value comes from:
+    a dotted path such as ``..actions:TrafficLightTarget.ALL``, or the name of
+    a :class:`FieldSpec` whose value is passed through.
+    """
+
+    when: str
+    constant: str = ""
+    field: str = ""
+
+
+@dataclass(frozen=True)
+class ArgumentChoice:
+    """A constructor argument whose source a ``select`` field chooses.
+
+    Some runtime arguments are a union: ``TrafficSignalAction`` takes either a
+    list of ids or ``TrafficLightTarget.ALL``.  An author picks between them
+    with a select, so the mapping from that select to the argument is what the
+    spec has to say -- and saying it here rather than in a hand-written builder
+    is what lets the generator check that *every* option has a branch.  A new
+    option with no case is the failure this exists to prevent: it used to fall
+    into a builder's ``else`` and quietly produce the wrong kind of value.
+
+    Attributes:
+        kwarg: Constructor parameter being fed.
+        discriminator: Name of the ``select`` field that chooses the branch.
+        cases: One per option of *discriminator*, exhaustively.
+    """
+
+    kwarg: str
+    discriminator: str
+    cases: tuple[ArgumentCase, ...]
+
+
+@dataclass(frozen=True)
 class ActionSpec:
     """Everything the editor and compiler need to know about one action type."""
 
@@ -191,6 +230,17 @@ class ActionSpec:
     title: str
     category: str
     builder: str
+    #: Runtime class this builds, as ``<relative module>:<name>``.  When it is
+    #: set the builder named above is *generated* from the constructor's
+    #: signature; when it is empty the builder is hand-written in
+    #: :mod:`autoware_carla_scenario.authoring.builders`.  Exactly one of the
+    #: two, which ``test_authoring_registry`` enforces.
+    target: str = ""
+    #: Field name -> constructor keyword, for the pairs that differ.  Fields
+    #: whose name already matches the constructor need no entry.
+    argmap: tuple[tuple[str, str], ...] = ()
+    #: Constructor arguments a select field chooses the source of.
+    choices: tuple[ArgumentChoice, ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     #: What the action acts on. ``actor`` actions are performed *by* a vehicle
     #: and belong to its track; ``environment`` actions change the world around
@@ -220,6 +270,12 @@ class ConditionSpec:
     category: str
     builder: str
     visual: ConditionVisual
+    #: See :attr:`ActionSpec.target`.
+    target: str = ""
+    #: See :attr:`ActionSpec.argmap`.
+    argmap: tuple[tuple[str, str], ...] = ()
+    #: See :attr:`ActionSpec.choices`.
+    choices: tuple[ArgumentChoice, ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     kind: ConditionKind = "leaf"
     min_children: int = 0
@@ -395,6 +451,7 @@ register_action_spec(
         title="Lane Change",
         category="Vehicle / Motion",
         builder="build_lane_change_action",
+        target="..actions:LaneChangeAction",
         visual_kind="instant",
         fields=(
             FieldSpec(
@@ -415,6 +472,7 @@ register_action_spec(
         title="Turn at Junction",
         category="Vehicle / Motion",
         builder="build_turn_action",
+        target="..actions:TurnAction",
         visual_kind="instant",
         fields=(
             FieldSpec(
@@ -452,9 +510,10 @@ register_action_spec(
                 kind="lanelet",
                 default=0,
                 help=(
-                    "Where the run is meant to end. Only an ego that plans its "
-                    "own route reads this -- an Autoware one -- and it will not "
-                    "move without it; an autopilot or driver ego ignores it."
+                    "Where this vehicle is being sent. Only one that plans its "
+                    "own route reads it -- an Autoware ego -- and it will not "
+                    "move without a goal; a TrafficManager or driver vehicle "
+                    "ignores it."
                 ),
             ),
             FieldSpec(
@@ -468,10 +527,11 @@ register_action_spec(
             ),
         ),
         description=(
-            "Give the ego a destination and let its stack plan the route. "
-            "Performed during initialization, before the run's clock starts: "
-            "an autonomy stack has to localize and route before it can drive, "
-            "so this cannot wait for a trigger on the timeline."
+            "Give a vehicle a destination and let its stack plan the route. "
+            "The ego is routed once during initialization whether or not a card "
+            "says so -- it cannot start driving until it has -- so a card is "
+            "for changing that destination, or for a vehicle that is not the "
+            "ego. Only a vehicle that plans its own route reads it."
         ),
     )
 )
@@ -482,6 +542,17 @@ register_action_spec(
         title="Set Traffic Signal",
         category="Environment",
         builder="build_traffic_signal_action",
+        target="..actions:TrafficSignalAction",
+        choices=(
+            ArgumentChoice(
+                kwarg="lanelet2_traffic_light_ids",
+                discriminator="target",
+                cases=(
+                    ArgumentCase("all", constant="..actions:TrafficLightTarget.ALL"),
+                    ArgumentCase("ids", field="lanelet2_traffic_light_ids"),
+                ),
+            ),
+        ),
         scope="environment",
         visual_kind="instant",
         fields=(
@@ -534,6 +605,7 @@ register_condition_spec(
         title="ALL",
         category="Composition",
         builder="build_and_condition",
+        target="..conditions:AndCondition",
         kind="composite",
         visual=ConditionVisual(metric="ALL"),
         min_children=2,
@@ -548,6 +620,7 @@ register_condition_spec(
         title="ANY",
         category="Composition",
         builder="build_or_condition",
+        target="..conditions:OrCondition",
         kind="composite",
         visual=ConditionVisual(metric="ANY"),
         min_children=2,
@@ -562,6 +635,7 @@ register_condition_spec(
         title="NOT",
         category="Composition",
         builder="build_not_condition",
+        target="..conditions:NotCondition",
         kind="wrapper",
         visual=ConditionVisual(metric="NOT"),
         min_children=1,
@@ -576,6 +650,7 @@ register_condition_spec(
         title="Sticky",
         category="Composition",
         builder="build_sticky_condition",
+        target="..conditions:StickyCondition",
         kind="wrapper",
         visual=ConditionVisual(metric="Sticky"),
         min_children=1,
@@ -590,6 +665,7 @@ register_condition_spec(
         title="Persistent",
         category="Composition",
         builder="build_persistent_condition",
+        target="..conditions:PersistentCondition",
         kind="wrapper",
         visual=ConditionVisual(metric="Held for", value="duration", unit="s"),
         fields=(
@@ -618,6 +694,8 @@ register_condition_spec(
         title="Distance",
         category="Relative",
         builder="build_entity_distance_condition",
+        target="..conditions:EntityDistanceCondition",
+        argmap=(("distance", "value"),),
         visual=ConditionVisual(
             metric="Distance",
             subject="source",
@@ -644,6 +722,8 @@ register_condition_spec(
         title="TTC",
         category="Relative",
         builder="build_ttc_condition",
+        target="..conditions:TimeToCollisionCondition",
+        argmap=(("seconds", "value"),),
         visual=ConditionVisual(
             metric="TTC",
             subject="source",
@@ -675,6 +755,8 @@ register_condition_spec(
         title="Speed",
         category="Entity",
         builder="build_speed_condition",
+        target="..conditions:SpeedCondition",
+        argmap=(("entity", "entity_name"),),
         visual=ConditionVisual(
             metric="Speed",
             subject="entity",
@@ -717,6 +799,8 @@ register_condition_spec(
         title="Standstill",
         category="Entity",
         builder="build_standstill_condition",
+        target="..conditions:StandstillCondition",
+        argmap=(("entity", "entity_name"),),
         visual=ConditionVisual(
             metric="Standstill", subject="entity", value="duration", unit="s"
         ),
@@ -902,6 +986,8 @@ register_condition_spec(
         title="Exists",
         category="Entity",
         builder="build_entity_existence_condition",
+        target="..conditions:EntityExistenceCondition",
+        argmap=(("entity", "entity_name"),),
         visual=ConditionVisual(
             metric="Existence", subject="entity", value_label="missing"
         ),
@@ -916,6 +1002,8 @@ register_condition_spec(
         title="Lane ends ahead",
         category="Entity",
         builder="build_waypoint_condition",
+        target="..conditions:WaypointCondition",
+        argmap=(("entity", "entity_name"),),
         visual=ConditionVisual(
             metric="Lane ahead", subject="entity", value_label="none"
         ),
@@ -949,6 +1037,7 @@ register_condition_spec(
         title="Elapsed time",
         category="World",
         builder="build_elapsed_time_condition",
+        target="..conditions:ElapsedTimeCondition",
         visual=ConditionVisual(
             metric="Elapsed time", rule="rule", value="duration_seconds", unit="s"
         ),
@@ -978,6 +1067,7 @@ register_condition_spec(
         title="Timeout",
         category="World",
         builder="build_timeout_condition",
+        target="..conditions:TimeoutCondition",
         visual=ConditionVisual(metric="Timeout", value="timeout_seconds", unit="s"),
         fields=(
             FieldSpec(
@@ -998,6 +1088,7 @@ register_condition_spec(
         title="Collision",
         category="World",
         builder="build_collision_condition",
+        target="..conditions:CollisionCondition",
         visual=ConditionVisual(metric="Collision", value_label="occurred"),
         fields=(
             FieldSpec(
@@ -1019,6 +1110,8 @@ register_condition_spec(
         title="Traffic signal state",
         category="World",
         builder="build_traffic_signal_condition",
+        target="..conditions:TrafficSignalCondition",
+        argmap=(("state", "expected_state"),),
         visual=ConditionVisual(
             metric="Signal",
             target="lanelet2_regulatory_element_id",
@@ -1055,6 +1148,8 @@ register_condition_spec(
         title="Action state",
         category="World",
         builder="build_action_state_condition",
+        target="..conditions:ActionStateCondition",
+        argmap=(("action", "action_id"),),
         visual=ConditionVisual(metric="Action", subject="action", value="state"),
         fields=(
             FieldSpec(
@@ -1158,6 +1253,7 @@ register_condition_spec(
         title="Always",
         category="World",
         builder="build_always_true_condition",
+        target="..conditions:AlwaysTrueCondition",
         visual=ConditionVisual(metric="Always", value_label="true"),
         description="Fires unconditionally -- the default action trigger.",
     )

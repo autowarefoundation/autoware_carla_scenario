@@ -313,42 +313,43 @@ class TestRouteToGoal:
         assert scenario.ego_entity is not None
         assert scenario.ego_entity._goal_pose is None  # type: ignore[union-attr]
 
-    def test_the_mission_reaches_the_entity_in_the_map_frame(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from autoware_carla_scenario.actions import routing
-        from autoware_carla_scenario.autoware_bridge import BridgePose
-        from autoware_carla_scenario.coordinate import CarlaWorldPose, Lanelet2Pose
+    def test_the_registered_action_reaches_the_entity_by_name(self) -> None:
+        """The scenario registers; the action finds the entity; the entity routes.
 
-        goal_carla = CarlaWorldPose(x=40.0, y=50.0, z=1.0, yaw=-90.0)
-        monkeypatch.setattr(routing, "to_opendrive", lambda pose: pose, raising=True)
-        monkeypatch.setattr(
-            routing,
-            "snap_to_carla_road",
-            lambda pose, world, ground_projection: goal_carla,
-            raising=True,
-        )
-        monkeypatch.setattr(
-            routing,
-            "to_map_frame",
-            lambda pose: BridgePose.from_yaw(pose.x, -pose.y, pose.z, 0.0),
-            raising=True,
+        Each of the three does one thing, so this checks the seam rather than
+        the arithmetic: that the action registered for the ego reaches the ego.
+        What the entity then does with the goal -- snapping it and putting it in
+        Autoware's map frame -- is pinned in ``test_autoware_ego_entity.py``,
+        where that code now lives.
+        """
+        from autoware_carla_scenario.constants import EGO_ROLE_NAME
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+        from autoware_carla_scenario.entity.registry import (
+            clear_entities,
+            register_entity,
         )
 
-        entity = self._autoware_entity()
-        scenario = _SimpleScenario(_make_ego_config())
-        scenario.ego_entity = entity
-        scenario.goal_pose = Lanelet2Pose(lanelet_id=123, s=4.0)
-        scenario.set_client(MagicMock())
-        scenario.register_route_to_goal(self._initial_pose())
+        routed: list[Lanelet2Pose] = []
 
-        scenario.run_init(MagicMock())
+        class _Ego:
+            def route_to(self, world, goal, *, initial_pose=None, **_) -> None:
+                routed.append(goal)
 
-        # Poses are handed over in the map frame, not CARLA's: the y-flip is
-        # the visible half of that, and the entity now has a mission to start
-        # the run with.
-        assert entity._initial_pose == BridgePose.from_yaw(1.0, -2.0, 3.0, 0.0)
-        assert entity._goal_pose == BridgePose.from_yaw(40.0, -50.0, 1.0, 0.0)
+        entity = _Ego()
+        clear_entities()
+        register_entity(EGO_ROLE_NAME, entity)
+        try:
+            scenario = _SimpleScenario(_make_ego_config())
+            scenario.ego_entity = self._autoware_entity()
+            scenario.goal_pose = Lanelet2Pose(lanelet_id=123, s=4.0)
+            scenario.set_client(MagicMock())
+            scenario.register_route_to_goal(self._initial_pose())
+
+            scenario.run_init(MagicMock())
+        finally:
+            clear_entities()
+
+        assert [g.lanelet_id for g in routed] == [123]
 
 
 class TestInitPhase:
