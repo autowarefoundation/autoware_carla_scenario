@@ -30,10 +30,12 @@ import importlib
 import inspect
 import sys
 import typing
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from ..conditions.base import BaseCondition
 from ..templating import code_environment
 from .registry import (
     ActionSpec,
@@ -561,13 +563,29 @@ def _children_expression(
     if spec.kind == "composite" and typing.get_origin(parameter.annotation) in (
         list,
         tuple,
-        typing.Sequence,
-        __import__("collections.abc", fromlist=["Sequence"]).Sequence,
+        Sequence,
     ):
         return "children"
-    if spec.kind == "wrapper" and name == "condition":
+    if spec.kind == "wrapper" and _is_condition_annotation(parameter.annotation):
         return "children[0]"
     return None
+
+
+def _is_condition_annotation(annotation: Any) -> bool:
+    """Whether *annotation* is a single condition -- what a wrapper wraps.
+
+    Read off the annotation rather than off the parameter name, so a wrapper
+    that calls its child ``inner`` is recognised the same as one that calls it
+    ``condition``.
+    """
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union:
+        return any(
+            _is_condition_annotation(arg)
+            for arg in typing.get_args(annotation)
+            if arg is not type(None)
+        )
+    return isinstance(annotation, type) and issubclass(annotation, BaseCondition)
 
 
 def _check_required(

@@ -87,7 +87,7 @@ class EditorService:
         """Return where *draft*'s exported archive is staged."""
         return self.export_dir / f"{draft.document.id}.zip"
 
-    def export_archive(self, draft: Draft, **options: Any) -> tuple[Any, Path]:
+    def export_archive(self, draft: Draft, **options: Any) -> Any:
         """Export *draft* as a Scenario Package and zip it for download.
 
         The package is built in a temporary directory and removed once zipped:
@@ -101,7 +101,8 @@ class EditorService:
                 :func:`~autoware_carla_scenario.authoring.package_export.export_package`.
 
         Returns:
-            The :class:`ExportResult` and the path of the archive.
+            The :class:`ExportResult`.  The archive itself is at
+            :meth:`archive_path`, which the download route asks for directly.
 
         Raises:
             PackageExportError: If the export itself failed.  Nothing is staged
@@ -123,7 +124,7 @@ class EditorService:
                 root_dir=str(result.root.parent),
                 base_dir=result.root.name,
             )
-            return result, archive
+            return result
         finally:
             shutil.rmtree(build_dir, ignore_errors=True)
 
@@ -250,22 +251,12 @@ class EditorService:
         if entity is None:
             raise EditorError(f"No entity named {entity_id!r}.")
         document.entities.remove(entity)
-        document.actions = [a for a in document.actions if a.actor != entity_id]
-        for action in document.actions:
-            if action.trigger is not None and _references_entity(
-                action.trigger, entity_id
-            ):
-                action.trigger = None
-        document.assertions.pass_conditions = [
-            c
-            for c in document.assertions.pass_conditions
-            if not _references_entity(c, entity_id)
-        ]
-        document.assertions.fail_conditions = [
-            c
-            for c in document.assertions.fail_conditions
-            if not _references_entity(c, entity_id)
-        ]
+        # Through delete_action, so the conditions that waited on the entity's
+        # actions go too -- dropping the actions alone would leave references
+        # to ids that no longer exist.
+        for owned in [a for a in document.actions if a.actor == entity_id]:
+            self.delete_action(document, owned.id)
+        _purge_references(document, "entity", entity_id)
         document.sync_layout()
 
     def update_entity(
@@ -379,8 +370,13 @@ class EditorService:
     def delete_constraint(self, document: ScenarioDocument, node_id: str) -> None:
         """Remove a constraint subtree."""
         for entity in document.entities:
-            if _remove_constraint(entity.spawn.constraints, node_id):
-                return
+            roots = entity.spawn.constraints
+            for index, root in enumerate(roots):
+                if root.id == node_id:
+                    del roots[index]
+                    return
+                if root.remove(node_id):
+                    return
         raise EditorError(f"No constraint named {node_id!r}.")
 
     # ------------------------------------------------------------------
@@ -453,21 +449,7 @@ class EditorService:
         document.actions.remove(action)
         document.ui.nodes.pop(action_id, None)
 
-        for other in document.actions:
-            if other.trigger is not None and _references_action(
-                other.trigger, action_id
-            ):
-                other.trigger = None
-        document.assertions.pass_conditions = [
-            c
-            for c in document.assertions.pass_conditions
-            if not _references_action(c, action_id)
-        ]
-        document.assertions.fail_conditions = [
-            c
-            for c in document.assertions.fail_conditions
-            if not _references_action(c, action_id)
-        ]
+        _purge_references(document, "action", action_id)
         document.sync_layout()
 
     def move_action(
@@ -671,19 +653,27 @@ def condition_actions(node: ConditionNode) -> list[str]:
     return condition_refs(node, "action")
 
 
-def _references_entity(node: ConditionNode, entity_id: str) -> bool:
-    """Whether any node in this subtree names *entity_id*."""
-    return _references(node, "entity", entity_id)
+def _purge_references(document: ScenarioDocument, kind: str, target: str) -> None:
+    """Drop every trigger and assertion that names *target* through a *kind* field.
 
+    One purge for both delete paths: an entity and an action are referenced the
+    same way, so a third kind of reference cannot be remembered in one deletion
+    and forgotten in the other.
+    """
 
-def _references_action(node: ConditionNode, action_id: str) -> bool:
-    """Whether any node in this subtree waits on *action_id*."""
-    return _references(node, "action", action_id)
+    def names_target(root: ConditionNode) -> bool:
+        return any(target in condition_refs(node, kind) for node in root.walk())
 
-
-def _references(node: ConditionNode, kind: str, target: str) -> bool:
-    """Whether any node in this subtree names *target* through a *kind* field."""
-    return any(target in condition_refs(candidate, kind) for candidate in node.walk())
+    for action in document.actions:
+        if action.trigger is not None and names_target(action.trigger):
+            action.trigger = None
+    assertions = document.assertions
+    assertions.pass_conditions = [
+        c for c in assertions.pass_conditions if not names_target(c)
+    ]
+    assertions.fail_conditions = [
+        c for c in assertions.fail_conditions if not names_target(c)
+    ]
 
 
 def _attach_trigger(
@@ -709,14 +699,3 @@ def find_constraint(
                 if candidate.id == node_id:
                     return entity.id, candidate
     return None, None
-
-
-def _remove_constraint(nodes: list[ConstraintNode], node_id: str) -> bool:
-    """Remove a constraint subtree from a forest.  Returns success."""
-    for index, node in enumerate(nodes):
-        if node.id == node_id:
-            del nodes[index]
-            return True
-        if _remove_constraint(node.constraints, node_id):
-            return True
-    return False

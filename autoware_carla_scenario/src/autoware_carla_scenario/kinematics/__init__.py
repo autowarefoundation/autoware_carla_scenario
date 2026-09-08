@@ -31,6 +31,7 @@ Usage::
     print(fv.speed())        # 15.008...
 """
 
+from .angle import normalize_angle_deg
 from .acceleration import (
     AbsoluteAcceleration,
     FrenetAcceleration,
@@ -47,6 +48,7 @@ __all__ = [
     "frame_of",
     # Vector
     "Vector3",
+    "normalize_angle_deg",
     # Velocity
     "AbsoluteVelocity",
     "RelativeVelocity",

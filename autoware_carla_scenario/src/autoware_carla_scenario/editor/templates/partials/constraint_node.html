@@ -4,7 +4,7 @@
    Children always nest in one list; how many a type takes comes from its
    spec, the same way a condition composition works. #}
 
-{% macro render(node, draft, entity, selected, document, depth=0) %}
+{% macro render(node, draft, entity, selected) %}
   {%- set spec = get_constraint_spec(node.type) -%}
   <div class="ed-constraint {% if selected == node.id %}is-selected{% endif %}">
     <div class="ed-constraint-head" tabindex="0" role="button"
@@ -24,7 +24,7 @@
     {% if spec and spec.accepts_children %}
       <div class="ed-constraint-children">
         {% for child in node.constraints %}
-          {{ render(child, draft, entity, selected, document, depth + 1) }}
+          {{ render(child, draft, entity, selected) }}
         {% endfor %}
         {% if spec.max_children is none or node.constraints|length < spec.max_children %}
           {{ add_constraint(draft, entity, node.id) }}

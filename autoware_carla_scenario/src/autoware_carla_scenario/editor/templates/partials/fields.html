@@ -294,14 +294,3 @@
     <span>{{ entity_label(value, document) }}</span>
   {%- endif -%}
 {% endmacro %}
-
-
-
-{% macro rule_symbol(rule) %}
-  {%- set symbols = {
-    'less_than': '<', 'less_than_or_equal': '≤',
-    'greater_than': '>', 'greater_than_or_equal': '≥',
-    'equal_to': '='
-  } -%}
-  {{ symbols.get(rule|string, rule) }}
-{% endmacro %}

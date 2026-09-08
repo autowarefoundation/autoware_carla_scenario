@@ -24,6 +24,7 @@ from fastapi.responses import (
 from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, dump_document_yaml
+from ..authoring.registry import TRUTHY_VALUES
 from . import map_preview
 from .service import EditorError, EditorService, find_constraint
 
@@ -479,7 +480,7 @@ async def spawn_preview(request: Request, draft_id: str) -> HTMLResponse:
     """Evaluate an entity's spawn constraints and draw the matches."""
     form = dict(await request.form())
     entity_id = str(form.get("entity_id", ""))
-    load_map = str(form.get("load_map", "")).lower() in ("1", "true", "on", "yes")
+    load_map = _checked(form, "load_map")
 
     draft = _service(request).require_draft(draft_id)
     entity = draft.document.entity(entity_id)
@@ -574,7 +575,7 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
 
     def _run() -> tuple[Any, str, str]:
         try:
-            result, _archive = service.export_archive(draft, **options)
+            result = service.export_archive(draft, **options)
         except PackageExportError as exc:
             logger.warning("Scenario package export failed: %s", exc)
             # The exporter attaches the failing tool's output to the exception.
@@ -617,4 +618,4 @@ def download_package(request: Request, draft_id: str) -> FileResponse:
 
 def _checked(form: dict[str, Any], name: str) -> bool:
     """Return whether a checkbox named *name* was submitted as checked."""
-    return str(form.get(name, "")).lower() in ("1", "true", "on", "yes")
+    return str(form.get(name, "")).lower() in TRUTHY_VALUES

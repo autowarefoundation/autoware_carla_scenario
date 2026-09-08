@@ -74,8 +74,10 @@ class BaseAction(ABC):
         self._once = once
         self._done = False
         self._lifecycle = ActionState.STANDBY
-        #: Elapsed time at which the current run started, or ``None`` in standby.
-        self._running_since: Optional[float] = None
+        #: Elapsed time at which the current run started.  Only read while
+        #: running, and always written on the way in, so there is no "not
+        #: started" value to confuse with an action triggered at 0.0.
+        self._running_since: float = 0.0
 
     @property
     def timing(self) -> TickTiming:
@@ -150,11 +152,7 @@ class BaseAction(ABC):
             just_started = True
 
         if self._lifecycle is ActionState.RUNNING:
-            # Compared against None, not truth-tested: an action triggered at
-            # elapsed 0.0 has a falsy start time and would otherwise measure
-            # its own runtime as zero forever.
-            started = self._running_since
-            running_for = elapsed if started is None else elapsed - started
+            running_for = elapsed - self._running_since
             if not self.is_finished(world, running_for):
                 # The trigger is deliberately not re-evaluated while running,
                 # so a repeating action cannot start a second run on top of one
@@ -173,7 +171,7 @@ class BaseAction(ABC):
             # A repeating action goes back to standby to be triggered again,
             # which is what OpenSCENARIO does for an element with a maximum
             # execution count above one.
-            self._running_since = None
+            self._running_since = 0.0
             self._lifecycle = (
                 ActionState.COMPLETE if self._once else ActionState.STANDBY
             )

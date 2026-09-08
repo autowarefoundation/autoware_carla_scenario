@@ -34,6 +34,35 @@ def find_actor_in_list(
     )
 
 
+def find_actor_pair(
+    actors: "list[carla.Actor]",
+    source: Union[EntityRole, str],
+    target: Union[EntityRole, str],
+) -> "tuple[Optional[carla.Actor], Optional[carla.Actor]]":
+    """Find two actors by ``role_name`` in one pass over *actors*.
+
+    Every pairwise condition wants both ends of the same measurement, and two
+    :func:`find_actor_in_list` calls scan the list twice for it.
+
+    Args:
+        actors: Pre-fetched actor list (e.g. from ``world.get_actors()``).
+        source: The ``role_name`` of the measurement's first end.
+        target: The ``role_name`` of its second end.
+
+    Returns:
+        ``(source actor, target actor)``, either of which may be ``None``.
+    """
+    source_name, target_name = str(source), str(target)
+    found: "dict[str, carla.Actor]" = {}
+    for actor in actors:
+        role = actor.attributes.get("role_name")
+        if role in (source_name, target_name) and role not in found:
+            found[role] = actor
+            if len(found) == 2:
+                break
+    return found.get(source_name), found.get(target_name)
+
+
 def find_actor_by_role_name(
     world: "carla.World", role_name: Union[EntityRole, str]
 ) -> Optional["carla.Actor"]:

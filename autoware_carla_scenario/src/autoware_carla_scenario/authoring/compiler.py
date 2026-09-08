@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
+from ..entity_role import EntityRole
 from .models import ActionNode, ConditionNode, Entity, ScenarioDocument
 from .registry import (
     INT_KINDS,
@@ -195,7 +196,9 @@ def _assign_roles(document: ScenarioDocument) -> dict[str, str]:
             roles[entity.id] = EGO_ROLE
         else:
             npc_index += 1
-            roles[entity.id] = f"npc{npc_index}"
+            # Through EntityRole, so the one place that validates a role name
+            # sees it -- the spawner reads these back rather than re-deriving.
+            roles[entity.id] = str(EntityRole.npc(npc_index))
     return roles
 
 

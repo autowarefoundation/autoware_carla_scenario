@@ -26,6 +26,7 @@ import enum
 import logging
 from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple, runtime_checkable
 
+from ..kinematics.angle import normalize_angle_deg
 from ..constants import (
     DEFAULT_TM_PORT,
     LANE_CHANGE_CENTER_TOLERANCE_M,
@@ -315,7 +316,7 @@ def _lane_key_of(waypoint: "carla.Waypoint") -> Tuple[int, int]:
 
 def _heading_error_deg(yaw: float, reference_yaw: float) -> float:
     """Return the absolute heading difference in degrees, wrapped to 180."""
-    return abs((yaw - reference_yaw + 180.0) % 360.0 - 180.0)
+    return abs(normalize_angle_deg(yaw - reference_yaw))
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +455,7 @@ def _pick_branch(
         if not branch:
             continue
         exit_yaw = branch[-1].transform.rotation.yaw
-        diff = (exit_yaw - entry_yaw + 180.0) % 360.0 - 180.0
+        diff = normalize_angle_deg(exit_yaw - entry_yaw)
         score = abs(diff - target)
         logger.debug(
             "turn route: branch exit_yaw=%.1f, diff=%.1f, score=%.1f",
@@ -468,7 +469,7 @@ def _pick_branch(
 
     if best is not None:
         exit_yaw = best[-1].transform.rotation.yaw
-        diff = (exit_yaw - entry_yaw + 180.0) % 360.0 - 180.0
+        diff = normalize_angle_deg(exit_yaw - entry_yaw)
         logger.info(
             "turn route: selected branch with heading change %.1f deg "
             "(target: %.1f deg %s)",

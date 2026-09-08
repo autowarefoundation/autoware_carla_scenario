@@ -29,16 +29,15 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from ..templating import code_environment
+from ..templating import code_environment, toml_string
 from .framework_pin import Pin, PinResolutionError, resolve_framework_pin
 from .hydra_config import dump_scenario_config
 from .models import ScenarioDocument
-from .persistence import dump_document_yaml, dump_yaml
+from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .validator import validate_document
 
 logger = logging.getLogger(__name__)
@@ -121,7 +120,6 @@ def package_names(document: ScenarioDocument) -> dict[str, str]:
     return {
         "scenario_id": scenario_id,
         "package_name": package_name,
-        "package_dir_name": package_name,
         "distribution_name": package_name.replace("_", "-"),
         "document_path_env": f"{package_name.upper()}_DOCUMENT_PATH",
     }
@@ -209,7 +207,7 @@ def _render_source_entry(pin: Pin) -> str:
         if isinstance(value, bool):
             parts.append(f"{key} = {str(value).lower()}")
         else:
-            parts.append(f'{key} = "{value}"')
+            parts.append(f"{key} = {toml_string(value)}")
     return ", ".join(parts)
 
 
@@ -262,7 +260,7 @@ def _write_package_tree(
     env = code_environment(TEMPLATES_DIR)
     package_name = names["package_name"]
     scenario_id = names["scenario_id"]
-    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated_at = utc_timestamp()
     pins = _pins(pin)
     sources = [(p.distribution, _render_source_entry(p)) for p in pins]
 
@@ -378,7 +376,7 @@ def _build_manifest(
         "dependencies": {p.distribution: p.manifest() for p in _pins(pin)},
         "generated_by": {
             "editor_version": _editor_version(),
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "generated_at": utc_timestamp(),
         },
         "files": files,
         "notes": notes,
@@ -503,8 +501,6 @@ def _strip_build_output(root: Path) -> None:
     removing a directory while iterating would have it try to descend into a
     path that no longer exists.
     """
-    for name in _BUILD_OUTPUT_DIRS:
-        shutil.rmtree(root / name, ignore_errors=True)
     doomed = [
         path
         for path in list(root.rglob("*"))
@@ -597,7 +593,7 @@ def export_package(
 
     names = package_names(document)
     parent = Path(destination).expanduser().resolve()
-    target = parent / names["package_dir_name"]
+    target = parent / names["package_name"]
     if target.exists():
         if not force:
             raise PackageExportError(
@@ -623,9 +619,7 @@ def export_package(
     # staging one level deeper and then moving would leave a lockfile whose
     # relative paths no longer resolve.
     staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{names['package_dir_name']}.export-", dir=str(parent)
-        )
+        tempfile.mkdtemp(prefix=f".{names['package_name']}.export-", dir=str(parent))
     )
 
     log = ""

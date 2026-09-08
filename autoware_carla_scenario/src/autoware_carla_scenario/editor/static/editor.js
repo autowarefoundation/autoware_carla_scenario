@@ -45,12 +45,25 @@
     if (!scroll || !svg) return;
 
     while (svg.firstChild) svg.removeChild(svg.firstChild);
-    svg.setAttribute('width', scroll.scrollWidth);
-    svg.setAttribute('height', scroll.scrollHeight);
 
+    /* Measure first, draw second.  Appending to a live SVG invalidates layout,
+     * so reading a rect after each append forced one reflow per link. */
     var origin = scroll.getBoundingClientRect();
     function toX(clientX) { return clientX - origin.left + scroll.scrollLeft; }
     function toY(clientY) { return clientY - origin.top + scroll.scrollTop; }
+
+    var laneHues = new Map();
+    function laneHue(clip) {
+      // The line wears the track colour of whoever runs the causing action.
+      var lane = clip.closest('.ed-lane');
+      if (!lane) return '';
+      if (!laneHues.has(lane)) {
+        laneHues.set(lane, getComputedStyle(lane).getPropertyValue('--lane-hue').trim());
+      }
+      return laneHues.get(lane);
+    }
+
+    var links = [];
 
     scroll.querySelectorAll('.ed-trigger-wrap[data-links-to]').forEach(function (wrap) {
       var target = document.getElementById(wrap.getAttribute('data-links-to'));
@@ -67,9 +80,9 @@
       if (y1 <= y2) return; // trigger is not below its action; nothing to draw
 
       var mid = (y1 + y2) / 2;
-      makePath(svg, 'M ' + x1 + ' ' + y1 + ' C ' + x1 + ' ' + mid + ', ' +
-        x2 + ' ' + mid + ', ' + x2 + ' ' + (y2 + 5));
-      makePath(svg, 'M ' + x2 + ' ' + y2 + ' l -4 5.5 l 8 0 z', 'head');
+      links.push(['M ' + x1 + ' ' + y1 + ' C ' + x1 + ' ' + mid + ', ' +
+        x2 + ' ' + mid + ', ' + x2 + ' ' + (y2 + 5), '', '', false]);
+      links.push(['M ' + x2 + ' ' + y2 + ' l -4 5.5 l 8 0 z', 'head', '', false]);
     });
 
     scroll.querySelectorAll('.ed-cond[data-caused-by]').forEach(function (card) {
@@ -81,12 +94,7 @@
         var clip = document.getElementById('node-' + actionId);
         if (!clip) return;
         var clipBox = clip.getBoundingClientRect();
-
-        // The line wears the track colour of whoever runs the causing action.
-        var lane = clip.closest('.ed-lane');
-        var hue = lane
-          ? getComputedStyle(lane).getPropertyValue('--lane-hue').trim()
-          : '';
+        var hue = laneHue(clip);
 
         var x1 = toX(clipBox.right);
         var y1 = toY(clipBox.top + clipBox.height / 2);
@@ -94,11 +102,17 @@
         var y2 = toY(cardBox.top + cardBox.height / 2);
         var bend = Math.max(28, Math.abs(x2 - x1) / 2);
 
-        makePath(svg, 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + bend) + ' ' + y1 + ', ' +
-          (x2 - bend) + ' ' + y2 + ', ' + x2 + ' ' + y2, 'causes', hue);
-        makePath(svg, 'M ' + (x2 + 5) + ' ' + y2 + ' l -6 -4 l 0 8 z',
-          'causes-head', hue, true);
+        links.push(['M ' + x1 + ' ' + y1 + ' C ' + (x1 + bend) + ' ' + y1 + ', ' +
+          (x2 - bend) + ' ' + y2 + ', ' + x2 + ' ' + y2, 'causes', hue, false]);
+        links.push(['M ' + (x2 + 5) + ' ' + y2 + ' l -6 -4 l 0 8 z',
+          'causes-head', hue, true]);
       });
+    });
+
+    svg.setAttribute('width', scroll.scrollWidth);
+    svg.setAttribute('height', scroll.scrollHeight);
+    links.forEach(function (link) {
+      makePath(svg, link[0], link[1], link[2], link[3]);
     });
   }
 
@@ -482,8 +496,9 @@
     mountMaps();
   }
 
-  document.addEventListener('DOMContentLoaded', refresh);
-  document.body.addEventListener('htmx:afterSwap', refresh);
+  // `afterSettle` only: it fires after `afterSwap` for the same swap, and after
+  // the swapped-in nodes have been laid out, which is what drawLinks measures.
+  // Binding both ran every reap and mount twice per edit.
   document.body.addEventListener('htmx:afterSettle', refresh);
   window.addEventListener('resize', scheduleRedraw);
   refresh();

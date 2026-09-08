@@ -24,6 +24,11 @@ class ComparisonRule(Enum):
     GREATER_THAN_OR_EQUAL = auto()
     LESS_THAN_OR_EQUAL = auto()
 
+    @property
+    def text(self) -> str:
+        """Return the operator as it reads inside a result message."""
+        return self.name.lower().replace("_", " ")
+
 
 def compare(
     actual: float, rule: ComparisonRule, value: float, tolerance: float = 1e-6

@@ -24,10 +24,10 @@ from .authoring.builders import instantiate_action, instantiate_condition
 from .authoring.compiler import BuildContext, CompiledScenario, compile_document
 from .authoring.models import Entity, ScenarioDocument
 from .authoring.persistence import load_document
+from .actions.base import TickTiming
 from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
 from .entity._spawn import SpawnTransform
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
-from .entity_role import EntityRole
 from .scenario_base import BaseScenario, EgoConfig
 
 if TYPE_CHECKING:
@@ -185,7 +185,7 @@ class DeclarativeScenario(BaseScenario):
             # condition -- possibly one built earlier, in another action's
             # trigger -- can find it.
             ctx.actions[compiled_action.node.id] = action
-            if compiled_action.node.timing == "post_tick":
+            if action.timing is TickTiming.POST_TICK:
                 self.register_post_tick(action)
             else:
                 self.register_pre_tick(action)
@@ -220,19 +220,19 @@ class DeclarativeScenario(BaseScenario):
     def _spawn_npcs(self) -> None:
         """Spawn every non-ego entity at its document spawn position."""
         world = self.world
-        for index, entity in enumerate(self._compiled.npcs, start=1):
-            npc_entity = self._build_npc(entity, index, world)
+        for entity in self._compiled.npcs:
+            npc_entity = self._build_npc(entity, world)
             npc_entity.spawn(world)
             self.register_entity(npc_entity)
             logger.info(
                 "Spawned %s (%s) on lanelet %d at s=%.1f",
                 entity.id,
-                EntityRole.npc(index),
+                self._compiled.role_of(entity.id),
                 entity.spawn.lanelet_id,
                 entity.spawn.s.value,
             )
 
-    def _build_npc(self, entity: Entity, index: int, world: "object") -> VehicleEntity:
+    def _build_npc(self, entity: Entity, world: "object") -> VehicleEntity:
         """Return the :class:`VehicleEntity` for *entity*, snapped to the road."""
         from .coordinate.transform import to_opendrive  # noqa: PLC0415
 
@@ -243,7 +243,10 @@ class DeclarativeScenario(BaseScenario):
         )
         return VehicleEntity(
             VehicleEntityConfig(
-                role_name=EntityRole.npc(index),
+                # The role the compiler already resolved every condition to.
+                # Deriving it a second time here is how a vehicle ends up
+                # spawned under a name no condition is watching.
+                role_name=self._compiled.role_of(entity.id),
                 spawn_location=SpawnTransform(snapped.to_carla_transform()),
                 vehicle_type=entity.vehicle_type,
                 initial_speed_kmh=entity.initial_speed_kmh,

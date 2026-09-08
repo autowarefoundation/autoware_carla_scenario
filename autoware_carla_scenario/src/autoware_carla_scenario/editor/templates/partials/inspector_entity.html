@@ -90,7 +90,7 @@
   <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Candidate lanelets</h4>
   <div class="ed-constraint-root" style="margin-bottom:12px">
     {% for node in target.spawn.constraints %}
-      {{ cons.render(node, draft, target, selected, document) }}
+      {{ cons.render(node, draft, target, selected) }}
     {% else %}
       <p class="ed-help" style="margin:0 0 6px">No constraints yet: every lanelet matches.</p>
     {% endfor %}
