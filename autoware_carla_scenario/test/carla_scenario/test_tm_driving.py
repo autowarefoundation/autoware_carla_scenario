@@ -91,9 +91,13 @@ class _World:
 class _TrafficManager:
     def __init__(self) -> None:
         self.lane_changes: list[tuple[object, bool]] = []
+        self.paths: list[tuple[object, list]] = []
 
     def force_lane_change(self, actor, to_right: bool) -> None:  # noqa: ANN001
         self.lane_changes.append((actor, to_right))
+
+    def set_path(self, actor, path: list) -> None:  # noqa: ANN001
+        self.paths.append((actor, path))
 
 
 class _Client:
@@ -151,9 +155,7 @@ class TestChangeLane:
             (LaneChangeDirection.LEFT, False),
         ):
             neighbour = _Waypoint(1, 2)
-            vehicle, tm, world = _vehicle_on(
-                1, 1, left=neighbour, right=neighbour
-            )
+            vehicle, tm, world = _vehicle_on(1, 1, left=neighbour, right=neighbour)
             vehicle.change_lane(world, direction)
             assert [sent for _, sent in tm.lane_changes] == [expected]
 
@@ -203,7 +205,9 @@ class TestLaneChangeFinished:
     """Settled means on the target lane, centred on it, and pointing along it."""
 
     @staticmethod
-    def _mid_manoeuvre(target_road: int, target_lane: int, *, offset: float, yaw: float):
+    def _mid_manoeuvre(
+        target_road: int, target_lane: int, *, offset: float, yaw: float
+    ):
         vehicle = _Vehicle(_Actor(_Transform(_Location(0.0, 0.0), yaw)))
         vehicle._lane_change_target = (target_road, target_lane)
         vehicle._lane_change_map = _Map(
@@ -318,3 +322,163 @@ def test_the_neighbour_looked_at_is_the_one_asked_for(direction) -> None:  # noq
 
     expected = (1, 9) if direction is LaneChangeDirection.LEFT else (1, 7)
     assert vehicle._lane_change_target == expected
+
+
+# ---------------------------------------------------------------------------
+# Turning at a junction
+# ---------------------------------------------------------------------------
+
+
+class _TurnWaypoint(_Waypoint):
+    """A waypoint that knows what comes next, so a route can be walked."""
+
+    def __init__(self, *args, is_junction: bool = False, **kwargs) -> None:  # noqa: ANN002, ANN003
+        super().__init__(*args, **kwargs)
+        self.is_junction = is_junction
+        self._next: list["_TurnWaypoint"] = []
+
+    def then(self, *waypoints: "_TurnWaypoint") -> "_TurnWaypoint":
+        self._next = list(waypoints)
+        return self
+
+    def next(self, step: float):  # noqa: ANN201, ARG002
+        return list(self._next)
+
+
+def _straight_run(yaw: float, count: int, *, y: float = 0.0, is_junction: bool = False):
+    """A chain of *count* waypoints all heading *yaw*, offset to *y*.
+
+    The offset is what tells the branches apart in the route that comes out:
+    the path is a list of locations, so the branch that was chosen has to be
+    readable from them.
+    """
+    chain = [
+        _TurnWaypoint(1, 1, _Location(float(i), y), yaw, is_junction=is_junction)
+        for i in range(count)
+    ]
+    for a, b in zip(chain, chain[1:]):
+        a.then(b)
+    return chain
+
+
+class TestTurnAtJunction:
+    """The route is worked out from the map, then handed to the TrafficManager."""
+
+    @staticmethod
+    def _map_with_a_fork():
+        """A road that reaches a junction offering a left and a right branch.
+
+        Exit headings are what the branches are told apart by: CARLA's yaw is
+        clockwise-positive, so -90 is a left turn and +90 a right one.
+        """
+        left_branch = _straight_run(-90.0, 12, y=-5.0, is_junction=True)
+        right_branch = _straight_run(90.0, 12, y=5.0, is_junction=True)
+        for branch in (left_branch, right_branch):
+            for wp in branch[-6:]:
+                wp.is_junction = False
+        pre = _TurnWaypoint(1, 1, _Location(0.0, 0.0), 0.0)
+        pre.then(left_branch[0], right_branch[0])
+        start = _TurnWaypoint(1, 1, _Location(-2.0, 0.0), 0.0).then(pre)
+        return start
+
+    def _vehicle(self):
+        actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
+        vehicle = _Vehicle(actor)
+        tm = _TrafficManager()
+        vehicle.set_client(_Client(tm))
+        return vehicle, tm, _World(_Map(self._map_with_a_fork()))
+
+    def test_each_direction_takes_the_branch_that_bends_that_way(self) -> None:
+        """The branch is chosen by exit heading, so both must be checked.
+
+        A picker that always returned the first branch would satisfy a test
+        that only asked for a left turn.
+        """
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        for direction, expected_y in (
+            (TurnDirection.LEFT, -5.0),
+            (TurnDirection.RIGHT, 5.0),
+        ):
+            vehicle, tm, world = self._vehicle()
+            vehicle.turn_at_junction(world, direction, post_junction_distance=4.0)
+
+            assert len(tm.paths) == 1, direction
+            path = tm.paths[0][1]
+            assert path, direction
+            assert {location.y for location in path} == {expected_y}, direction
+
+    def test_a_route_that_cannot_be_found_sends_nothing(self) -> None:
+        """A junction that is not there is reported, not faked."""
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
+        vehicle = _Vehicle(actor)
+        tm = _TrafficManager()
+        vehicle.set_client(_Client(tm))
+        # A road that simply ends: nothing ahead, so no junction and no route.
+        dead_end = _TurnWaypoint(1, 1, _Location(), 0.0)
+        vehicle.turn_at_junction(_World(_Map(dead_end)), TurnDirection.RIGHT)
+        assert tm.paths == []
+
+    def test_without_a_client_nothing_is_sent(self) -> None:
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        vehicle = _Vehicle(_Actor(_Transform(_Location())))
+        vehicle.turn_at_junction(
+            _World(_Map(self._map_with_a_fork())), TurnDirection.LEFT
+        )  # must not raise
+
+    def test_an_autoware_ego_refuses_a_turn_route(self, caplog) -> None:
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
+        with caplog.at_level("WARNING"):
+            entity.turn_at_junction(_World(_Map(None)), TurnDirection.LEFT)
+        assert "not driven by the TrafficManager" in caplog.text
+
+
+class TestTheTurnActionDelegates:
+    def test_execute_asks_the_named_entity_with_its_tuning(self) -> None:
+        from autoware_carla_scenario.actions import TurnAction
+        from autoware_carla_scenario.entity.registry import (
+            clear_entities,
+            register_entity,
+        )
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        seen: list[tuple] = []
+
+        class _Recording(_Vehicle):
+            def turn_at_junction(self, world, direction, **kwargs) -> None:  # noqa: ANN001, ANN003
+                seen.append((direction, kwargs))
+
+        clear_entities()
+        register_entity("npc1", _Recording())
+        try:
+            TurnAction(
+                "npc1",
+                TurnDirection.RIGHT,
+                client=None,
+                label="t",
+                search_distance=42.0,
+            ).execute(_World(_Map(None)))
+        finally:
+            clear_entities()
+
+        assert seen[0][0] is TurnDirection.RIGHT
+        assert seen[0][1]["search_distance"] == 42.0
+
+    def test_an_unknown_entity_is_reported(self, caplog) -> None:
+        from autoware_carla_scenario.actions import TurnAction
+        from autoware_carla_scenario.entity.registry import clear_entities
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        clear_entities()
+        with caplog.at_level("WARNING"):
+            TurnAction("ghost", TurnDirection.LEFT, client=None, label="t").execute(
+                _World(_Map(None))
+            )
+        assert "not found" in caplog.text

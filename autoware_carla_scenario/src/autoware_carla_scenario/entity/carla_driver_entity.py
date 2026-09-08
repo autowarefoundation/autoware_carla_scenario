@@ -132,6 +132,15 @@ class CarlaDriverEntity(EgoVehicle):
             type(self).__name__,
         )
 
+    def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
+        """Refuse a TrafficManager route: nothing here is driven by it."""
+        del world, direction, kwargs
+        logger.warning(
+            "%s: a turn was asked for, but this entity is not driven by the "
+            "TrafficManager, so setting a route there would do nothing.",
+            type(self).__name__,
+        )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
