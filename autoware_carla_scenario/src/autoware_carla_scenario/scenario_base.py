@@ -433,6 +433,11 @@ class BaseScenario(ABC):
         # list above is walked to apply initial speeds; the registry answers
         # "who is 'npc1'?", which is what a scenario document asks.
         _register_entity(entity.role_name, entity)
+        # And the client, so a manoeuvre asked of this entity reaches the
+        # TrafficManager that drives it.  Same place, same two facts the
+        # scenario already holds.
+        if self._client is not None:
+            entity.set_client(self._client, self._tm_port)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.

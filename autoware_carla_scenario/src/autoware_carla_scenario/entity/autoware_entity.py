@@ -255,6 +255,24 @@ class AutowareEgoEntity(EgoVehicle):
         return self._ready
 
     # ------------------------------------------------------------------
+    # Manoeuvres
+    # ------------------------------------------------------------------
+
+    def change_lane(self, world: "carla.World", direction) -> None:  # noqa: ANN001
+        """Refuse a TrafficManager manoeuvre: nothing here is driven by it.
+
+        Autoware plans and executes its own manoeuvres; a lane change is
+        something its planner decides, not something the scenario forces on it.
+        Send it somewhere with :meth:`route_to` and let it work out the lanes.
+        """
+        del world
+        logger.warning(
+            "%s: a lane change was asked for, but this entity is not driven by "
+            "the TrafficManager, so forcing one there would do nothing. Route it instead.",
+            type(self).__name__,
+        )
+
+    # ------------------------------------------------------------------
     # Actor lifecycle (attach, not spawn)
     # ------------------------------------------------------------------
 

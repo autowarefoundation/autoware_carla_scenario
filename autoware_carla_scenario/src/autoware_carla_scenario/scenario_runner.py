@@ -541,6 +541,7 @@ class ScenarioRunner:
         # before that actor would be destroyed.
         ego = scenario.create_ego()
         register_entity(EGO_ROLE_NAME, ego)
+        ego.set_client(self._client, self._tm_port)
 
         # Destroy any leftover actors from a previous scenario that may
         # have survived a failed reload_world().  On a clean world this
