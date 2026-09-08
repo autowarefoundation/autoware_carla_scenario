@@ -9,9 +9,10 @@ Regenerate with::
 
     uv run python -m autoware_carla_scenario.authoring.codegen
 
-Builders that are *not* a plain constructor call -- the ones that assemble a
-pose, or pick between two constructors -- stay hand-written in
-:mod:`autoware_carla_scenario.authoring.builders`.
+An argument the signature alone cannot describe -- a pose assembled from two
+fields and a literal, a list of comparison rules built from four bounds -- is
+described by the spec's ``builds`` and assembled in the prelude below, so that
+these builders are generated and checked like every other one.
 
 Module-level imports stay free of CARLA and lanelet2, exactly as in the
 hand-written module: the editor process imports this package without a
@@ -59,6 +60,52 @@ def {{ b.name }}(
 {% if b.uses_params %}
     params = compiled.params
 {% endif %}
+{#- Every call below is written one keyword per line with a trailing comma.
+    That is a magic trailing comma, which `ruff-format` leaves alone, so the
+    generator does not have to predict where the formatter would wrap. A list
+    is filled by appending rather than by a comprehension for the same reason:
+    a comprehension has no such comma, so its shape would depend on width. -#}
+{% for build in b.builds %}
+{% if build.mode == "single" %}
+    {{ build.kwarg }} = {{ build.cls }}(
+{% for kwarg, expr in build.parts[0].pieces %}
+        {{ kwarg }}={{ expr }},
+{% endfor %}
+    )
+{% elif build.mode == "over" %}
+    {{ build.kwarg }}: list[Any] = []
+    for item in params["{{ build.over }}"]:
+        {{ build.kwarg }}.append(
+            {{ build.cls }}(
+{% for kwarg, expr in build.parts[0].pieces %}
+                {{ kwarg }}={{ expr }},
+{% endfor %}
+            )
+        )
+{% else %}
+    {{ build.kwarg }}: list[Any] = []
+{% for part in build.parts %}
+{% if part.when_present %}
+    if params.get("{{ part.when_present }}") is not None:
+        {{ build.kwarg }}.append(
+            {{ build.cls }}(
+{% for kwarg, expr in part.pieces %}
+                {{ kwarg }}={{ expr }},
+{% endfor %}
+            )
+        )
+{% else %}
+    {{ build.kwarg }}.append(
+        {{ build.cls }}(
+{% for kwarg, expr in part.pieces %}
+            {{ kwarg }}={{ expr }},
+{% endfor %}
+        )
+    )
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
 {% for choice in b.choices %}
     {{ choice.kwarg }}: Any
 {% for case in choice.cases %}

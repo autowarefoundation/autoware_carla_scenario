@@ -9,9 +9,10 @@ Regenerate with::
 
     uv run python -m autoware_carla_scenario.authoring.codegen
 
-Builders that are *not* a plain constructor call -- the ones that assemble a
-pose, or pick between two constructors -- stay hand-written in
-:mod:`autoware_carla_scenario.authoring.builders`.
+An argument the signature alone cannot describe -- a pose assembled from two
+fields and a literal, a list of comparison rules built from four bounds -- is
+described by the spec's ``builds`` and assembled in the prelude below, so that
+these builders are generated and checked like every other one.
 
 Module-level imports stay free of CARLA and lanelet2, exactly as in the
 hand-written module: the editor process imports this package without a
@@ -35,8 +36,11 @@ __all__ = [
     "build_sticky_condition",
     "build_entity_existence_condition",
     "build_waypoint_condition",
+    "build_entity_lane_position_condition",
+    "build_entity_road_position_condition",
     "build_speed_condition",
     "build_standstill_condition",
+    "build_temporary_stop_condition",
     "build_entity_distance_condition",
     "build_ttc_condition",
     "build_action_state_condition",
@@ -47,6 +51,7 @@ __all__ = [
     "build_traffic_signal_condition",
     "build_traffic_signal_action",
     "build_lane_change_action",
+    "build_routing_action",
     "build_turn_action",
 ]
 
@@ -154,6 +159,121 @@ def build_waypoint_condition(
     )
 
 
+def build_entity_lane_position_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityLanePositionCondition`."""
+    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..conditions.comparison import ScalarComparisonRule  # noqa: PLC0415
+    from ..conditions.comparison import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        s=0.0,
+        lanelet_id=params["lanelet_id"],
+    )
+    rules: list[Any] = []
+    if params.get("s_min") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="s",
+                rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
+                value=params["s_min"],
+            )
+        )
+    if params.get("s_max") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="s",
+                rule=ComparisonRule.LESS_THAN_OR_EQUAL,
+                value=params["s_max"],
+            )
+        )
+    if params.get("t_min") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="t",
+                rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
+                value=params["t_min"],
+            )
+        )
+    if params.get("t_max") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="t",
+                rule=ComparisonRule.LESS_THAN_OR_EQUAL,
+                value=params["t_max"],
+            )
+        )
+    return EntityLanePositionCondition(
+        entity_name=str(params["entity"]),
+        position=position,
+        rules=rules,
+        label=compiled.label,
+    )
+
+
+def build_entity_road_position_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityLanePositionCondition`."""
+    from ..conditions import EntityLanePositionCondition  # noqa: PLC0415
+    from ..coordinate import OpenDrivePose  # noqa: PLC0415
+    from ..conditions.comparison import ScalarComparisonRule  # noqa: PLC0415
+    from ..conditions.comparison import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    position = OpenDrivePose(
+        s=0.0,
+        road_id=params["road_id"],
+        lane_id=params["lane_id"],
+    )
+    rules: list[Any] = []
+    if params.get("s_min") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="s",
+                rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
+                value=params["s_min"],
+            )
+        )
+    if params.get("s_max") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="s",
+                rule=ComparisonRule.LESS_THAN_OR_EQUAL,
+                value=params["s_max"],
+            )
+        )
+    if params.get("t_min") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="t",
+                rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
+                value=params["t_min"],
+            )
+        )
+    if params.get("t_max") is not None:
+        rules.append(
+            ScalarComparisonRule(
+                field="t",
+                rule=ComparisonRule.LESS_THAN_OR_EQUAL,
+                value=params["t_max"],
+            )
+        )
+    return EntityLanePositionCondition(
+        entity_name=str(params["entity"]),
+        position=position,
+        rules=rules,
+        label=compiled.label,
+    )
+
+
 def build_speed_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",
@@ -187,6 +307,34 @@ def build_standstill_condition(
         entity_name=str(params["entity"]),
         duration=params["duration"],
         speed_threshold=params["speed_threshold"],
+        label=compiled.label,
+    )
+
+
+def build_temporary_stop_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TemporaryStopCondition`."""
+    from ..conditions import TemporaryStopCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    params = compiled.params
+    stop_positions: list[Any] = []
+    for item in params["stop_lanelets"]:
+        stop_positions.append(
+            Lanelet2Pose(
+                lanelet_id=item,
+                s=0.0,
+            )
+        )
+    return TemporaryStopCondition(
+        entity_name=str(params["entity"]),
+        stop_positions=stop_positions,
+        s_margin=params["s_margin"],
+        speed_threshold=params["speed_threshold"],
+        stop_duration=params["stop_duration"],
         label=compiled.label,
     )
 
@@ -374,6 +522,32 @@ def build_lane_change_action(
         label=compiled.label,
         once=compiled.node.once,
         tm_port=ctx.tm_port,
+    )
+
+
+def build_routing_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`RoutingAction`."""
+    from ..actions import RoutingAction  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    goal = Lanelet2Pose(
+        lanelet_id=params["goal_lanelet_id"],
+        s=params["goal_s"],
+    )
+    return RoutingAction(
+        entity_name=compiled.actor_role,
+        goal=goal,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
     )
 
 

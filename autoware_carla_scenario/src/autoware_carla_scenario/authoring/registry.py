@@ -38,6 +38,8 @@ from typing import Any, Literal, Optional
 __all__ = [
     "ActionSpec",
     "ArgumentCase",
+    "BuiltArgument",
+    "BuiltPart",
     "ArgumentChoice",
     "BindingSpec",
     "ConditionSpec",
@@ -189,6 +191,52 @@ class ConditionVisual:
 
 
 @dataclass(frozen=True)
+class BuiltPart:
+    """One call to a built argument's constructor.
+
+    ``args`` maps that constructor's keywords to the spec fields feeding them;
+    ``constants`` supplies the keywords no field does, as source text.  A part
+    with ``when_present`` set is left out at runtime when that field has no
+    value, which is how an unset bound says "no rule" rather than "a rule
+    comparing against nothing".
+    """
+
+    args: tuple[tuple[str, str], ...] = ()
+    constants: tuple[tuple[str, str], ...] = ()
+    when_present: str = ""
+
+
+@dataclass(frozen=True)
+class BuiltArgument:
+    """A constructor argument the generator assembles instead of passing through.
+
+    Most arguments are a field handed over as it stands, which the signature
+    alone describes.  These are the ones it cannot: a pose built out of two
+    fields and a literal, a list of comparison rules built out of four bounds,
+    a lanelet id per item of a list field.  Saying it here rather than in a
+    hand-written builder keeps the generator's checks -- fields that reach no
+    argument, arguments nothing fills -- applying to these specs too.
+
+    Three shapes, by which of the last three attributes is set:
+
+    * one ``parts`` entry, no ``over`` -- a single value;
+    * several ``parts`` -- a list, each part one item, absent ones dropped;
+    * ``over`` -- a list, one item per element of that list field, which feeds
+      ``item_kwarg``.
+    """
+
+    #: The constructor keyword this fills.
+    kwarg: str
+    #: What to call, as ``<relative module>:<name>``.
+    target: str
+    parts: tuple[BuiltPart, ...] = ()
+    #: A list field to map over, one call per element.
+    over: str = ""
+    #: The keyword each element of ``over`` is passed as.
+    item_kwarg: str = ""
+
+
+@dataclass(frozen=True)
 class ArgumentCase:
     """One branch of a discriminated constructor argument.
 
@@ -244,6 +292,8 @@ class ActionSpec:
     argmap: tuple[tuple[str, str], ...] = ()
     #: Constructor arguments a select field chooses the source of.
     choices: tuple[ArgumentChoice, ...] = ()
+    #: Constructor arguments the generator assembles rather than passes through.
+    builds: tuple[BuiltArgument, ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     #: What the action acts on. ``actor`` actions are performed *by* a vehicle
     #: and belong to its track; ``environment`` actions change the world around
@@ -282,6 +332,8 @@ class ConditionSpec:
     argmap: tuple[tuple[str, str], ...] = ()
     #: See :attr:`ActionSpec.choices`.
     choices: tuple[ArgumentChoice, ...] = ()
+    #: See :attr:`ActionSpec.builds`.
+    builds: tuple[BuiltArgument, ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     kind: ConditionKind = "leaf"
     min_children: int = 0
@@ -590,6 +642,21 @@ register_action_spec(
         title="Set Goal",
         category="Vehicle / Motion",
         builder="build_routing_action",
+        target="..actions:RoutingAction",
+        # The goal is one pose out of two fields, which the constructor's own
+        # signature cannot say: `s` is where along the goal lanelet, and the
+        # lanelet is the address.
+        builds=(
+            BuiltArgument(
+                kwarg="goal",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(("lanelet_id", "goal_lanelet_id"), ("s", "goal_s")),
+                    ),
+                ),
+            ),
+        ),
         visual_kind="instant",
         # A goal is what an ego needs in order to become ready, and the runner
         # waits for ready before the loop starts.  Landing this card on the tick
@@ -920,6 +987,76 @@ register_condition_spec(
         title="Position (Lanelet2)",
         category="Entity",
         builder="build_entity_lane_position_condition",
+        target="..conditions:EntityLanePositionCondition",
+        argmap=(("entity", "entity_name"),),
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(("lanelet_id", "lanelet_id"),), constants=(("s", "0.0"),)
+                    ),
+                ),
+            ),
+            # The editor offers a *range* because that is what an author means
+            # by "over this stretch"; the runtime takes one-sided rules, so each
+            # bound that is set becomes one and an unset bound becomes nothing.
+            BuiltArgument(
+                kwarg="rules",
+                target="..conditions.comparison:ScalarComparisonRule",
+                parts=(
+                    BuiltPart(
+                        constants=(
+                            ("field", '"s"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.GREATER_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "s_min"),),
+                        when_present="s_min",
+                    ),
+                    BuiltPart(
+                        constants=(
+                            ("field", '"s"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.LESS_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "s_max"),),
+                        when_present="s_max",
+                    ),
+                    BuiltPart(
+                        constants=(
+                            ("field", '"t"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.GREATER_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "t_min"),),
+                        when_present="t_min",
+                    ),
+                    BuiltPart(
+                        constants=(
+                            ("field", '"t"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.LESS_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "t_max"),),
+                        when_present="t_max",
+                    ),
+                ),
+            ),
+        ),
         visual=ConditionVisual(
             metric="Position",
             subject="entity",
@@ -961,6 +1098,77 @@ register_condition_spec(
         title="Position (OpenDRIVE)",
         category="Entity",
         builder="build_entity_road_position_condition",
+        target="..conditions:EntityLanePositionCondition",
+        argmap=(("entity", "entity_name"),),
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:OpenDrivePose",
+                parts=(
+                    BuiltPart(
+                        args=(("road_id", "road_id"), ("lane_id", "lane_id")),
+                        constants=(("s", "0.0"),),
+                    ),
+                ),
+            ),
+            # The editor offers a *range* because that is what an author means
+            # by "over this stretch"; the runtime takes one-sided rules, so each
+            # bound that is set becomes one and an unset bound becomes nothing.
+            BuiltArgument(
+                kwarg="rules",
+                target="..conditions.comparison:ScalarComparisonRule",
+                parts=(
+                    BuiltPart(
+                        constants=(
+                            ("field", '"s"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.GREATER_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "s_min"),),
+                        when_present="s_min",
+                    ),
+                    BuiltPart(
+                        constants=(
+                            ("field", '"s"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.LESS_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "s_max"),),
+                        when_present="s_max",
+                    ),
+                    BuiltPart(
+                        constants=(
+                            ("field", '"t"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.GREATER_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "t_min"),),
+                        when_present="t_min",
+                    ),
+                    BuiltPart(
+                        constants=(
+                            ("field", '"t"'),
+                            (
+                                "rule",
+                                "..conditions.comparison:"
+                                "ComparisonRule.LESS_THAN_OR_EQUAL",
+                            ),
+                        ),
+                        args=(("value", "t_max"),),
+                        when_present="t_max",
+                    ),
+                ),
+            ),
+        ),
         visual=ConditionVisual(
             metric="Position",
             subject="entity",
@@ -982,12 +1190,14 @@ register_condition_spec(
                 name="lane_id",
                 label="Lane",
                 kind="int",
-                default=None,
-                required=False,
+                default=0,
                 help=(
-                    "A road carries several lanes, so a road on its own does "
-                    "not name a place: leave this empty only when any lane of "
-                    "the road will do."
+                    "Required: in OpenDRIVE a road and a lane together are what "
+                    "name a place, so a road on its own does not determine one. "
+                    "The runtime keeps a road-only condition for the case where "
+                    "the lane genuinely does not matter, but it is a different "
+                    "constructor on purpose -- so that 'I could not work out "
+                    "the lane' cannot be written the same way."
                 ),
             ),
             *_extent_fields("road"),
@@ -1219,6 +1429,20 @@ register_condition_spec(
         title="Temporary stop",
         category="Entity",
         builder="build_temporary_stop_condition",
+        target="..conditions:TemporaryStopCondition",
+        argmap=(("entity", "entity_name"),),
+        # The editor offers the *start* of each lanelet, which the condition's
+        # own `s_margin` widens; the runtime takes poses, so each id becomes
+        # one.
+        builds=(
+            BuiltArgument(
+                kwarg="stop_positions",
+                target="..coordinate:Lanelet2Pose",
+                over="stop_lanelets",
+                item_kwarg="lanelet_id",
+                parts=(BuiltPart(constants=(("s", "0.0"),)),),
+            ),
+        ),
         visual=ConditionVisual(
             metric="Stops at",
             subject="entity",

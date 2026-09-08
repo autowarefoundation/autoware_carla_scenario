@@ -38,6 +38,7 @@ from typing import Any, Optional
 from ..conditions.base import BaseCondition
 from ..templating import code_environment
 from .registry import (
+    BuiltPart,
     ActionSpec,
     ArgumentChoice,
     ConditionSpec,
@@ -317,6 +318,34 @@ class RenderedChoice:
 
 
 @dataclass(frozen=True)
+class RenderedPart:
+    """One call inside a built argument, as keyword/expression pairs.
+
+    Kept as pairs rather than joined source so the template can put one keyword
+    per line with a trailing comma.  That is a *magic trailing comma*, which
+    ``ruff-format`` leaves exactly as written -- this generator renders what the
+    formatter would write, and a call whose width it would otherwise have to
+    predict is how that contract gets broken.
+    """
+
+    pieces: "tuple[tuple[str, str], ...]"
+    when_present: str = ""
+
+
+@dataclass(frozen=True)
+class RenderedBuild:
+    """An argument the builder assembles before the constructor call."""
+
+    kwarg: str
+    #: ``"single"``, ``"list"`` or ``"over"`` -- see :class:`BuiltArgument`.
+    mode: str
+    #: The constructor every part calls.
+    cls: str = ""
+    parts: "tuple[RenderedPart, ...]" = ()
+    over: str = ""
+
+
+@dataclass(frozen=True)
 class RenderedBuilder:
     """Everything the template needs to write one builder."""
 
@@ -327,6 +356,7 @@ class RenderedBuilder:
     article: str
     imports: "tuple[str, ...]"
     choices: "tuple[RenderedChoice, ...]"
+    builds: "tuple[RenderedBuild, ...]"
     args: "tuple[tuple[str, str], ...]"
     uses_params: bool
     needs_actor_assert: bool
@@ -386,11 +416,19 @@ def _build_one(
 
     imports = [_import_line(cls, class_name, relative)]
     choices, consumed = _render_choices(spec, fields, where, imports)
+    builds, built_from = _render_builds(spec, fields, where, imports)
+    consumed |= built_from
+    built = {build.kwarg for build in builds}
     parameters = {parameter.name: parameter for parameter in _parameters(cls, localns)}
 
     args: list[tuple[str, str]] = []
     uses_params = bool(choices)
     for name, parameter in parameters.items():
+        if name in built:
+            # Assembled in the prelude; the constructor takes the local.
+            args.append((name, name))
+            uses_params = True
+            continue
         expression = _argument(
             spec, name, parameter, by_kwarg, consumed, choices, where, relative, imports
         )
@@ -411,10 +449,123 @@ def _build_one(
         article="an" if class_name[0] in "AEIOU" else "a",
         imports=tuple(dict.fromkeys(imports)),
         choices=choices,
+        builds=builds,
         args=tuple(args),
         uses_params=uses_params,
         needs_actor_assert=isinstance(spec, ActionSpec) and spec.actor_required,
     )
+
+
+def _render_builds(
+    spec: "ConditionSpec | ActionSpec",
+    fields: dict[str, FieldSpec],
+    where: str,
+    imports: list[str],
+) -> "tuple[tuple[RenderedBuild, ...], set[str]]":
+    """Render every :class:`BuiltArgument`, returning the fields they consume.
+
+    The checks are the point of saying this in the spec rather than by hand: a
+    part naming a field that does not exist, or a shape that sets neither
+    ``parts`` nor ``over``, fails generation instead of rendering a builder
+    that raises at scenario setup.
+    """
+    rendered: list[RenderedBuild] = []
+    consumed: set[str] = set()
+
+    for build in spec.builds:
+        cls, relative, class_name = _resolve_target(build.target)
+        imports.append(_import_line(cls, class_name, relative))
+
+        def one_call(
+            part: BuiltPart, extra: "tuple[tuple[str, str], ...]" = ()
+        ) -> "tuple[tuple[str, str], ...]":
+            """Return the keyword/expression pairs for one call."""
+            pieces: list[tuple[str, str]] = list(extra)
+            for kwarg, constant in part.constants:
+                pieces.append((kwarg, _built_constant(constant, imports)))
+            for kwarg, field_name in part.args:
+                if field_name not in fields:
+                    raise GenerationError(
+                        f"{where}: build for {build.kwarg!r} names absent field "
+                        f"{field_name!r}"
+                    )
+                consumed.add(field_name)
+                pieces.append((kwarg, f'params["{field_name}"]'))
+            return tuple(pieces)
+
+        if build.over:
+            if build.over not in fields:
+                raise GenerationError(
+                    f"{where}: build for {build.kwarg!r} maps over absent field "
+                    f"{build.over!r}"
+                )
+            if not build.item_kwarg:
+                raise GenerationError(
+                    f"{where}: build for {build.kwarg!r} maps over "
+                    f"{build.over!r} but names no item_kwarg"
+                )
+            consumed.add(build.over)
+            part = build.parts[0] if build.parts else BuiltPart()
+            rendered.append(
+                RenderedBuild(
+                    kwarg=build.kwarg,
+                    mode="over",
+                    cls=class_name,
+                    over=build.over,
+                    parts=(
+                        RenderedPart(
+                            pieces=one_call(part, ((build.item_kwarg, "item"),))
+                        ),
+                    ),
+                )
+            )
+            continue
+
+        if not build.parts:
+            raise GenerationError(
+                f"{where}: build for {build.kwarg!r} sets neither parts nor over"
+            )
+
+        parts = tuple(
+            RenderedPart(pieces=one_call(part), when_present=part.when_present)
+            for part in build.parts
+        )
+        for part in build.parts:
+            if part.when_present and part.when_present not in fields:
+                raise GenerationError(
+                    f"{where}: build for {build.kwarg!r} is conditional on absent "
+                    f"field {part.when_present!r}"
+                )
+            if part.when_present:
+                consumed.add(part.when_present)
+        rendered.append(
+            RenderedBuild(
+                kwarg=build.kwarg,
+                mode=(
+                    "single"
+                    if len(parts) == 1 and not parts[0].when_present
+                    else "list"
+                ),
+                cls=class_name,
+                parts=parts,
+            )
+        )
+
+    return tuple(rendered), consumed
+
+
+def _built_constant(source: str, imports: list[str]) -> str:
+    """Return a built argument's constant, importing it when it names a class.
+
+    A bare literal -- ``0.0``, ``"s"`` -- is source text and stands as written;
+    anything shaped like a target is resolved so that a renamed enum member
+    fails generation rather than at scenario setup.
+    """
+    if ":" not in source:
+        return source
+    expression, import_line = _constant_expression(source)
+    imports.append(import_line)
+    return expression
 
 
 def _render_choices(

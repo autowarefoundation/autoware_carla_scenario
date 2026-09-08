@@ -398,3 +398,92 @@ class TestGeneratedBuilders:
                 f"{spec.type_id!r}: {choice.kwarg!r} has cases for {sorted(cased)} "
                 f"but {choice.discriminator!r} offers {sorted(options)}"
             )
+
+
+class TestBuiltArguments:
+    """The `builds` a spec declares are the part a signature cannot describe.
+
+    They used to be hand-written builders, exempt from every check in this
+    file. Now that the generator renders them, the semantics they encode --
+    which bound becomes which comparison, which pose an address is -- are worth
+    stating once here, because nothing else says them.
+    """
+
+    @staticmethod
+    def _build(type_id: str, kwarg: str) -> registry.BuiltArgument:
+        spec = registry.get_condition_spec(type_id) or registry.get_action_spec(type_id)
+        assert spec is not None, type_id
+        return next(b for b in spec.builds if b.kwarg == kwarg)
+
+    @pytest.mark.parametrize(
+        "type_id", ["entity_lane_position", "entity_road_position"]
+    )
+    def test_every_bound_becomes_the_rule_it_reads_as(self, type_id: str) -> None:
+        build = self._build(type_id, "rules")
+
+        seen = []
+        for part in build.parts:
+            constants = dict(part.constants)
+            seen.append(
+                (
+                    part.when_present,
+                    constants["field"].strip('"'),
+                    constants["rule"].rsplit(".", 1)[-1],
+                )
+            )
+
+        assert seen == [
+            ("s_min", "s", "GREATER_THAN_OR_EQUAL"),
+            ("s_max", "s", "LESS_THAN_OR_EQUAL"),
+            ("t_min", "t", "GREATER_THAN_OR_EQUAL"),
+            ("t_max", "t", "LESS_THAN_OR_EQUAL"),
+        ]
+
+    def test_a_lanelet_position_is_an_address_not_a_place_along_one(self) -> None:
+        """`s` on the pose is 0.0: where along the lane is said by the bounds."""
+        build = self._build("entity_lane_position", "position")
+
+        assert build.target.endswith(":Lanelet2Pose")
+        assert dict(build.parts[0].constants)["s"] == "0.0"
+        assert dict(build.parts[0].args) == {"lanelet_id": "lanelet_id"}
+
+    def test_an_opendrive_position_names_a_road_and_a_lane(self) -> None:
+        """Neither alone determines a pose, so the spec asks for both."""
+        build = self._build("entity_road_position", "position")
+        spec = registry.get_condition_spec("entity_road_position")
+        assert spec is not None
+
+        assert dict(build.parts[0].args) == {
+            "road_id": "road_id",
+            "lane_id": "lane_id",
+        }
+        lane = next(f for f in spec.fields if f.name == "lane_id")
+        assert lane.required, "a road without a lane does not name a place"
+
+
+class TestNothingIsHandWrittenAnyMore:
+    """Every spec is generated, and the exemption should not come back quietly.
+
+    A hand-written builder is exempt from every check in this file: exhaustive
+    select cases, fields that reach no argument, options drifted from their
+    enum. That is the cost of the exemption, and it is why `builds` exists --
+    what a signature cannot describe, the spec says instead.
+    """
+
+    def test_every_spec_names_a_target(self) -> None:
+        specs: list[registry.ActionSpec | registry.ConditionSpec] = [
+            *registry.condition_specs(),
+            *registry.action_specs(),
+        ]
+        without = sorted(spec.type_id for spec in specs if not spec.target)
+        assert not without, (
+            f"these specs are hand-written: {without}. Describe what the "
+            f"signature cannot with `builds`, or say here why this one is "
+            f"genuinely beyond it."
+        )
+
+    def test_the_hand_written_module_defines_no_builder(self) -> None:
+        from autoware_carla_scenario.authoring import builders
+
+        defined = [name for name in vars(builders) if name.startswith("build_")]
+        assert not defined, f"hand-written builders are back: {defined}"

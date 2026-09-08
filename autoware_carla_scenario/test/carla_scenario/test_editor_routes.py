@@ -285,8 +285,14 @@ class TestPages:
     def test_a_position_can_be_narrowed_to_a_stretch_of_the_lane(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
-        """The runtime has always taken `s`/`t` rules; the editor threw them away."""
-        from autoware_carla_scenario.authoring.builders import _scalar_bounds
+        """The runtime has always taken `s`/`t` rules; the editor threw them away.
+
+        What this route owns is the round trip: a bound typed into the form has
+        to reach the compiled parameters as a number.  Turning the pair into
+        one-sided comparison rules is the generator's half, asserted against the
+        spec in `test_authoring_registry` -- building the condition here would
+        need a loaded map, which is neither what broke nor what this covers.
+        """
         from autoware_carla_scenario.authoring.compiler import compile_document
 
         document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
@@ -297,12 +303,10 @@ class TestPages:
         )
 
         compiled = compile_document(_document(store, draft_id))
-        rules = _scalar_bounds(compiled.pass_conditions[0].children[0].params)
-        assert [(r.field, r.value) for r in rules] == [("s", 20.0), ("s", 50.0)]
-        assert [r.rule.name for r in rules] == [
-            "GREATER_THAN_OR_EQUAL",
-            "LESS_THAN_OR_EQUAL",
-        ]
+        params = compiled.pass_conditions[0].children[0].params
+
+        assert (params["s_min"], params["s_max"]) == (20.0, 50.0)
+        assert params["t_min"] is None and params["t_max"] is None
 
     def test_a_lanelet_field_gets_a_map_to_pick_from(
         self, client: TestClient, draft_id: str
