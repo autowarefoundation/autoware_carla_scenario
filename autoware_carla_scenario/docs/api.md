@@ -53,6 +53,7 @@ All conditions inherit from `BaseCondition` and return a
 | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. |
 | `StickyCondition`, `PersistentCondition` | Latch / persist a child condition's truth value. |
 | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers. |
+| `EntityDistanceCondition`, `TimeToCollisionCondition` | Relative conditions between two entities: separation, and time to collision along the line joining them. |
 | `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
 | `TrafficSignalCondition` | Traffic-light state check. |
 | `ComparisonRule`, `ScalarComparisonRule`, `compare` | Numeric comparison primitives. `compare(actual, rule, value, tolerance)` is the underlying helper. |
@@ -170,6 +171,49 @@ surface, but the helper modules are importable for tooling:
 | `ui.sweep_resolver.resolve_sweep` | Resolve a sweep without launching CARLA. |
 | `ui.models` | Pydantic models (`SessionSummary`, `SessionItem`, `ConditionNode`, `ScenarioResultView`, `RunProgress`). |
 
+## Scenario authoring (`autoware_carla_scenario.authoring`)
+
+The declarative authoring layer behind the [Scenario Editor](scenario_editor.md).
+None of it imports CARLA or lanelet2, so a document can be loaded, validated,
+compiled and exported anywhere.
+
+| Symbol | Description |
+|--------|-------------|
+| `ScenarioDocument` | The Scenario IR: entities, actions, assertions, and a `ui` block that is presentation only. |
+| `Entity`, `SpawnSpec`, `SValue`, `BindingRef` | Actors and how they spawn (fixed lanelet, or a constraint search with an optionally derived offset). |
+| `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
+| `ActionSpec`, `ConditionSpec`, `ConstraintSpec`, `BindingSpec`, `FieldSpec`, `ConditionVisual` | Metadata describing how a primitive is presented, edited and built. |
+| `register_action_spec`, `register_condition_spec`, `register_constraint_spec`, `register_binding_spec` | Add a primitive; the GUI, validation and the compiler pick it up with no template change. |
+| `validate_document` -> `ValidationReport` | Metadata-driven validation; errors block export, warnings do not. |
+| `compile_document` -> `CompiledScenario` | Resolve entity ids to CARLA roles and type-check parameters, without importing CARLA. |
+| `authoring.builders` | Factories that turn a compiled plan into the framework's own `BaseAction` / `BaseCondition`. Imports CARLA lazily. |
+| `build_scenario_config`, `dump_scenario_config` | Render a document as the framework's Hydra scenario config, including a `sweep` section the existing sweeper understands. |
+| `export_package` -> `ExportResult` | Write a reproducible Scenario Package; raises `PackageExportError` (leaving nothing behind) when locking or verification fails. |
+| `DraftStore`, `Draft`, `load_document`, `save_document` | YAML persistence for editor drafts and exported documents. |
+| `new_document`, `blank_document` | Starter documents. |
+
+## Declarative runtime (`autoware_carla_scenario.declarative`)
+
+| Symbol | Description |
+|--------|-------------|
+| `DeclarativeScenario` | A `BaseScenario` whose content comes from a `ScenarioDocument`. Registers the same pre/post-tick actions and pass/fail conditions a hand-written scenario would. Imports CARLA. |
+| `DeclarativeScenarioConfig` | Hydra config group: `document_path`, `timeout_seconds`, and `spawn_overrides` (the addressable per-entity spawn keys a sweep drives). |
+
+## Scenario editor (`autoware_carla_scenario.editor`)
+
+Used by the `scenario-editor` CLI. A separate application from `ui`; neither
+imports the other.
+
+| Symbol | Description |
+|--------|-------------|
+| `editor.app.create_app` | Build the FastAPI application (draft and export directories are arguments). |
+| `editor.routes` | HTML-partial routes driven by htmx. |
+| `editor.service.EditorService` | Every document mutation the editor performs, testable without a web client. |
+| `editor.map_preview.evaluate_spawn` | Evaluate spawn constraints with the framework's own sweeper, and decide which lanelets the viewer outlines. |
+| `editor.map_preview.lanelet2_source` | The `.osm` the editor serves to `simple_lanelet2`'s wasm map viewer. |
+| `editor.app.map_viewer_url` | Where that viewer is loaded from (`SCENARIO_EDITOR_MAP_VIEWER`). |
+| `editor.forms.parse_params` | Turn a form submission into typed IR parameters, driven by `FieldSpec` metadata. |
+
 ## Utilities (`autoware_carla_scenario.utils`)
 
 | Symbol | Description |
@@ -188,6 +232,8 @@ Defined in `pyproject.toml`:
 | `scenario` | `autoware_carla_scenario.examples.run:main` |
 | `detect-no-3d-model` | `autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main` |
 | `viewer` | `autoware_carla_scenario.ui:main` |
+| `scenario-editor` | `autoware_carla_scenario.editor:main` |
+| `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
 
 The `scenario` command also exposes Python-level helpers in
 `autoware_carla_scenario.examples.run` for downstream packages:

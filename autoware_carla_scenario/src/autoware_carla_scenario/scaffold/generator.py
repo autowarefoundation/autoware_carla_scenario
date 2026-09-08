@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from ..templating import code_environment
 
 
 class ScaffoldResult(NamedTuple):
@@ -126,18 +126,6 @@ def resolve_names(
 # ---------------------------------------------------------------------------
 
 
-def _environment() -> Environment:
-    """Build the Jinja2 environment used to render the templates."""
-    return Environment(
-        loader=FileSystemLoader(str(TEMPLATES_DIR)),
-        autoescape=False,  # we render code/config, never HTML
-        keep_trailing_newline=True,
-        trim_blocks=True,
-        lstrip_blocks=True,
-        undefined=StrictUndefined,  # fail loudly on a missing variable
-    )
-
-
 def create_scenario_package(
     name: str,
     *,
@@ -176,7 +164,7 @@ def create_scenario_package(
         msg = f"Target directory already exists: {root} (use force=True to overwrite)."
         raise FileExistsError(msg)
 
-    env = _environment()
+    env = code_environment(TEMPLATES_DIR)
     for template_name, out_template in _FILE_MANIFEST.items():
         out_path = root / out_template.format(**names)
         out_path.parent.mkdir(parents=True, exist_ok=True)

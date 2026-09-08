@@ -1,0 +1,58 @@
+{% import "partials/fields.html" as f %}
+{% import "partials/icons.html" as ic %}
+<form hx-post="/draft/{{ draft.id }}/scenario"
+      hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <p class="ed-kicker">Scenario</p>
+  <h3 class="ed-heading">{{ document.title }}</h3>
+
+  <div class="ed-field">
+    <label class="ed-label">Title</label>
+    <input type="text" name="title" class="ed-input" value="{{ document.title }}">
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">Identifier</label>
+    <input type="text" name="scenario_id" class="ed-input mono" value="{{ document.id }}">
+    <p class="ed-help">lower_snake_case. Names the exported package and the Hydra config.</p>
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">Description</label>
+    <textarea name="description" rows="2" class="ed-input">{{ document.description }}</textarea>
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">Timeout <span class="unit">(s)</span></label>
+    <input type="number" step="any" name="timeout_seconds" class="ed-input"
+           value="{{ document.timeout_seconds }}">
+  </div>
+
+  <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Map</h4>
+  <div class="ed-field">
+    <label class="ed-label">Hydra map group</label>
+    <input type="text" name="map_group" class="ed-input mono" value="{{ document.map.group }}">
+    <p class="ed-help">Selected as <code>map={{ document.map.group }}</code> when running.</p>
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">CARLA map name</label>
+    <input type="text" name="map_name" class="ed-input" value="{{ document.map.name }}">
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">Lanelet2 file (.osm)</label>
+    <input type="text" name="map_lanelet2_path" class="ed-input mono" style="font-size:11.5px"
+           value="{{ document.map.lanelet2_path or '' }}">
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">OpenDRIVE file (.xodr)</label>
+    <input type="text" name="map_xodr_path" class="ed-input mono" style="font-size:11.5px"
+           value="{{ document.map.xodr_path or '' }}">
+    <p class="ed-help">Both are needed for the spawn preview and for a sweep.</p>
+  </div>
+  <div class="ed-field">
+    <label class="ed-label">Excluded lanelet IDs</label>
+    {{ f.lanelet_picker('map_no_3d_model_lanelet_ids',
+                        document.map.no_3d_model_lanelet_ids, draft,
+                        'excluded lanelets', many=true) }}
+    <p class="ed-help">
+      Referenced by spawn constraints as <code>${map.no_3d_model_lanelet_ids}</code>.
+      Leave empty to inherit the map group's own list at run time.
+    </p>
+  </div>
+</form>

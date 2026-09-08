@@ -365,6 +365,22 @@ class TestRoundTripOpenDrive:
 
 
 class TestCrossSystem:
+    def test_a_road_is_not_a_lane(self, map_manager):
+        """Neighbouring lanelets share one OpenDRIVE road.
+
+        On this map lanelets 183 and 184 are two lanes of the same road, so a
+        caller that resolved a lanelet to a road alone would make "NPC1 is on
+        lanelet 183" true while NPC1 is still in the neighbouring lane -- the
+        cut-in example would pass without the cut-in ever happening.  This is
+        the coordinate-level fact behind that; that the conditions carry the
+        lane through is pinned in ``test_composition_conditions.py``.
+        """
+        address = to_opendrive(Lanelet2Pose(lanelet_id=183, s=0.0))
+        neighbour = to_opendrive(Lanelet2Pose(lanelet_id=184, s=0.0))
+
+        assert address.road_id == neighbour.road_id
+        assert address.lane_id != neighbour.lane_id
+
     def test_lanelet2_to_opendrive_and_back(self, map_manager):
         """Lanelet2 → CARLA → OpenDRIVE → CARLA: position should be close."""
         lanelet_id = next(iter(map_manager.lanelet_map.laneletLayer)).id

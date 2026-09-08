@@ -4,13 +4,18 @@ This guide explains how to use the `autoware-carla-scenario` package to run auto
 
 ## CLI Commands Overview
 
-The package provides three CLI commands:
+The package provides these CLI commands:
 
 | Command | Framework | Purpose |
 |---------|-----------|---------|
 | [`scenario`](#scenario-scenario-runner) | Hydra | Run autonomous driving scenario tests in CARLA |
+| `scenario-new` | argparse | Scaffold a standalone scenario package |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
+| [`scenario-editor`](scenario_editor.md) | FastAPI + Uvicorn | Web UI for authoring scenarios and exporting reproducible packages |
+
+`viewer` and `scenario-editor` are separate applications on separate ports, and
+neither starts the other.
 
 ---
 
@@ -572,6 +577,14 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `VIEWER_BASE_PATH` | viewer | Base path for scenario results |
 | `VIEWER_HOST` | viewer | Viewer server bind address |
 | `VIEWER_PORT` | viewer | Viewer server listen port |
+| `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
+| `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
+| `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |
+| `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address |
+| `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port |
+| `SCENARIO_EDITOR_MAP_VIEWER` | scenario editor | URL of a self-hosted `simple_lanelet2` map viewer |
+| `SCENARIO_EXPORT_FRAMEWORK_VERSION` | package export | Pin exported packages to a published framework release |
+| `SCENARIO_EXPORT_FRAMEWORK_REPOSITORY` | package export | Repository URL recorded for a commit pin |
 
 ---
 

@@ -28,6 +28,9 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "jinja2>=3.1.0",
+    # The Scenario Editor is driven entirely by HTML form posts, and Starlette
+    # requires this to read a request body as a form -- urlencoded included.
+    "python-multipart>=0.0.9",
     "pyyaml>=6.0",
     "pydantic>=2.0.0",
     "ffmpeg-python>=0.2.0",
@@ -72,3 +75,6 @@ scenario = "autoware_carla_scenario.examples.run:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"
 detect-no-3d-model = "autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main"
 viewer = "autoware_carla_scenario.ui:main"
+# The editor is a separate application from the viewer; running one does not
+# start the other.
+scenario-editor = "autoware_carla_scenario.editor:main"

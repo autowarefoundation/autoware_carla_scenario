@@ -51,6 +51,7 @@ from autoware_carla_scenario import (
     SpawnTransform,
 )
 from autoware_carla_scenario.conditions import ScenarioResult
+from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.registry import (
     BuildScenarioFn,
     get_conf_dirs,
@@ -256,7 +257,7 @@ def run_scenario_with_queue(
     *,
     host: str = "localhost",
     port: int = 2000,
-    tm_port: int = 8000,
+    tm_port: int = DEFAULT_TM_PORT,
     xodr_path: Path | None = None,
     lanelet2_path: Path | None = None,
     map_name: str | None = None,

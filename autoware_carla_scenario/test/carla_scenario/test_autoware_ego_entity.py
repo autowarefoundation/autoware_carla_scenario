@@ -324,3 +324,54 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
             entity.on_scenario_start(world)
 
         assert "where the scenario expected it" not in caplog.text
+
+
+class TestRouteTo:
+    """Delivering a destination to Autoware is the entity's job, not the action's.
+
+    The action says where and when; how a goal becomes something this stack can
+    act on -- snapped onto the road it will drive, and expressed in Autoware's
+    own ``map`` frame -- is knowledge about the stack, so it lives here.
+    """
+
+    def test_a_lanelet_goal_arrives_snapped_and_in_the_map_frame(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.coordinate import CarlaWorldPose, Lanelet2Pose
+
+        snapped = CarlaWorldPose(x=40.0, y=50.0, z=1.0, yaw=-90.0)
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.to_opendrive",
+            lambda pose: pose,
+        )
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.snap_to_carla_road",
+            lambda pose, world, ground_projection: snapped,
+        )
+
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+        entity.route_to(
+            world,
+            Lanelet2Pose(lanelet_id=123, s=4.0),
+            initial_pose=CarlaWorldPose(x=1.0, y=2.0, z=0.5, yaw=0.0),
+        )
+        entity.on_scenario_start(world)
+
+        # The y-flip is the visible half of the frame change (the autouse
+        # fixture zeroes the projector offsets, so only handedness is left).
+        goal = bridge.configured_goal
+        assert goal is not None
+        assert goal.position.x == pytest.approx(40.0)
+        assert goal.position.y == pytest.approx(-50.0)
+
+    def test_an_entity_that_plans_nothing_ignores_a_goal(self) -> None:
+        """The base no-op is what makes a routing card safe to draw anywhere."""
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+        from autoware_carla_scenario.entity import EgoVehicle
+
+        # Must not raise, and must not need a map: there is nothing to convert.
+        EgoVehicle().route_to(object(), Lanelet2Pose(lanelet_id=1, s=0.0))  # type: ignore[arg-type]

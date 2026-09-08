@@ -1,0 +1,35 @@
+{% import "partials/icons.html" as ic %}
+{% if report.errors %}
+  <div class="ed-notice ed-notice-bad">
+    {{ ic.icon('alert', 15) }}
+    <div style="min-width:0">
+      <div class="ed-notice-title">
+        {{ report.errors|length }} error{{ '' if report.errors|length == 1 else 's' }} — this scenario cannot be exported yet
+      </div>
+      <ul>
+        {% for issue in report.errors %}
+          <li><span class="path">{{ issue.path }}</span>{{ issue.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+{% elif report.warnings %}
+  <div class="ed-notice ed-notice-warn">
+    {{ ic.icon('alert', 15) }}
+    <div style="min-width:0">
+      <div class="ed-notice-title">
+        Valid, with {{ report.warnings|length }} warning{{ '' if report.warnings|length == 1 else 's' }}
+      </div>
+      <ul>
+        {% for issue in report.warnings %}
+          <li><span class="path">{{ issue.path }}</span>{{ issue.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+{% else %}
+  <div class="ed-notice ed-notice-ok">
+    {{ ic.icon('check', 15) }}
+    <div><span class="ed-notice-title">Valid</span> — ready to export.</div>
+  </div>
+{% endif %}

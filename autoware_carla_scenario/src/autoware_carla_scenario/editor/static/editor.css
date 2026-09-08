@@ -1,0 +1,1233 @@
+/* Scenario Editor — visual system.
+ *
+ * Self-contained on purpose. The editor is a local tool that is often run next
+ * to a simulator on a closed network, and a stylesheet fetched from a CDN turns
+ * a blocked egress rule into an unusable page rather than an unstyled one — the
+ * export panel would not even stay shut. Everything below is one file, so the
+ * editor looks the same online and offline.
+ *
+ * Tokens first, then primitives, then the three surfaces: canvas, inspector and
+ * chrome. Colours are named for their role, not their hue, so a re-theme is a
+ * change to this block alone.
+ */
+
+/* ------------------------------------------------------------------ tokens */
+
+:root {
+  /* Surfaces, from furthest back to nearest. */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-sunken: #fafbfc;
+  --surface-raised: #ffffff;
+  --chrome: #15171e;
+  --chrome-line: #2a2e39;
+
+  /* Hairlines. */
+  --line: #e7e9ee;
+  --line-strong: #d3d8e0;
+
+  /* Ink, from loudest to quietest. */
+  --ink: #12141a;
+  --ink-body: #464e5e;
+  --ink-muted: #858d9d;
+  --ink-faint: #a8afbd;
+  --ink-inverse: #f4f5f7;
+
+  /* One accent, used for selection, focus and the operator in a condition. */
+  --accent: #5a5ad6;
+  --accent-hover: #4a4ac6;
+  --accent-wash: #eeeefd;
+  --accent-line: #c9c9f5;
+
+  /* Semantics. */
+  --pass: #0f9d76;
+  --pass-wash: #eafaf4;
+  --pass-line: #a8e6d2;
+  --fail: #e0484d;
+  --fail-wash: #fdf0f0;
+  --fail-line: #f6c3c4;
+  --warn: #c2760a;
+  --warn-wash: #fdf6e8;
+  --warn-line: #f0d9a8;
+
+  /* The environment track. Deliberately outside the actor cycle: it is not
+     one more actor, and reusing an actor hue would say it was. */
+  --env: #0891b2;
+  --env-wash: #ecfbfe;
+
+  /* Actor hues, cycled by lane so two lanes never read as one. */
+  --actor-ego: #3b6fd4;
+  --actor-1: #8b5cf6;
+  --actor-2: #d97757;
+  --actor-3: #0d9488;
+  --actor-4: #c2410c;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(18, 20, 26, 0.05);
+  --shadow: 0 1px 3px rgba(18, 20, 26, 0.07), 0 4px 12px rgba(18, 20, 26, 0.05);
+  --shadow-lift: 0 2px 4px rgba(18, 20, 26, 0.07), 0 8px 24px rgba(18, 20, 26, 0.09);
+
+  --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans JP", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+/* ------------------------------------------------------------------- reset */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink-body);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, p, ul, ol, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+a { color: inherit; text-decoration: none; }
+code, pre, .mono { font-family: var(--mono); font-variant-ligatures: none; }
+button { font: inherit; color: inherit; }
+svg { display: block; }
+[hidden], .hidden { display: none !important; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+.ed-shell { max-width: 1680px; margin: 0 auto; padding: 0 20px 48px; }
+
+.ed-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 384px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .ed-workspace { grid-template-columns: minmax(0, 1fr); }
+}
+
+.ed-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.ed-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.ed-panel-title { font-size: 13px; font-weight: 650; color: var(--ink); letter-spacing: -0.01em; }
+.ed-panel-sub { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px; }
+
+/* The connector key under the canvas heading: a line sample per link type. */
+.ed-links-legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.ed-links-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.ed-links-legend i { width: 16px; height: 0; border-top: 1.75px solid var(--accent-line); }
+.ed-links-legend .ed-legend-fires { border-top-color: var(--accent-line); }
+.ed-links-legend .ed-legend-causes {
+  border-top-style: dashed;
+  border-top-color: var(--ink-muted);
+}
+.ed-panel-body { padding: 16px; }
+
+/* ------------------------------------------------------------------ chrome */
+
+.ed-bar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+.ed-bar-inner {
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: 0 20px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ed-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink-inverse);
+  font-weight: 650;
+  font-size: 14.5px;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
+}
+
+.ed-brand-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: linear-gradient(140deg, #6d6df0, #4a4ac6 65%);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.ed-brand-mark svg { width: 14px; height: 14px; color: #fff; }
+
+.ed-crumb { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ed-crumb-sep { color: #4b5262; }
+.ed-crumb-name {
+  color: var(--ink-inverse);
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ed-crumb-id { color: #737c8f; font-size: 11.5px; font-family: var(--mono); }
+
+.ed-bar-spacer { flex: 1; }
+.ed-bar-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ------------------------------------------------------------------ buttons */
+
+.ed-btn,
+.ed-btn-primary,
+.ed-btn-ghost,
+.ed-btn-danger,
+.ed-btn-sm,
+.ed-btn-xs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.13s, border-color 0.13s, color 0.13s,
+    box-shadow 0.13s, transform 0.06s;
+}
+.ed-btn:active,
+.ed-btn-primary:active,
+.ed-btn-danger:active { transform: translateY(0.5px); }
+
+.ed-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink-body);
+  box-shadow: var(--shadow-sm);
+}
+.ed-btn:hover { background: var(--surface-sunken); border-color: #c2c8d2; color: var(--ink); }
+
+.ed-btn-primary {
+  padding: 6px 13px;
+  font-size: 13px;
+  background: linear-gradient(180deg, #6767dd, var(--accent));
+  border-color: var(--accent-hover);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(58, 58, 150, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.ed-btn-primary:hover { background: linear-gradient(180deg, #5c5cd4, var(--accent-hover)); }
+
+.ed-btn-ghost {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink-muted);
+  background: transparent;
+}
+.ed-btn-ghost:hover { background: rgba(18, 20, 26, 0.05); color: var(--ink); }
+
+/* On the dark bar the ghost and secondary buttons invert. */
+.ed-bar .ed-btn {
+  background: #232734;
+  border-color: #343a49;
+  color: #dfe3ea;
+  box-shadow: none;
+}
+.ed-bar .ed-btn:hover { background: #2c3140; border-color: #414859; color: #fff; }
+.ed-bar .ed-btn-ghost { color: #9aa3b4; }
+.ed-bar .ed-btn-ghost:hover { background: #232734; color: #fff; }
+
+.ed-btn-danger {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--surface);
+  border-color: var(--fail-line);
+  color: var(--fail);
+}
+.ed-btn-danger:hover { background: var(--fail-wash); }
+
+.ed-btn-sm {
+  padding: 4px 9px;
+  font-size: 12px;
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink-body);
+  box-shadow: var(--shadow-sm);
+}
+.ed-btn-sm:hover { background: var(--surface-sunken); color: var(--ink); }
+
+.ed-btn-xs {
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink-muted);
+}
+.ed-btn-xs:hover { background: var(--accent-wash); border-color: var(--accent-line); color: var(--accent); }
+
+/* ------------------------------------------------------------------- forms */
+
+.ed-field { margin-bottom: 14px; }
+
+.ed-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-body);
+  letter-spacing: 0.005em;
+  margin-bottom: 5px;
+}
+.ed-label .unit { color: var(--ink-faint); font-weight: 400; }
+
+.ed-input,
+.ed-input-sm,
+.ed-input-xs {
+  width: 100%;
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: inherit;
+  transition: border-color 0.13s, box-shadow 0.13s;
+  appearance: none;
+}
+.ed-input { padding: 7px 10px; font-size: 13px; }
+.ed-input-sm { padding: 4px 8px; font-size: 12px; width: auto; }
+.ed-input-xs { padding: 2px 6px; font-size: 11.5px; width: auto; max-width: 13rem; }
+
+.ed-input:hover,
+.ed-input-sm:hover,
+.ed-input-xs:hover { border-color: #c2c8d2; }
+
+.ed-input:focus,
+.ed-input-sm:focus,
+.ed-input-xs:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+select.ed-input,
+select.ed-input-sm,
+select.ed-input-xs {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23858d9d' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M4 6.5 8 10.5 12 6.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 13px;
+  padding-right: 26px;
+}
+
+textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
+
+.ed-help { font-size: 11.5px; color: var(--ink-faint); margin-top: 5px; line-height: 1.45; }
+.ed-help code { font-size: 11px; background: var(--surface-sunken); padding: 0 3px; border-radius: 3px; }
+
+.ed-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--ink-body); cursor: pointer; }
+.ed-check input { margin: 2px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
+.ed-check .ed-help { margin-top: 2px; }
+
+.ed-radio-row { display: flex; gap: 6px; margin-bottom: 12px; }
+.ed-radio {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.ed-radio input { accent-color: var(--accent); margin: 0; }
+.ed-radio:hover { border-color: #c2c8d2; }
+.ed-radio:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-hover);
+  font-weight: 550;
+}
+
+.ed-kicker {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ed-heading { font-size: 16px; font-weight: 650; color: var(--ink); letter-spacing: -0.015em; margin: 2px 0 10px; }
+.ed-subheading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 20px 0 10px;
+}
+.ed-subheading::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* -------------------------------------------------------------------- pills */
+
+.ed-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 550;
+  border: 1px solid transparent;
+}
+.ed-pill svg { width: 12px; height: 12px; }
+.ed-pill-ok { background: var(--pass-wash); color: var(--pass); border-color: var(--pass-line); }
+.ed-pill-warn { background: var(--warn-wash); color: var(--warn); border-color: var(--warn-line); }
+.ed-pill-bad { background: var(--fail-wash); color: var(--fail); border-color: var(--fail-line); }
+.ed-bar .ed-pill { background: transparent; border-color: #343a49; }
+.ed-bar .ed-pill-ok { color: #4ecfa8; border-color: #2c4a44; }
+.ed-bar .ed-pill-warn { color: #e5aa4a; border-color: #4a3f2c; }
+.ed-bar .ed-pill-bad { color: #f0797d; border-color: #4a2f31; }
+
+/* ------------------------------------------------------------------ notices */
+
+.ed-notice {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  font-size: 13px;
+  background: var(--surface);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.ed-notice svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+.ed-notice-title { font-weight: 600; margin-bottom: 2px; }
+.ed-notice-ok { background: var(--pass-wash); border-color: var(--pass-line); color: #0a6a51; }
+.ed-notice-ok svg { color: var(--pass); }
+.ed-notice-warn { background: var(--warn-wash); border-color: var(--warn-line); color: #8a5406; }
+.ed-notice-warn svg { color: var(--warn); }
+.ed-notice-bad { background: var(--fail-wash); border-color: var(--fail-line); color: #a52a2f; }
+.ed-notice-bad svg { color: var(--fail); }
+.ed-notice ul { margin-top: 5px; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.ed-notice .path { font-family: var(--mono); font-size: 11px; opacity: 0.72; margin-right: 5px; }
+
+/* ------------------------------------------------------------------- canvas */
+
+/* The canvas is laid out like a sequencer's arrangement view: fixed-width slots
+ * on a shared grid, one bar line before each. Every track and the ruler derive
+ * their geometry from the three tokens below, so the ruler cannot drift out of
+ * alignment with the clips underneath it. */
+.ed-canvas-scroll {
+  --step-w: 10.5rem;
+  --step-gap: 20px;
+  --track-pad: 20px;
+  --step-span: calc(var(--step-w) + var(--step-gap));
+  /* Bar lines fall in the middle of the gutter that precedes each slot. */
+  --step-offset: calc(var(--track-pad) - var(--step-gap) / 2);
+  --grid-line: #dde1e9;
+  --step-shade: rgba(18, 20, 26, 0.028);
+
+  position: relative;
+  overflow-x: auto;
+  /* Track ground sits below the headers so the sticky column reads as chrome
+   * and the slots read as the surface clips are arranged on. */
+  background: #f2f4f8;
+}
+
+/* One repeating tile per step, so the grid keeps up with any track length: a
+ * bar line before every slot, and every other slot shaded, which is what lets
+ * the eye count columns leftwards instead of measuring gaps. */
+.ed-lane-track,
+.ed-ruler-track {
+  background-image:
+    repeating-linear-gradient(to right, var(--grid-line) 0 1px, transparent 1px var(--step-span)),
+    repeating-linear-gradient(to right,
+      var(--step-shade) 0 var(--step-span),
+      transparent var(--step-span) calc(var(--step-span) * 2));
+  background-position-x: var(--step-offset);
+}
+
+/* ------------------------------------------------------------------- ruler */
+
+.ed-ruler {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  z-index: 2;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.ed-ruler-head {
+  flex: 0 0 13rem;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 14px 0 19px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ed-ruler-head svg { color: var(--accent); }
+
+/* ------------------------------------------------------- initialization */
+
+/* Everything left of the seam happens before the clock starts: the ego spawns,
+ * the world ticks so sensors publish, and the run is put in the state it starts
+ * from -- but no condition has been evaluated and nothing is driving yet.
+ * Every lane carries this cell, including the ones that can hold nothing in it,
+ * so a step number means the same column on all of them. */
+.ed-init,
+.ed-ruler-init {
+  flex: 0 0 13rem;
+  border-right: 2px solid var(--line-strong);
+  background: var(--surface-sunken);
+}
+
+.ed-ruler-init {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 10px 0 14px;
+}
+
+.ed-init {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 14px;
+}
+
+.ed-init-none {
+  color: var(--ink-faint);
+  font-size: 12px;
+  text-align: center;
+  padding-top: 4px;
+}
+
+/* The add control is a column of its own out on the track; in here it is just
+ * the last thing in the cell. */
+.ed-add-inline { display: flex; }
+.ed-add-inline .ed-add { width: 100%; }
+
+/* Sits against the seam and points across it: the label belongs to the line,
+ * not to either column, because what it names is the transition. */
+.ed-ruler-seam {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+}
+
+.ed-ruler-track {
+  display: flex;
+  gap: var(--step-gap);
+  padding: 0 var(--track-pad);
+  min-width: max-content;
+}
+.ed-ruler-step {
+  flex: 0 0 var(--step-w);
+  padding: 4px 0 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Connector overlay, drawn by editor.js. */
+.ed-links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 1;
+}
+.ed-links path { fill: none; stroke: var(--accent-line); stroke-width: 1.5; }
+.ed-links .head { fill: var(--accent-line); stroke: none; }
+
+/* A "causes" line runs from a clip to a condition that clip makes true, and is
+ * dashed so it is never confused with the solid one a trigger uses to fire its
+ * own action.  It is stroked in the causing actor's track colour, which is what
+ * ties it to a track once several of them cross the canvas. */
+.ed-links .causes { stroke-width: 1.75; stroke-dasharray: 5 4; opacity: 0.9; }
+.ed-links .causes-head { stroke: none; opacity: 0.9; }
+
+.ed-lane {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 2;
+}
+.ed-lane:last-child { border-bottom: none; }
+
+.ed-lane-head {
+  flex: 0 0 13rem;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding: 14px 14px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 0.13s;
+}
+.ed-lane-head::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--lane-hue, var(--line-strong));
+}
+.ed-lane-head:hover { background: var(--surface-sunken); }
+.ed-lane-head.is-selected { background: var(--accent-wash); }
+.ed-lane-head.is-static { cursor: default; }
+.ed-lane-head.is-static:hover { background: var(--surface); }
+
+.ed-actor { display: flex; align-items: center; gap: 9px; }
+.ed-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--lane-hue, var(--ink-muted));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  flex: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.ed-actor-name { font-size: 13.5px; font-weight: 620; color: var(--ink); letter-spacing: -0.01em; }
+.ed-actor-role { font-size: 10.5px; color: var(--ink-faint); font-family: var(--mono); }
+
+.ed-spawn-chip {
+  font-size: 11px;
+  color: var(--ink-muted);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  line-height: 1.35;
+}
+.ed-spawn-chip.is-none {
+  color: var(--ink-faint);
+  font-style: italic;
+  background: transparent;
+  border-style: dashed;
+}
+.ed-spawn-chip .k { color: var(--ink-faint); }
+.ed-spawn-chip .v { color: var(--ink-body); font-weight: 550; font-variant-numeric: tabular-nums; }
+
+.ed-lane-track {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--step-gap);
+  padding: 14px var(--track-pad) 16px;
+  min-width: max-content;
+}
+
+/* Slots are fixed width and never centre their contents: a clip that starts on
+ * the bar line is what makes the step grid legible. */
+.ed-column {
+  display: flex;
+  flex: 0 0 var(--step-w);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+.ed-column-add { align-items: flex-start; }
+
+/* Cards sharing a step stack, with a gap wide enough to read as "these two,
+ * together" rather than as two steps. */
+.ed-step-item { display: flex; flex-direction: column; gap: 7px; }
+.ed-step-item + .ed-step-item { margin-top: 14px; }
+
+/* ------------------------------------------------------------- action cards */
+
+/* An action is drawn as a clip: a tinted title bar in the actor's colour over a
+ * washed body, filling its slot edge to edge. The title bar is what lets a row
+ * of clips be read as a sequence at a glance, the way a DAW's regions are. */
+.ed-action {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--action-hue, var(--accent)) 7%, var(--surface-raised));
+  border: 1px solid color-mix(in srgb, var(--action-hue, var(--accent)) 38%, var(--line-strong));
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+  transition: box-shadow 0.15s, border-color 0.13s, transform 0.1s;
+}
+.ed-action:hover { box-shadow: var(--shadow-lift); transform: translateY(-1px); }
+.ed-action.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash), var(--shadow);
+}
+.ed-action-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  background: var(--action-hue, var(--accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+.ed-action-glyph { color: rgba(255, 255, 255, 0.85); flex: none; }
+.ed-action-glyph svg { width: 12px; height: 12px; }
+.ed-action-title {
+  font-size: 12px;
+  font-weight: 640;
+  color: #fff;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ed-action-meta {
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  padding: 5px 9px 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ed-action-meta .dot { width: 2px; height: 2px; border-radius: 50%; background: currentColor; opacity: 0.6; }
+.ed-action-meta .bad { color: var(--fail); }
+
+.ed-move { display: flex; gap: 4px; opacity: 0; transition: opacity 0.13s; }
+.ed-column:hover .ed-move,
+.ed-move:focus-within { opacity: 1; }
+.ed-move-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.ed-move-btn svg { width: 11px; height: 11px; }
+.ed-move-btn:hover { background: var(--accent-wash); border-color: var(--accent-line); color: var(--accent); }
+
+/* --------------------------------------------------------------- conditions */
+
+.ed-trigger-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+.ed-trigger { display: flex; flex-direction: column; gap: 6px; align-items: stretch; width: 100%; }
+.ed-trigger.is-empty {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-faint);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.ed-cond {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--pred-hue, var(--line-strong));
+  border-radius: var(--radius-sm);
+  padding: 6px 24px 6px 9px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s, border-color 0.13s;
+}
+.ed-cond:hover { box-shadow: var(--shadow); border-color: var(--line-strong); }
+.ed-cond.is-selected {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+.cond-subject {
+  display: flex;
+  align-items: baseline;
+  /* A named frame makes this line long enough to wrap in a step-wide card, so
+   * it wraps between the subject and the target rather than inside either. */
+  flex-wrap: wrap;
+  gap: 0 4px;
+  font-size: 11px;
+  font-weight: 620;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.cond-arrow { color: var(--ink-faint); }
+/* An actor named in a condition wears its track colour, so a trigger hanging in
+ * one track still says which track it is watching. */
+.cond-actor { color: var(--ref-hue, var(--ink)); font-weight: 660; }
+.cond-world { color: var(--ink-faint); font-weight: 500; }
+/* A reference the condition declares but has not been given.  It reads as
+ * unfinished rather than as a world-scoped condition, which is what showing it
+ * as "world" made it look like. */
+.cond-unset { color: var(--warn); font-weight: 600; }
+.cond-metric { font-size: 10.5px; color: var(--ink-muted); margin-top: 1px; }
+/* The coordinate system a bare id belongs to, and any parameter that would
+ * otherwise not appear on the card at all. Quieter than the value itself: it
+ * says what the number is, not what it is being compared against. */
+.cond-frame { color: var(--ink-faint); font-weight: 500; }
+.cond-ref { white-space: nowrap; }
+.cond-detail { font-size: 10.5px; color: var(--ink-faint); }
+.cond-value {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  margin-top: 1px;
+}
+.cond-op { color: var(--accent); margin-right: 2px; }
+.cond-unit { color: var(--ink-muted); font-weight: 500; font-size: 11.5px; }
+
+.ed-cond-group {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: 7px;
+  box-shadow: var(--shadow-sm);
+}
+.ed-cond-group.is-selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+.ed-cond-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 2px 7px;
+  cursor: pointer;
+}
+.ed-op {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.ed-op-not { background: var(--fail); }
+.ed-op-sticky { background: #0891b2; }
+.ed-op-persistent { background: #7c3aed; }
+.ed-op-note { font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.ed-cond-children {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 9px;
+  border-left: 2px solid var(--line-strong);
+  margin-left: 5px;
+}
+
+.ed-del {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-faint);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.13s, background-color 0.13s, color 0.13s;
+}
+.ed-del svg { width: 10px; height: 10px; }
+.ed-cond:hover .ed-del,
+.ed-cond-group:hover .ed-del,
+.ed-constraint:hover .ed-del,
+.ed-del:focus-visible { opacity: 1; }
+.ed-del:hover { background: var(--fail-wash); color: var(--fail); }
+.ed-cond-group-head .ed-del,
+.ed-constraint-head .ed-del { position: static; margin-left: auto; }
+
+/* An "add" control is a folded `<details>`: the type picker only appears when
+ * it is wanted, so a lane with four compositions is not four open selects. */
+.ed-add { position: relative; }
+.ed-add > summary { list-style: none; }
+.ed-add > summary::-webkit-details-marker { display: none; }
+
+.ed-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px 2px 7px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--ink-faint);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.ed-add-btn:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.ed-add-btn.is-action { padding: 5px 12px 5px 10px; font-size: 12px; }
+.ed-add[open] > .ed-add-btn {
+  border-style: solid;
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+
+.ed-add-form {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-top: 5px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* ------------------------------------------------------------ verdict lanes */
+
+/* Outcomes are not a track anyone plays, so they get the tinted "master" strip
+ * at the bottom of the arrangement rather than another actor-coloured lane. */
+.ed-verdict { background: color-mix(in srgb, var(--lane-hue) 5%, var(--surface)); }
+.ed-verdict .ed-lane-head { background: transparent; }
+.ed-verdict .ed-lane-head:hover { background: transparent; }
+.ed-verdict-pass { --lane-hue: var(--pass); border-top: 1px solid var(--line-strong); }
+.ed-verdict-fail { --lane-hue: var(--fail); }
+.ed-verdict-pass .ed-cond { --pred-hue: var(--pass); }
+.ed-verdict-fail .ed-cond { --pred-hue: var(--fail); }
+.ed-verdict-label { display: flex; align-items: center; gap: 7px; }
+.ed-verdict-label svg { width: 15px; height: 15px; color: var(--lane-hue); }
+.ed-verdict-label span { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink); }
+.ed-verdict-hint { font-size: 11px; color: var(--ink-faint); line-height: 1.35; }
+
+/* -------------------------------------------------------------- constraints */
+
+.ed-constraint-root { display: flex; flex-direction: column; gap: 5px; }
+.ed-constraint { position: relative; border-left: 2px solid var(--line); padding-left: 9px; }
+.ed-constraint.is-selected { border-left-color: var(--accent); }
+.ed-constraint-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 3px 20px 3px 0;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ed-constraint-head:hover { background: var(--surface-sunken); }
+.ed-constraint-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.ed-constraint-params { font-size: 11px; color: var(--ink-muted); font-family: var(--mono); }
+.ed-constraint-children { display: flex; flex-direction: column; gap: 5px; margin-left: 4px; margin-top: 4px; }
+
+.ed-derived {
+  border: 1px solid var(--accent-line);
+  background: var(--accent-wash);
+  border-radius: var(--radius);
+  padding: 12px 12px 1px;
+  margin-bottom: 14px;
+}
+
+/* ------------------------------------------------------------- map preview */
+
+.ed-preview {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.ed-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+.ed-preview-count { font-size: 13px; font-weight: 650; color: var(--ink); letter-spacing: -0.01em; }
+.ed-preview-count .of { font-weight: 400; color: var(--ink-faint); }
+.ed-preview-sub { font-size: 11px; color: var(--ink-faint); margin-top: 1px; }
+.ed-preview-body { padding: 11px; }
+
+.ed-map-frame {
+  position: relative;
+  height: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.ed-pick-row { display: flex; align-items: center; gap: 8px; }
+/* A readout, not an input: a lanelet id is only ever set by picking one off
+ * the map, so the field shows what is set and the button is the way to change
+ * it. Styled as inert so it does not invite a keystroke that goes nowhere. */
+.ed-input-locked {
+  background: var(--surface-sunken);
+  color: var(--ink-body);
+  cursor: default;
+}
+.ed-input-locked:hover { border-color: var(--line-strong); }
+.ed-pick-row .ed-input { flex: 1; min-width: 0; }
+.ed-pick-row .ed-btn-sm { flex: none; }
+
+/* The picker takes the viewport. Picking a lanelet out of a city means seeing
+ * the city, and the inspector column is 384px wide -- a map that size is a
+ * thumbnail, not a control.
+ *
+ * This z-index only works because editor.js moves the element to <body> first:
+ * the inspector sits inside a `position: sticky` wrapper, and sticky creates a
+ * stacking context regardless of its own z-index, so a z-index left in place
+ * would rank against nothing that matters and the canvas would paint over it. */
+.ed-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  padding: 24px;
+  background: rgba(18, 20, 26, 0.55);
+}
+.ed-modal-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+  overflow: hidden;
+}
+.ed-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+  flex: none;
+}
+/* Anchors the mounting frame, which positions itself absolutely while it is
+ * still invisible. */
+.ed-modal-body { position: relative; flex: 1; min-height: 0; padding: 12px; }
+
+.ed-map-full { height: 100%; }
+
+/* The viewer sizes its canvas against a laid-out box, so it cannot be mounted
+ * into a `display: none` one -- but an empty 260px box where a map should be is
+ * worse than no box, so it must not be on screen either.  `visibility` keeps
+ * the geometry that `hidden` would take away, and taking it out of flow stops
+ * the placeholder pushing what follows down while it mounts. */
+.ed-map-frame.is-mounting {
+  position: absolute;
+  left: 0;
+  right: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+lanelet2-viewer { display: block; width: 100%; height: 100%; }
+
+/* Caption under the map, revealed with it. Prose rather than colour swatches:
+ * the viewer draws one highlight colour and picks it from its own theme, so a
+ * swatch here would be a guess. */
+.ed-map-key {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.ed-id-list {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+  max-height: 7rem;
+  overflow-y: auto;
+  word-break: break-all;
+  margin-top: 6px;
+  line-height: 1.6;
+}
+details > summary { cursor: pointer; font-size: 11.5px; color: var(--ink-muted); }
+details > summary:hover { color: var(--ink-body); }
+
+/* --------------------------------------------------------------- draft list */
+
+.ed-draft {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  transition: background-color 0.13s;
+}
+.ed-draft:last-child { border-bottom: none; }
+.ed-draft:hover { background: var(--surface-sunken); }
+.ed-draft-name { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
+.ed-draft-name:hover { color: var(--accent); }
+.ed-draft-meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; }
+.ed-draft-meta .sep { opacity: 0.5; }
+
+.ed-empty {
+  padding: 44px 20px;
+  text-align: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  margin: 16px;
+  background: var(--surface-sunken);
+}
+.ed-empty-title { font-size: 14px; font-weight: 600; color: var(--ink-body); }
+.ed-empty p { font-size: 12.5px; color: var(--ink-faint); margin-top: 4px; }
+
+/* --------------------------------------------------------------------- logs */
+
+.ed-log {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: #cdd3de;
+  background: var(--chrome);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin-top: 8px;
+}
+
+.ed-kv { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; font-size: 12px; }
+.ed-kv div { display: flex; gap: 8px; }
+.ed-kv dt { color: var(--ink-muted); min-width: 8.5rem; }
+.ed-kv dd { margin: 0; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
+
+/* --------------------------------------------------------------- indicators */
+
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { display: inline-flex; }
+
+.ed-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--accent-line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ed-spin 0.65s linear infinite;
+}
+@keyframes ed-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The environment track sits under the actors and is not one of them: a
+   sunken ground and a quieter head say "this is the world they drive in"
+   without inventing a sixth actor colour. */
+.ed-lane-env {
+  background: var(--surface-sunken);
+}
+
+.ed-lane-env .ed-lane-head {
+  cursor: default;
+}
+
+/* A field the form does not submit, because there is nothing to choose. */
+.ed-static {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-sunken);
+  color: var(--ink-body);
+  font-size: 12.5px;
+}
+
+.ed-static svg {
+  color: var(--env);
+  flex: none;
+}

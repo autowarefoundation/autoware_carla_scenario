@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block title %}{{ document.title }} · Scenario Editor{% endblock %}
+
+{% block crumb %}
+  <div class="ed-crumb">
+    <span class="ed-crumb-sep">/</span>
+    <span class="ed-crumb-name">{{ document.title }}</span>
+    <span class="ed-crumb-id">{{ document.id }}</span>
+  </div>
+{% endblock %}
+
+{% block actions %}
+  <a href="/draft/{{ draft.id }}/yaml" target="_blank" rel="noopener"
+     class="ed-btn-ghost" title="View the Scenario IR">
+    {{ ic.icon('code', 14) }} IR
+  </a>
+  <button class="ed-btn"
+          hx-post="/draft/{{ draft.id }}/validate"
+          hx-target="#validation" hx-swap="innerHTML">
+    {{ ic.icon('shield', 14) }} Validate
+  </button>
+  <button class="ed-btn"
+          hx-post="/draft/{{ draft.id }}/save"
+          hx-target="#status" hx-swap="innerHTML">
+    {{ ic.icon('save', 14) }} Save Draft
+  </button>
+  <button class="ed-btn-primary" onclick="toggleExportPanel()">
+    {{ ic.icon('package', 14) }} Export Package
+  </button>
+{% endblock %}
+
+{% block content %}
+  <div style="padding-top:16px">
+    <div id="status"></div>
+    {% include "partials/export_panel.html" %}
+    <div id="editor-body">
+      {% include "partials/editor_body.html" %}
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,272 @@
+{% import "partials/condition_node.html" as pred %}
+{% import "partials/fields.html" as f %}
+{% import "partials/icons.html" as ic %}
+
+{# Actor x causal-progression swimlanes, drawn as a DAW arrangement view.
+
+   The horizontal axis is *scenario progression*, not time: a card further right
+   happens later in the story, but the distance between two cards means nothing.
+   Borrowing a sequencer's furniture -- track headers down the left, a numbered
+   ruler across the top and a bar line before every slot -- is what makes that
+   direction readable: cards snap to numbered steps, so "further right" is a
+   step number you can name rather than a gap you have to eyeball.  The ruler
+   counts steps and not seconds precisely because the axis is not time.
+
+   Triggers hang under the action they fire, so there is no separate event lane
+   to correlate by eye. #}
+
+{# Track colours come from `fields.entity_hue`, the same helper the condition
+   cards tint their actor names with -- two copies of the palette would drift
+   the moment an actor was reordered. #}
+{# Action categories only -- an unlisted one falls back to the generic accent. #}
+{%- set CATEGORY_HUES = {
+  'Vehicle / Motion': 'var(--actor-1)',
+  'Environment': 'var(--env)'
+} -%}
+
+{% macro add_action(draft, actor, phase='') %}
+  <div class="{{ 'ed-add-inline' if phase else 'ed-column ed-column-add' }}">
+    <details class="ed-add">
+      <summary class="ed-add-btn is-action" title="Add an action">{{ ic.icon('plus', 12) }} action</summary>
+      <form hx-post="/draft/{{ draft.id }}/action" hx-target="#editor-body" hx-swap="innerHTML"
+            class="ed-add-form">
+        <input type="hidden" name="actor" value="{{ actor }}">
+        {% if phase %}<input type="hidden" name="phase" value="{{ phase }}">{% endif %}
+        <select name="type_id" class="ed-input-xs" style="flex:1">
+          {# Each track offers only what belongs in it: a vehicle cannot set the
+             traffic lights, and the environment cannot change lane. #}
+          {% for spec in action_specs() %}
+            {% if spec.actor_required == (actor != '') %}
+              <option value="{{ spec.type_id }}">{{ spec.title }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+      </form>
+    </details>
+  </div>
+{% endmacro %}
+
+{# One card. The column around it is the caller's, because a step holds a set
+   of actions: everything is armed from the first tick, so actions that nothing
+   sequences run alongside each other and are stacked to say so. #}
+{% macro action_card(action, draft, selected, document) %}
+  {%- set spec = get_action_spec(action.type) -%}
+  {%- set hue = CATEGORY_HUES.get(spec.category, 'var(--accent)') if spec else 'var(--fail)' -%}
+  <div class="ed-step-item">
+    <div class="ed-action {% if selected == action.id %}is-selected{% endif %}"
+         style="--action-hue: {{ hue }}"
+         tabindex="0" role="button" id="node-{{ action.id }}"
+         data-object-id="{{ action.id }}"
+         hx-get="/draft/{{ draft.id }}/inspector/{{ action.id }}"
+         hx-target="#inspector" hx-swap="innerHTML">
+      <div class="ed-action-top">
+        <span class="ed-action-glyph">
+          {{ ic.icon('bolt' if spec and spec.visual_kind == 'instant' else 'bar', 13) }}
+        </span>
+        <span class="ed-action-title">{{ action.title or (spec.title if spec else action.type) }}</span>
+      </div>
+      <div class="ed-action-meta">
+        {% if spec %}<span>{{ spec.title }}</span>{% else %}<span class="bad">unknown action</span>{% endif %}
+        <span class="dot"></span>
+        <span>{{ action.phase.replace('_', ' ') }}</span>
+        {% if not action.once %}<span class="dot"></span><span>repeats</span>{% endif %}
+      </div>
+    </div>
+
+    <div class="ed-move">
+      <button class="ed-move-btn" title="Move earlier"
+              hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/move"
+              hx-vals='{"delta": -1}' hx-target="#editor-body" hx-swap="innerHTML">
+        {{ ic.icon('left', 11) }}
+      </button>
+      <button class="ed-move-btn" title="Move later"
+              hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/move"
+              hx-vals='{"delta": 1}' hx-target="#editor-body" hx-swap="innerHTML">
+        {{ ic.icon('right', 11) }}
+      </button>
+    </div>
+
+    {# No trigger area in the init phase: it runs once and begins immediately,
+       so there is no later moment to wait for, and offering the control would
+       invite writing a condition the phase cannot honour. #}
+    {% if action.takes_trigger %}
+      <div class="ed-trigger-wrap" data-links-to="node-{{ action.id }}">
+        <div class="ed-trigger {% if not action.trigger %}is-empty{% endif %}" id="trigger-{{ action.id }}">
+          {% if action.trigger %}
+            {{ pred.render(action.trigger, draft, selected, document) }}
+          {% else %}
+            fires immediately
+          {% endif %}
+        </div>
+        {{ pred.add(draft, 'trigger:' ~ action.id) }}
+      </div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+
+{# The init cell. Every lane carries one -- including the ones that can hold
+   nothing in it -- because a column only means the same thing on every row if
+   every row has it. Init has no steps of its own: the phase runs once, so its
+   cards are a set drawn in one cell rather than a sequence. #}
+{% macro init_cell(actions, draft, selected, document, actor, addable) %}
+  <div class="ed-init">
+    {% for action in actions %}
+      {{ action_card(action, draft, selected, document) }}
+    {% endfor %}
+    {% if addable %}
+      {{ add_action(draft, actor, 'init') }}
+    {% elif not actions %}
+      <div class="ed-init-none">&mdash;</div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+
+{# A whole step: every card in it, or an empty slot holding the grid open. #}
+{% macro step_column(slot, draft, selected, document) %}
+  <div class="ed-column" {% if not slot %}aria-hidden="true"{% endif %}>
+    {% for action in slot %}
+      {{ action_card(action, draft, selected, document) }}
+    {% endfor %}
+  </div>
+{% endmacro %}
+
+{% macro verdict_lane(kind, label, hint, glyph, conditions, draft, selected, document) %}
+  <div class="ed-lane ed-verdict ed-verdict-{{ kind }}">
+    <div class="ed-lane-head is-static">
+      <div class="ed-verdict-label">{{ ic.icon(glyph, 15) }}<span>{{ label }}</span></div>
+      <div class="ed-verdict-hint">{{ hint }}</div>
+    </div>
+    {{ init_cell([], draft, selected, document, '', false) }}
+    <div class="ed-lane-track">
+      {% for node in conditions %}
+        <div class="ed-column">
+          <div class="ed-trigger">{{ pred.render(node, draft, selected, document) }}</div>
+        </div>
+      {% endfor %}
+      <div class="ed-column ed-column-add">{{ pred.add(draft, kind) }}</div>
+    </div>
+  </div>
+{% endmacro %}
+
+<section id="canvas" class="ed-panel" data-draft="{{ draft.id }}" data-selected="{{ selected }}">
+  <div class="ed-panel-head">
+    <div>
+      <div class="ed-panel-title">Arrangement</div>
+      <div class="ed-panel-sub">One track per actor. The head column is the state at t=0; right of the
+        seam is step order, not elapsed time</div>
+      {# Two lines that mean different things need saying once, here, rather
+         than being inferred from a dash pattern. #}
+      <div class="ed-links-legend">
+        <span><i class="ed-legend-fires"></i>fires this action</span>
+        <span><i class="ed-legend-causes"></i>the action this condition waits on</span>
+      </div>
+    </div>
+    <form hx-post="/draft/{{ draft.id }}/entity" hx-target="#editor-body" hx-swap="innerHTML"
+          style="display:flex; align-items:center; gap:7px">
+      <select name="kind" class="ed-input-sm">
+        <option value="vehicle">Vehicle</option>
+        <option value="ego" {% if document.ego %}disabled{% endif %}>Ego</option>
+      </select>
+      <button type="submit" class="ed-btn-sm">{{ ic.icon('plus', 12) }} Actor</button>
+    </form>
+  </div>
+
+  <div class="ed-canvas-scroll">
+    <svg class="ed-links" aria-hidden="true"></svg>
+
+    <div class="ed-ruler">
+      {# The head column is not a step -- it is the state every track starts
+         in.  Naming it, and marking the seam, is what says where setup ends
+         and the run begins; without that the two read as one continuous
+         strip. #}
+      <div class="ed-ruler-head">
+        <span>Actor</span>
+      </div>
+      <div class="ed-ruler-init">
+        <span>Initialization</span>
+        <span class="ed-ruler-seam">run{{ ic.icon('right', 11) }}</span>
+      </div>
+      <div class="ed-ruler-track">
+        {% for step in range(document.step_count()) %}
+          <div class="ed-ruler-step"><span>{{ step + 1 }}</span></div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% for entity in document.ordered_entities() %}
+      {%- set hue = f.entity_hue(entity.id, document)|trim -%}
+      <div class="ed-lane" data-entity="{{ entity.id }}" style="--lane-hue: {{ hue }}">
+        <div class="ed-lane-head {% if selected == entity.id %}is-selected{% endif %}"
+             tabindex="0" role="button" data-object-id="{{ entity.id }}"
+             hx-get="/draft/{{ draft.id }}/inspector/{{ entity.id }}"
+             hx-target="#inspector" hx-swap="innerHTML">
+          <div class="ed-actor">
+            <span class="ed-avatar">{{ ic.icon('user' if entity.kind == 'ego' else 'car', 13) }}</span>
+            <span style="min-width:0">
+              <span class="ed-actor-name" style="display:block">{{ entity.display_name }}</span>
+              <span class="ed-actor-role">{{ 'Ego' if entity.kind == 'ego' else entity.id }}</span>
+            </span>
+          </div>
+          <div class="ed-spawn-chip">
+            {% if entity.spawn.mode == 'fixed' %}
+              <span class="k">lanelet</span> <span class="v">{{ entity.spawn.lanelet_id }}</span>
+              <span class="k">at</span> <span class="v">{{ entity.spawn.s.value }} m</span>
+            {% else %}
+              <span class="v">{{ entity.spawn.constraints|length }} constraint{{ '' if entity.spawn.constraints|length == 1 else 's' }}</span>
+              <span class="k">searched</span>
+              {%- if entity.spawn.s.mode == 'derived' %}<br><span class="k">offset</span> <span class="v">derived</span>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+
+        {{ init_cell(document.init_actions(entity.id), draft, selected, document,
+                     entity.id, true) }}
+        <div class="ed-lane-track">
+          {% for slot in document.action_slots(entity.id) %}
+            {{ step_column(slot, draft, selected, document) }}
+          {% endfor %}
+          {{ add_action(draft, entity.id) }}
+        </div>
+      </div>
+    {% endfor %}
+
+    {# The environment gets a track of its own, under the actors. Traffic
+       lights and the like are performed by no vehicle, so drawing them in a
+       vehicle's lane claimed a relationship the run does not have; and a track
+       that is always here is where you go to add one. #}
+    <div class="ed-lane ed-lane-env" style="--lane-hue: var(--env)">
+      <div class="ed-lane-head is-static">
+        <div class="ed-actor">
+          <span class="ed-avatar" style="background:var(--env)">{{ ic.icon('globe', 13) }}</span>
+          <span>
+            <span class="ed-actor-name" style="display:block">Environment</span>
+            <span class="ed-actor-role">the world</span>
+          </span>
+        </div>
+        <div class="ed-spawn-chip is-none">nothing to place</div>
+      </div>
+      {{ init_cell(document.init_actions(none), draft, selected, document, '', true) }}
+      <div class="ed-lane-track">
+        {% for slot in document.action_slots(none) %}
+          {{ step_column(slot, draft, selected, document) }}
+        {% endfor %}
+        {{ add_action(draft, '') }}
+      </div>
+    </div>
+
+    {% if not document.entities %}
+      <div class="ed-empty">
+        <div class="ed-empty-title">No actors yet</div>
+        <p>Add one to start building the scenario.</p>
+      </div>
+    {% endif %}
+
+    {{ verdict_lane('pass', 'PASS', 'the scenario succeeds when any of these holds',
+                    'check', document.assertions.pass_conditions, draft, selected, document) }}
+    {{ verdict_lane('fail', 'FAIL', 'the scenario fails when any of these holds',
+                    'flag', document.assertions.fail_conditions, draft, selected, document) }}
+  </div>
+</section>

@@ -1,0 +1,73 @@
+{% import "partials/fields.html" as f %}
+{% import "partials/icons.html" as ic %}
+{# One condition, rendered recursively.
+
+   A composition draws as an operator pill above a bracketed list of children; a
+   leaf draws as `subject -> target | metric | rule value`, which is the reading
+   that makes a trigger legible on the canvas at a glance. #}
+
+{% macro render(node, draft, selected, document) %}
+  {%- set spec = get_condition_spec(node.type) -%}
+  {% if spec and spec.kind in ('composite', 'wrapper') %}
+    <div class="ed-cond-group {% if selected == node.id %}is-selected{% endif %}"
+         data-object-id="{{ node.id }}">
+      <div class="ed-cond-group-head" tabindex="0" role="button"
+           hx-get="/draft/{{ draft.id }}/inspector/{{ node.id }}"
+           hx-target="#inspector" hx-swap="innerHTML">
+        <span class="ed-op ed-op-{{ node.type }}">{{ spec.title }}</span>
+        {% if spec.visual.value %}
+          <span class="ed-op-note">
+            {{ node.params.get(spec.visual.value) }}{{ ' ' ~ spec.visual.unit if spec.visual.unit }}
+          </span>
+        {% endif %}
+        {{ delete_button(draft, node) }}
+      </div>
+      <div class="ed-cond-children">
+        {% for child in node.children %}
+          {{ render(child, draft, selected, document) }}
+        {% endfor %}
+        {% if spec.max_children is none or node.children|length < spec.max_children %}
+          {{ add(draft, 'node:' ~ node.id) }}
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    {# `data-caused-by` is what lets the canvas draw the causal link, and it is
+       the document's own reference: the action this condition waits on. #}
+    <div class="ed-cond {% if selected == node.id %}is-selected{% endif %}"
+         tabindex="0" role="button" data-object-id="{{ node.id }}"
+         data-caused-by="{{ condition_actions(node)|join(',') }}"
+         hx-get="/draft/{{ draft.id }}/inspector/{{ node.id }}"
+         hx-target="#inspector" hx-swap="innerHTML">
+      {{ f.condition_summary(node, document) }}
+      {{ delete_button(draft, node) }}
+    </div>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro delete_button(draft, node) %}
+  <button class="ed-del" title="Remove this condition"
+          hx-post="/draft/{{ draft.id }}/condition/{{ node.id }}/delete"
+          hx-target="#editor-body" hx-swap="innerHTML">{{ ic.icon('x', 10) }}</button>
+{% endmacro %}
+
+
+{# The type picker stays folded away until asked for: an always-open select in
+   every lane and every composition reads as content, and there are a lot of
+   them.  `<details>` gets that for free, with no JavaScript and no popover. #}
+{% macro add(draft, slot) %}
+  <details class="ed-add">
+    <summary class="ed-add-btn" title="Add a condition">{{ ic.icon('plus', 11) }} condition</summary>
+    <form hx-post="/draft/{{ draft.id }}/condition" hx-target="#editor-body" hx-swap="innerHTML"
+          class="ed-add-form">
+      <input type="hidden" name="slot" value="{{ slot }}">
+      <select name="type_id" class="ed-input-xs" style="flex:1">
+        {% for spec in condition_specs() %}
+          <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+    </form>
+  </details>
+{% endmacro %}

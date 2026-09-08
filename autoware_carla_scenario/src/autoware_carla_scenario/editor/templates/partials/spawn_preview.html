@@ -1,0 +1,97 @@
+{% import "partials/icons.html" as ic %}
+{# Spawn preview: how many lanelets the constraints match, and where they are.
+
+   The count comes from the sweeper's own constraint engine, so it cannot
+   disagree with an actual sweep. The drawing comes from simple_lanelet2's wasm
+   viewer -- the same project that provides the `lanelet2` Python API this
+   framework runs on -- which gives real map rendering, pan and zoom, and
+   click-to-pick without any of it being reimplemented here.
+
+   It is the *only* renderer. A server-rendered SVG used to sit underneath it as
+   an offline fallback, but the page loads htmx from a CDN and every control
+   here is an hx- attribute, so nothing on this screen works without network
+   anyway -- the fallback bought no offline capability and cost a second drawing
+   of the same map, a legend describing colours the viewer does not use, and two
+   places to implement every change. #}
+<div class="ed-preview">
+  <div class="ed-preview-head">
+    <div>
+      {% if preview.map_loaded and preview.searching %}
+        <div class="ed-preview-count">
+          {{ preview.matched_ids|length }} matched
+          <span class="of">of {{ preview.total }} lanelets</span>
+        </div>
+      {% elif preview.map_loaded %}
+        <div class="ed-preview-count">
+          Lanelet <span class="of">{{ preview.selected_id or '—' }}</span>
+        </div>
+      {% elif preview.searching %}
+        <div class="ed-preview-count">
+          {{ preview.constraint_count }} constraint{{ '' if preview.constraint_count == 1 else 's' }}
+        </div>
+        <div class="ed-preview-sub">Not evaluated yet</div>
+      {% else %}
+        <div class="ed-preview-count">Spawn position</div>
+        <div class="ed-preview-sub">Not evaluated yet</div>
+      {% endif %}
+    </div>
+    <button class="ed-btn-sm"
+            hx-post="/draft/{{ draft.id }}/spawn-preview"
+            hx-vals='{"entity_id": "{{ entity.id if entity else '' }}", "load_map": "1"}'
+            hx-target="#spawn-preview" hx-swap="innerHTML"
+            hx-indicator="#preview-spinner">
+      <span id="preview-spinner" class="htmx-indicator ed-spinner"></span>
+      {{ 'Refresh' if preview.map_loaded else ('Preview matches' if preview.searching else 'Show on map') }}
+    </button>
+  </div>
+
+  <div class="ed-preview-body">
+    {% if preview.error %}
+      <div class="ed-notice ed-notice-warn" style="margin-bottom:10px; padding:8px 10px; font-size:12px">
+        {{ ic.icon('alert', 14) }}<div>{{ preview.error }}</div>
+      </div>
+    {% endif %}
+
+    {% if preview.map_loaded %}
+      {# Hidden until the map has actually drawn: an empty 260px box where a
+         map should be is worse than no box, and that is what an unreachable
+         module would otherwise leave behind. #}
+      {# `data-viewer-key` parks this frame across renders: the preview
+         re-renders whenever anything in the inspector changes, and the map
+         behind it is the same file every time. See `reuseMap` in editor.js. #}
+      <div class="ed-map-frame" hidden
+           data-viewer-key="spawn"
+           data-map-viewer="{{ map_viewer_url() }}"
+           data-map-src="/draft/{{ draft.id }}/map.osm"
+           data-entity="{{ entity.id if entity else '' }}"
+           data-draft="{{ draft.id }}"
+           data-highlight="{{ preview.highlight_ids|join(',') }}"
+           data-picks-layer="{{ lanelet_pick_layers }}">
+        <noscript>The map viewer needs JavaScript; the ID list below still works.</noscript>
+      </div>
+
+      {# Revealed by editor.js when the viewer cannot be loaded at all, so a
+         blocked CDN reads as an explanation rather than a missing map. #}
+      <p class="ed-help" data-viewer-unavailable hidden>
+        The Lanelet2 map viewer could not be loaded. The match count and the
+        ID list below are computed on the server and are unaffected.
+      </p>
+
+      <p class="ed-map-key" data-viewer-hint hidden>
+        {% if preview.searching %}
+          Outlined: the {{ preview.matched_ids|length }} matching lanelet{{ '' if preview.matched_ids|length == 1 else 's' }}.
+        {% else %}
+          Outlined: lanelet {{ preview.selected_id or '—' }}, this entity's spawn.
+        {% endif %}
+        Click a lanelet to spawn there.
+      </p>
+    {% endif %}
+
+    {% if preview.matched_ids %}
+      <details style="margin-top:8px">
+        <summary>Matched IDs</summary>
+        <p class="ed-id-list">{{ preview.matched_ids|join(', ') }}</p>
+      </details>
+    {% endif %}
+  </div>
+</div>

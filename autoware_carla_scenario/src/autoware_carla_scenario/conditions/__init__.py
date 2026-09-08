@@ -1,5 +1,6 @@
 """Scenario pass/fail conditions for CARLA scenario testing."""
 
+from .action_state import ActionStateCondition
 from .always_true import AlwaysTrueCondition
 from .and_condition import AndCondition
 from .base import (
@@ -12,12 +13,14 @@ from .base import (
 from .collision import CollisionCondition
 from .comparison import ComparisonRule, ScalarComparisonRule, compare
 from .composition import (
+    EntityDistanceCondition,
     EntityLanePositionCondition,
     SpeedCondition,
     SpeedCoordinateSystem,
     SpeedDirection,
     StandstillCondition,
     TemporaryStopCondition,
+    TimeToCollisionCondition,
     WaypointCheckType,
     WaypointCondition,
 )
@@ -31,6 +34,7 @@ from .timeout import TimeoutCondition
 from .traffic_signal import TrafficSignalCondition
 
 __all__ = [
+    "ActionStateCondition",
     "AlwaysTrueCondition",
     "AndCondition",
     "BaseCondition",
@@ -39,6 +43,7 @@ __all__ = [
     "ConditionStatus",
     "compare",
     "ElapsedTimeCondition",
+    "EntityDistanceCondition",
     "EntityExistenceCondition",
     "EntityLanePositionCondition",
     "NotCondition",
@@ -52,6 +57,7 @@ __all__ = [
     "StandstillCondition",
     "StickyCondition",
     "TemporaryStopCondition",
+    "TimeToCollisionCondition",
     "TimeoutCondition",
     "WaypointCheckType",
     "WaypointCondition",

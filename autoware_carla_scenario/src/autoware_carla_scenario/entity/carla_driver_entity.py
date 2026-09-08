@@ -116,6 +116,32 @@ class CarlaDriverEntity(EgoVehicle):
         return self._drive_count
 
     # ------------------------------------------------------------------
+    # Manoeuvres
+    # ------------------------------------------------------------------
+
+    def change_lane(self, world: "carla.World", direction) -> None:  # noqa: ANN001
+        """Refuse a TrafficManager manoeuvre: nothing here is driven by it.
+
+        The driver policy holds the controls; a manoeuvre forced through the
+        TrafficManager would be overwritten by the next control it applies.
+        """
+        del world
+        logger.warning(
+            "%s: a lane change was asked for, but this entity is not driven by "
+            "the TrafficManager, so forcing one there would do nothing. The policy decides its own manoeuvres.",
+            type(self).__name__,
+        )
+
+    def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
+        """Refuse a TrafficManager route: nothing here is driven by it."""
+        del world, direction, kwargs
+        logger.warning(
+            "%s: a turn was asked for, but this entity is not driven by the "
+            "TrafficManager, so setting a route there would do nothing.",
+            type(self).__name__,
+        )
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 

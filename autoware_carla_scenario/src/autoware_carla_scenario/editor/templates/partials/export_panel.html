@@ -1,0 +1,52 @@
+{% import "partials/icons.html" as ic %}
+{# Save Draft and Export Package are deliberately separate: saving keeps working
+   state, exporting produces a package whose dependencies are frozen.
+
+   There is no destination field. The editor is routinely used from another
+   machine on the LAN, so a path typed here would name a directory on the host
+   running the server -- not one the person exporting can reach. The package is
+   built server-side, zipped, and handed back as a download. #}
+<div id="export-panel" class="ed-panel hidden" style="margin-bottom:16px">
+  <div class="ed-panel-head">
+    <div>
+      <div class="ed-panel-title">Export Scenario Package</div>
+      <div class="ed-panel-sub">
+        A <code class="mono">.zip</code> another machine can unpack,
+        <code class="mono">uv sync --locked</code> and run
+      </div>
+    </div>
+    <button class="ed-btn-ghost" onclick="toggleExportPanel()">{{ ic.icon('x', 14) }}</button>
+  </div>
+  <form class="ed-panel-body"
+        hx-post="/draft/{{ draft.id }}/export"
+        hx-target="#export-result" hx-swap="innerHTML"
+        hx-indicator="#export-spinner">
+    <div style="display:flex; flex-direction:column; gap:9px">
+        <label class="ed-check">
+          <input type="checkbox" name="lock" value="on" checked>
+          <span>Generate <code>uv.lock</code>
+            <span class="ed-help">Off produces a package that is not reproducible.</span></span>
+        </label>
+        <label class="ed-check">
+          <input type="checkbox" name="verify" value="on" checked>
+          <span>Verify with <code>uv sync --locked</code></span>
+        </label>
+        <label class="ed-check">
+          <input type="checkbox" name="run_tests" value="on" checked>
+          <span>Run the generated package's tests</span>
+        </label>
+        <label class="ed-check">
+          <input type="checkbox" name="dev_mode" value="on">
+          <span>Development export
+            <span class="ed-help">Depends on the local framework checkout by path. Not portable.</span></span>
+        </label>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px; margin-top:14px">
+      <button type="submit" class="ed-btn-primary">{{ ic.icon('package', 14) }} Export Package</button>
+      <span id="export-spinner" class="htmx-indicator" style="align-items:center; gap:8px; font-size:13px; color:var(--accent)">
+        <span class="ed-spinner"></span> Resolving dependencies — this can take a minute&hellip;
+      </span>
+    </div>
+    <div id="export-result" style="margin-top:14px"></div>
+  </form>
+</div>
