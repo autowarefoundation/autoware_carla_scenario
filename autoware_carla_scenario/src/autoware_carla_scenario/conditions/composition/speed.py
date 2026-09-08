@@ -190,7 +190,7 @@ class SpeedCondition(CompositionCondition):
             return None
 
         if self._comparison.satisfied(speed_component):
-            rule_text = self._comparison.rule.name.lower().replace("_", " ")
+            rule_text = self._comparison.rule.text
             return ScenarioResult(
                 passed=True,
                 message=(

@@ -12,6 +12,7 @@ from ..conditions import BaseCondition
 from ..conditions.base import find_actor_by_role_name
 from ..constants import DEFAULT_TM_PORT
 from ..entity_role import EntityRole
+from ..kinematics.angle import normalize_angle_deg
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -249,7 +250,7 @@ class TurnAction(BaseAction):
             if not branch:
                 continue
             exit_yaw = branch[-1].transform.rotation.yaw
-            diff = (exit_yaw - entry_yaw + 180.0) % 360.0 - 180.0
+            diff = normalize_angle_deg(exit_yaw - entry_yaw)
             score = abs(diff - target)
             logger.debug(
                 "TurnAction: branch exit_yaw=%.1f, diff=%.1f, score=%.1f",
@@ -263,7 +264,7 @@ class TurnAction(BaseAction):
 
         if best is not None:
             exit_yaw = best[-1].transform.rotation.yaw
-            diff = (exit_yaw - entry_yaw + 180.0) % 360.0 - 180.0
+            diff = normalize_angle_deg(exit_yaw - entry_yaw)
             logger.info(
                 "TurnAction: selected branch with heading change %.1f deg "
                 "(target: %.1f deg %s)",

@@ -515,17 +515,27 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   z-index: 3;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 4px;
-  padding: 0 14px 0 19px;
+  padding: 0 10px 0 19px;
   background: var(--surface);
-  border-right: 1px solid var(--line);
+  border-right: 2px solid var(--line-strong);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-faint);
 }
-.ed-ruler-head svg { color: var(--ink-faint); }
+.ed-ruler-head svg { color: var(--accent); }
+
+/* Sits against the seam and points across it: the label belongs to the line,
+ * not to either column, because what it names is the transition. */
+.ed-ruler-seam {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+}
 
 .ed-ruler-track {
   display: flex;
@@ -577,7 +587,7 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   left: 0;
   z-index: 3;
   background: var(--surface);
-  border-right: 1px solid var(--line);
+  border-right: 2px solid var(--line-strong);
   padding: 14px 14px 14px 16px;
   display: flex;
   flex-direction: column;
@@ -625,6 +635,12 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   border-radius: var(--radius-sm);
   padding: 4px 7px;
   line-height: 1.35;
+}
+.ed-spawn-chip.is-none {
+  color: var(--ink-faint);
+  font-style: italic;
+  background: transparent;
+  border-style: dashed;
 }
 .ed-spawn-chip .k { color: var(--ink-faint); }
 .ed-spawn-chip .v { color: var(--ink-body); font-weight: 550; font-variant-numeric: tabular-nums; }

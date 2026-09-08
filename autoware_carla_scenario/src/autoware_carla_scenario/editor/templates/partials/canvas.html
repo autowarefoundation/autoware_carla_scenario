@@ -130,7 +130,8 @@
   <div class="ed-panel-head">
     <div>
       <div class="ed-panel-title">Arrangement</div>
-      <div class="ed-panel-sub">One track per actor. Left to right is step order, not elapsed time</div>
+      <div class="ed-panel-sub">One track per actor. The head column is the state at t=0; right of the
+        seam is step order, not elapsed time</div>
       {# Two lines that mean different things need saying once, here, rather
          than being inferred from a dash pattern. #}
       <div class="ed-links-legend">
@@ -152,8 +153,13 @@
     <svg class="ed-links" aria-hidden="true"></svg>
 
     <div class="ed-ruler">
+      {# The head column is not a step -- it is the state every track starts
+         in.  Naming it, and marking the seam, is what says where setup ends
+         and the run begins; without that the two read as one continuous
+         strip. #}
       <div class="ed-ruler-head">
-        <span>Step</span>{{ ic.icon('right', 11) }}
+        <span>Initial state</span>
+        <span class="ed-ruler-seam">run{{ ic.icon('right', 11) }}</span>
       </div>
       <div class="ed-ruler-track">
         {% for step in range(document.step_count()) %}
@@ -214,6 +220,7 @@
             <span class="ed-actor-role">the world</span>
           </span>
         </div>
+        <div class="ed-spawn-chip is-none">nothing to place</div>
       </div>
       <div class="ed-lane-track">
         {% for slot in document.action_slots(none) %}

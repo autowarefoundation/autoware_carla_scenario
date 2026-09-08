@@ -305,16 +305,8 @@ class AutowareEgoEntity(EgoVehicle):
         measured from different places and would disagree on every run.
         """
         assert self.actor is not None  # noqa: S101 - checked by the caller
-        transform = self.actor.get_transform()
         actual = to_map_frame(
-            CarlaWorldPose(
-                x=transform.location.x,
-                y=transform.location.y,
-                z=transform.location.z,
-                roll=transform.rotation.roll,
-                pitch=transform.rotation.pitch,
-                yaw=transform.rotation.yaw,
-            )
+            CarlaWorldPose.from_carla_transform(self.actor.get_transform())
         )
         expected = self._initial_pose
         if expected is None:

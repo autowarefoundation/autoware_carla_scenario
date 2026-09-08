@@ -19,6 +19,7 @@ from .models import (
     ConstraintNode,
     Entity,
     ScenarioDocument,
+    condition_refs,
 )
 from .registry import (
     INT_KINDS,
@@ -264,7 +265,7 @@ def _check_condition(
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
 
-    if owner is not None and node.params.get("action") == owner:
+    if owner is not None and owner in condition_refs(node, "action"):
         out.error(
             f"{path}.action",
             f"{spec.title} waits on the action it triggers, which can never fire.",

@@ -6,7 +6,7 @@
    leaf draws as `subject -> target | metric | rule value`, which is the reading
    that makes a trigger legible on the canvas at a glance. #}
 
-{% macro render(node, draft, selected, document, depth=0) %}
+{% macro render(node, draft, selected, document) %}
   {%- set spec = get_condition_spec(node.type) -%}
   {% if spec and spec.kind in ('composite', 'wrapper') %}
     <div class="ed-cond-group {% if selected == node.id %}is-selected{% endif %}"
@@ -24,7 +24,7 @@
       </div>
       <div class="ed-cond-children">
         {% for child in node.children %}
-          {{ render(child, draft, selected, document, depth + 1) }}
+          {{ render(child, draft, selected, document) }}
         {% endfor %}
         {% if spec.max_children is none or node.children|length < spec.max_children %}
           {{ add(draft, 'node:' ~ node.id) }}

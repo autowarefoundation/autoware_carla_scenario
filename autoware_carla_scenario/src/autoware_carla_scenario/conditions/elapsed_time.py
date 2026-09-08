@@ -70,7 +70,7 @@ class ElapsedTimeCondition(BaseCondition):
             ScenarioResult with passed=True if the condition is met, None otherwise.
         """
         if self._comparison.satisfied(elapsed):
-            rule_text = self._comparison.rule.name.lower().replace("_", " ")
+            rule_text = self._comparison.rule.text
             return ScenarioResult(
                 passed=True,
                 message=(

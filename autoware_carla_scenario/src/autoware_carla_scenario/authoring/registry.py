@@ -50,6 +50,7 @@ __all__ = [
     "REFERENCE_PATTERN",
     "SelectOption",
     "COMPARISON_RULES",
+    "rule_symbol",
     "TRAFFIC_LIGHT_STATES",
     "TRUTHY_VALUES",
     "action_specs",
@@ -332,11 +333,25 @@ class BindingSpec:
 #: stay in step.
 COMPARISON_RULES: tuple[SelectOption, ...] = (
     SelectOption("less_than", "<"),
-    SelectOption("less_than_or_equal", "<="),
+    SelectOption("less_than_or_equal", "≤"),
     SelectOption("greater_than", ">"),
-    SelectOption("greater_than_or_equal", ">="),
+    SelectOption("greater_than_or_equal", "≥"),
     SelectOption("equal_to", "="),
 )
+
+
+def rule_symbol(rule: object) -> str:
+    """Return the operator glyph for a comparison rule value.
+
+    The canvas and the inspector select read the same table, so a rule added
+    to :data:`COMPARISON_RULES` cannot render as its raw name on one of them.
+    """
+    wanted = str(rule)
+    for option in COMPARISON_RULES:
+        if option.value == wanted:
+            return option.label
+    return wanted
+
 
 #: Mirrors ``carla.TrafficLightState`` (same reason as above).
 TRAFFIC_LIGHT_STATES: tuple[SelectOption, ...] = (
@@ -364,6 +379,54 @@ _RULE_FIELD = FieldSpec(
 def _entity_field(name: str, label: str) -> FieldSpec:
     """Return an entity-reference field; options come from the document."""
     return FieldSpec(name=name, label=label, kind="entity", default=None)
+
+
+def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
+    """Return the s/t range fields that bound a position along *noun*.
+
+    Both position conditions accept the same stretch, so they share one
+    definition -- separate copies could disagree on a unit or on whether a
+    bound is required while ``build_*_condition`` reads them through one path.
+    """
+    return (
+        FieldSpec(
+            name="s_min",
+            label="s from",
+            kind="number",
+            default=None,
+            required=False,
+            unit="m",
+            help=(
+                f"Along the {noun} from its start.  Leave both empty to accept "
+                "the whole length."
+            ),
+        ),
+        FieldSpec(
+            name="s_max",
+            label="s to",
+            kind="number",
+            default=None,
+            required=False,
+            unit="m",
+        ),
+        FieldSpec(
+            name="t_min",
+            label="t from",
+            kind="number",
+            default=None,
+            required=False,
+            unit="m",
+            help=f"Across the {noun}. Positive is left of the road direction.",
+        ),
+        FieldSpec(
+            name="t_max",
+            label="t to",
+            kind="number",
+            default=None,
+            required=False,
+            unit="m",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -810,43 +873,7 @@ register_condition_spec(
                     "address a road directly."
                 ),
             ),
-            FieldSpec(
-                name="s_min",
-                label="s from",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-                help=(
-                    "Along the lane from its start.  Leave both empty to accept "
-                    "the whole length."
-                ),
-            ),
-            FieldSpec(
-                name="s_max",
-                label="s to",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-            ),
-            FieldSpec(
-                name="t_min",
-                label="t from",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-                help="Across the lane. Positive is left of the road direction.",
-            ),
-            FieldSpec(
-                name="t_max",
-                label="t to",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-            ),
+            *_extent_fields("lane"),
         ),
         description=(
             "The entity is on the lane a Lanelet2 lanelet describes, optionally "
@@ -894,43 +921,7 @@ register_condition_spec(
                     "the road will do."
                 ),
             ),
-            FieldSpec(
-                name="s_min",
-                label="s from",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-                help=(
-                    "Along the road from its start.  Leave both empty to accept "
-                    "the whole length."
-                ),
-            ),
-            FieldSpec(
-                name="s_max",
-                label="s to",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-            ),
-            FieldSpec(
-                name="t_min",
-                label="t from",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-                help="Across the road. Positive is left of the road direction.",
-            ),
-            FieldSpec(
-                name="t_max",
-                label="t to",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m",
-            ),
+            *_extent_fields("road"),
         ),
         description=(
             "The entity is on an OpenDRIVE road, optionally on one of its lanes "

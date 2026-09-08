@@ -132,6 +132,16 @@ class ConstraintNode(_Node):
             found.extend(child.walk())
         return found
 
+    def remove(self, node_id: str) -> bool:
+        """Remove the descendant identified by *node_id*.  Returns success."""
+        for index, child in enumerate(self.constraints):
+            if child.id == node_id:
+                del self.constraints[index]
+                return True
+            if child.remove(node_id):
+                return True
+        return False
+
 
 class BindingRef(_Node):
     """Reference to a ``sweep.bindings`` entry that derives a value.

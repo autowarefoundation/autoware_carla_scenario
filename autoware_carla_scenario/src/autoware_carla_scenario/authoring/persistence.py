@@ -17,6 +17,13 @@ from typing import Any, Optional
 
 import yaml
 
+try:  # The C parser when PyYAML was built with libyaml -- ~10x on a draft.
+    from yaml import CSafeDumper as _SafeDumper
+    from yaml import CSafeLoader as _SafeLoader
+except ImportError:  # pragma: no cover -- depends on the installed PyYAML
+    from yaml import SafeDumper as _SafeDumper  # type: ignore[assignment]
+    from yaml import SafeLoader as _SafeLoader  # type: ignore[assignment]
+
 from .models import ScenarioDocument, new_object_id
 
 __all__ = [
@@ -27,6 +34,7 @@ __all__ = [
     "dump_yaml",
     "load_document",
     "save_document",
+    "utc_timestamp",
 ]
 
 #: Environment variable that relocates the draft directory.
@@ -43,7 +51,7 @@ def default_draft_dir() -> Path:
     return (Path.cwd() / "scenario_drafts").resolve()
 
 
-def _now() -> str:
+def utc_timestamp() -> str:
     """Return an ISO-8601 UTC timestamp."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -55,7 +63,9 @@ def dump_yaml(data: Any) -> str:
     and a manifest all read top-down; wrapping is wide enough that a path or an
     interpolation stays on one line.
     """
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
+    return yaml.dump(
+        data, Dumper=_SafeDumper, sort_keys=False, allow_unicode=True, width=100
+    )
 
 
 def dump_document_yaml(document: ScenarioDocument) -> str:
@@ -74,7 +84,7 @@ def load_document(path: str | Path) -> ScenarioDocument:
         ValueError: If the file is empty or not a mapping.
     """
     file_path = Path(path)
-    raw = yaml.safe_load(file_path.read_text(encoding="utf-8"))
+    raw = yaml.load(file_path.read_text(encoding="utf-8"), Loader=_SafeLoader)
     if not isinstance(raw, dict):
         raise ValueError(f"{file_path} does not contain a scenario document mapping.")
     if "document" in raw and isinstance(raw["document"], dict):
@@ -117,8 +127,8 @@ class Draft:
         return cls(
             id=str(raw.get("id") or new_object_id("draft")),
             title=str(raw.get("title") or document.title),
-            created_at=str(raw.get("created_at") or _now()),
-            updated_at=str(raw.get("updated_at") or _now()),
+            created_at=str(raw.get("created_at") or utc_timestamp()),
+            updated_at=str(raw.get("updated_at") or utc_timestamp()),
             document=document,
         )
 
@@ -149,19 +159,12 @@ class DraftStore:
 
     # -- reads ----------------------------------------------------------
 
-    def exists(self, draft_id: str) -> bool:
-        """Whether a draft with this id is stored."""
-        try:
-            return self.path_for(draft_id).is_file()
-        except ValueError:
-            return False
-
     def get(self, draft_id: str) -> Optional[Draft]:
         """Return the draft, or ``None`` when it does not exist."""
         path = self.path_for(draft_id)
         if not path.is_file():
             return None
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_SafeLoader) or {}
         raw.setdefault("id", draft_id)
         return Draft.from_dict(raw)
 
@@ -183,7 +186,7 @@ class DraftStore:
 
     def create(self, document: ScenarioDocument, title: str | None = None) -> Draft:
         """Store *document* as a new draft and return it."""
-        stamp = _now()
+        stamp = utc_timestamp()
         draft = Draft(
             id=new_object_id("draft"),
             title=title or document.title,
@@ -196,7 +199,7 @@ class DraftStore:
 
     def save(self, draft: Draft) -> Draft:
         """Persist *draft*, refreshing its ``updated_at`` stamp."""
-        draft.updated_at = _now()
+        draft.updated_at = utc_timestamp()
         draft.title = draft.document.title or draft.title
         self._write(draft)
         return draft

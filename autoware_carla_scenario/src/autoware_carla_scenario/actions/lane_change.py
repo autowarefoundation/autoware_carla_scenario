@@ -16,6 +16,7 @@ from ..constants import (
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
 from ..entity_role import EntityRole
+from ..kinematics.angle import normalize_angle_deg
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -227,4 +228,4 @@ def _lane_key_of(waypoint: "carla.Waypoint") -> tuple[int, int]:
 
 def _heading_error_deg(yaw: float, reference_yaw: float) -> float:
     """Return the absolute angle between two headings, in degrees, 0-180."""
-    return abs((yaw - reference_yaw + 180.0) % 360.0 - 180.0)
+    return abs(normalize_angle_deg(yaw - reference_yaw))

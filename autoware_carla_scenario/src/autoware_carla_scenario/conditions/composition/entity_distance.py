@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
-from ..base import ScenarioResult, find_actor_in_list
+from ..base import ScenarioResult, find_actor_pair
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition
 
@@ -83,8 +83,7 @@ class EntityDistanceCondition(CompositionCondition):
     def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
         """Return the source-to-target distance, or ``None`` if unavailable."""
         assert self._entity_name is not None  # noqa: S101
-        source = find_actor_in_list(actors, self._entity_name)
-        target = find_actor_in_list(actors, self._target)
+        source, target = find_actor_pair(actors, self._entity_name, self._target)
         if source is None or target is None:
             return None
 
@@ -107,7 +106,7 @@ class EntityDistanceCondition(CompositionCondition):
         if not self._comparison.satisfied(distance):
             return None
 
-        rule_text = self._comparison.rule.name.lower().replace("_", " ")
+        rule_text = self._comparison.rule.text
         return ScenarioResult(
             passed=True,
             message=(

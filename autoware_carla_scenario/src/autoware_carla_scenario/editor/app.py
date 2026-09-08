@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
@@ -26,6 +26,9 @@ from ..authoring.persistence import DraftStore, default_draft_dir
 from .service import EditorError, EditorService, condition_actions
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # `app` is built on first access -- see __getattr__ below.
+    app: FastAPI
 
 __all__ = ["build_service", "create_app", "app"]
 
@@ -153,6 +156,8 @@ def create_app(
         # Which actions a condition waits on -- the canvas draws its causal
         # links from these, not from where the cards happen to sit.
         condition_actions=condition_actions,
+        # The operator glyph comes from the same table the select does.
+        rule_symbol=registry.rule_symbol,
     )
 
     application.state.templates = templates
@@ -178,5 +183,17 @@ def create_app(
     return application
 
 
-#: Module-level application, used by ``uv run scenario-editor``.
-app = create_app()
+def __getattr__(name: str) -> Any:
+    """Build the module-level ``app`` on first access.
+
+    ``uv run scenario-editor`` goes through :func:`~..editor.main`, which builds
+    its own application from the environment; constructing one eagerly here
+    meant every start built two and threw the env-blind one away.  ``uvicorn
+    autoware_carla_scenario.editor.app:app`` still works, and still gets an
+    application built with the defaults.
+    """
+    if name == "app":
+        application = create_app()
+        globals()["app"] = application
+        return application
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
