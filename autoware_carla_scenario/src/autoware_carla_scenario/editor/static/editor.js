@@ -1,9 +1,10 @@
 /* Scenario Editor — the behaviour a server render cannot do.
  *
  * Everything that changes the scenario goes through htmx and a server render, so
- * this file is limited to three things: drawing the connector between a trigger
- * and the action it fires, moving keyboard focus around the swimlanes, and
- * mounting the Lanelet2 map viewer for the spawn preview.
+ * this file is limited to four things: drawing the connector between a trigger
+ * and the action it fires, moving keyboard focus around the swimlanes, mounting
+ * the Lanelet2 map viewer, and placing the overview's pins over the lanelets
+ * they name — which only the viewer can say the position of.
  */
 (function () {
   'use strict';
@@ -182,12 +183,14 @@
     return viewerModule;
   }
 
-  /* The caption and the map are revealed together, so the caption never
-     describes a drawing that is not there. Resolved when it is needed rather
-     than captured at mount: under reuse the frame outlives several renders of
-     the fragment around it, and the caption is a fresh element every time. */
+  /* The notices that belong to one map: its "could not be loaded", its caption.
+     Scoped by `data-viewer-scope`, which every template that mounts a viewer
+     marks its container with -- there is more than one map on the page now, and
+     a document-wide lookup would reveal the picker's notice for the overview's
+     failure. Resolved when it is needed rather than captured at mount: under
+     reuse the frame outlives several renders of the fragment around it. */
   function previewOf(frame) {
-    return frame.closest('.ed-modal-body') || document;
+    return frame.closest('[data-viewer-scope]') || document;
   }
 
   function revealHint(frame) {
@@ -280,6 +283,26 @@
         // shows where the matches are, and zooming to the current spawn would
         // throw away the very thing the preview is for.
         applyHighlight(frame);
+        layoutPins(frame);
+        // Framed on the places, not on the whole city: this panel is here to
+        // show where the scenario happens, and a fitted map of Nishishinjuku is
+        // mostly not that. Only on load -- a pan or a zoom afterwards belongs to
+        // the person doing it, and a re-render carries it across.
+        frameOnPins(frame);
+      });
+
+      // Pins are drawn in page coordinates over a map that pans and zooms under
+      // them, so every move is a move of theirs too.
+      viewer.addEventListener('viewchange', function () {
+        if (!probing) schedulePinLayout();
+      });
+
+      // Tilted, `getView` reports drawing coordinates rather than the map's --
+      // a point on a hill and the ground behind it are drawn in the same place
+      // -- so a pin cannot be positioned from it and is not shown at all.
+      viewer.addEventListener('view3dchange', function (event) {
+        frame.__tilted = !!(event.detail && event.detail.enabled);
+        layoutPins(frame);
       });
 
       // Picking on the map is how a Lanelet2 id is chosen at all, and it writes
@@ -304,10 +327,15 @@
           return;
         }
 
-        // Every map on the page is a picker's: the field it writes into is
-        // what the map was opened from.
+        // A map with nothing to pick into is the places panel's: it draws what
+        // the document already names, so the one thing a click there can mean
+        // is "show me what named this". A place is still edited where it is
+        // written -- in that object's own inspector -- so nothing is saved here.
         var input = document.getElementById(frame.dataset.picksInto || '');
-        if (!input) return;
+        if (!input) {
+          openPlace(picked);
+          return;
+        }
 
         if (frame.dataset.picksMany) {
           // Toggling, so a set is built by clicking rather than by typing a
@@ -341,6 +369,171 @@
       if (reuseMap(frame)) return;
       mountMap(frame);
     });
+  }
+
+  /* ---------------------------------------------------------------------
+   * Scenario pins
+   *
+   * The overview above the timeline draws every place a scenario names, and one
+   * outline colour cannot say which of them is the spawn, which the goal and
+   * which a lanelet some condition watches. The labels are the server's,
+   * rendered beside the map; this is what puts each one over the lanelet it
+   * names.
+   *
+   * Where that lanelet is on screen is the viewer's own answer, asked for
+   * through its public API: `focusOn` centres the view on a primitive, so
+   * focusing one and reading `getView` back reports its centre in map
+   * coordinates, and the view is then put back where it was. The alternative
+   * was projecting the .osm a second time here, which is a second answer to
+   * "where is this" that can disagree with the drawing it is laid over.
+   *
+   * Each lanelet is probed once and the answer kept on the frame -- the same
+   * frame that is parked across a re-render -- so an edit re-lays the pins out
+   * without asking the map anything.
+   * ------------------------------------------------------------------- */
+
+  var probing = false;   // a probe moves the view; ignore its own viewchanges
+
+  function pinLayer(frame) {
+    return previewOf(frame).querySelector('[data-pins]');
+  }
+
+  /* Measure the lanelets not measured yet, in one save/restore of the view. */
+  function probeCentres(frame, wanted) {
+    var viewer = frame.__viewer;
+    var known = frame.__pinAt || (frame.__pinAt = {});
+    var missing = wanted.filter(function (id) { return !(id in known); });
+    if (!viewer || !missing.length) return;
+
+    probing = true;
+    var saved = viewer.getView();
+    missing.forEach(function (id) {
+      // `null` records a lanelet this map does not have, so it is asked once
+      // rather than on every pan.
+      known[id] = null;
+      if (viewer.focusOn(id)) {
+        var at = viewer.getView();
+        known[id] = { x: at.x, y: at.y };
+      }
+    });
+    viewer.setView(saved);
+    probing = false;
+  }
+
+  function layoutPins(frame) {
+    var layer = pinLayer(frame);
+    if (!layer) return;
+    var viewer = frame.__viewer;
+    if (!viewer || !frame.__loaded || frame.__tilted) {
+      layer.hidden = true;
+      return;
+    }
+
+    var pins = Array.prototype.slice.call(layer.querySelectorAll('[data-lanelet]'));
+    probeCentres(frame, pins.map(function (pin) { return pin.dataset.lanelet; }));
+
+    // Read everything first, write afterwards: this runs on every frame of a
+    // pan, and a layout read taken after a style write re-flows the page. The
+    // border box is what the viewer sizes itself from and reports `getView`
+    // against; a pin's width is fixed for the life of a render -- the flip
+    // changes neither its text nor its box -- so it is measured once and kept
+    // on the element the server just made.
+    var box = frame.getBoundingClientRect();
+    var view = viewer.getView();
+    var width = box.width;
+    var height = box.height;
+    pins.forEach(function (pin) {
+      if (pin.__width === undefined) pin.__width = pin.offsetWidth;
+    });
+
+    var stacked = {};
+    pins.forEach(function (pin) {
+      var at = frame.__pinAt[pin.dataset.lanelet];
+      if (!at) {
+        pin.hidden = true;
+        return;
+      }
+      // Two places on one lanelet -- an ego watching the lane it starts on --
+      // would otherwise draw one pin exactly over the other.
+      var rank = stacked[pin.dataset.lanelet] || 0;
+      stacked[pin.dataset.lanelet] = rank + 1;
+      var x = width / 2 + (at.x - view.x) * view.scale;
+      var y = height / 2 - (at.y - view.y) * view.scale + rank * 19;
+      // Labels on the right half read back towards the middle -- the map's
+      // right edge is also where the viewer keeps its own zoom buttons -- and
+      // one that would overflow anyway is flipped wherever it sits.
+      var flipped = x > width * 0.5 || x + pin.__width > width - 6;
+      pin.hidden = false;
+      pin.classList.toggle('is-flipped', flipped);
+      pin.style.transform = 'translate(' + Math.round(x) + 'px, ' + Math.round(y) +
+        'px)' + (flipped ? ' translateX(-100%)' : '');
+    });
+    layer.hidden = false;
+  }
+
+  /* Move the view to hold every place this scenario names, once. */
+  function frameOnPins(frame) {
+    var viewer = frame.__viewer;
+    if (!viewer || !frame.__pinAt) return;
+
+    // The centres `layoutPins` just measured, rather than a second walk of the
+    // DOM to arrive at the same numbers.
+    var placed = Object.keys(frame.__pinAt)
+      .map(function (id) { return frame.__pinAt[id]; })
+      .filter(Boolean);
+    if (!placed.length) return;
+    var xs = placed.map(function (at) { return at.x; });
+    var ys = placed.map(function (at) { return at.y; });
+
+    var minX = Math.min.apply(null, xs);
+    var maxX = Math.max.apply(null, xs);
+    var minY = Math.min.apply(null, ys);
+    var maxY = Math.max.apply(null, ys);
+    var box = frame.getBoundingClientRect();
+    // A floor on the span, so one place -- or two on the same street -- is
+    // framed as a neighbourhood rather than as a kerbstone; and a margin, so
+    // the labels have somewhere to go.
+    var scale = Math.min(
+      box.width / Math.max(maxX - minX, 150),
+      box.height / Math.max(maxY - minY, 150)
+    ) * 0.72;
+    viewer.setView({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, scale: scale });
+  }
+
+  function layoutEveryPin() {
+    document.querySelectorAll('.ed-map-frame').forEach(layoutPins);
+  }
+
+  /* Coalesced to one layout per animation frame: the viewer emits several
+   * `viewchange` events per frame during an inertial pan, and dragging a window
+   * edge fires `resize` faster than the page can be laid out. */
+  var pinFrame = null;
+  function schedulePinLayout() {
+    if (pinFrame) return;
+    pinFrame = window.requestAnimationFrame(function () {
+      pinFrame = null;
+      layoutEveryPin();
+    });
+  }
+
+  /* Open the inspector on whatever named a lanelet the places panel drew.
+   *
+   * The panel already lists every place as a row carrying its lanelet and the
+   * request that selects its object, in document order. Reading the answer off
+   * the row is why the server sends no second copy of the mapping: two lists of
+   * the same thing are two lists to keep in step. */
+  function openPlace(lanelet) {
+    var row = placeRow(lanelet);
+    var url = row && row.getAttribute('hx-get');
+    if (!url || !window.htmx) return;
+    window.htmx.ajax('GET', url, { target: '#inspector', swap: 'innerHTML' });
+  }
+
+  /* The panel's row for a lanelet -- the first, when two places share one. */
+  function placeRow(lanelet) {
+    var panel = document.getElementById('scenario-map');
+    if (!panel || !(lanelet > 0)) return null;
+    return panel.querySelector('[data-focus-lanelet="' + Number(lanelet) + '"]');
   }
 
   /* ---------------------------------------------------------------------
@@ -476,6 +669,19 @@
       }
       return;
     }
+    // A place in the overview's list points the map at itself: the panel draws
+    // a whole city, and 12 m of lane in it is not findable by eye. The row is
+    // also an htmx button opening the object's inspector, so this does not
+    // swallow the click -- pointing at the place and saying what named it are
+    // two halves of the same answer.
+    var focus = event.target.closest && event.target.closest('[data-focus-lanelet]');
+    if (focus) {
+      var wanted = parseInt(focus.getAttribute('data-focus-lanelet'), 10);
+      var panel = document.querySelector('#scenario-map .ed-map-frame');
+      if (panel && panel.__viewer && wanted > 0) {
+        panel.__viewer.focusOn(wanted, { fraction: 0.3 });
+      }
+    }
     // Emptying a picked value: the map can set a lanelet but not unset one, and
     // a field that may be left blank -- the goal of an ego the TrafficManager
     // drives -- needs a way back to blank. It goes through the same `change` the
@@ -559,12 +765,38 @@
     scheduleRedraw();
     mountMaps();
     syncPickerHighlight();
+    // The pins are re-rendered by the server on every swap while the map they
+    // sit over is carried across it, so they are placed again from what the
+    // frame already measured.
+    layoutEveryPin();
+  }
+
+  /* The overview is a panel of its own, outside `#editor-body`, because it
+   * holds state a body swap would reset -- which search pattern is bound. This
+   * is how it hears that the document moved: it refreshes itself on the event,
+   * from a URL that carries the pattern it is showing. */
+  function afterSettle(event) {
+    var target = event.detail && event.detail.target;
+    if (target && target.id === 'scenario-map') {
+      // The panel replaced itself: its map is parked and put back, and its
+      // pins are new. Nothing outside it moved, so nothing outside it is redone.
+      mountMaps();
+      layoutEveryPin();
+      return;
+    }
+    refresh();
+    if (target && target.id === 'editor-body') {
+      document.body.dispatchEvent(new CustomEvent('scenario-changed'));
+    }
   }
 
   // `afterSettle` only: it fires after `afterSwap` for the same swap, and after
   // the swapped-in nodes have been laid out, which is what drawLinks measures.
   // Binding both ran every reap and mount twice per edit.
-  document.body.addEventListener('htmx:afterSettle', refresh);
-  window.addEventListener('resize', scheduleRedraw);
+  document.body.addEventListener('htmx:afterSettle', afterSettle);
+  window.addEventListener('resize', function () {
+    scheduleRedraw();
+    schedulePinLayout();
+  });
   refresh();
 })();

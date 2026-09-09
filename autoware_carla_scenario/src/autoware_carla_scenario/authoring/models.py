@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional, cast, get_args
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from .registry import get_action_spec
+from .registry import LaneletPlace, get_action_spec
 
 __all__ = [
     "ActionNode",
@@ -592,17 +592,38 @@ class LaneletSlot:
 
     Attributes:
         key: Stable address, ``"<owner id>.<field>"``, safe to put in a form.
-        label: How the slot is named to a person, for warnings and headings.
         owner_id: What the inspector selects when this slot is edited.
         holder: The object the id and the choice live on.
         field: ``"spawn"``, ``"goal"``, or the name of a lanelet parameter.
+        title: Who names the place -- an actor, an action, a condition.
+        role: What the place is to them -- ``"spawn"``, ``"goal"``, or the
+            parameter's own label.
+        place: What kind of place it is, from the field's spec.
+        of_entity: Whether :attr:`title` names an actor, which is what decides
+            how :attr:`label` reads.
     """
 
     key: str
-    label: str
     owner_id: str
     holder: Any
     field: str
+    title: str
+    role: str
+    place: LaneletPlace = "watched"
+    of_entity: bool = False
+
+    @property
+    def label(self) -> str:
+        """How the slot is named to a person, for warnings and headings.
+
+        Derived from the two halves rather than stored beside them: a consumer
+        that wants "NPC1" and "spawn" separately -- the editor's map draws them
+        as a pin -- would otherwise re-split this string, and the split and the
+        join drifted the moment both existed.
+        """
+        if self.of_entity:
+            return f"{self.title}'s {self.role} lanelet"
+        return f"{self.role} on {self.title}"
 
     @property
     def choice(self) -> LaneletChoice:
@@ -726,20 +747,26 @@ class ScenarioDocument(_Node):
             slots.append(
                 LaneletSlot(
                     key=f"{entity.id}.spawn",
-                    label=f"{name}'s spawn lanelet",
                     owner_id=entity.id,
                     holder=entity.spawn,
                     field="spawn",
+                    title=name,
+                    role="spawn",
+                    place="spawn",
+                    of_entity=True,
                 )
             )
             if entity.goal is not None:
                 slots.append(
                     LaneletSlot(
                         key=f"{entity.id}.goal",
-                        label=f"{name}'s goal lanelet",
                         owner_id=entity.id,
                         holder=entity.goal,
                         field="goal",
+                        title=name,
+                        role="goal",
+                        place="goal",
+                        of_entity=True,
                     )
                 )
         for action in self.actions:
@@ -747,24 +774,27 @@ class ScenarioDocument(_Node):
                 slots.append(
                     LaneletSlot(
                         key=f"{action.id}.{spec_field.name}",
-                        label=f"{spec_field.label} on {action.title or action.type}",
                         owner_id=action.id,
                         holder=action,
                         field=spec_field.name,
+                        title=action.title or action.type,
+                        role=spec_field.label,
+                        place=spec_field.place,
                     )
                 )
         for root in self.condition_roots():
             for node in root.walk():
                 spec = get_condition_spec(node.type)
                 for spec_field in searchable_lanelet_fields(spec):
-                    title = spec.title if spec is not None else node.type
                     slots.append(
                         LaneletSlot(
                             key=f"{node.id}.{spec_field.name}",
-                            label=f"{spec_field.label} on {title}",
                             owner_id=node.id,
                             holder=node,
                             field=spec_field.name,
+                            title=spec.title if spec is not None else node.type,
+                            role=spec_field.label,
+                            place=spec_field.place,
                         )
                     )
         return slots
@@ -794,10 +824,13 @@ class ScenarioDocument(_Node):
                 return self.lanelet_slot(key)
             return LaneletSlot(
                 key=key,
-                label=f"{entity.display_name}'s goal lanelet",
                 owner_id=entity.id,
                 holder=GoalSpec(),
                 field="goal",
+                title=entity.display_name,
+                role="goal",
+                place="goal",
+                of_entity=True,
             )
         return None
 

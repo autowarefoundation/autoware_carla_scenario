@@ -46,6 +46,7 @@ __all__ = [
     "ConstraintSpec",
     "FieldKind",
     "INT_KINDS",
+    "LaneletPlace",
     "INT_LIST_KINDS",
     "SEARCHABLE_LANELET_KINDS",
     "searchable_lanelet_fields",
@@ -146,6 +147,16 @@ class SelectOption:
     label: str
 
 
+#: What a lanelet-valued field names: where something starts, where something is
+#: sent, or a place the scenario only watches.
+#:
+#: Declared by the spec rather than guessed from whatever holds the field: a
+#: "Set Goal" action names a destination exactly as an ego's own goal does, and
+#: a map that inferred the answer from the holder drew the two with different
+#: glyphs.
+LaneletPlace = Literal["spawn", "goal", "watched"]
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """One editable parameter of a primitive.
@@ -159,6 +170,9 @@ class FieldSpec:
         unit: Unit suffix shown after the control (e.g. ``m``, ``s``).
         help: One-line hint rendered under the control.
         required: Whether the compiler rejects a missing/empty value.
+        place: For a lanelet field, what kind of place it names -- see
+            :data:`LaneletPlace`.  Read by the editor's map, which draws a
+            destination differently from a place merely watched.
     """
 
     name: str
@@ -169,6 +183,7 @@ class FieldSpec:
     unit: str = ""
     help: str = ""
     required: bool = True
+    place: LaneletPlace = "watched"
 
 
 @dataclass(frozen=True)
@@ -699,6 +714,7 @@ register_action_spec(
         fields=(
             FieldSpec(
                 name="goal_lanelet_id",
+                place="goal",
                 label="Goal lanelet",
                 kind="lanelet",
                 default=0,

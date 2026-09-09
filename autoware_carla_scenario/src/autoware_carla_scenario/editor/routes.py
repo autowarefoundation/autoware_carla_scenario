@@ -25,7 +25,7 @@ from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, dump_document_yaml
 from ..authoring.registry import TRUTHY_VALUES
-from . import map_preview
+from . import map_preview, scenario_map
 from .service import EditorError, EditorService, find_constraint
 
 logger = logging.getLogger(__name__)
@@ -171,12 +171,18 @@ async def create_draft(request: Request) -> RedirectResponse:
 def open_draft(
     request: Request, draft_id: str, selected: str = "scenario"
 ) -> HTMLResponse:
-    """Open the editor on a draft."""
+    """Open the editor on a draft.
+
+    The map panel is rendered with the page rather than fetched after it, so the
+    first thing on screen already says where the scenario happens.  It is the
+    only render that builds a map view here: every later one comes through
+    ``/map-view``, which is the panel refreshing itself.
+    """
     draft = _service(request).require_draft(draft_id)
+    context = _context(request, draft, selected)
+    context["view"] = scenario_map.build_map_view(draft.document)
     return _templates(request).TemplateResponse(
-        request=request,
-        name="editor.html",
-        context=_context(request, draft, selected),
+        request=request, name="editor.html", context=context
     )
 
 
@@ -525,6 +531,42 @@ async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
             "slot": slot,
             "slot_key": slot_key,
             "preview": result,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# The scenario on the map
+# ---------------------------------------------------------------------------
+
+
+@router.get("/draft/{draft_id}/map-view", response_class=HTMLResponse)
+def map_view(
+    request: Request, draft_id: str, pattern: int = 0, load_map: bool = False
+) -> HTMLResponse:
+    """Render the map panel above the timeline: every place the scenario names.
+
+    ``pattern`` binds one match of the searched lanelet, so an abstract
+    scenario is drawn as one of the concrete runs a sweep would perform rather
+    than as the set it stands for.  It is carried in this panel's own refresh
+    URL, which is re-rendered with the answer, so stepping through patterns
+    survives an edit somewhere else on the page.
+
+    ``load_map`` is what a first binding costs -- parsing a city -- and is
+    therefore asked for rather than assumed; once the map is cached every later
+    render binds without it.
+    """
+    draft = _service(request).require_draft(draft_id)
+    view = scenario_map.build_map_view(
+        draft.document, pattern=pattern, load_map=load_map
+    )
+    return _templates(request).TemplateResponse(
+        request=request,
+        name="partials/scenario_map.html",
+        context={
+            "draft": draft,
+            "document": draft.document,
+            "view": view,
         },
     )
 

@@ -14,6 +14,7 @@ breaking the page.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections import OrderedDict
@@ -44,6 +45,12 @@ _MAP_CACHE_SIZE = 2
 
 _MAP_CACHE: "OrderedDict[tuple[str, str], _LoadedMap]" = OrderedDict()
 
+#: Distinct constraint trees whose matches are remembered per map.  A session
+#: writes a bounded number of them -- one per edit to a search -- and each is a
+#: list of ids, so the cap is only there to stop a very long session growing
+#: without end.
+_MATCH_CACHE_SIZE = 64
+
 
 @dataclass
 class _LoadedMap:
@@ -52,6 +59,12 @@ class _LoadedMap:
     lanelet_map: Any
     routing_graph: Any
     lanelet_count: int
+    #: Matches by constraint tree.  Evaluating a search scans every lanelet in
+    #: the map, and the places panel re-renders on *every* edit -- renaming an
+    #: actor would otherwise re-scan a city to arrive at the same ids.  Kept
+    #: here rather than in a cache of its own because that is what makes it
+    #: correct: the answer belongs to this parse of this map, and dies with it.
+    matches: "OrderedDict[str, list[int]]" = field(default_factory=OrderedDict)
 
 
 @dataclass
@@ -293,20 +306,34 @@ def evaluate_slot(
     if not searching:
         return result
 
+    materialized = materialize_constraints(choice.constraints, document)
+    # The tree itself is the question being asked, so it is the key: two slots
+    # searching for the same thing, or the same slot across an edit that did not
+    # touch the search, are one answer.
+    asked = json.dumps(materialized, sort_keys=True, default=str)
+    remembered = loaded.matches.get(asked)
+    if remembered is not None:
+        loaded.matches.move_to_end(asked)
+        result.matched_ids = list(remembered)
+        return result
+
     from ..sweeper.constraints import (  # noqa: PLC0415
         find_matching_lanelets,
         parse_constraint,
     )
 
     try:
-        parsed = [
-            parse_constraint(cfg)
-            for cfg in materialize_constraints(choice.constraints, document)
-        ]
-        result.matched_ids = find_matching_lanelets(
+        parsed = [parse_constraint(cfg) for cfg in materialized]
+        matched = find_matching_lanelets(
             parsed, loaded.lanelet_map, loaded.routing_graph
         )
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not raised
         logger.info("Lanelet preview failed for %s: %s", slot.key, exc)
         result.error = f"Constraints could not be evaluated: {exc}"
+        return result
+
+    loaded.matches[asked] = matched
+    while len(loaded.matches) > _MATCH_CACHE_SIZE:
+        loaded.matches.popitem(last=False)
+    result.matched_ids = list(matched)
     return result

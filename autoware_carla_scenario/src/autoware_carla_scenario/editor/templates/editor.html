@@ -31,9 +31,22 @@
 {% endblock %}
 
 {% block content %}
-  <div style="padding-top:16px">
+  {# One grid for the whole editor: the status line, the export panel, the map,
+     the timeline and the inspector are all its items, so where the map sits is
+     a stylesheet's answer rather than a template's. `#editor-body` and the
+     workspace inside it are `display: contents` for exactly that reason -- the
+     swap target stays one element, and its children still lay out beside the
+     map rather than under it. #}
+  <div class="ed-stage">
     <div id="status"></div>
     {% include "partials/export_panel.html" %}
+    {# Outside `#editor-body`: an edit re-renders the body wholesale, and this
+       panel keeps state of its own -- which search pattern is bound -- that a
+       wholesale re-render would reset. It refreshes itself instead, on the
+       `scenario-changed` event `editor.js` fires after every body swap. #}
+    <section id="scenario-map" class="ed-panel">
+      {% include "partials/scenario_map.html" %}
+    </section>
     <div id="editor-body">
       {% include "partials/editor_body.html" %}
     </div>

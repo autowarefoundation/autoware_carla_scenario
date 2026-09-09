@@ -12,7 +12,7 @@ import io
 import re
 import zipfile
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
 import yaml
@@ -1381,3 +1381,220 @@ class TestMapViewerReuse:
         script = (Path(editor_app.__file__).parent / "static" / "editor.js").read_text()
         assert "viewerKey" in script
         assert "function reuseMap(" in script
+
+
+class TestScenarioMap:
+    """The places panel: every lanelet a scenario names, drawn once.
+
+    The canvas says what happens and in what order; these tests are about the
+    other half of the question -- where -- and about what an *abstract* scenario
+    draws, which is one bound pattern rather than a set of matches.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _unloaded_map(self) -> None:
+        """Start every test with no map parsed.
+
+        The parse cache is process-global on purpose -- a map takes seconds and
+        a session edits one -- so whether the panel binds a pattern depends on
+        what ran *before* it. Without this, a test asserting on the id a
+        document stores passed or failed on the order pytest happened to pick.
+        """
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+
+    def test_the_page_opens_with_the_places_on_it(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The first thing on screen already says where the scenario happens."""
+        body = client.get(f"/draft/{draft_id}").text
+        panel = body.split('id="scenario-map"', 1)[1].split('id="editor-body"', 1)[0]
+
+        assert 'data-viewer-key="scenario-map"' in panel
+        # The ego's spawn and goal, the NPC's spawn, and the lanelet the PASS
+        # condition watches -- every slot the document holds, not just spawns.
+        for label in ("Ego", "NPC1", "Position (Lanelet2)"):
+            assert label in panel
+        assert 'data-lanelet="183"' in panel  # the ego's spawn
+        assert 'data-lanelet="141"' in panel  # its goal
+
+    def test_the_map_outlines_every_place_at_once(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        highlight = (
+            client.get(f"/draft/{draft_id}/map-view")
+            .text.split('data-highlight="', 1)[1]
+            .split('"', 1)[0]
+        )
+        assert set(highlight.split(",")) == {"183", "141", "184"}
+
+    def test_clicking_a_place_opens_what_named_it(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The panel is read-only: a click routes to the object, not the id.
+
+        Each place is one row carrying its lanelet and the request that selects
+        what named it -- which is also what a click on the map reads, so the
+        mapping is not sent a second time.
+        """
+        body = client.get(f"/draft/{draft_id}/map-view").text
+
+        for lanelet, owner in ((183, "ego"), (184, "npc1")):
+            row = body.split(f'data-focus-lanelet="{lanelet}"', 1)[1].split(">", 1)[0]
+            assert f"/draft/{draft_id}/inspector/{owner}" in row
+        # And no picking: a place is edited where it is written.
+        assert "data-picks-into" not in body
+
+    def test_an_unloaded_map_offers_to_bind_rather_than_binding(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Binding parses a city, so it is asked for rather than assumed."""
+        body = client.get(f"/draft/{draft_id}/map-view").text
+
+        assert "Bind a pattern" in body
+        assert "searched, not bound yet" in body
+        # The default the document carries is still drawn: that is what a run
+        # without a sweep would use.
+        assert 'data-lanelet="184"' in body
+
+    def test_binding_draws_one_of_the_runs_a_sweep_would_perform(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+
+        assert "Pattern <b>1</b> of" in body
+        assert "bound: match 1 of" in body
+        # The bound lanelet is a match of the search, not the stored default.
+        highlight = body.split('data-highlight="', 1)[1].split('"', 1)[0]
+        assert "183" in highlight and "141" in highlight
+
+    def test_stepping_the_pattern_binds_a_different_lanelet(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Each step is one more of the runs the sweeper would enumerate."""
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        first = client.get(f"/draft/{draft_id}/map-view?pattern=0").text
+        third = client.get(f"/draft/{draft_id}/map-view?pattern=2").text
+
+        assert "Pattern <b>3</b> of" in third
+        bound_first = first.split('data-highlight="', 1)[1].split('"', 1)[0]
+        bound_third = third.split('data-highlight="', 1)[1].split('"', 1)[0]
+        assert bound_first != bound_third
+
+    def test_the_pattern_survives_an_edit_elsewhere(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The panel refreshes itself from a URL carrying what it is showing."""
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        body = client.get(f"/draft/{draft_id}/map-view?pattern=4").text
+
+        assert f'hx-get="/draft/{draft_id}/map-view?pattern=4"' in body
+        assert 'hx-trigger="scenario-changed from:body"' in body
+
+    def test_a_pattern_past_the_last_wraps_to_the_first(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The arrows can be held down without falling off the end."""
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        first = client.get(f"/draft/{draft_id}/map-view?pattern=0").text
+        count = int(first.split("Pattern <b>1</b> of ", 1)[1].split("\n", 1)[0].strip())
+        wrapped = client.get(f"/draft/{draft_id}/map-view?pattern={count}").text
+
+        assert "Pattern <b>1</b> of" in wrapped
+
+    def test_a_scenario_with_no_map_file_says_so(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """An empty box where a map should be is worse than no box."""
+        client.post(f"/draft/{draft_id}/scenario", data={"map_lanelet2_path": ""})
+        body = client.get(f"/draft/{draft_id}/map-view").text
+
+        assert "No map" in body
+        assert "ed-map-frame" not in body
+        # The places are still listed: they are what the document says.
+        assert "Ego" in body
+
+    @staticmethod
+    def _count_map_scans(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Count how often a search is really walked against the map.
+
+        The number is the point of the memo: matching visits every lanelet, and
+        a real map is many times the size of this fixture's.
+        """
+        from autoware_carla_scenario.sweeper import constraints
+
+        scans: list[int] = []
+        real = constraints.find_matching_lanelets
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            scans.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(constraints, "find_matching_lanelets", counted)
+        return scans
+
+    def test_an_edit_that_is_not_the_search_does_not_re_scan_the_map(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient, draft_id: str
+    ) -> None:
+        """The panel re-renders on every edit; the city is walked once."""
+        scans = self._count_map_scans(monkeypatch)
+
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        assert len(scans) == 1
+
+        client.post(f"/draft/{draft_id}/scenario", data={"title": "Renamed"})
+        client.get(f"/draft/{draft_id}/map-view")
+        assert len(scans) == 1, "an unrelated edit re-scanned the map"
+
+    def test_the_picker_shares_that_answer(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient, draft_id: str
+    ) -> None:
+        """Choosing a spawn or a goal in the inspector asks the same question.
+
+        The picker's match readout and the panel are two routes onto one
+        search, so the answer is remembered for both -- and the memo is keyed on
+        the constraint tree rather than on the slot, which is what makes that
+        true even for two slots searching for the same thing.
+        """
+        scans = self._count_map_scans(monkeypatch)
+
+        client.post(
+            f"/draft/{draft_id}/lanelet-preview",
+            data={"slot": "npc1.spawn", "load_map": "1"},
+        )
+        assert len(scans) == 1
+
+        # Re-opening the picker, and the panel drawing the same search.
+        client.post(f"/draft/{draft_id}/lanelet-preview", data={"slot": "npc1.spawn"})
+        client.get(f"/draft/{draft_id}/map-view")
+        assert len(scans) == 1, "the picker and the panel each walked the map"
+
+    def test_editing_the_search_does_re_scan(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+    ) -> None:
+        """The memo is keyed on the question, so a new question is asked."""
+        scans = self._count_map_scans(monkeypatch)
+
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        length = _entity(store, draft_id, "npc1").spawn.constraints[0].constraints[1]
+        client.post(
+            f"/draft/{draft_id}/constraint/{length.id}",
+            data={"rule": "greater_than_or_equal", "value": "30", "selected": "npc1"},
+        )
+        client.get(f"/draft/{draft_id}/map-view")
+
+        assert len(scans) == 2
+
+    def test_the_script_places_the_pins_it_is_handed(self) -> None:
+        """The labels are the server's; only the coordinates are the viewer's."""
+        script = (Path(editor_app.__file__).parent / "static" / "editor.js").read_text()
+        assert "function layoutPins(" in script
+        # Positions come from the viewer's own API rather than a second
+        # projection of the .osm, which could disagree with the drawing.
+        assert "focusOn(id)" in script
+        assert "getView()" in script

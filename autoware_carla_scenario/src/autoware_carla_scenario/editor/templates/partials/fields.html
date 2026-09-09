@@ -99,6 +99,27 @@
 {% endmacro %}
 
 
+{# One mounted Lanelet2 viewer, wherever it is drawn.
+
+   The data attributes *are* the contract with `editor.js` -- which module to
+   load, which .osm, what to outline, which layers a click may land on -- so
+   they are written once here rather than at each site that shows a map.  The
+   picker and the places panel differed by two attributes and drifted by three
+   the first time the contract grew a term. #}
+{% macro map_frame(key, draft, highlight, picks_into='', many=false) %}
+  <div class="ed-map-frame ed-map-full" hidden
+       data-viewer-key="{{ key }}"
+       data-map-viewer="{{ map_viewer_url() }}"
+       data-map-src="/draft/{{ draft.id }}/map.osm"
+       data-highlight="{{ highlight }}"
+       data-picks-layer="{{ lanelet_pick_layers }}"
+       {% if picks_into %}data-picks-into="{{ picks_into }}"{% endif %}
+       {% if many %}data-picks-many="1"{% endif %}>
+    <noscript>The map needs JavaScript.</noscript>
+  </div>
+{% endmacro %}
+
+
 {# The map, over the whole viewport: the inspector column is 384px wide and a
    city map that size cannot be picked from.  Opening it is also the first time
    the map is fetched and parsed, instead of on every inspector render.
@@ -138,21 +159,13 @@
           </div>
         </div>
         <div class="ed-modal-body">
-          <div class="ed-modal-map">
+          <div class="ed-modal-map" data-viewer-scope>
             {# `data-viewer-key`: an edit made in the side panel re-renders the
                whole editor body, and the picker is re-opened on the other side
                of that swap. The key is what carries the parsed map across it,
                pan and zoom included, instead of re-fetching the .osm. #}
-            <div class="ed-map-frame ed-map-full" hidden
-                 data-viewer-key="picker-{{ name }}"
-                 data-map-viewer="{{ map_viewer_url() }}"
-                 data-map-src="/draft/{{ draft.id }}/map.osm"
-                 data-highlight="{{ shown|replace(' ', '') }}"
-                 data-picks-into="pick-{{ name }}"
-                 data-picks-layer="{{ lanelet_pick_layers }}"
-                 {% if many %}data-picks-many="1"{% endif %}>
-              <noscript>The map picker needs JavaScript.</noscript>
-            </div>
+            {{ map_frame('picker-' ~ name, draft, shown|replace(' ', ''),
+                         picks_into='pick-' ~ name, many=many) }}
             <p class="ed-help" data-viewer-unavailable hidden>
               The Lanelet2 map viewer could not be loaded, so there is nothing
               to pick from. Check that this scenario's Lanelet2 file path is

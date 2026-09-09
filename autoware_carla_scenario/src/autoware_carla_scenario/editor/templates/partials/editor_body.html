@@ -2,23 +2,30 @@
    are re-rendered together so they can never drift apart. #}
 {% import "partials/icons.html" as ic %}
 
-<div id="validation" style="margin-bottom:12px">
-  {% include "partials/validation.html" %}
+{# What the whole page is being told, in one band across it: the verdict on
+   the document and, when an edit was refused, why. #}
+<div class="ed-body-top">
+  <div id="validation">
+    {% include "partials/validation.html" %}
+  </div>
+
+  {% if error %}
+    <div class="ed-notice ed-notice-bad" style="margin-top:12px">
+      {{ ic.icon('alert', 15) }}
+      <div><div class="ed-notice-title">That edit was not applied</div>{{ error }}</div>
+    </div>
+  {% endif %}
 </div>
 
-{% if error %}
-  <div class="ed-notice ed-notice-bad" style="margin-bottom:12px">
-    {{ ic.icon('alert', 15) }}
-    <div><div class="ed-notice-title">That edit was not applied</div>{{ error }}</div>
-  </div>
-{% endif %}
-
+{# `display: contents` on both, so the timeline and the inspector are items of
+   the page grid rather than of a box inside it -- which is what lets the map
+   panel sit beside either of them without leaving `#editor-body`. #}
 <div class="ed-workspace">
-  <div style="min-width:0">
+  <div class="ed-canvas-col">
     {% include "partials/canvas.html" %}
   </div>
-  <aside style="min-width:0">
-    <div id="inspector" style="position:sticky; top:70px">
+  <aside class="ed-inspector-col">
+    <div id="inspector">
       {% include "partials/inspector.html" %}
     </div>
   </aside>
