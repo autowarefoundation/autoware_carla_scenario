@@ -27,6 +27,83 @@ There is no editor-only runtime. Every action a document names is built by
 `autoware_carla_scenario.conditions`, and every spawn constraint is evaluated by
 the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
+## Where it happens: the places panel
+
+Above the timeline is one map carrying every lanelet the scenario names -- each
+entity's spawn, the ego's goal, and the lanelet every condition watches. The
+canvas says *what* happens and in what order; it has no way to say *where*, and
+until this panel existed the answer was a scatter of ids across lane heads and
+condition cards that only meant something with the map open in another window.
+
+```
+Places                                            < Pattern 1 of 133 >
++--------------------------------------+---------------------------+
+|            (o) NPC1 spawn BOUND      | Ego  spawn                |
+|                                      |   lanelet 183 · 0 m       |
+|      (o) Ego spawn                   |   pinned                  |
+|      (o) Position (Lanelet2) lanelet | NPC1 spawn                |
+|                                      |   lanelet 4 · derived     |
+|                                      |   bound: match 1 of 133   |
++--------------------------------------+---------------------------+
+```
+
+Each place is a **pin in its actor's track colour** -- the same hue that actor's
+lane head and every condition naming it already wear -- with a glyph for what
+the place is: a target for a spawn, a flag for a goal, an eye for a lanelet
+something watches. The viewer has one highlight channel, so the outline says
+"this scenario touches here" and the pins say which of them is which.
+
+The list beside the map is the same places in document order. Clicking one opens
+the object that named it in the inspector *and* points the map at it; clicking a
+place on the map does the same, because the overview draws places the document
+already names and the only thing a click there can mean is "show me what named
+this". Nothing is edited here -- a lanelet is still set where it is written, in
+the picker its own field opens.
+
+### An abstract scenario draws one bound pattern
+
+A scenario whose lanelet is a constraint search does not name a place: it names
+a **set**, and the sweeper runs it once per member. Outlining all 133 matches
+draws the *search*, and none of those 133 runs looks like that picture. So one
+match is **bound** -- through the same `swept_slot` the exported config sweeps
+and the same constraint engine the sweep evaluates -- and the panel says which
+of how many is on screen. The arrows step through the runs a `--multirun` sweep
+would perform, one concrete scenario at a time.
+
+Everything else keeps the id stored beside it, because that is exactly what a
+run that does not sweep uses: the sweeper enumerates a single target key, so at
+most one lanelet in a document is ever bound.
+
+Binding means parsing the map on the server, which is measured in seconds, so it
+is a button (**Bind a pattern**) rather than something every page load pays for.
+Once the map is cached every later render binds without being asked, including
+the panel's own refresh after an edit.
+
+### Where a pin goes
+
+The labels are the server's -- rendered with the panel, beside the list that
+repeats them -- and only the *coordinates* are the viewer's. `editor.js` asks it
+through its public API: `focusOn(id)` centres the view on a primitive, so
+focusing one and reading `getView()` back reports that lanelet's centre in the
+map's own coordinates, and the view is then put back where it was. The
+alternative was projecting the `.osm` a second time in JavaScript, which is a
+second answer to "where is this" that can disagree with the drawing it is laid
+over. Each lanelet is measured once and kept on the frame, which is the frame
+`reuseMap()` parks across a re-render, so an edit re-places the pins without
+asking the map anything.
+
+The panel frames itself on the places rather than on the whole city when the map
+loads, and a pan or zoom after that is the person's: a re-render carries it
+across, exactly as the picker's does. Tilted into the viewer's 3D view the pins
+hide themselves, because `getView()` then reports drawing coordinates and a
+point on a hill and the ground behind it are drawn in the same place.
+
+This is a second parse of the same `.osm` while a picker is open, which is the
+cost the inspector's own map was removed to avoid. It is a different drawing
+rather than the same one twice: the picker answers "which lanelet is this
+field", and the overview answers "where is this scenario" -- a question nothing
+else on the page answers at all.
+
 ## The canvas
 
 The main view is a **swimlane DAG drawn as a DAW arrangement**: one track per

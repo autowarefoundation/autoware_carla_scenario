@@ -34,6 +34,14 @@
   <div style="padding-top:16px">
     <div id="status"></div>
     {% include "partials/export_panel.html" %}
+    {# Above the timeline, and outside `#editor-body`: an edit re-renders the
+       body wholesale, and this panel keeps state of its own -- which search
+       pattern is bound -- that a wholesale re-render would reset. It refreshes
+       itself instead, on the `scenario-changed` event `editor.js` fires after
+       every body swap. #}
+    <section id="scenario-map" class="ed-panel" style="margin-bottom:12px">
+      {% include "partials/scenario_map.html" %}
+    </section>
     <div id="editor-body">
       {% include "partials/editor_body.html" %}
     </div>

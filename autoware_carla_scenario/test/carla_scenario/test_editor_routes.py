@@ -1381,3 +1381,134 @@ class TestMapViewerReuse:
         script = (Path(editor_app.__file__).parent / "static" / "editor.js").read_text()
         assert "viewerKey" in script
         assert "function reuseMap(" in script
+
+
+class TestScenarioMap:
+    """The panel above the timeline: every place a scenario names, drawn once.
+
+    The canvas says what happens and in what order; these tests are about the
+    other half of the question -- where -- and about what an *abstract* scenario
+    draws, which is one bound pattern rather than a set of matches.
+    """
+
+    def test_the_page_opens_with_the_places_on_it(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The first thing on screen already says where the scenario happens."""
+        body = client.get(f"/draft/{draft_id}").text
+        panel = body.split('id="scenario-map"', 1)[1].split('id="editor-body"', 1)[0]
+
+        assert 'data-viewer-key="scenario-map"' in panel
+        # The ego's spawn and goal, the NPC's spawn, and the lanelet the PASS
+        # condition watches -- every slot the document holds, not just spawns.
+        for label in ("Ego", "NPC1", "Position (Lanelet2)"):
+            assert label in panel
+        assert 'data-lanelet="183"' in panel  # the ego's spawn
+        assert 'data-lanelet="141"' in panel  # its goal
+
+    def test_the_map_outlines_every_place_at_once(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        highlight = (
+            client.get(f"/draft/{draft_id}/map-view")
+            .text.split('data-highlight="', 1)[1]
+            .split('"', 1)[0]
+        )
+        assert set(highlight.split(",")) == {"183", "141", "184"}
+
+    def test_clicking_a_place_opens_what_named_it(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The overview is read-only: a click routes to the object, not the id."""
+        body = client.get(f"/draft/{draft_id}/map-view").text
+        owners = body.split("data-owners='", 1)[1].split("'", 1)[0]
+
+        assert '"183": "ego"' in owners
+        assert '"184": "npc1"' in owners
+        assert f'data-opens-inspector="/draft/{draft_id}/inspector/"' in body
+        # And no picking: a place is edited where it is written.
+        assert "data-picks-into" not in body
+
+    def test_an_unloaded_map_offers_to_bind_rather_than_binding(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Binding parses a city, so it is asked for rather than assumed."""
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+        body = client.get(f"/draft/{draft_id}/map-view").text
+
+        assert "Bind a pattern" in body
+        assert "searched, not bound yet" in body
+        # The default the document carries is still drawn: that is what a run
+        # without a sweep would use.
+        assert 'data-lanelet="184"' in body
+
+    def test_binding_draws_one_of_the_runs_a_sweep_would_perform(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+
+        assert "Pattern <b>1</b> of" in body
+        assert "bound: match 1 of" in body
+        # The bound lanelet is a match of the search, not the stored default.
+        highlight = body.split('data-highlight="', 1)[1].split('"', 1)[0]
+        assert "183" in highlight and "141" in highlight
+
+    def test_stepping_the_pattern_binds_a_different_lanelet(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Each step is one more of the runs the sweeper would enumerate."""
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        first = client.get(f"/draft/{draft_id}/map-view?pattern=0").text
+        third = client.get(f"/draft/{draft_id}/map-view?pattern=2").text
+
+        assert "Pattern <b>3</b> of" in third
+        bound_first = first.split('data-highlight="', 1)[1].split('"', 1)[0]
+        bound_third = third.split('data-highlight="', 1)[1].split('"', 1)[0]
+        assert bound_first != bound_third
+
+    def test_the_pattern_survives_an_edit_elsewhere(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The panel refreshes itself from a URL carrying what it is showing."""
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        body = client.get(f"/draft/{draft_id}/map-view?pattern=4").text
+
+        assert f'hx-get="/draft/{draft_id}/map-view?pattern=4"' in body
+        assert 'hx-trigger="scenario-changed from:body"' in body
+
+    def test_a_pattern_past_the_last_wraps_to_the_first(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The arrows can be held down without falling off the end."""
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        first = client.get(f"/draft/{draft_id}/map-view?pattern=0").text
+        count = int(first.split("Pattern <b>1</b> of ", 1)[1].split("\n", 1)[0].strip())
+        wrapped = client.get(f"/draft/{draft_id}/map-view?pattern={count}").text
+
+        assert "Pattern <b>1</b> of" in wrapped
+
+    def test_a_scenario_with_no_map_file_says_so(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """An empty box where a map should be is worse than no box."""
+        client.post(f"/draft/{draft_id}/scenario", data={"map_lanelet2_path": ""})
+        body = client.get(f"/draft/{draft_id}/map-view").text
+
+        assert "No map" in body
+        assert "ed-map-frame" not in body
+        # The places are still listed: they are what the document says.
+        assert "Ego" in body
+
+    def test_the_script_places_the_pins_it_is_handed(self) -> None:
+        """The labels are the server's; only the coordinates are the viewer's."""
+        script = (Path(editor_app.__file__).parent / "static" / "editor.js").read_text()
+        assert "function layoutPins(" in script
+        # Positions come from the viewer's own API rather than a second
+        # projection of the .osm, which could disagree with the drawing.
+        assert "focusOn(id)" in script
+        assert "getView()" in script

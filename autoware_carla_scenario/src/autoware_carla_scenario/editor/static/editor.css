@@ -1263,3 +1263,167 @@ details > summary:hover { color: var(--ink-body); }
   color: var(--env);
   flex: none;
 }
+
+/* ------------------------------------------------------------------ places */
+
+/* The scenario as places, above the timeline that says when.
+ *
+ * One map, at the top of the page, drawing every lanelet the document names:
+ * the spawns, the goal, and the lanelets conditions watch. The outline is the
+ * viewer's single highlight channel, so the pins are what say which place is
+ * which -- each one tinted with its actor's track colour, the same hue the
+ * lane head and every condition naming that actor wear. */
+
+.ed-mapview-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .ed-mapview-body { grid-template-columns: minmax(0, 1fr); }
+  .ed-mapview-side { border-left: 0; border-top: 1px solid var(--line); }
+}
+
+.ed-mapview-map {
+  position: relative;
+  min-width: 0;
+  height: 340px;
+}
+
+/* The map is the panel's own floor: its border is the panel's, so a second one
+   around the canvas would draw a box inside a box. */
+.ed-mapview-map .ed-map-frame {
+  border: 0;
+  border-radius: 0;
+}
+
+.ed-mapview-none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+  color: var(--ink-muted);
+  background: var(--surface-sunken);
+}
+.ed-mapview-none p { margin: 0; font-size: 12px; max-width: 34ch; }
+
+.ed-mapview-side {
+  border-left: 1px solid var(--line);
+  padding: 12px;
+  height: 340px;
+  overflow-y: auto;
+}
+
+/* Pins: positioned by `editor.js` from the viewer's own view, laid over the
+   canvas rather than drawn into it -- the map is the viewer's to paint. */
+.ed-pins {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ed-pin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Half the dot, so the transform lands the dot's centre on the lanelet and
+     the label reads away from it. */
+  margin: -9px 0 0 -9px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ed-pin-dot {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--pin-hue);
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--surface), 0 1px 3px rgba(16, 20, 30, 0.28);
+}
+
+.ed-pin-label {
+  padding: 1px 6px 2px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--pin-hue);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(16, 20, 30, 0.14);
+}
+.ed-pin-label .role { color: var(--ink-muted); font-weight: 400; }
+.ed-pin-label .bound {
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Which of a search's matches is on screen. */
+.ed-pattern { display: flex; align-items: center; gap: 7px; }
+.ed-pattern-count { font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; }
+.ed-pattern-count b { color: var(--ink); font-weight: 650; }
+.ed-pattern-step {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.ed-pattern-step:hover {
+  background: var(--accent-wash);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* Every place, in document order -- which is the order a sweep would drive
+   them in, so the list and the sweep agree about what comes first. */
+.ed-point-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+
+.ed-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ed-point:hover { background: var(--surface-sunken); border-color: var(--line); }
+.ed-point.is-unset { opacity: 0.6; }
+.ed-point-glyph { flex: none; margin-top: 1px; color: var(--point-hue); }
+.ed-point-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ed-point-name { font-size: 12px; font-weight: 600; color: var(--ink); }
+.ed-point-name .role { color: var(--ink-muted); font-weight: 400; }
+.ed-point-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-body); }
+.ed-point-meta .dot {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+.ed-point-note { font-size: 10.5px; color: var(--ink-faint); }
+.ed-point-note.is-bound { color: var(--accent); }

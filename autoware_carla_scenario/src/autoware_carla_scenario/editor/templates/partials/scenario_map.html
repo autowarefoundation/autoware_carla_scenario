@@ -1,0 +1,172 @@
+{% import "partials/icons.html" as ic %}
+{% import "partials/fields.html" as f %}
+{# The scenario as places, above the timeline that says when.
+
+   The arrangement canvas is about order; it has no way to say *where*. Spawns,
+   the goal and the lanelets conditions watch are ids scattered across lane
+   heads and cards -- numbers that mean nothing until someone opens the map in
+   another window. Here they are one drawing: every place outlined on the map
+   the scenario actually runs on, each with a pin saying whose it is.
+
+   A searched lanelet is drawn as **one bound pattern** rather than as its
+   matches. A search names a set and the sweeper runs the scenario once per
+   member, so outlining all of them draws the search instead of the scenario --
+   and none of those runs looks like that picture. The arrows step through the
+   runs a sweep would perform, one concrete scenario at a time.
+
+   The pins are positioned by `editor.js` from the viewer's own view, because
+   only the viewer knows where a lanelet ended up on screen; everything they
+   say is rendered here, so the drawing and the list below cannot disagree. #}
+
+{%- set KIND_GLYPH = {'spawn': 'target', 'goal': 'flag', 'watched': 'eye'} -%}
+{%- set refresh = '/draft/' ~ draft.id ~ '/map-view?pattern=' ~ view.pattern -%}
+
+{# This element carries the panel's own refresh: it is re-rendered by the swap
+   it asks for, so the pattern someone stepped to is baked into the next URL and
+   survives an edit made anywhere else on the page. #}
+<div class="ed-mapview"
+     hx-get="{{ refresh }}"
+     hx-trigger="scenario-changed from:body"
+     hx-target="#scenario-map" hx-swap="innerHTML">
+
+  <div class="ed-panel-head">
+    <div>
+      <div class="ed-panel-title">Places</div>
+      <div class="ed-panel-sub">
+        Every lanelet this scenario names, on the map it runs on
+      </div>
+    </div>
+
+    {% if view.pattern_count %}
+      {# One of the runs a sweep would perform, chosen by hand. #}
+      <div class="ed-pattern">
+        <button class="ed-pattern-step" title="The previous match"
+                hx-get="/draft/{{ draft.id }}/map-view?pattern={{ view.previous_pattern }}"
+                hx-target="#scenario-map" hx-swap="innerHTML">
+          {{ ic.icon('left', 12) }}
+        </button>
+        <span class="ed-pattern-count">
+          Pattern <b>{{ view.pattern + 1 }}</b> of {{ view.pattern_count }}
+        </span>
+        <button class="ed-pattern-step" title="The next match"
+                hx-get="/draft/{{ draft.id }}/map-view?pattern={{ view.next_pattern }}"
+                hx-target="#scenario-map" hx-swap="innerHTML">
+          {{ ic.icon('right', 12) }}
+        </button>
+      </div>
+    {% elif view.searching %}
+      <button class="ed-btn-sm"
+              hx-get="/draft/{{ draft.id }}/map-view?load_map=1"
+              hx-target="#scenario-map" hx-swap="innerHTML"
+              hx-indicator="#map-bind-spinner">
+        <span id="map-bind-spinner" class="htmx-indicator ed-spinner"></span>
+        Bind a pattern
+      </button>
+    {% endif %}
+  </div>
+
+  <div class="ed-mapview-body">
+    <div class="ed-mapview-map" data-viewer-scope>
+      {% if document.map.lanelet2_path %}
+        {# `data-viewer-key` parks the parsed map across a re-render, exactly as
+           the picker's does: this panel re-renders on every edit, and refetching
+           a city each time is what that key exists to avoid. #}
+        <div class="ed-map-frame ed-map-full" hidden
+             data-viewer-key="scenario-map"
+             data-map-viewer="{{ map_viewer_url() }}"
+             data-map-src="/draft/{{ draft.id }}/map.osm"
+             data-highlight="{{ view.highlight_ids|join(',') }}"
+             data-picks-layer="{{ lanelet_pick_layers }}"
+             data-opens-inspector="/draft/{{ draft.id }}/inspector/"
+             data-owners='{{ view.owners_by_lanelet()|tojson }}'>
+          <noscript>The map needs JavaScript.</noscript>
+        </div>
+        {# Rendered here, positioned there: the labels are the server's, the
+           coordinates are the viewer's. #}
+        <div class="ed-pins" data-pins hidden>
+          {% for point in view.points if point.placed %}
+            {%- set hue = f.entity_hue(point.entity_id, document)|trim or 'var(--accent)' -%}
+            <div class="ed-pin" hidden
+                 data-lanelet="{{ point.lanelet_id }}"
+                 style="--pin-hue: {{ hue }}">
+              <span class="ed-pin-dot">{{ ic.icon(KIND_GLYPH.get(point.kind, 'eye'), 9) }}</span>
+              <span class="ed-pin-label">
+                {{ point.title }} <span class="role">{{ point.role }}</span>
+                {%- if point.bound %} <span class="bound">bound</span>{% endif %}
+              </span>
+            </div>
+          {% endfor %}
+        </div>
+        <p class="ed-help" data-viewer-unavailable hidden>
+          The Lanelet2 map viewer could not be loaded, so there is nothing to
+          draw. The places are listed beside this either way.
+        </p>
+      {% else %}
+        <div class="ed-mapview-none">
+          <div class="ed-empty-title">No map</div>
+          <p>Set this scenario's Lanelet2 (.osm) path in the Scenario inspector
+             to see where it happens.</p>
+        </div>
+      {% endif %}
+    </div>
+
+    <aside class="ed-mapview-side">
+      {% if view.searching %}
+        <p class="ed-map-key">
+          {% if view.bound %}
+            <b>{{ view.swept_label }}</b> is a constraint search, so this
+            scenario is one of {{ view.pattern_count }} runs. The arrows above
+            bind another, the way a sweep binds one per run.
+          {% else %}
+            <b>{{ view.swept_label }}</b> is a constraint search: it names a set
+            of lanelets, not one place. Bind a pattern to draw one of the runs a
+            sweep would perform.
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% if view.error %}
+        <div class="ed-notice ed-notice-warn" style="padding:8px 10px; font-size:12px">
+          {{ ic.icon('alert', 14) }}<div>{{ view.error }}</div>
+        </div>
+      {% endif %}
+
+      <div class="ed-point-list">
+        {% for point in view.points %}
+          {%- set hue = f.entity_hue(point.entity_id, document)|trim or 'var(--accent)' -%}
+          {# Selecting the object that named the place, and pointing the map at
+             it: the two halves of "what is this pin". #}
+          <button class="ed-point {% if not point.placed %}is-unset{% endif %}"
+                  style="--point-hue: {{ hue }}"
+                  data-focus-lanelet="{{ point.lanelet_id }}"
+                  hx-get="/draft/{{ draft.id }}/inspector/{{ point.owner_id }}"
+                  hx-target="#inspector" hx-swap="innerHTML">
+            <span class="ed-point-glyph">
+              {{ ic.icon(KIND_GLYPH.get(point.kind, 'eye'), 12) }}
+            </span>
+            <span class="ed-point-text">
+              <span class="ed-point-name">
+                {{ point.title }} <span class="role">{{ point.role }}</span>
+              </span>
+              <span class="ed-point-meta">
+                {% if point.placed %}
+                  lanelet {{ point.lanelet_id }}
+                {% else %}
+                  not set
+                {% endif %}
+                {% if point.detail %}
+                  <span class="dot"></span>{{ point.detail }}
+                {% endif %}
+              </span>
+              <span class="ed-point-note {% if point.bound %}is-bound{% endif %}">
+                {{ point.note }}
+              </span>
+            </span>
+          </button>
+        {% else %}
+          <p class="ed-help">This scenario names no lanelet yet.</p>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+</div>
