@@ -1384,12 +1384,25 @@ class TestMapViewerReuse:
 
 
 class TestScenarioMap:
-    """The panel above the timeline: every place a scenario names, drawn once.
+    """The places panel: every lanelet a scenario names, drawn once.
 
     The canvas says what happens and in what order; these tests are about the
     other half of the question -- where -- and about what an *abstract* scenario
     draws, which is one bound pattern rather than a set of matches.
     """
+
+    @pytest.fixture(autouse=True)
+    def _unloaded_map(self) -> None:
+        """Start every test with no map parsed.
+
+        The parse cache is process-global on purpose -- a map takes seconds and
+        a session edits one -- so whether the panel binds a pattern depends on
+        what ran *before* it. Without this, a test asserting on the id a
+        document stores passed or failed on the order pytest happened to pick.
+        """
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
 
     def test_the_page_opens_with_the_places_on_it(
         self, client: TestClient, draft_id: str
@@ -1433,9 +1446,6 @@ class TestScenarioMap:
         self, client: TestClient, draft_id: str
     ) -> None:
         """Binding parses a city, so it is asked for rather than assumed."""
-        from autoware_carla_scenario.editor import map_preview
-
-        map_preview.clear_cache()
         body = client.get(f"/draft/{draft_id}/map-view").text
 
         assert "Bind a pattern" in body
@@ -1447,9 +1457,6 @@ class TestScenarioMap:
     def test_binding_draws_one_of_the_runs_a_sweep_would_perform(
         self, client: TestClient, draft_id: str
     ) -> None:
-        from autoware_carla_scenario.editor import map_preview
-
-        map_preview.clear_cache()
         body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
 
         assert "Pattern <b>1</b> of" in body
