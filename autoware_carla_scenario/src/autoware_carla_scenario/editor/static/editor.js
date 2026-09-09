@@ -187,7 +187,7 @@
      than captured at mount: under reuse the frame outlives several renders of
      the fragment around it, and the caption is a fresh element every time. */
   function previewOf(frame) {
-    return frame.closest('.ed-preview, .ed-modal-body') || document;
+    return frame.closest('.ed-modal-body') || document;
   }
 
   function revealHint(frame) {
@@ -304,41 +304,29 @@
           return;
         }
 
-        var into = frame.dataset.picksInto;
-        if (into) {
-          var input = document.getElementById(into);
-          if (!input) return;
+        // Every map on the page is a picker's: the field it writes into is
+        // what the map was opened from.
+        var input = document.getElementById(frame.dataset.picksInto || '');
+        if (!input) return;
 
-          if (frame.dataset.picksMany) {
-            // Toggling, so a set is built by clicking rather than by typing a
-            // comma-separated list nobody can check by eye.
-            var chosen = ids(input.value);
-            var at = chosen.indexOf(Number(picked));
-            if (at >= 0) chosen.splice(at, 1);
-            else chosen.push(Number(picked));
-            input.value = chosen.join(', ');
-            viewer.setHighlight(chosen);
-            say(frame, chosen.length + ' selected');
-            return;
-          }
-
-          input.value = String(picked);
-          closePickers();
-          // Dispatched last: the form's `change` trigger re-renders the whole
-          // inspector, taking this modal with it.
-          input.dispatchEvent(new Event('change', { bubbles: true }));
+        if (frame.dataset.picksMany) {
+          // Toggling, so a set is built by clicking rather than by typing a
+          // comma-separated list nobody can check by eye.
+          var chosen = ids(input.value);
+          var at = chosen.indexOf(Number(picked));
+          if (at >= 0) chosen.splice(at, 1);
+          else chosen.push(Number(picked));
+          input.value = chosen.join(', ');
+          viewer.setHighlight(chosen);
+          say(frame, chosen.length + ' selected');
           return;
         }
 
-        if (!window.htmx) return;
-        var draft = frame.dataset.draft;
-        var entity = frame.dataset.entity;
-        if (!draft || !entity) return;
-        window.htmx.ajax('POST', '/draft/' + draft + '/entity/' + entity, {
-          target: '#editor-body',
-          swap: 'innerHTML',
-          values: { spawn_lanelet_id: String(picked) },
-        });
+        input.value = String(picked);
+        closePickers();
+        // Dispatched last: the form's `change` trigger re-renders the whole
+        // inspector, taking this modal with it.
+        input.dispatchEvent(new Event('change', { bubbles: true }));
       });
 
       viewer.loadUrl(frame.dataset.mapSrc);

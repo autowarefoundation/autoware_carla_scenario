@@ -150,7 +150,7 @@
     </div>
     <div id="picker-matches"
          hx-post="/draft/{{ draft.id }}/spawn-preview"
-         hx-vals='{"entity_id": "{{ target.id }}", "in_picker": "1"}'
+         hx-vals='{"entity_id": "{{ target.id }}"}'
          hx-trigger="load delay:200ms"
          hx-swap="innerHTML">
       <p class="ed-help">Loading&hellip;</p>
@@ -212,18 +212,6 @@
     {% endif %}
   </form>
 {% endcall %}
-
-<h4 class="ed-subheading">{{ ic.icon('map', 12) }} On the map</h4>
-
-{# Shown for both spawn modes: a hand-typed lanelet ID is worth seeing on a map
-   too, and clicking one is the quickest way to change it. #}
-<div id="spawn-preview"
-     hx-post="/draft/{{ draft.id }}/spawn-preview"
-     hx-vals='{"entity_id": "{{ target.id }}"}'
-     hx-trigger="load delay:200ms"
-     hx-swap="innerHTML">
-  <p class="ed-help">Loading&hellip;</p>
-</div>
 
 {% if target.kind != 'ego' or document.entities|length > 1 %}
   <button class="ed-btn-danger" style="width:100%; margin-top:16px"

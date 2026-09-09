@@ -289,8 +289,9 @@ on that same map as they are counted.
 
 **Constraint search** hands the lanelet choice to the existing
 lanelet-constraint sweeper. The tree is edited in the picker, each node with its
-own parameters — the inspector column is behind the map while it is open — and
-is serialised straight into `sweep.constraints`:
+own parameters — the inspector column is behind the map while it is open — with
+the match count beside it outlining what it found on that same map, and is
+serialised straight into `sweep.constraints`:
 
 ```yaml
 sweep:
@@ -339,25 +340,26 @@ server and are unaffected.
 
 ### The map is parsed once
 
-htmx replaces the whole inspector on every edit, and the preview then re-renders
-itself, so the server sends a brand-new, empty map frame each time. Mounting
-that frame refetched the `.osm` and parsed it again in wasm — one fetch per
-edit, for a map that had not changed.
+htmx replaces the whole inspector on every edit, so the server sends a
+brand-new, empty map frame each time. Mounting that frame refetched the `.osm`
+and parsed it again in wasm — one fetch per edit, for a map that had not
+changed.
 
 The frame that already holds the parsed scene carries a `data-viewer-key`, and
 `reuseMap()` in `editor.js` swaps it back in over the fresh one, copying across
-only what actually differs: which entity the preview is for, and which lanelets
-are outlined. The whole frame moves rather than the canvas inside it — the
-viewer keeps a reference to the element it was constructed with and observes it
-for resizes, so lifting the canvas out would leave it measuring a node that is
-no longer on the page. Panning and zooming survive an edit as a consequence,
-which re-mounting had been silently throwing away.
+only what actually differs: which lanelets are outlined. The whole frame moves
+rather than the canvas inside it — the viewer keeps a reference to the element
+it was constructed with and observes it for resizes, so lifting the canvas out
+would leave it measuring a node that is no longer on the page. Panning and
+zooming survive an edit as a consequence, which re-mounting had been silently
+throwing away.
 
-A picker is keyed too. An edit made in its side panel — the spawn's fixed or
-searched choice, its constraints — posts like every other control and swaps the
-whole editor body, which builds a fresh copy of the modal while the open one
-hangs off `<body>`. The fresh copy is swapped in behind the person using it, and
-the key is what carries the parsed map across that, pan and zoom included.
+That is what makes the picker editable. An edit in its side panel — the spawn's
+fixed or searched choice, its constraints, where along the lanelet — posts like
+every other control and swaps the whole editor body, which builds a fresh copy
+of the modal while the open one hangs off `<body>`. The fresh copy is swapped in
+behind the person using it, and the key carries the parsed map across, pan and
+zoom included.
 
 It is the **only** renderer. A server-rendered SVG used to sit behind it as an
 offline fallback, but the page loads htmx from a CDN and every control here is an

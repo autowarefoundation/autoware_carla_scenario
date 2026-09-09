@@ -60,11 +60,11 @@ class PreviewResult:
 
     Attributes:
         searching: Whether the entity spawns by constraint search.  A fixed
-            spawn still gets a map, just no match list.
+            spawn has nothing to evaluate: its lanelet is the one the picker is
+            already outlining.
         matched_ids: Lanelet IDs satisfying the constraints.
         total: Lanelets in the map, for "37 of 812".
         constraint_count: How many top-level constraints were evaluated.
-        selected_id: The entity's current spawn lanelet.
         map_loaded: Whether a map was available.
         error: Why the map or the constraints could not be evaluated.
     """
@@ -73,29 +73,19 @@ class PreviewResult:
     matched_ids: list[int] = field(default_factory=list)
     total: int = 0
     constraint_count: int = 0
-    selected_id: Optional[int] = None
     map_loaded: bool = False
     error: str = ""
 
     @property
     def highlight_ids(self) -> list[int]:
-        """The lanelets the viewer should outline, which depends on the mode.
+        """The lanelets the open map should outline: the matches.
 
         The viewer has a single highlight channel -- one outline colour, no
-        second class -- so the set has to mean exactly one thing:
-
-        * a constraint search outlines **the matches**, which is what the
-          search is for;
-        * a fixed spawn outlines **the pinned lanelet**, because there are no
-          matches to show.
-
-        Mixing the current spawn into a search's matches would paint it the
-        same colour as them, which says it is one of the matches whether or not
-        it is.
+        second class -- so the set has to mean exactly one thing, and here it
+        means "what the search found".  A fixed spawn asks for no preview at
+        all: the picker outlines the pinned lanelet from the field itself.
         """
-        if self.searching:
-            return list(self.matched_ids)
-        return [self.selected_id] if self.selected_id else []
+        return list(self.matched_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -281,11 +271,7 @@ def evaluate_spawn(
     """
     searching = entity.spawn.mode == "constraint_search"
     constraint_count = len(entity.spawn.constraints)
-    result = PreviewResult(
-        searching=searching,
-        constraint_count=constraint_count,
-        selected_id=entity.spawn.lanelet_id or None,
-    )
+    result = PreviewResult(searching=searching, constraint_count=constraint_count)
 
     if searching and not constraint_count:
         result.error = "Add a constraint to see which lanelets match."

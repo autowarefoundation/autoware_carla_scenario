@@ -892,19 +892,13 @@ class TestSpawnConstraints:
         assert response.status_code == 404
         assert "Lanelet2" in response.text
 
-    def test_the_preview_hands_the_viewer_what_it_needs(
+    def test_the_picker_hands_the_viewer_what_it_needs(
         self, client: TestClient, draft_id: str
     ) -> None:
         """The data attributes on the frame are the whole client-side contract."""
-        from autoware_carla_scenario.editor import map_preview
-
-        map_preview.clear_cache()
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
-        ).text
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
         assert 'data-map-src="/draft/%s/map.osm"' % draft_id in body
-        assert 'data-entity="npc1"' in body
+        assert 'data-picks-into="pick-spawn_lanelet_id"' in body
         assert "data-highlight=" in body
         assert "hakuturu583.github.io/simple_lanelet2/viewer.js" in body
 
@@ -912,14 +906,8 @@ class TestSpawnConstraints:
         self, client: TestClient, draft_id: str
     ) -> None:
         """An empty box where a map should be is worse than no box."""
-        from autoware_carla_scenario.editor import map_preview
-
-        map_preview.clear_cache()
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
-        ).text
-        assert '<div class="ed-map-frame" hidden' in body
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        assert '<div class="ed-map-frame ed-map-full" hidden' in body
         # The viewer is the only renderer; nothing is drawn server-side to sit
         # underneath it and be mistaken for a second map.
         assert "data-map-fallback" not in body
@@ -939,31 +927,19 @@ class TestSpawnConstraints:
             .headers["location"]
             .rsplit("/", 1)[-1]
         )
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
-        ).text
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
         assert 'data-map-viewer="/vendor/viewer.js"' in body
 
-    def test_a_fixed_spawn_is_shown_on_the_map_too(
+    def test_a_fixed_spawn_outlines_the_lanelet_it_pins(
         self, client: TestClient, draft_id: str
     ) -> None:
-        """A hand-typed lanelet ID is worth seeing, and clicking one is faster."""
-        from autoware_carla_scenario.editor import map_preview
+        """Nothing is evaluated for it: the pinned id is what the map outlines."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        picker = body.split('id="picker-spawn_lanelet_id"', 1)[1]
 
-        map_preview.clear_cache()
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "ego", "load_map": "1"},
-        ).text
-        assert "ed-map-frame" in body
-        assert 'data-entity="ego"' in body
-        assert "183" in body  # the ego's fixed spawn lanelet
-        # No match list: there are no constraints to match.
-        assert "matched of" not in body
-        # The viewer has one highlight colour, so a fixed spawn outlines the
-        # pinned lanelet and nothing else.
-        assert 'data-highlight="183"' in body
+        assert 'data-highlight="183"' in picker  # the ego's fixed spawn lanelet
+        # No match readout: there are no constraints to match.
+        assert "picker-matches" not in picker
 
     def test_a_constraint_search_outlines_its_matches(
         self, client: TestClient, draft_id: str
@@ -980,7 +956,7 @@ class TestSpawnConstraints:
             f"/draft/{draft_id}/spawn-preview",
             data={"entity_id": "npc1", "load_map": "1"},
         ).text
-        highlight = body.split('data-highlight="')[1].split('"')[0]
+        highlight = body.split('data-picker-highlight="')[1].split('"')[0]
         matched = body.split("Matched IDs")[1]
         assert highlight, "a search with matches must outline them"
         assert all(f"{i}" in matched for i in highlight.split(",")[:5])
@@ -1200,14 +1176,12 @@ class TestMapViewerReuse:
     scene survives an edit instead of being fetched and parsed again.
     """
 
-    def test_the_preview_frame_is_marked_for_reuse(
+    def test_the_picker_frame_is_marked_for_reuse(
         self, client: TestClient, draft_id: str
     ) -> None:
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "ego", "load_map": "1"},
-        ).text
-        assert 'data-viewer-key="spawn"' in body
+        """An edit made in the picker re-renders it; the parsed map is kept."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        assert 'data-viewer-key="picker-spawn_lanelet_id"' in body
 
     def test_the_script_still_honours_that_key(self) -> None:
         """The attribute is only worth rendering if something reads it."""
