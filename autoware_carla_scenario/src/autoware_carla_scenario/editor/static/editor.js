@@ -460,7 +460,17 @@
       var x = width / 2 + (at.x - view.x) * view.scale;
       var y = height / 2 - (at.y - view.y) * view.scale + rank * 19;
       pin.hidden = false;
-      pin.style.transform = 'translate(' + Math.round(x) + 'px, ' + Math.round(y) + 'px)';
+      // A label reads away from its dot, and on the right of the map that runs
+      // it off the edge -- or under the viewer's own zoom buttons. Past the
+      // two-thirds line it reads back towards the middle instead.
+      // Labels on the right half read back towards the middle -- the map's
+      // right edge is also where the viewer keeps its own zoom buttons -- and
+      // one that would overflow anyway is flipped wherever it sits.
+      pin.classList.remove('is-flipped');
+      var flipped = x > width * 0.5 || x + pin.offsetWidth > width - 6;
+      pin.classList.toggle('is-flipped', flipped);
+      pin.style.transform = 'translate(' + Math.round(x) + 'px, ' + Math.round(y) +
+        'px)' + (flipped ? ' translateX(-100%)' : '');
     });
     layer.hidden = false;
   }

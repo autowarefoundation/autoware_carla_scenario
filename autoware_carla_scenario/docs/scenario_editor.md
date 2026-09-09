@@ -29,23 +29,39 @@ the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
 ## Where it happens: the places panel
 
-Above the timeline is one map carrying every lanelet the scenario names -- each
-entity's spawn, the ego's goal, and the lanelet every condition watches. The
-canvas says *what* happens and in what order; it has no way to say *where*, and
-until this panel existed the answer was a scatter of ids across lane heads and
-condition cards that only meant something with the map open in another window.
+One map carries every lanelet the scenario names -- each entity's spawn, the
+ego's goal, and the lanelet every condition watches. The canvas says *what*
+happens and in what order; it has no way to say *where*, and until this panel
+existed the answer was a scatter of ids across lane heads and condition cards
+that only meant something with the map open in another window.
+
+It sits at the top of the right-hand rail, over the inspector:
 
 ```
-Places                                            < Pattern 1 of 133 >
-+--------------------------------------+---------------------------+
-|            (o) NPC1 spawn BOUND      | Ego  spawn                |
-|                                      |   lanelet 183 · 0 m       |
-|      (o) Ego spawn                   |   pinned                  |
-|      (o) Position (Lanelet2) lanelet | NPC1 spawn                |
-|                                      |   lanelet 4 · derived     |
-|                                      |   bound: match 1 of 133   |
-+--------------------------------------+---------------------------+
++------------------------------------------+---------------------------+
+| Arrangement (the timeline, full width)    | Places      < 1/133 >     |
+| ACTOR | Init | 1  | 2  | 3  | 4  | 5      |   (o) NPC1 spawn BOUND    |
+| Ego   |      | [] |    |    |    |        |   (o) Ego goal            |
+| NPC1  |      | [] | [] |    |    |        |   (o) Ego spawn           |
+| Env   |      |    | [] |    |    |        | [Ego spawn][Ego goal][..] |
+| PASS  | ...                               +---------------------------+
+| FAIL  | ...                               | Inspector                 |
++------------------------------------------+---------------------------+
 ```
+
+Three things had to be true at once -- the map, the timeline and the inspector
+all on screen without scrolling -- and this is the arrangement that gets there
+without taking width from the thing that needs it. The timeline's axis *is*
+width: a card further right is later in the story, so narrowing it costs steps
+you can see. The map is roughly square and the inspector is a column, so both
+fit the rail; and "where" then sits directly over "what", which is what makes
+clicking a place and reading its object one movement of the eye.
+
+The whole editor is one CSS grid (`.ed-stage`) for that reason. `#editor-body`
+stays the single htmx swap target and simply does not draw a box -- `display:
+contents` lifts the timeline and the inspector into that grid -- so the map can
+sit beside either of them while every edit still re-renders one element. Moving
+the panel is a change to one block of `editor.css`, not to a template.
 
 Each place is a **pin in its actor's track colour** -- the same hue that actor's
 lane head and every condition naming it already wear -- with a glyph for what
@@ -53,12 +69,16 @@ the place is: a target for a spawn, a flag for a goal, an eye for a lanelet
 something watches. The viewer has one highlight channel, so the outline says
 "this scenario touches here" and the pins say which of them is which.
 
-The list beside the map is the same places in document order. Clicking one opens
+Under the map the same places are chips, in document order. Clicking one opens
 the object that named it in the inspector *and* points the map at it; clicking a
 place on the map does the same, because the overview draws places the document
 already names and the only thing a click there can mean is "show me what named
 this". Nothing is edited here -- a lanelet is still set where it is written, in
 the picker its own field opens.
+
+A label reads away from its dot, except on the right half of the map, where it
+reads back towards the middle: that edge is also where the viewer keeps its own
+zoom buttons, and a label running under them is a label nobody can read.
 
 ### An abstract scenario draws one bound pattern
 

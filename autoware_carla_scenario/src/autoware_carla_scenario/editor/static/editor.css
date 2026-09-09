@@ -112,15 +112,53 @@ svg { display: block; }
 
 .ed-shell { max-width: 1680px; margin: 0 auto; padding: 0 20px 48px; }
 
-.ed-workspace {
+/* The whole editor is one grid.
+ *
+ * Status line, export panel, map, validation band, timeline and inspector are
+ * all items of it, so *where the map sits* is a question this stylesheet
+ * answers rather than a shape baked into the templates. `#editor-body` stays
+ * the single htmx swap target and simply does not draw a box: `display:
+ * contents` lifts its children into this grid, which is what lets the timeline
+ * and the inspector sit beside a panel that is not inside them.
+ *
+ * Rows 1-3 are the full-width strip every layout shares. What happens below is
+ * the layout variant, in one block, further down. */
+.ed-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 384px;
-  gap: 16px;
+  gap: 12px;
   align-items: start;
+  padding-top: 16px;
 }
 
+#editor-body,
+.ed-workspace { display: contents; }
+
+.ed-canvas-col,
+.ed-inspector-col { min-width: 0; }
+
+#status,
+#export-panel,
+.ed-body-top { grid-column: 1 / -1; }
+
+#status { grid-row: 1; }
+#export-panel { grid-row: 2; }
+.ed-body-top { grid-row: 3; }
+
+/* An empty row still costs a gap, and the status line is empty until something
+   is saved. */
+#status:empty { display: none; }
+
+.ed-inspector-col #inspector { position: sticky; top: 70px; }
+
 @media (max-width: 1180px) {
-  .ed-workspace { grid-template-columns: minmax(0, 1fr); }
+  /* One column, in document order: nothing here is wide enough to sit beside
+     anything else. */
+  .ed-stage { grid-template-columns: minmax(0, 1fr); }
+  .ed-stage > *,
+  #scenario-map,
+  .ed-canvas-col,
+  .ed-inspector-col { grid-column: 1; grid-row: auto; }
+  .ed-inspector-col #inspector { position: static; }
 }
 
 .ed-panel {
@@ -1340,6 +1378,20 @@ details > summary:hover { color: var(--ink-body); }
   gap: 5px;
 }
 
+/* Near the right edge the label reads back towards the middle, so it neither
+   runs off the map nor sits under the viewer's own controls. */
+.ed-pin.is-flipped {
+  flex-direction: row-reverse;
+  /* The box is pulled left of the pin by `translateX(-100%)`, so the dot -- now
+     its last child -- lands on the lanelet when the margin pushes back by half
+     of it, the mirror of the unflipped case. */
+  margin-left: 9px;
+}
+.ed-pin.is-flipped .ed-pin-label {
+  border-left: 1px solid var(--line-strong);
+  border-right: 3px solid var(--pin-hue);
+}
+
 .ed-pin-dot {
   flex: none;
   display: grid;
@@ -1353,6 +1405,11 @@ details > summary:hover { color: var(--ink-body); }
 }
 
 .ed-pin-label {
+  /* Long enough to name a place, short enough that a pin never becomes the
+     map. The list beside the map carries the whole name. */
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 1px 6px 2px;
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--pin-hue);
@@ -1427,3 +1484,30 @@ details > summary:hover { color: var(--ink-body); }
 }
 .ed-point-note { font-size: 10.5px; color: var(--ink-faint); }
 .ed-point-note.is-bound { color: var(--accent); }
+
+/* ==================================================== layout variant */
+/* A2 -- A, with the places as chips rather than a list.
+ *
+ * The map above the inspector, and under it one line per place folded into a
+ * row of chips: four places fit without a scrollbar, and the inspector keeps
+ * the rest of the column. */
+.ed-stage { grid-template-columns: minmax(0, 1fr) 384px; }
+
+#scenario-map     { grid-column: 2; grid-row: 4; }
+.ed-canvas-col    { grid-column: 1; grid-row: 4 / span 2; }
+.ed-inspector-col { grid-column: 2; grid-row: 5; }
+
+.ed-mapview-body { grid-template-columns: minmax(0, 1fr); }
+.ed-mapview-map { height: 250px; }
+.ed-mapview-side {
+  height: auto;
+  border-left: 0;
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
+}
+.ed-mapview-side .ed-map-key { font-size: 11px; margin-bottom: 2px; }
+.ed-point-list { flex-direction: row; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.ed-point { width: auto; padding: 4px 8px; border-color: var(--line); }
+.ed-point-note { display: none; }
+.ed-point-meta { font-size: 10.5px; }
+/* ================================================ end layout variant */
