@@ -20,6 +20,12 @@
 
 {%- set KIND_GLYPH = {'spawn': 'target', 'goal': 'flag', 'watched': 'eye'} -%}
 {%- set refresh = '/draft/' ~ draft.id ~ '/map-view?pattern=' ~ view.pattern -%}
+{# One colour per actor, resolved once: `entity_hue` sorts the actor list to
+   find a position, and a pin and its chip would each pay for that. #}
+{%- set HUES = {} -%}
+{%- for entity in document.ordered_entities() -%}
+  {%- set _ = HUES.update({entity.id: f.entity_hue(entity.id, document)|trim}) -%}
+{%- endfor -%}
 
 {# This element carries the panel's own refresh: it is re-rendered by the swap
    it asks for, so the pattern someone stepped to is baked into the next URL and
@@ -70,22 +76,14 @@
       {% if document.map.lanelet2_path %}
         {# `data-viewer-key` parks the parsed map across a re-render, exactly as
            the picker's does: this panel re-renders on every edit, and refetching
-           a city each time is what that key exists to avoid. #}
-        <div class="ed-map-frame ed-map-full" hidden
-             data-viewer-key="scenario-map"
-             data-map-viewer="{{ map_viewer_url() }}"
-             data-map-src="/draft/{{ draft.id }}/map.osm"
-             data-highlight="{{ view.highlight_ids|join(',') }}"
-             data-picks-layer="{{ lanelet_pick_layers }}"
-             data-opens-inspector="/draft/{{ draft.id }}/inspector/"
-             data-owners='{{ view.owners_by_lanelet()|tojson }}'>
-          <noscript>The map needs JavaScript.</noscript>
-        </div>
+           a city each time is what that key exists to avoid.  No `picks_into`:
+           this map sets nothing, it draws what the document already says. #}
+        {{ f.map_frame('scenario-map', draft, view.highlight_ids|join(',')) }}
         {# Rendered here, positioned there: the labels are the server's, the
            coordinates are the viewer's. #}
         <div class="ed-pins" data-pins hidden>
           {% for point in view.points if point.placed %}
-            {%- set hue = f.entity_hue(point.entity_id, document)|trim or 'var(--accent)' -%}
+            {%- set hue = HUES.get(point.entity_id) or 'var(--accent)' -%}
             <div class="ed-pin" hidden
                  data-lanelet="{{ point.lanelet_id }}"
                  style="--pin-hue: {{ hue }}">
@@ -102,7 +100,7 @@
           draw. The places are listed beside this either way.
         </p>
       {% else %}
-        <div class="ed-mapview-none">
+        <div class="ed-empty ed-mapview-none">
           <div class="ed-empty-title">No map</div>
           <p>Set this scenario's Lanelet2 (.osm) path in the Scenario inspector
              to see where it happens.</p>
@@ -113,7 +111,7 @@
     <aside class="ed-mapview-side">
       {% if view.searching %}
         <p class="ed-map-key">
-          {% if view.bound %}
+          {% if view.pattern_count %}
             <b>{{ view.swept_label }}</b> is a constraint search, so this
             scenario is one of {{ view.pattern_count }} runs. The arrows above
             bind another, the way a sweep binds one per run.
@@ -133,7 +131,7 @@
 
       <div class="ed-point-list">
         {% for point in view.points %}
-          {%- set hue = f.entity_hue(point.entity_id, document)|trim or 'var(--accent)' -%}
+          {%- set hue = HUES.get(point.entity_id) or 'var(--accent)' -%}
           {# Selecting the object that named the place, and pointing the map at
              it: the two halves of "what is this pin". #}
           <button class="ed-point {% if not point.placed %}is-unset{% endif %}"

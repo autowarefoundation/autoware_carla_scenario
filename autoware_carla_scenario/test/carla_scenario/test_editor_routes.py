@@ -12,7 +12,7 @@ import io
 import re
 import zipfile
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
 import yaml
@@ -1432,13 +1432,17 @@ class TestScenarioMap:
     def test_clicking_a_place_opens_what_named_it(
         self, client: TestClient, draft_id: str
     ) -> None:
-        """The overview is read-only: a click routes to the object, not the id."""
-        body = client.get(f"/draft/{draft_id}/map-view").text
-        owners = body.split("data-owners='", 1)[1].split("'", 1)[0]
+        """The panel is read-only: a click routes to the object, not the id.
 
-        assert '"183": "ego"' in owners
-        assert '"184": "npc1"' in owners
-        assert f'data-opens-inspector="/draft/{draft_id}/inspector/"' in body
+        Each place is one row carrying its lanelet and the request that selects
+        what named it -- which is also what a click on the map reads, so the
+        mapping is not sent a second time.
+        """
+        body = client.get(f"/draft/{draft_id}/map-view").text
+
+        for lanelet, owner in ((183, "ego"), (184, "npc1")):
+            row = body.split(f'data-focus-lanelet="{lanelet}"', 1)[1].split(">", 1)[0]
+            assert f"/draft/{draft_id}/inspector/{owner}" in row
         # And no picking: a place is edited where it is written.
         assert "data-picks-into" not in body
 
@@ -1510,6 +1514,81 @@ class TestScenarioMap:
         assert "ed-map-frame" not in body
         # The places are still listed: they are what the document says.
         assert "Ego" in body
+
+    @staticmethod
+    def _count_map_scans(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Count how often a search is really walked against the map.
+
+        The number is the point of the memo: matching visits every lanelet, and
+        a real map is many times the size of this fixture's.
+        """
+        from autoware_carla_scenario.sweeper import constraints
+
+        scans: list[int] = []
+        real = constraints.find_matching_lanelets
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            scans.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(constraints, "find_matching_lanelets", counted)
+        return scans
+
+    def test_an_edit_that_is_not_the_search_does_not_re_scan_the_map(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient, draft_id: str
+    ) -> None:
+        """The panel re-renders on every edit; the city is walked once."""
+        scans = self._count_map_scans(monkeypatch)
+
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        assert len(scans) == 1
+
+        client.post(f"/draft/{draft_id}/scenario", data={"title": "Renamed"})
+        client.get(f"/draft/{draft_id}/map-view")
+        assert len(scans) == 1, "an unrelated edit re-scanned the map"
+
+    def test_the_picker_shares_that_answer(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient, draft_id: str
+    ) -> None:
+        """Choosing a spawn or a goal in the inspector asks the same question.
+
+        The picker's match readout and the panel are two routes onto one
+        search, so the answer is remembered for both -- and the memo is keyed on
+        the constraint tree rather than on the slot, which is what makes that
+        true even for two slots searching for the same thing.
+        """
+        scans = self._count_map_scans(monkeypatch)
+
+        client.post(
+            f"/draft/{draft_id}/lanelet-preview",
+            data={"slot": "npc1.spawn", "load_map": "1"},
+        )
+        assert len(scans) == 1
+
+        # Re-opening the picker, and the panel drawing the same search.
+        client.post(f"/draft/{draft_id}/lanelet-preview", data={"slot": "npc1.spawn"})
+        client.get(f"/draft/{draft_id}/map-view")
+        assert len(scans) == 1, "the picker and the panel each walked the map"
+
+    def test_editing_the_search_does_re_scan(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+    ) -> None:
+        """The memo is keyed on the question, so a new question is asked."""
+        scans = self._count_map_scans(monkeypatch)
+
+        client.get(f"/draft/{draft_id}/map-view?load_map=1")
+        length = _entity(store, draft_id, "npc1").spawn.constraints[0].constraints[1]
+        client.post(
+            f"/draft/{draft_id}/constraint/{length.id}",
+            data={"rule": "greater_than_or_equal", "value": "30", "selected": "npc1"},
+        )
+        client.get(f"/draft/{draft_id}/map-view")
+
+        assert len(scans) == 2
 
     def test_the_script_places_the_pins_it_is_handed(self) -> None:
         """The labels are the server's; only the coordinates are the viewer's."""

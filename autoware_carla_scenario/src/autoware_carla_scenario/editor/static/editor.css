@@ -125,6 +125,16 @@ svg { display: block; }
  * the layout variant, in one block, further down. */
 .ed-stage {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 384px;
+  /* The regions, named once. The timeline keeps the whole width because its
+     axis *is* width -- a card further right is later in the story -- so the
+     map and the inspector share the rail beside it, "where" over "what". */
+  grid-template-areas:
+    "status   status"
+    "export   export"
+    "banner   banner"
+    "timeline places"
+    "timeline detail";
   gap: 12px;
   align-items: start;
   padding-top: 16px;
@@ -133,16 +143,12 @@ svg { display: block; }
 #editor-body,
 .ed-workspace { display: contents; }
 
-.ed-canvas-col,
-.ed-inspector-col { min-width: 0; }
-
-#status,
-#export-panel,
-.ed-body-top { grid-column: 1 / -1; }
-
-#status { grid-row: 1; }
-#export-panel { grid-row: 2; }
-.ed-body-top { grid-row: 3; }
+#status { grid-area: status; }
+#export-panel { grid-area: export; }
+.ed-body-top { grid-area: banner; }
+#scenario-map { grid-area: places; }
+.ed-canvas-col { grid-area: timeline; min-width: 0; }
+.ed-inspector-col { grid-area: detail; min-width: 0; }
 
 /* An empty row still costs a gap, and the status line is empty until something
    is saved. */
@@ -151,13 +157,12 @@ svg { display: block; }
 .ed-inspector-col #inspector { position: sticky; top: 70px; }
 
 @media (max-width: 1180px) {
-  /* One column, in document order: nothing here is wide enough to sit beside
+  /* One column, in reading order: nothing here is wide enough to sit beside
      anything else. */
-  .ed-stage { grid-template-columns: minmax(0, 1fr); }
-  .ed-stage > *,
-  #scenario-map,
-  .ed-canvas-col,
-  .ed-inspector-col { grid-column: 1; grid-row: auto; }
+  .ed-stage {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "status" "export" "banner" "places" "timeline" "detail";
+  }
   .ed-inspector-col #inspector { position: static; }
 }
 
@@ -798,13 +803,15 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   align-items: center;
   gap: 5px;
 }
-.ed-action-meta .dot { width: 2px; height: 2px; border-radius: 50%; background: currentColor; opacity: 0.6; }
+.ed-action-meta .dot,
+.ed-point-meta .dot { width: 2px; height: 2px; border-radius: 50%; background: currentColor; opacity: 0.6; }
 .ed-action-meta .bad { color: var(--fail); }
 
 .ed-move { display: flex; gap: 4px; opacity: 0; transition: opacity 0.13s; }
 .ed-column:hover .ed-move,
 .ed-move:focus-within { opacity: 1; }
-.ed-move-btn {
+.ed-move-btn,
+.ed-pattern-step {
   display: grid;
   place-items: center;
   width: 22px;
@@ -817,7 +824,8 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   transition: all 0.13s;
 }
 .ed-move-btn svg { width: 11px; height: 11px; }
-.ed-move-btn:hover { background: var(--accent-wash); border-color: var(--accent-line); color: var(--accent); }
+.ed-move-btn:hover,
+.ed-pattern-step:hover { background: var(--accent-wash); border-color: var(--accent-line); color: var(--accent); }
 
 /* --------------------------------------------------------------- conditions */
 
@@ -1312,21 +1320,19 @@ details > summary:hover { color: var(--ink-body); }
  * which -- each one tinted with its actor's track colour, the same hue the
  * lane head and every condition naming that actor wear. */
 
+/* The map over the places, not beside them: this panel lives in the 384px rail
+   and a map with a list next to it would be two narrow columns instead of one
+   usable map. */
 .ed-mapview-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
-}
-
-@media (max-width: 1100px) {
-  .ed-mapview-body { grid-template-columns: minmax(0, 1fr); }
-  .ed-mapview-side { border-left: 0; border-top: 1px solid var(--line); }
 }
 
 .ed-mapview-map {
   position: relative;
   min-width: 0;
-  height: 340px;
+  height: 250px;
 }
 
 /* The map is the panel's own floor: its border is the panel's, so a second one
@@ -1336,26 +1342,20 @@ details > summary:hover { color: var(--ink-body); }
   border-radius: 0;
 }
 
+/* `.ed-empty` centres horizontally; a map's empty box has a height to fill. */
 .ed-mapview-none {
   display: flex;
   flex-direction: column;
-  align-items: center;
   justify-content: center;
-  gap: 4px;
   height: 100%;
-  padding: 20px;
-  text-align: center;
-  color: var(--ink-muted);
   background: var(--surface-sunken);
 }
-.ed-mapview-none p { margin: 0; font-size: 12px; max-width: 34ch; }
 
 .ed-mapview-side {
-  border-left: 1px solid var(--line);
-  padding: 12px;
-  height: 340px;
-  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
 }
+.ed-mapview-side .ed-map-key { font-size: 11px; margin-bottom: 2px; }
 
 /* Pins: positioned by `editor.js` from the viewer's own view, laid over the
    canvas rather than drawn into it -- the map is the viewer's to paint. */
@@ -1429,39 +1429,30 @@ details > summary:hover { color: var(--ink-body); }
   text-transform: uppercase;
 }
 
-/* Which of a search's matches is on screen. */
+/* Which of a search's matches is on screen.  The arrows are the lane-move
+   button (see `.ed-move-btn`) at the size a panel head wants. */
 .ed-pattern { display: flex; align-items: center; gap: 7px; }
 .ed-pattern-count { font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; }
 .ed-pattern-count b { color: var(--ink); font-weight: 650; }
-.ed-pattern-step {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 22px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface);
-  color: var(--ink-muted);
-  cursor: pointer;
-  transition: all 0.13s;
-}
-.ed-pattern-step:hover {
-  background: var(--accent-wash);
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
+.ed-pattern-step { width: 24px; height: 22px; color: var(--ink-muted); }
 
 /* Every place, in document order -- which is the order a sweep would drive
-   them in, so the list and the sweep agree about what comes first. */
-.ed-point-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+   them in, so the list and the sweep agree about what comes first.  Chips
+   rather than rows: the rail is narrow and there are as many places as a
+   scenario names lanelets. */
+.ed-point-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
 
 .ed-point {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid transparent;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
   border-radius: 7px;
   background: transparent;
   font: inherit;
@@ -1474,40 +1465,12 @@ details > summary:hover { color: var(--ink-body); }
 .ed-point-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ed-point-name { font-size: 12px; font-weight: 600; color: var(--ink); }
 .ed-point-name .role { color: var(--ink-muted); font-weight: 400; }
-.ed-point-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-body); }
-.ed-point-meta .dot {
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.6;
+.ed-point-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--ink-body);
 }
-.ed-point-note { font-size: 10.5px; color: var(--ink-faint); }
+.ed-point-note { font-size: 10px; color: var(--ink-faint); }
 .ed-point-note.is-bound { color: var(--accent); }
-
-/* ==================================================== layout variant */
-/* A2 -- A, with the places as chips rather than a list.
- *
- * The map above the inspector, and under it one line per place folded into a
- * row of chips: four places fit without a scrollbar, and the inspector keeps
- * the rest of the column. */
-.ed-stage { grid-template-columns: minmax(0, 1fr) 384px; }
-
-#scenario-map     { grid-column: 2; grid-row: 4; }
-.ed-canvas-col    { grid-column: 1; grid-row: 4 / span 2; }
-.ed-inspector-col { grid-column: 2; grid-row: 5; }
-
-.ed-mapview-body { grid-template-columns: minmax(0, 1fr); }
-.ed-mapview-map { height: 250px; }
-.ed-mapview-side {
-  height: auto;
-  border-left: 0;
-  border-top: 1px solid var(--line);
-  padding: 8px 10px;
-}
-.ed-mapview-side .ed-map-key { font-size: 11px; margin-bottom: 2px; }
-.ed-point-list { flex-direction: row; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-.ed-point { width: auto; padding: 4px 8px; border-color: var(--line); }
-.ed-point-note { display: none; }
-.ed-point-meta { font-size: 10.5px; }
-/* ================================================ end layout variant */

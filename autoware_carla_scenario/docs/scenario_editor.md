@@ -63,6 +63,12 @@ contents` lifts the timeline and the inspector into that grid -- so the map can
 sit beside either of them while every edit still re-renders one element. Moving
 the panel is a change to one block of `editor.css`, not to a template.
 
+Which glyph a place gets is the **field's own declaration**, not a guess from
+whatever holds it: `FieldSpec.place` is `spawn`, `goal` or `watched`, so the
+`Set Goal` action's lanelet draws as a destination exactly as the ego's own goal
+does. A primitive that registers a new lanelet field is drawn without the map
+learning anything about it.
+
 Each place is a **pin in its actor's track colour** -- the same hue that actor's
 lane head and every condition naming it already wear -- with a glyph for what
 the place is: a target for a spawn, a flag for a goal, an eye for a lanelet
