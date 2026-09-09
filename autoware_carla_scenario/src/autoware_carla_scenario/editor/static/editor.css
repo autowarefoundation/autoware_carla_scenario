@@ -157,11 +157,16 @@ svg { display: block; }
 .ed-inspector-col #inspector { position: sticky; top: 70px; }
 
 @media (max-width: 1180px) {
-  /* One column, in reading order: nothing here is wide enough to sit beside
-     anything else. */
+  /* One column: nothing here is wide enough to sit beside anything else, so
+     the question is only what comes first -- and it is the timeline. Stacking
+     the map above it is the arrangement this layout was changed to get away
+     from: the panel is 300-odd pixels of height before a single lane is drawn,
+     and answering "where" by hiding "what happens" is not a trade a narrow
+     screen makes any better. The inspector follows it, because that is what an
+     edit lands in; the map is context, and context can be scrolled to. */
   .ed-stage {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "status" "export" "banner" "places" "timeline" "detail";
+    grid-template-areas: "status" "export" "banner" "timeline" "detail" "places";
   }
   .ed-inspector-col #inspector { position: static; }
 }
