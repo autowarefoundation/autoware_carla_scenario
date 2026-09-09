@@ -352,7 +352,7 @@ class TestValidation:
         )
         report = validate_document(document)
         assert report.ok
-        assert any("searches one entity" in i.message for i in report.warnings)
+        assert any("searches one lanelet" in i.message for i in report.warnings)
 
 
 class TestEgoGoal:

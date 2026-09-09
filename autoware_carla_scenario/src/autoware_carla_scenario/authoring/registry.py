@@ -47,6 +47,8 @@ __all__ = [
     "FieldKind",
     "INT_KINDS",
     "INT_LIST_KINDS",
+    "SEARCHABLE_LANELET_KINDS",
+    "searchable_lanelet_fields",
     "FieldSpec",
     "ConditionVisual",
     "REFERENCE_PATTERN",
@@ -106,6 +108,16 @@ FieldKind = Literal[
 #: was deliberate.
 INT_KINDS: tuple[FieldKind, ...] = ("int", "lanelet")
 INT_LIST_KINDS: tuple[FieldKind, ...] = ("int_list", "lanelet_list")
+
+#: Field kinds whose lanelet may be handed to the lanelet-constraint sweeper
+#: instead of being pinned.
+#:
+#: A search names *one* lanelet per run -- the sweeper enumerates matches and
+#: runs the scenario once for each -- so it answers the question a ``lanelet``
+#: field asks and not the one ``lanelet_list`` asks.  A set of lanelets ("stop
+#: at any of these") is a different statement, and giving it the same control
+#: would promise that a search fills the whole set.
+SEARCHABLE_LANELET_KINDS: frozenset[str] = frozenset({"lanelet"})
 
 #: Values a checked HTML checkbox may submit, and the strings a hand-edited
 #: document may spell a ``bool`` field with.  One set, so form parsing and
@@ -587,6 +599,20 @@ def get_binding_spec(type_id: str) -> Optional[BindingSpec]:
 def default_params(fields: "tuple[FieldSpec, ...]") -> dict[str, Any]:
     """Return a fresh params mapping seeded with each field's default."""
     return {f.name: f.default for f in fields}
+
+
+def searchable_lanelet_fields(
+    spec: "ActionSpec | ConditionSpec | None",
+) -> "tuple[FieldSpec, ...]":
+    """Return the fields of *spec* whose lanelet may be searched for.
+
+    The one place that answers "can this field be handed to the sweeper", so
+    the inspector, the validator and the Hydra config cannot come to disagree
+    about which parameters a document may attach a constraint tree to.
+    """
+    if spec is None:
+        return ()
+    return tuple(f for f in spec.fields if f.kind in SEARCHABLE_LANELET_KINDS)
 
 
 # ---------------------------------------------------------------------------

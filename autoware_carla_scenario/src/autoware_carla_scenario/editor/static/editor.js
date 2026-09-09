@@ -380,6 +380,19 @@
 
   var openPicker = null;     // id of the picker currently portalled to <body>
 
+  /* Ask the server for the match count of the picker that just opened.
+   *
+   * The panel cannot fetch it on `load`: every lanelet field on the inspector
+   * has a picker in the page at once, so each render would count matches for
+   * maps nobody is looking at — and counting means parsing a city. It is the
+   * same reason the map viewer itself is only mounted for an open picker. */
+  function primePreview(modal) {
+    if (!modal || !window.htmx) return;
+    modal.querySelectorAll('[hx-trigger~="picker-open"]').forEach(function (el) {
+      window.htmx.trigger(el, 'picker-open');
+    });
+  }
+
   function closePickers() {
     openPicker = null;
     document.querySelectorAll('[data-portalled]').forEach(function (modal) {
@@ -414,6 +427,9 @@
     fresh.dataset.portalled = '1';
     document.body.appendChild(fresh);
     fresh.hidden = false;
+    // The fresh copy carries an empty readout: the edit that brought it here
+    // may well have been the constraint whose matches it counts.
+    primePreview(fresh);
   }
 
   /* The matches the server just counted, drawn on the map already open beside
@@ -456,6 +472,7 @@
         document.body.appendChild(modal);
         modal.hidden = false;
         mountMaps();
+        primePreview(modal);
       }
       return;
     }

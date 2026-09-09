@@ -359,8 +359,8 @@ class TestPages:
         picker = body.split('id="picker-spawn_lanelet_id"', 1)[1]
         column = body.split('id="picker-spawn_lanelet_id"', 1)[0]
 
-        assert 'name="spawn_mode"' not in column
-        assert 'name="spawn_mode"' in picker
+        assert 'name="lanelet_mode_npc1_spawn"' not in column
+        assert 'name="lanelet_mode_npc1_spawn"' in picker
         # The constraint tree, and each node's own parameters, come with it:
         # the inspector column is behind the map while the picker is open.
         assert "ed-constraint-fields" in picker
@@ -565,11 +565,16 @@ class TestEntityEditing:
                 "title": "Cut-in car",
                 "vehicle_type": "vehicle.audi.tt",
                 "initial_speed_kmh": "30",
-                "spawn_mode": "fixed",
                 "spawn_lanelet_id": "200",
                 "spawn_s_mode": "fixed",
                 "spawn_s": "12.5",
             },
+        )
+        # Fixed or searched comes from the picker's own route, not this form:
+        # it is the question every lanelet field asks, and one place answers it.
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": "npc1.spawn", "mode": "fixed"},
         )
         entity = _entity(store, draft_id, "npc1")
         assert (entity.title, entity.vehicle_type, entity.initial_speed_kmh) == (
@@ -665,7 +670,6 @@ class TestEntityEditing:
         client.post(
             f"/draft/{draft_id}/entity/npc1",
             data={
-                "spawn_mode": "constraint_search",
                 "spawn_s_mode": "derived",
                 "spawn_s": "10",
                 "binding_type": "stop_line_offset",
@@ -822,6 +826,195 @@ class TestPredicateEditing:
         assert _action(store, draft_id, action.id).trigger is None
 
 
+class TestLaneletSearches:
+    """Every lanelet a document names is chosen the same way.
+
+    The spawn could be searched for years before anything else could, because
+    the panel that asks was written into the entity inspector rather than into
+    the picker every lanelet field opens.
+    """
+
+    @staticmethod
+    def _lane_condition(store: DraftStore, draft_id: str) -> ConditionNode:
+        """The starter's PASS assertion names a lanelet; return that node."""
+        return _document(store, draft_id).assertions.pass_conditions[0].children[0]
+
+    def test_a_condition_lanelet_is_offered_the_same_choice_as_a_spawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        node = self._lane_condition(store, draft_id)
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        picker = body.split('id="picker-lanelet_id"', 1)[1]
+        column = body.split('id="picker-lanelet_id"', 1)[0]
+
+        group = f"lanelet_mode_{node.id}_lanelet_id"
+        assert f'name="{group}"' in picker
+        assert f'name="{group}"' not in column
+        assert f'"slot": "{node.id}.lanelet_id"' in picker
+
+    def test_a_goal_is_offered_the_same_choice_as_a_spawn(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        picker = body.split('id="picker-goal_lanelet_id"', 1)[1]
+        assert 'name="lanelet_mode_ego_goal"' in picker
+        assert '"slot": "ego.goal"' in picker
+
+    def test_a_set_of_lanelets_is_picked_by_hand(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A search names one lanelet per run, so it cannot fill a set."""
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        picker = body.split('id="picker-map_no_3d_model_lanelet_ids"', 1)[1]
+        assert "How this lanelet is chosen" not in picker
+        assert "data-picks-many" in picker
+
+    def test_a_condition_lanelet_can_be_searched_for(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The whole point: a constraint tree on something that is not a spawn."""
+        node = self._lane_condition(store, draft_id)
+        slot = f"{node.id}.lanelet_id"
+
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": slot, "mode": "constraint_search"},
+        )
+        client.post(
+            f"/draft/{draft_id}/constraint",
+            data={"slot": slot, "type_id": "is_junction"},
+        )
+
+        stored = _condition(store, draft_id, node.id).searches["lanelet_id"]
+        assert stored.mode == "constraint_search"
+        assert [c.type for c in stored.constraints] == ["is_junction"]
+
+    def test_a_search_survives_a_flip_back_to_fixed(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Changing one's mind twice must not cost the tree already written."""
+        node = self._lane_condition(store, draft_id)
+        slot = f"{node.id}.lanelet_id"
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": slot, "mode": "constraint_search"},
+        )
+        client.post(
+            f"/draft/{draft_id}/constraint",
+            data={"slot": slot, "type_id": "is_junction"},
+        )
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode", data={"slot": slot, "mode": "fixed"}
+        )
+
+        stored = _condition(store, draft_id, node.id).searches["lanelet_id"]
+        assert stored.mode == "fixed"
+        assert [c.type for c in stored.constraints] == ["is_junction"]
+
+    def test_a_goal_can_be_searched_for_before_one_is_pinned(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The search is *how* a goal is chosen, so it cannot need one first."""
+        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": ""})
+        assert _entity(store, draft_id, "ego").goal is None
+
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": "ego.goal", "mode": "constraint_search"},
+        )
+        goal = _present(_entity(store, draft_id, "ego").goal, "goal")
+        assert goal.mode == "constraint_search"
+
+    def test_a_searched_condition_lanelet_reaches_the_sweeper(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A search is only real if the exported config can be swept on it."""
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_scenario_config,
+        )
+
+        node = self._lane_condition(store, draft_id)
+        slot = f"{node.id}.lanelet_id"
+        # The starter already searches NPC1's spawn, and the sweeper drives one
+        # key per run; pin it so this search is the one that is driven.
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": "npc1.spawn", "mode": "fixed"},
+        )
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": slot, "mode": "constraint_search"},
+        )
+        client.post(
+            f"/draft/{draft_id}/constraint",
+            data={"slot": slot, "type_id": "is_junction"},
+        )
+
+        config = build_scenario_config(_document(store, draft_id))
+        key = f"scenario.param_overrides.{node.id}.lanelet_id"
+        assert config["sweep"]["constraints"] == {key: [{"type": "is_junction"}]}
+        # And the key it writes to is declared, or Hydra's struct mode refuses it.
+        assert config["scenario"]["param_overrides"][node.id]["lanelet_id"] == 183
+
+    def test_no_inspector_nests_a_form_inside_another(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The whole reason the pickers are rendered outside the forms.
+
+        A search is made of forms -- one per constraint node, one to add one --
+        and a nested `<form>` is dropped by the parser, so the controls inside
+        it simply stop submitting. It fails silently, hence the test.
+        """
+        from html.parser import HTMLParser
+
+        class _Nesting(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.depth = 0
+                self.nested = 0
+
+            def handle_starttag(self, tag: str, attrs: object) -> None:
+                if tag == "form":
+                    self.nested += 1 if self.depth else 0
+                    self.depth += 1
+
+            def handle_endtag(self, tag: str) -> None:
+                if tag == "form":
+                    self.depth = max(0, self.depth - 1)
+
+        node = self._lane_condition(store, draft_id)
+        # With a search open, which is when the picker holds the most forms.
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": f"{node.id}.lanelet_id", "mode": "constraint_search"},
+        )
+        client.post(
+            f"/draft/{draft_id}/constraint",
+            data={"slot": f"{node.id}.lanelet_id", "type_id": "lanelet_length"},
+        )
+
+        for target in ("scenario", "ego", "npc1", node.id):
+            parser = _Nesting()
+            parser.feed(client.get(f"/draft/{draft_id}/inspector/{target}").text)
+            assert parser.nested == 0, f"{target} nests a form"
+
+    def test_a_second_search_is_reported_rather_than_dropped(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        node = self._lane_condition(store, draft_id)
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": f"{node.id}.lanelet_id", "mode": "constraint_search"},
+        )
+        client.post(
+            f"/draft/{draft_id}/constraint",
+            data={"slot": f"{node.id}.lanelet_id", "type_id": "is_junction"},
+        )
+        report = validate_document(_document(store, draft_id))
+        assert report.ok
+        assert any("searches one lanelet" in i.message for i in report.warnings)
+
+
 class TestSpawnConstraints:
     def test_constraints_nest_and_delete(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -831,7 +1024,7 @@ class TestSpawnConstraints:
         client.post(
             f"/draft/{draft_id}/constraint",
             data={
-                "entity_id": "npc1",
+                "slot": "npc1.spawn",
                 "type_id": "lanelet_length",
                 "parent_id": root.id,
             },
@@ -869,7 +1062,7 @@ class TestSpawnConstraints:
 
         map_preview.clear_cache()
         response = client.post(
-            f"/draft/{draft_id}/spawn-preview", data={"entity_id": "npc1"}
+            f"/draft/{draft_id}/lanelet-preview", data={"slot": "npc1.spawn"}
         )
         assert response.status_code == 200
         assert "Not evaluated yet" in response.text
@@ -953,8 +1146,8 @@ class TestSpawnConstraints:
 
         map_preview.clear_cache()
         body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
+            f"/draft/{draft_id}/lanelet-preview",
+            data={"slot": "npc1.spawn", "load_map": "1"},
         ).text
         highlight = body.split('data-picker-highlight="')[1].split('"')[0]
         matched = body.split("Matched IDs")[1]
@@ -972,8 +1165,8 @@ class TestSpawnConstraints:
             data={"map_lanelet2_path": "", "map_xodr_path": ""},
         )
         response = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
+            f"/draft/{draft_id}/lanelet-preview",
+            data={"slot": "npc1.spawn", "load_map": "1"},
         )
         assert response.status_code == 200
         assert "no map files configured" in response.text

@@ -32,8 +32,11 @@
       {% endfor %}
     </select>
   {% elif spec.kind in ('lanelet', 'lanelet_list') %}
-    {{ lanelet_picker(name, current, draft, spec.label,
-                      many=(spec.kind == 'lanelet_list')) }}
+    {# The readout only.  Its map lives in a modal that
+       `partials/lanelet_search.html` renders outside this form -- the choice
+       between a pinned lanelet and a constraint search is made of forms, and a
+       form cannot nest.  Anything rendering `fields()` renders `modals()` too. #}
+    {{ lanelet_field(name, current, draft, many=(spec.kind == 'lanelet_list')) }}
   {% elif spec.kind == 'action' %}
     {# Actions are listed by track, because "which one is Cut in" is a question
        about whose track it sits on as much as about its title. #}
@@ -60,16 +63,6 @@
     <input type="text" name="{{ name }}" class="ed-input"
            value="{{ '' if current is none else current }}">
   {% endif %}
-{% endmacro %}
-
-
-{# The control for a Lanelet2 lanelet id, shared by the metadata-driven fields
-   and by the spawn section, which is hand-written because a spawn is not a
-   `params` mapping. One macro, or the two drift: the entity inspector kept a
-   plain text box for months after the conditions stopped having one. #}
-{% macro lanelet_picker(name, current, draft, label='Lanelet', many=false) %}
-  {{ lanelet_field(name, current, draft, many) }}
-  {{ lanelet_modal(name, current, draft, label, many) }}
 {% endmacro %}
 
 
@@ -110,10 +103,11 @@
    city map that size cannot be picked from.  Opening it is also the first time
    the map is fetched and parsed, instead of on every inspector render.
 
-   A caller block is rendered beside the map.  That is where the spawn puts the
-   choice between a pinned lanelet and a constraint search, and the search
-   itself: a constraint is a statement about the map, and is easier to write
-   with the map it searches in front of you. #}
+   A caller block is rendered beside the map.  That is where every lanelet field
+   puts the choice between a pinned lanelet and a constraint search, and the
+   search itself: a constraint is a statement about the map, and is easier to
+   write with the map it searches in front of you.  See
+   `partials/lanelet_search.html`, which is what fills that block. #}
 {% macro lanelet_modal(name, current, draft, label='Lanelet', many=false) %}
   {%- set shown = (current if current is string
                    else (current or [])|join(', ')) if many

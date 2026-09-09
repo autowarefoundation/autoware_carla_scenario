@@ -1,4 +1,5 @@
 {% import "partials/fields.html" as f %}
+{% import "partials/lanelet_search.html" as ls %}
 {% import "partials/icons.html" as ic %}
 {# The inspector renders whatever object the canvas selected.
 
@@ -79,6 +80,10 @@
         </label>
       </div>
     </form>
+    {# Every lanelet this action names, each with its map and the choice between
+       a pinned lanelet and a constraint search. Outside the form above: the
+       search is made of forms, and a form cannot nest. #}
+    {% if spec %}{{ ls.modals(spec.fields, target.params, draft, document, target.id, selected) }}{% endif %}
     <button class="ed-btn-danger" style="width:100%"
             hx-post="/draft/{{ draft.id }}/action/{{ target.id }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML">
@@ -98,6 +103,7 @@
         <p class="ed-help" style="margin-bottom:14px">This condition has no parameters.</p>
       {% endif %}
     </form>
+    {% if spec %}{{ ls.modals(spec.fields, target.params, draft, document, target.id, selected) }}{% endif %}
     {% if spec and spec.accepts_children %}
       <p class="ed-help" style="margin-bottom:14px">
         {{ spec.min_children }} child condition(s) required,

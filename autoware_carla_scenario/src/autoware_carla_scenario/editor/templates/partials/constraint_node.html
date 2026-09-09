@@ -1,11 +1,15 @@
 {% import "partials/icons.html" as ic %}
 {% import "partials/fields.html" as f %}
-{# One spawn constraint, rendered recursively.
+{# One lanelet constraint, rendered recursively.
 
    Children always nest in one list; how many a type takes comes from its
-   spec, the same way a condition composition works. #}
+   spec, the same way a condition composition works.
 
-{% macro render(node, draft, entity, selected, document=none, inline_fields=false) %}
+   `slot` is the lanelet field this search chooses for -- a spawn, a goal, the
+   lanelet a condition watches. It is what an add or a delete posts back, so
+   the tree is the same whichever lanelet it is answering for. #}
+
+{% macro render(node, draft, slot, selected, document=none, inline_fields=false) %}
   {%- set spec = get_constraint_spec(node.type) -%}
   <div class="ed-constraint {% if selected == node.id %}is-selected{% endif %}">
     <div class="ed-constraint-head" tabindex="0" role="button"
@@ -19,7 +23,7 @@
       {% endif %}
       <form hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
-        <input type="hidden" name="selected" value="{{ entity.id }}">
+        <input type="hidden" name="selected" value="{{ slot.owner_id }}">
         <button type="submit" class="ed-del" title="Remove">{{ ic.icon('x', 10) }}</button>
       </form>
     </div>
@@ -32,7 +36,7 @@
             hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}"
             hx-trigger="change delay:200ms"
             hx-target="#editor-body" hx-swap="innerHTML">
-        <input type="hidden" name="selected" value="{{ entity.id }}">
+        <input type="hidden" name="selected" value="{{ slot.owner_id }}">
         {{ f.fields(spec.fields, node.params, document, '', draft) }}
       </form>
     {% endif %}
@@ -40,10 +44,10 @@
     {% if spec and spec.accepts_children %}
       <div class="ed-constraint-children">
         {% for child in node.constraints %}
-          {{ render(child, draft, entity, selected, document, inline_fields) }}
+          {{ render(child, draft, slot, selected, document, inline_fields) }}
         {% endfor %}
         {% if spec.max_children is none or node.constraints|length < spec.max_children %}
-          {{ add_constraint(draft, entity, node.id) }}
+          {{ add_constraint(draft, slot, node.id) }}
         {% endif %}
       </div>
     {% endif %}
@@ -66,12 +70,12 @@
 {% endmacro %}
 
 
-{% macro add_constraint(draft, entity, parent_id='') %}
+{% macro add_constraint(draft, slot, parent_id='') %}
   <details class="ed-add">
     <summary class="ed-add-btn" title="Add a constraint">{{ ic.icon('plus', 11) }} constraint</summary>
     <form hx-post="/draft/{{ draft.id }}/constraint" hx-target="#editor-body" hx-swap="innerHTML"
           class="ed-add-form">
-      <input type="hidden" name="entity_id" value="{{ entity.id }}">
+      <input type="hidden" name="slot" value="{{ slot.key }}">
       <input type="hidden" name="parent_id" value="{{ parent_id }}">
       <select name="type_id" class="ed-input-xs" style="flex:1">
         {% for spec in constraint_specs() %}

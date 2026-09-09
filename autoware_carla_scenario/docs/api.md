@@ -181,6 +181,7 @@ compiled and exported anywhere.
 |--------|-------------|
 | `ScenarioDocument` | The Scenario IR: entities, actions, assertions, and a `ui` block that is presentation only. |
 | `Entity`, `SpawnSpec`, `SValue`, `BindingRef`, `GoalSpec`, `EgoDriver` | Actors, how they spawn (fixed lanelet, or a constraint search with an optionally derived offset), and — for the ego alone — which stack drives it and where it is sent. |
+| `LaneletChoice`, `LaneletSlot`, `ScenarioDocument.lanelet_slots` | Fixed or searched, and one view over every place a document names a lanelet — a spawn, a goal, an action's or a condition's `lanelet` parameter — so the picker, the validator and the Hydra config read one answer. |
 | `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
 | `ActionSpec`, `ConditionSpec`, `ConstraintSpec`, `BindingSpec`, `FieldSpec`, `ConditionVisual` | Metadata describing how a primitive is presented, edited and built. |
 | `register_action_spec`, `register_condition_spec`, `register_constraint_spec`, `register_binding_spec` | Add a primitive; the GUI, validation and the compiler pick it up with no template change. |
@@ -209,7 +210,7 @@ imports the other.
 | `editor.app.create_app` | Build the FastAPI application (draft and export directories are arguments). |
 | `editor.routes` | HTML-partial routes driven by htmx. |
 | `editor.service.EditorService` | Every document mutation the editor performs, testable without a web client. |
-| `editor.map_preview.evaluate_spawn` | Evaluate spawn constraints with the framework's own sweeper, and decide which lanelets the viewer outlines. |
+| `editor.map_preview.evaluate_slot` | Evaluate one lanelet field's constraints with the framework's own sweeper, and decide which lanelets the viewer outlines. |
 | `editor.map_preview.lanelet2_source` | The `.osm` the editor serves to `simple_lanelet2`'s wasm map viewer. |
 | `editor.app.map_viewer_url` | Where that viewer is loaded from (`SCENARIO_EDITOR_MAP_VIEWER`). |
 | `editor.forms.parse_params` | Turn a form submission into typed IR parameters, driven by `FieldSpec` metadata. |

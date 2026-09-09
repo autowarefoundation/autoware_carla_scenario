@@ -56,8 +56,9 @@ def _resolve_target(
     """Return ``(kind, object, constraint_owner)`` for an inspector target id.
 
     ``kind`` is one of ``scenario``, ``entity``, ``action``, ``condition``,
-    ``constraint`` or ``missing``.  ``constraint_owner`` is the id of the entity
-    whose spawn search holds the object, and is set for constraints only.
+    ``constraint`` or ``missing``.  ``constraint_owner`` is the id of the object
+    whose lanelet search holds it -- an entity, an action or a condition -- and
+    is set for constraints only.
     """
     if not object_id or object_id == "scenario":
         return "scenario", document, None
@@ -298,24 +299,44 @@ def delete_entity(request: Request, draft_id: str, entity_id: str) -> HTMLRespon
 
 
 # ---------------------------------------------------------------------------
-# Spawn constraints
+# Lanelet searches
 # ---------------------------------------------------------------------------
 
 
-@router.post("/draft/{draft_id}/constraint", response_class=HTMLResponse)
-async def add_constraint(request: Request, draft_id: str) -> HTMLResponse:
-    """Add a constraint to an entity's spawn search."""
+@router.post("/draft/{draft_id}/lanelet-mode", response_class=HTMLResponse)
+async def set_lanelet_mode(request: Request, draft_id: str) -> HTMLResponse:
+    """Pin one lanelet field, or hand it to the constraint sweeper.
+
+    The same route for every lanelet in a document -- a spawn, the ego's goal,
+    the lanelet a condition watches -- because the choice is the same one; the
+    ``slot`` field says which lanelet is being answered for.
+    """
     form = dict(await request.form())
-    entity_id = str(form.get("entity_id", ""))
-    type_id = str(form.get("type_id", ""))
-    parent_id = str(form.get("parent_id", "")) or None
+    slot_key = str(form.get("slot", ""))
+    mode = str(form.get("mode", ""))
     service = _service(request)
     return _apply(
         request,
         draft_id,
-        entity_id,
-        lambda doc: service.add_constraint(doc, entity_id, type_id, parent_id),
+        slot_key.rpartition(".")[0],
+        lambda doc: service.set_lanelet_mode(doc, slot_key, mode),
     )
+
+
+@router.post("/draft/{draft_id}/constraint", response_class=HTMLResponse)
+async def add_constraint(request: Request, draft_id: str) -> HTMLResponse:
+    """Add a constraint to the search that chooses one lanelet."""
+    form = dict(await request.form())
+    slot_key = str(form.get("slot", ""))
+    type_id = str(form.get("type_id", ""))
+    parent_id = str(form.get("parent_id", "")) or None
+    service = _service(request)
+
+    def _add(document: ScenarioDocument) -> str:
+        service.add_constraint(document, slot_key, type_id, parent_id)
+        return service.require_slot(document, slot_key).owner_id
+
+    return _apply(request, draft_id, slot_key.rpartition(".")[0], _add)
 
 
 @router.post("/draft/{draft_id}/constraint/{node_id}", response_class=HTMLResponse)
@@ -472,34 +493,37 @@ def delete_condition(request: Request, draft_id: str, node_id: str) -> HTMLRespo
 
 
 # ---------------------------------------------------------------------------
-# Spawn preview
+# Lanelet search preview
 # ---------------------------------------------------------------------------
 
 
-@router.post("/draft/{draft_id}/spawn-preview", response_class=HTMLResponse)
-async def spawn_preview(request: Request, draft_id: str) -> HTMLResponse:
-    """Count the lanelets an entity's spawn constraints match.
+@router.post("/draft/{draft_id}/lanelet-preview", response_class=HTMLResponse)
+async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
+    """Count the lanelets one field's constraints match.
 
     The readout beside the map in the lanelet picker: the map itself is already
     open there, and is handed the matching ids to outline.
     """
     form = dict(await request.form())
-    entity_id = str(form.get("entity_id", ""))
+    slot_key = str(form.get("slot", ""))
     load_map = _checked(form, "load_map")
 
     draft = _service(request).require_draft(draft_id)
-    entity = draft.document.entity(entity_id)
-    if entity is None:
-        result = map_preview.PreviewResult(error=f"No entity named {entity_id!r}.")
+    slot = draft.document.lanelet_slot(slot_key)
+    if slot is None:
+        result = map_preview.PreviewResult(
+            error=f"No lanelet field named {slot_key!r}."
+        )
     else:
-        result = map_preview.evaluate_spawn(draft.document, entity, load_map=load_map)
+        result = map_preview.evaluate_slot(draft.document, slot, load_map=load_map)
     return _templates(request).TemplateResponse(
         request=request,
-        name="partials/spawn_preview.html",
+        name="partials/lanelet_preview.html",
         context={
             "draft": draft,
             "document": draft.document,
-            "entity": entity,
+            "slot": slot,
+            "slot_key": slot_key,
             "preview": result,
         },
     )

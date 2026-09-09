@@ -47,12 +47,19 @@
   </div>
   <div class="ed-field">
     <label class="ed-label">Excluded lanelet IDs</label>
-    {{ f.lanelet_picker('map_no_3d_model_lanelet_ids',
-                        document.map.no_3d_model_lanelet_ids, draft,
-                        'excluded lanelets', many=true) }}
+    {# The readout; its map is below, outside this form. #}
+    {{ f.lanelet_field('map_no_3d_model_lanelet_ids',
+                       document.map.no_3d_model_lanelet_ids, draft, many=true) }}
     <p class="ed-help">
       Referenced by spawn constraints as <code>${map.no_3d_model_lanelet_ids}</code>.
       Leave empty to inherit the map group's own list at run time.
     </p>
   </div>
 </form>
+
+{# Outside the form, like every other lanelet picker: a set of lanelets is
+   picked by hand rather than searched for -- a search names one lanelet per run
+   -- so this one carries no side panel. #}
+{{ f.lanelet_modal('map_no_3d_model_lanelet_ids',
+                   document.map.no_3d_model_lanelet_ids, draft,
+                   'excluded lanelets', many=true) }}
