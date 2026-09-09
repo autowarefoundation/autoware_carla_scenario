@@ -122,10 +122,18 @@ def build_ego_and_spawn(
     The goal travels with the ego config, and whether one is required is the
     *entity's* rule rather than the config's --
     :attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`.  An
-    ego that plans its own route gets an :class:`AutowareEgoConfig`, which has
-    no form without a goal, and a config that selects such an ego and names no
-    destination is refused here, while the run is still being built, rather than
-    part-way through the scenario's ``setup()``.
+    ego that plans its own route is configured with an
+    :class:`AutowareEgoConfig`, which has no form without a goal, once the
+    config names one.
+
+    A config that names none is not refused here, because it is not yet wrong:
+    a scenario may know the destination the config does not, and derive it in
+    ``setup()`` --
+    :class:`~autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenario`
+    sends the ego to the end of the route it asserts.  The scenario is given its
+    say first, and
+    :meth:`~autoware_carla_scenario.BaseScenario.register_route_to_goal` makes
+    the call once it has had it.
 
     Args:
         cfg: Resolved Hydra config.
@@ -140,14 +148,12 @@ def build_ego_and_spawn(
     goal_pose = build_goal_pose(cfg)
     entity = ego_entity if ego_entity is not None else build_ego_entity(cfg)
     requires_goal = entity is not None and entity.requires_goal
-    if requires_goal and goal_pose is None:
-        msg = (
-            f"ego.entity={cfg.ego.get('entity')} plans its own route and needs a "
-            "goal: it plans from the spawn pose to a goal and will not move "
-            "without one. Set 'ego.goal_lanelet_id' (and optionally 'ego.goal_s')."
-        )
-        raise ValueError(msg)
-    ego_cls: type[EgoConfig] = AutowareEgoConfig if requires_goal else EgoConfig
+    # The typed config is used where it can be: an ego that plans its own route
+    # and a goal that is already known.  Without one the plain config carries
+    # ``None`` onward, for the scenario to fill in.
+    ego_cls: type[EgoConfig] = (
+        AutowareEgoConfig if requires_goal and goal_pose is not None else EgoConfig
+    )
     ego = ego_cls(
         spawn_location=SpawnTransform(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
@@ -206,8 +212,9 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # ``setup()`` registers a ``RoutingAction`` for the spawn and
         # the goal its ``EgoConfig`` carries, snapped onto the live map -- poses
         # that do not exist before then -- and the runner performs it in the init
-        # phase.  A config that selects this entity without a goal is refused by
-        # ``build_ego_and_spawn``, which builds it an ``AutowareEgoConfig``.
+        # phase.  The goal may come from the config (``build_ego_and_spawn``
+        # then builds an ``AutowareEgoConfig``) or from the scenario itself; an
+        # ego that reaches ``setup()`` with neither is refused there.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,

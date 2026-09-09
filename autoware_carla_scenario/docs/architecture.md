@@ -755,10 +755,12 @@ that drives itself overrides them — see
 drives it itself from an external policy's plan.
 
 **Who needs a goal**: `requires_goal` says whether an entity plans its own route and so
-cannot start without a destination. `AutowareEntity` sets it; the run is refused while it
-is still being built (`build_ego_and_spawn` gives such an ego an `AutowareEgoConfig`,
-which has no form without a goal) and again in `BaseScenario.register_route_to_goal` for
-an ego config assembled by hand.
+cannot start without a destination. `AutowareEntity` sets it. When the config names a
+goal, `build_ego_and_spawn` gives such an ego an `AutowareEgoConfig`, which has no form
+without one; when it does not, the scenario is given its say first — a scenario can
+derive the destination in `setup()`, as `IntersectionPassingScenario` does from the route
+it asserts — and `BaseScenario.register_route_to_goal` refuses an ego that still has
+none.
 
 **Spawn retry logic**: When a vehicle fails to spawn (e.g., collision with existing geometry), the spawn system retries with lateral (`t_step`) and vertical (`z_step`) offsets, up to `spawn_retry_max_count` attempts.
 

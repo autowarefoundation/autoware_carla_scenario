@@ -412,8 +412,9 @@ ego:
 ```
 
 The keys are written only when a goal is set, leaving the `ego` group's own
-`null` in place otherwise. A run with `ego.entity=autoware` and no goal is
-refused while the scenario is being built.
+`null` in place otherwise. A run whose ego plans its own route and reaches
+`setup()` with no goal — neither from the config nor derived by the scenario —
+is refused there.
 
 The **Set Goal** card still exists, for changing a destination mid-run or for a
 vehicle that is not the ego. One owned by the ego and left in the initialization
