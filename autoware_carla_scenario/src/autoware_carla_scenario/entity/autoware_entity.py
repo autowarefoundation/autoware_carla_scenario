@@ -123,10 +123,6 @@ class AutowareEgoEntity(EgoVehicle):
     #: The interface node spawns the ego and owns its lifecycle.
     attaches_to_existing_actor: bool = True
 
-    #: Autoware plans a route from the initial pose to a goal and only then
-    #: engages: without one it never reports ready.
-    requires_goal: bool = True
-
     def __init__(
         self,
         config: Optional["AutowareBridgeConfig"] = None,

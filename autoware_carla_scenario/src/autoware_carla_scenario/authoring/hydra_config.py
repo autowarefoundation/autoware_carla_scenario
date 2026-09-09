@@ -20,11 +20,11 @@ Goal keys
 ---------
 The ego's goal travels the same way, as ``ego.goal_lanelet_id`` /
 ``ego.goal_s``.  Those are the keys the runner turns into the ego's
-configuration, and an ``ego.entity=autoware`` run is refused without them, so a
-document that sends the ego somewhere has to write them rather than hand the
-goal over some editor-only channel.  They are emitted only when the ego has a
-goal: an absent key leaves the ``ego`` group's own ``null`` in place, which is
-what an ego that drives itself needs.
+configuration, so a document that sends the ego somewhere has to write them
+rather than hand the goal over some editor-only channel.  An authored document
+always has a goal -- one without is a validation error -- but the keys are
+emitted only when it does, so that a document being edited into shape leaves the
+``ego`` group's own ``null`` in place rather than a lanelet nobody chose.
 """
 
 from __future__ import annotations

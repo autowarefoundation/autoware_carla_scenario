@@ -42,7 +42,6 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 from autoware_carla_scenario import (
-    AutowareEgoConfig,
     BaseScenario,
     EgoConfig,
     EgoVehicle,
@@ -111,7 +110,7 @@ register_scenario("temporary_stop", TemporaryStopScenario, TemporaryStopConfig)
 
 
 def build_ego_and_spawn(
-    cfg: DictConfig, *, ego_entity: EgoVehicle | None = None
+    cfg: DictConfig,
 ) -> tuple[EgoConfig, Lanelet2Pose, GroundProjectionConfig]:
     """Extract :class:`EgoConfig`, spawn pose, and ground-projection config.
 
@@ -119,42 +118,20 @@ def build_ego_and_spawn(
     projects can call this helper and then instantiate their own scenario class
     without duplicating the boilerplate.
 
-    The goal travels with the ego config, and whether one is required is the
-    *entity's* rule rather than the config's --
-    :attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`.  An
-    ego that plans its own route is configured with an
-    :class:`AutowareEgoConfig`, which has no form without a goal, once the
-    config names one.
-
-    A config that names none is not refused here, because it is not yet wrong:
-    a scenario may know the destination the config does not, and derive it in
-    ``setup()`` --
+    Both ends of the run travel with the ego config: ``ego.spawn_lanelet_id``
+    and ``ego.goal_lanelet_id``.  A config that names no goal is not refused
+    here, because it is not yet wrong -- a scenario may know the destination the
+    config does not, and derive it in ``setup()``, as
     :class:`~autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenario`
-    sends the ego to the end of the route it asserts.  The scenario is given its
-    say first, and
-    :meth:`~autoware_carla_scenario.BaseScenario.register_route_to_goal` makes
-    the call once it has had it.
-
-    Args:
-        cfg: Resolved Hydra config.
-        ego_entity: The entity that will drive the ego, when the caller has
-            already built it -- :func:`build_scenario` has, so the entity is
-            built once per run.  ``None`` builds it from *cfg* to read its rule.
+    does from the route it asserts.  The scenario is given its say first, and
+    :meth:`~autoware_carla_scenario.BaseScenario.register_route_to_goal` refuses
+    an ego that still has nowhere to go.
     """
     ground_projection = GroundProjectionConfig(
         ray_distance_upper=float(cfg.entity.ground_projection_ray_distance_upper),
         ray_distance_lower=float(cfg.entity.ground_projection_ray_distance_lower),
     )
-    goal_pose = build_goal_pose(cfg)
-    entity = ego_entity if ego_entity is not None else build_ego_entity(cfg)
-    requires_goal = entity is not None and entity.requires_goal
-    # The typed config is used where it can be: an ego that plans its own route
-    # and a goal that is already known.  Without one the plain config carries
-    # ``None`` onward, for the scenario to fill in.
-    ego_cls: type[EgoConfig] = (
-        AutowareEgoConfig if requires_goal and goal_pose is not None else EgoConfig
-    )
-    ego = ego_cls(
+    ego = EgoConfig(
         spawn_location=SpawnTransform(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
         ),
@@ -163,7 +140,7 @@ def build_ego_and_spawn(
         spawn_retry_max_count=int(cfg.entity.spawn_retry_max_count),
         spawn_retry_t_step=float(cfg.entity.spawn_retry_t_step),
         spawn_retry_z_step=float(cfg.entity.spawn_retry_z_step),
-        goal_pose=goal_pose,
+        goal_pose=build_goal_pose(cfg),
     )
     spawn_pose = Lanelet2Pose(
         lanelet_id=cfg.ego.spawn_lanelet_id,
@@ -212,9 +189,9 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # ``setup()`` registers a ``RoutingAction`` for the spawn and
         # the goal its ``EgoConfig`` carries, snapped onto the live map -- poses
         # that do not exist before then -- and the runner performs it in the init
-        # phase.  The goal may come from the config (``build_ego_and_spawn``
-        # then builds an ``AutowareEgoConfig``) or from the scenario itself; an
-        # ego that reaches ``setup()`` with neither is refused there.
+        # phase.  The goal comes from the config (``ego.goal_lanelet_id``) or
+        # from the scenario itself; an ego that ends ``setup()`` with neither is
+        # refused there.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,
@@ -657,13 +634,12 @@ def build_scenario(
         )
         raise ValueError(msg)
 
-    # Built once and handed on: the entity decides whether the ego config needs
-    # a goal, and building it twice would stand up two of whatever it owns (an
-    # Autoware ego holds a bridge server).
-    ego_entity = build_ego_entity(cfg)
-    ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg, ego_entity=ego_entity)
+    ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario_dict = _to_dict(cfg.scenario)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
+    # Built once: an Autoware ego holds a bridge server, and two of those cannot
+    # hold the same address.
+    ego_entity = build_ego_entity(cfg)
     if ego_entity is not None:
         scenario.ego_entity = ego_entity
     return ego, scenario

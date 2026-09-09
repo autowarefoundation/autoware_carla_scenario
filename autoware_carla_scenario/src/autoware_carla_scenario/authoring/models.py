@@ -236,9 +236,9 @@ class GoalSpec(_Node):
     -- rather than being an action performed at some point in the loop.
 
     It is rendered as the framework's own ``ego.goal_lanelet_id`` / ``ego.goal_s``
-    keys and reaches the runtime as
-    :class:`~autoware_carla_scenario.AutowareEgoConfig`, which cannot be built
-    without one.
+    keys and reaches the runtime on the ego's
+    :class:`~autoware_carla_scenario.EgoConfig`.  Every scenario needs one, so a
+    document whose ego has no goal is a validation error.
     """
 
     lanelet_id: int = 0

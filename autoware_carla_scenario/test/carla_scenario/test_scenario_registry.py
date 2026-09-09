@@ -311,64 +311,16 @@ class TestBuildEgoAndSpawn:
         assert ego.goal_pose.lanelet_id == 265
         assert ego.goal_pose.s == 12.5
 
-    def test_an_autoware_ego_with_a_goal_gets_the_config_that_requires_one(
-        self,
-    ) -> None:
-        from autoware_carla_scenario import AutowareEgoConfig
-        from autoware_carla_scenario.examples.run import build_ego_and_spawn
-
-        cfg = _ego_and_spawn_cfg(entity="autoware", goal_lanelet_id=265)
-        ego, _, _ = build_ego_and_spawn(cfg)
-
-        assert isinstance(ego, AutowareEgoConfig)
-
-    def test_an_autoware_ego_without_a_goal_waits_for_the_scenario(self) -> None:
+    def test_a_config_without_a_goal_waits_for_the_scenario(self) -> None:
         """A scenario may know the destination the config does not.
 
         ``IntersectionPassingScenario`` derives the ego's goal in ``setup()``
         from the route it asserts, so a config that names none is not yet wrong;
-        ``register_route_to_goal`` decides once the scenario has had its say.
+        ``register_route_to_goal`` refuses an ego that still has nowhere to go.
         """
-        from autoware_carla_scenario import AutowareEgoConfig
         from autoware_carla_scenario.examples.run import build_ego_and_spawn
 
         ego, _, _ = build_ego_and_spawn(_ego_and_spawn_cfg(entity="autoware"))
-
-        assert ego.goal_pose is None
-        assert not isinstance(ego, AutowareEgoConfig)
-
-    def test_the_entity_decides_which_config_the_ego_gets(self) -> None:
-        """The requirement is the entity's, so a stub entity states it alone."""
-        from autoware_carla_scenario import AutowareEgoConfig, EgoVehicle
-        from autoware_carla_scenario.examples.run import build_ego_and_spawn
-
-        class _PlansItsOwnRoute(EgoVehicle):
-            requires_goal = True
-
-        cfg = _ego_and_spawn_cfg(goal_lanelet_id=265)
-        ego, _, _ = build_ego_and_spawn(cfg, ego_entity=_PlansItsOwnRoute())
-        assert isinstance(ego, AutowareEgoConfig)
-
-        # The same goal, an ego that is driven for it: no requirement to state.
-        plain, _, _ = build_ego_and_spawn(cfg, ego_entity=EgoVehicle())
-        assert not isinstance(plain, AutowareEgoConfig)
-        assert plain.goal_pose is not None
-
-    def test_a_prebuilt_entity_is_not_rebuilt(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An Autoware entity owns a bridge server, so a run must build one."""
-        from autoware_carla_scenario import EgoVehicle
-        from autoware_carla_scenario.examples import run as run_module
-
-        def _refuse(cfg: object) -> None:
-            raise AssertionError("the entity was already built")
-
-        monkeypatch.setattr(run_module, "build_ego_entity", _refuse)
-
-        ego, _, _ = run_module.build_ego_and_spawn(
-            _ego_and_spawn_cfg(), ego_entity=EgoVehicle()
-        )
 
         assert ego.goal_pose is None
 

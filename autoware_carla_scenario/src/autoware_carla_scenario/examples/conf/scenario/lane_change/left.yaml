@@ -9,6 +9,9 @@ ego:
   initial_speed_kmh: 1.0
   spawn_lanelet_id: 183
   spawn_s: 0.0
+  # Up the road from the spawn. A swept spawn keeps this goal: the
+  # sweeper varies one key, and the ego here is driven for it anyway.
+  goal_lanelet_id: 141
 
 sweep:
   constraints:

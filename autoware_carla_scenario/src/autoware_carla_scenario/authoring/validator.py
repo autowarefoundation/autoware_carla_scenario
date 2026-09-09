@@ -406,14 +406,27 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
 
 
 def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
-    """Check the entity's goal, which only the ego is allowed to have.
+    """Check the entity's goal: the ego needs one, and nothing else may have one.
 
     A goal is read by a vehicle that plans its own route, and the ego is the
     only one that can have such a stack behind it -- the export renders the
     ego's goal and nothing else.  A goal stored on another vehicle would
     therefore be dropped in silence, so it is reported instead.
+
+    The ego's own goal is required, not optional.  A scenario is a drive from
+    somewhere to somewhere, and the document is where that is written down: an
+    ego with no destination runs an Autoware stack that never moves, and leaves
+    every other reader guessing where the run was meant to end.
     """
     if entity.goal is None:
+        if entity.kind == "ego":
+            out.error(
+                f"{path}.goal",
+                "The ego has no goal. Pick one in the Goal section of its "
+                "inspector: it is where the run is meant to end, and an ego "
+                "that plans its own route will not move without it.",
+                entity.id,
+            )
         return
     if entity.kind != "ego":
         out.error(

@@ -24,8 +24,7 @@ and sensor types described below.
 | Symbol | Module | Purpose |
 |--------|--------|---------|
 | `BaseScenario` | `scenario_base` | Abstract base for user scenarios. Subclasses implement `setup()` and `is_done()`. |
-| `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME` and carries the ego's `goal_pose` (optional: only an ego that plans its own route reads it). |
-| `AutowareEgoConfig` | `scenario_base` | `EgoConfig` for an ego Autoware drives, with `goal_pose` required — Autoware plans a route from the spawn to a goal and will not start without one. |
+| `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME` and carries both ends of the run: the spawn and the ego's `goal_pose`. `None` means "not named yet" — a scenario may derive the goal in `setup()`, and one that ends setup with none is refused. |
 | `ScenarioRunner` | `scenario_runner` | Executes a single `BaseScenario` against a CARLA world (sync mode tick loop, recording, cleanup). |
 | `ScenarioQueue` | `scenario_queue` | Context manager that owns a `CarlaServerManager` and runs registered scenarios sequentially with cooldown / retry. |
 | `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`. |

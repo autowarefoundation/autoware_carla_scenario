@@ -394,14 +394,16 @@ the same plain `key=value` overrides.
 
 The ego's inspector has a **Goal** section beside its spawn, because the two are
 the ends of the same thing: where the run starts, and where the ego is meant to
-get to. A goal is picked from the map like a spawn is, and cleared with **Clear
-goal** — an ego with no destination is the ordinary case.
+get to. A goal is picked from the map like a spawn is, and it is **required** —
+a document whose ego has no goal is a validation error, so pick another lanelet
+to change it rather than clearing it.
 
 It is not a card. A card happens *during* a run, and a goal is what the ego
 needs before one can start: Autoware localizes at the spawn, plans a route to
-the goal, and only then engages. The framework says the same thing in its types
-— an `AutowareEgoConfig` cannot be built without a goal — so the editor stores
-the goal on the ego and exports it as the framework's own keys:
+the goal, and only then engages. The framework asks the same of every scenario —
+`BaseScenario.register_route_to_goal` refuses an ego that ends `setup()` with
+none — so the editor stores the goal on the ego and exports it as the
+framework's own keys:
 
 ```yaml
 ego:

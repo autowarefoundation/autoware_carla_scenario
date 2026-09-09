@@ -352,17 +352,12 @@ class TestPages:
     ) -> None:
         """The ego's goal is a lanelet, so it is chosen the way every one is."""
         body = client.get(f"/draft/{draft_id}/inspector/ego").text
+
         assert 'id="pick-goal_lanelet_id"' in body
         assert 'data-open-picker="picker-goal_lanelet_id"' in body
-        # Nothing to clear and no offset to give until a goal exists.
-        assert "data-clear-field" not in body
-        assert 'name="goal_s"' not in body
-
-        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": "265"})
-        body = client.get(f"/draft/{draft_id}/inspector/ego").text
-
-        assert 'data-clear-field="pick-goal_lanelet_id"' in body
         assert 'name="goal_s"' in body
+        # A required field offers no way to empty it: pick another lanelet.
+        assert "data-clear-field" not in body
 
     def test_only_the_ego_is_offered_a_goal(
         self, client: TestClient, draft_id: str
@@ -574,15 +569,19 @@ class TestEntityEditing:
         assert ego.goal is not None
         assert (ego.goal.lanelet_id, ego.goal.s) == (265, 12.5)
 
-    def test_an_empty_goal_lanelet_clears_the_goal(
+    def test_an_empty_goal_lanelet_stores_no_goal_and_is_reported(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
-        # The picker can set a lanelet but not unset one, so blanking the field
-        # is how an ego goes back to having no destination.
-        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": "265"})
+        # The inspector offers no way to blank it, but a hand-written form can:
+        # the document then says what it says, and validation calls it out.
+        from autoware_carla_scenario.authoring.validator import validate_document
+
         client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": ""})
 
         assert _entity(store, draft_id, "ego").goal is None
+        report = validate_document(_document(store, draft_id))
+        assert not report.ok
+        assert any("no goal" in issue.message for issue in report.errors)
 
     def test_a_partial_form_leaves_the_goal_alone(
         self, client: TestClient, store: DraftStore, draft_id: str

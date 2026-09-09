@@ -690,10 +690,6 @@ classDiagram
         +goal_pose: Lanelet2Pose | None
     }
 
-    class AutowareEgoConfig {
-        +goal_pose: Lanelet2Pose (required)
-    }
-
     class SpawnLocation {
         <<interface>>
     }
@@ -714,7 +710,6 @@ classDiagram
 
     class EgoVehicle {
         +use_autopilot = true
-        +requires_goal = false
         +actor: carla.Actor | None
         +spawn(world, config) carla.Actor
         +on_scenario_start(world)
@@ -725,7 +720,6 @@ classDiagram
 
     class AutowareEntity {
         +use_autopilot = false
-        +requires_goal = true
     }
 
     class CarlaDriverEntity {
@@ -734,7 +728,6 @@ classDiagram
     }
 
     VehicleEntityConfig <|-- EgoConfig
-    EgoConfig <|-- AutowareEgoConfig
     SpawnLocation <|.. SpawnTransform
     SpawnLocation <|.. SpawnPointIndex
     VehicleEntityConfig --> SpawnLocation
@@ -754,13 +747,13 @@ that drives itself overrides them — see
 `AutowareEntity` opts out and nothing drives the actor; `CarlaDriverEntity` opts out and
 drives it itself from an external policy's plan.
 
-**Who needs a goal**: `requires_goal` says whether an entity plans its own route and so
-cannot start without a destination. `AutowareEntity` sets it. When the config names a
-goal, `build_ego_and_spawn` gives such an ego an `AutowareEgoConfig`, which has no form
-without one; when it does not, the scenario is given its say first — a scenario can
-derive the destination in `setup()`, as `IntersectionPassingScenario` does from the route
-it asserts — and `BaseScenario.register_route_to_goal` refuses an ego that still has
-none.
+**Where the ego is going**: every scenario has a goal, whichever entity drives. For an
+`AutowareEntity` it is what makes the ego move at all; for one driven by the
+TrafficManager or a driver policy the routing action is a no-op, but the destination the
+run was aiming at is still stated. It reaches the ego config from `ego.goal_lanelet_id`,
+or from the scenario itself — `IntersectionPassingScenario` derives it from the route it
+asserts — and `BaseScenario.register_route_to_goal` refuses an ego that ends `setup()`
+with none.
 
 **Spawn retry logic**: When a vehicle fails to spawn (e.g., collision with existing geometry), the spawn system retries with lateral (`t_step`) and vertical (`z_step`) offsets, up to `spawn_retry_max_count` attempts.
 

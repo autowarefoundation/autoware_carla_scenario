@@ -323,11 +323,15 @@ class EditorService:
     def _update_goal(entity: Entity, form: Mapping[str, Any]) -> None:
         """Apply the goal fields of the entity form.
 
-        The lanelet picker submits an empty value when nothing is chosen, and
-        that is how a goal is cleared: an ego with no destination is the
-        ordinary case, not an error.  Only the ego carries a goal, so no other
-        entity's form is read for one -- the inspector does not offer the
-        controls, and a goal stored elsewhere is a validation error.
+        The stored goal is whatever the field says, including nothing: the
+        picker offers no way to blank it -- every scenario needs a goal, and
+        :func:`~autoware_carla_scenario.authoring.validator.validate_document`
+        reports an ego without one -- but a document written by hand can arrive
+        in that state, and the form has to be able to say so.
+
+        Only the ego carries a goal, so no other entity's form is read for one:
+        the inspector does not offer the controls, and a goal stored elsewhere
+        is a validation error.
 
         Raises:
             EditorError: If the goal offset is not a number.

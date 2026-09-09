@@ -280,18 +280,29 @@ class TestRouteToGoal:
 
         return CarlaWorldPose(x=1.0, y=2.0, z=3.0, yaw=45.0)
 
-    def test_an_ego_that_drives_itself_registers_nothing(self) -> None:
-        # An autopilot or driver ego has no goal and no mission to set, so
-        # nothing is registered and no error is raised.
+    def test_an_ego_that_drives_itself_is_routed_too(self) -> None:
+        # The action is a no-op for an ego the TrafficManager drives, but the
+        # scenario still says where the run was aiming: every ego has a goal.
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
         scenario = _SimpleScenario(_make_ego_config())
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=141, s=0.0)
+
         scenario.register_route_to_goal(self._initial_pose())
-        assert scenario.goal_pose is None
-        assert scenario._init_actions == []
+
+        assert len(scenario._init_actions) == 1
+
+    def test_any_ego_without_a_goal_is_refused(self) -> None:
+        # Not only an Autoware one: a scenario that ends setup() with nowhere
+        # to send the ego has not said what it is testing.
+        scenario = _SimpleScenario(_make_ego_config())
+        with pytest.raises(ValueError, match="no goal"):
+            scenario.register_route_to_goal(self._initial_pose())
 
     def test_an_autoware_ego_without_a_goal_is_refused(self) -> None:
         scenario = _SimpleScenario(_make_ego_config())
         scenario.ego_entity = self._autoware_entity()
-        with pytest.raises(ValueError, match="goal_lanelet_id"):
+        with pytest.raises(ValueError, match="no goal"):
             scenario.register_route_to_goal(self._initial_pose())
 
     def test_a_goal_registers_a_routing_action(self) -> None:
@@ -396,31 +407,20 @@ class TestGoalOnTheEgoConfig:
         assert scenario.ego_config.goal_pose is not None
         assert scenario.ego_config.goal_pose.lanelet_id == 123
 
-    def test_an_autoware_ego_config_cannot_be_built_without_a_goal(self) -> None:
-        from autoware_carla_scenario import AutowareEgoConfig
-
-        with pytest.raises(TypeError):
-            AutowareEgoConfig(  # type: ignore[call-arg]
-                spawn_location=SpawnTransform(
-                    carla.Transform(carla.Location(x=0, y=0, z=0))
-                )
-            )
-
-    def test_an_autoware_ego_config_routes_without_any_assignment(self) -> None:
-        from autoware_carla_scenario import AutowareEgoConfig, RoutingAction
-        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+    def test_a_config_that_carries_the_goal_routes_without_any_assignment(
+        self,
+    ) -> None:
+        from autoware_carla_scenario import RoutingAction
         from autoware_carla_scenario.coordinate import Lanelet2Pose
-        from autoware_carla_scenario.entity import AutowareEgoEntity
 
         scenario = _SimpleScenario(
-            AutowareEgoConfig(
+            EgoConfig(
                 spawn_location=SpawnTransform(
                     carla.Transform(carla.Location(x=0, y=0, z=0))
                 ),
                 goal_pose=Lanelet2Pose(lanelet_id=265, s=12.5),
             )
         )
-        scenario.ego_entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
 
         scenario.register_route_to_goal()
 

@@ -120,10 +120,21 @@ class TestHydraConfig:
         assert config["ego"]["goal_lanelet_id"] == 265
         assert config["ego"]["goal_s"] == 12.5
 
-    def test_an_ego_with_no_goal_writes_no_goal_keys(self) -> None:
-        # An ego that drives itself needs none, and an emitted key would shadow
-        # the ego group's own null with the same value for no reason.
+    def test_the_starter_carries_its_goal_into_the_config(self) -> None:
         config = build_scenario_config(new_document())
+        assert config["ego"]["goal_lanelet_id"] > 0
+
+    def test_an_ego_with_no_goal_writes_no_goal_keys(self) -> None:
+        # A document whose ego has no goal is a validation error, but the
+        # renderer states only what the document says: an emitted key would
+        # shadow the ego group's own null with a lanelet nobody chose.
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.goal = None
+
+        config = build_scenario_config(document)
+
         assert "goal_lanelet_id" not in config["ego"]
         assert "goal_s" not in config["ego"]
 

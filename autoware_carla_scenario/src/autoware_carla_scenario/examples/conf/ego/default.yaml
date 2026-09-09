@@ -4,7 +4,11 @@ ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 242
   spawn_s: 25.0
-  # Where Autoware is routed to.  Only entity: autoware reads these.
+  # Where the ego is going.  Every scenario needs a goal -- an ego that plans
+  # its own route (entity: autoware) will not move without one, and one driven
+  # for it still had a destination the run was aiming at -- but it belongs to
+  # the scenario, not to this group: a default here would silently override the
+  # goal a scenario derives for itself.
   goal_lanelet_id: null
   goal_s: 0.0
   # Which entity drives the ego: autopilot | autoware | carla_driver

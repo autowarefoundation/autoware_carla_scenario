@@ -74,24 +74,18 @@
                           target.goal.lanelet_id if target.goal else none,
                           draft, 'Goal lanelet') }}
       <p class="ed-help">
-        Where the ego is being sent. An Autoware ego plans its route to it and
-        will not move without one; an ego driven by the TrafficManager or by a
-        driver policy ignores it.
+        Required: where the run is meant to end. An Autoware ego plans its route
+        to it and will not move without one; an ego driven by the TrafficManager
+        or by a driver policy ignores it. Pick another lanelet to change it.
       </p>
-      {% if target.goal %}
-        <button type="button" class="ed-btn-sm" style="margin-top:6px"
-                data-clear-field="pick-goal_lanelet_id">Clear goal</button>
-      {% endif %}
     </div>
-    {% if target.goal %}
-      <div class="ed-field">
-        <label class="ed-label">
-          Offset along the goal lanelet <span class="unit">(m)</span>
-        </label>
-        <input type="number" step="any" name="goal_s" class="ed-input"
-               value="{{ target.goal.s }}">
-      </div>
-    {% endif %}
+    <div class="ed-field">
+      <label class="ed-label">
+        Offset along the goal lanelet <span class="unit">(m)</span>
+      </label>
+      <input type="number" step="any" name="goal_s" class="ed-input"
+             value="{{ target.goal.s if target.goal else 0.0 }}">
+    </div>
   {% endif %}
 
   {% if target.spawn.s.mode == 'derived' %}

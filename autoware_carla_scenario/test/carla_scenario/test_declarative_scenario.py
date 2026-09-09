@@ -94,8 +94,20 @@ class TestTheEgoGoal:
         assert scenario.goal_pose is not None
         assert scenario.goal_pose.lanelet_id == 42
 
-    def test_a_document_without_a_goal_leaves_the_config_alone(self) -> None:
-        assert _scenario().goal_pose is None
+    def test_a_document_without_a_goal_does_not_run(self) -> None:
+        """Every scenario says where its ego is going, authored ones included."""
+        from autoware_carla_scenario.authoring.compiler import CompilationError
+
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.goal = None
+
+        with pytest.raises(CompilationError, match="no goal"):
+            _scenario(document)
+
+    def test_the_starter_document_brings_its_own_goal(self) -> None:
+        assert _scenario().goal_pose is not None
 
 
 class TestConstruction:
