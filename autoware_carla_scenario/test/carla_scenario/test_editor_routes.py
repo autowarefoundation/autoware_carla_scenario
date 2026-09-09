@@ -365,6 +365,11 @@ class TestPages:
         # the inspector column is behind the map while the picker is open.
         assert "ed-constraint-fields" in picker
         assert "ed-constraint" not in column
+        # Where along the lanelet is the same kind of question, so it is asked
+        # in the same place -- the column only says what the answer is.
+        assert 'name="spawn_s_mode"' not in column
+        assert 'name="spawn_s_mode"' in picker
+        assert 'name="spawn_s"' in picker
 
     def test_the_goal_is_picked_from_the_map_like_the_spawn(
         self, client: TestClient, store: DraftStore, draft_id: str

@@ -31,34 +31,17 @@
     {{ f.lanelet_field('spawn_lanelet_id', target.spawn.lanelet_id, draft) }}
     <p class="ed-help">
       {% if target.spawn.mode == 'fixed' %}
-        Pinned. Edit opens the map, where it can be handed to the
-        lanelet-constraint sweeper instead.
+        Pinned,
       {% else %}
-        Searched: {{ target.spawn.constraints|length }} constraint{{ '' if target.spawn.constraints|length == 1 else 's' }},
-        with this ID as the default a non-swept run uses. Edit opens the map and
-        the search.
+        Searched ({{ target.spawn.constraints|length }} constraint{{ '' if target.spawn.constraints|length == 1 else 's' }}, this ID the default a non-swept run uses),
       {% endif %}
+      {% if target.spawn.s.mode == 'fixed' %}
+        {{ target.spawn.s.value }} m along it.
+      {% else %}
+        offset derived from the map.
+      {% endif %}
+      Edit opens the map, where all of that is chosen.
     </p>
-  </div>
-
-  <h4 class="ed-subheading">{{ ic.icon('bar', 12) }} Position on the matched lanelet</h4>
-  <div class="ed-radio-row">
-    <label class="ed-radio">
-      <input type="radio" name="spawn_s_mode" value="fixed"
-             {% if target.spawn.s.mode == 'fixed' %}checked{% endif %}>
-      <span>Fixed</span>
-    </label>
-    <label class="ed-radio">
-      <input type="radio" name="spawn_s_mode" value="derived"
-             {% if target.spawn.s.mode == 'derived' %}checked{% endif %}>
-      <span>Derived</span>
-    </label>
-  </div>
-  <div class="ed-field">
-    <label class="ed-label">
-      {{ 'Offset' if target.spawn.s.mode == 'fixed' else 'Default offset' }} <span class="unit">(m)</span>
-    </label>
-    <input type="number" step="any" name="spawn_s" class="ed-input" value="{{ target.spawn.s.value }}">
   </div>
 
   {% if target.kind == 'ego' %}
@@ -114,30 +97,6 @@
                value="{{ target.goal.s }}">
       </div>
     {% endif %}
-  {% endif %}
-
-  {% if target.spawn.s.mode == 'derived' %}
-    {% set binding = target.spawn.s.binding %}
-    {% set binding_type = binding.type if binding else 'stop_line_offset' %}
-    {% set binding_spec = get_binding_spec(binding_type) %}
-    <div class="ed-derived">
-      <div class="ed-field">
-        <label class="ed-label">Derived from</label>
-        <select name="binding_type" class="ed-input">
-          {% for spec in binding_specs() %}
-            <option value="{{ spec.type_id }}" {% if spec.type_id == binding_type %}selected{% endif %}>
-              {{ spec.title }}
-            </option>
-          {% endfor %}
-        </select>
-        {% if binding_spec and binding_spec.description %}
-          <p class="ed-help">{{ binding_spec.description }}</p>
-        {% endif %}
-      </div>
-      {% if binding_spec %}
-        {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
-      {% endif %}
-    </div>
   {% endif %}
 </form>
 
@@ -197,6 +156,61 @@
       <p class="ed-help">Loading&hellip;</p>
     </div>
   {% endif %}
+
+  {# Where along the lanelet, in the same place as which lanelet: both are
+     answered by looking at the map, and a derived offset -- "15 m before the
+     stop line" -- is a statement about it. Its own form, because the panel is
+     shown outside the inspector's. #}
+  <div class="ed-side-title" style="margin-top:18px">
+    Position on the matched lanelet
+  </div>
+  <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+        hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+    <div class="ed-radio-row">
+      <label class="ed-radio">
+        <input type="radio" name="spawn_s_mode" value="fixed"
+               {% if target.spawn.s.mode == 'fixed' %}checked{% endif %}>
+        <span>Fixed</span>
+      </label>
+      <label class="ed-radio">
+        <input type="radio" name="spawn_s_mode" value="derived"
+               {% if target.spawn.s.mode == 'derived' %}checked{% endif %}>
+        <span>Derived</span>
+      </label>
+    </div>
+    <div class="ed-field">
+      <label class="ed-label">
+        {{ 'Offset' if target.spawn.s.mode == 'fixed' else 'Default offset' }}
+        <span class="unit">(m)</span>
+      </label>
+      <input type="number" step="any" name="spawn_s" class="ed-input"
+             value="{{ target.spawn.s.value }}">
+    </div>
+
+    {% if target.spawn.s.mode == 'derived' %}
+      {% set binding = target.spawn.s.binding %}
+      {% set binding_type = binding.type if binding else 'stop_line_offset' %}
+      {% set binding_spec = get_binding_spec(binding_type) %}
+      <div class="ed-derived">
+        <div class="ed-field">
+          <label class="ed-label">Derived from</label>
+          <select name="binding_type" class="ed-input">
+            {% for spec in binding_specs() %}
+              <option value="{{ spec.type_id }}" {% if spec.type_id == binding_type %}selected{% endif %}>
+                {{ spec.title }}
+              </option>
+            {% endfor %}
+          </select>
+          {% if binding_spec and binding_spec.description %}
+            <p class="ed-help">{{ binding_spec.description }}</p>
+          {% endif %}
+        </div>
+        {% if binding_spec %}
+          {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
+        {% endif %}
+      </div>
+    {% endif %}
+  </form>
 {% endcall %}
 
 <h4 class="ed-subheading">{{ ic.icon('map', 12) }} On the map</h4>
