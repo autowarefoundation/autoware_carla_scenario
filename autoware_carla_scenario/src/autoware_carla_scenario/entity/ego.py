@@ -31,6 +31,15 @@ class EgoVehicle(TrafficManagerDriven):
     #: TrafficManager autopilot on this actor after warm-up.
     use_autopilot: bool = True
 
+    #: Whether this entity cannot start without a goal.  An ego that plans its
+    #: own route -- see
+    #: :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
+    #: -- has nowhere to go without one and never reports ready, so a scenario
+    #: that names none is refused.  One that is driven for it (TrafficManager,
+    #: an external driver policy) reads no goal, and a scenario is free to leave
+    #: it unsaid.
+    requires_goal: bool = False
+
     #: When ``True``, the actor is not this entity's to create or destroy: it
     #: belongs to something outside the scenario (an ``autoware_carla_interface``
     #: node, say) and :meth:`spawn` only attaches to it.  :class:`ScenarioRunner`

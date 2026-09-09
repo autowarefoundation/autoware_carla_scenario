@@ -4,11 +4,11 @@ ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 242
   spawn_s: 25.0
-  # Where the ego is going.  Every scenario needs a goal -- an ego that plans
-  # its own route (entity: autoware) will not move without one, and one driven
-  # for it still had a destination the run was aiming at -- but it belongs to
-  # the scenario, not to this group: a default here would silently override the
-  # goal a scenario derives for itself.
+  # Where the ego is going.  Required for entity: autoware, which plans its
+  # route to it and will not move without one; the other entities are driven for
+  # the ego and read no goal.  It belongs to the scenario rather than to this
+  # group either way: a default here would silently override the goal a scenario
+  # derives for itself.
   #
   # A scenario whose spawn is swept keeps whatever goal it names: the sweeper
   # enumerates one target key per run, and it is the spawn.

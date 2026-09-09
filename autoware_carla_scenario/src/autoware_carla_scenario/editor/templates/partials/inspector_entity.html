@@ -62,6 +62,24 @@
   </div>
 
   {% if target.kind == 'ego' %}
+    {% set autoware = target.driven_by == 'autoware' %}
+    <h4 class="ed-subheading">{{ ic.icon('car', 12) }} Driven by</h4>
+    <div class="ed-field">
+      <select name="driven_by" class="ed-input">
+        <option value="autopilot" {% if not autoware %}selected{% endif %}>
+          TrafficManager (CARLA autopilot)
+        </option>
+        <option value="autoware" {% if autoware %}selected{% endif %}>
+          Autoware
+        </option>
+      </select>
+      <p class="ed-help">
+        Which stack drives the ego, exported as <code>ego.entity</code>.
+        Autoware plans its own route, so it needs a goal below; an ego the
+        TrafficManager drives reads none.
+      </p>
+    </div>
+
     {# The goal sits with the spawn because it is the other end of the same
        thing: where the run starts and where it is meant to get to. It is not a
        card, because a card happens *during* a run and a goal is what the ego
@@ -74,18 +92,28 @@
                           target.goal.lanelet_id if target.goal else none,
                           draft, 'Goal lanelet') }}
       <p class="ed-help">
-        Required: where the run is meant to end. An Autoware ego plans its route
-        to it and will not move without one; an ego driven by the TrafficManager
-        or by a driver policy ignores it. Pick another lanelet to change it.
+        {% if autoware %}
+          Required: Autoware plans its route to it and will not move without
+          one.
+        {% else %}
+          Optional: the TrafficManager drives this ego and reads no goal. Give
+          one to say where the run was meant to end.
+        {% endif %}
       </p>
+      {% if target.goal and not autoware %}
+        <button type="button" class="ed-btn-sm" style="margin-top:6px"
+                data-clear-field="pick-goal_lanelet_id">Clear goal</button>
+      {% endif %}
     </div>
-    <div class="ed-field">
-      <label class="ed-label">
-        Offset along the goal lanelet <span class="unit">(m)</span>
-      </label>
-      <input type="number" step="any" name="goal_s" class="ed-input"
-             value="{{ target.goal.s if target.goal else 0.0 }}">
-    </div>
+    {% if target.goal %}
+      <div class="ed-field">
+        <label class="ed-label">
+          Offset along the goal lanelet <span class="unit">(m)</span>
+        </label>
+        <input type="number" step="any" name="goal_s" class="ed-input"
+               value="{{ target.goal.s }}">
+      </div>
+    {% endif %}
   {% endif %}
 
   {% if target.spawn.s.mode == 'derived' %}

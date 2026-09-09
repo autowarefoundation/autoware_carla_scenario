@@ -296,23 +296,42 @@ class BaseScenario(ABC):
 
         return od_pose
 
-    def require_goal(self) -> Lanelet2Pose:
-        """Return :attr:`goal_pose`, refusing a scenario that named none.
+    @property
+    def ego_requires_goal(self) -> bool:
+        """Whether this scenario's ego cannot start without a goal.
 
-        The one statement of the rule every scenario is held to: it says where
-        its ego is going.  :meth:`register_route_to_goal` asks because it cannot
-        route without an answer, and :class:`ScenarioRunner` asks once
-        :meth:`setup` returns, so that a scenario which snaps its own spawn
-        rather than calling :meth:`_setup_ego_spawn` is held to it too.
+        The entity's own rule
+        (:attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`),
+        read off the instance the scenario was given or, when it will be built
+        from :attr:`ego_type`, off that class.
+        """
+        entity = self.ego_entity
+        ego_class = type(entity) if entity is not None else self.ego_type
+        return ego_class.requires_goal
+
+    def require_goal(self) -> Optional[Lanelet2Pose]:
+        """Return :attr:`goal_pose`, refusing an ego that cannot start without one.
+
+        The one statement of the rule, for the two places that ask:
+        :meth:`register_route_to_goal`, which cannot route without an answer,
+        and :class:`ScenarioRunner` once :meth:`setup` returns -- so a scenario
+        that snaps its own spawn rather than calling :meth:`_setup_ego_spawn` is
+        held to it too.
+
+        An ego that is driven for it needs no goal, and ``None`` is the honest
+        answer for a scenario that names none: the run is a drive with no
+        destination stated, which is what a TrafficManager or driver-policy ego
+        does anyway.
 
         Raises:
-            ValueError: If :attr:`goal_pose` is ``None``.
+            ValueError: If :attr:`goal_pose` is ``None`` and the ego is one that
+                plans its own route.
         """
-        if self.goal_pose is None:
+        if self.goal_pose is None and self.ego_requires_goal:
             msg = (
-                f"{type(self).__name__} has no goal for its ego. Every scenario "
-                "says where the ego is going: set 'ego.goal_lanelet_id' (and "
-                "optionally 'ego.goal_s') in the scenario config, pass an "
+                f"{type(self).__name__} has no goal, and its ego plans its own "
+                "route: it will not move without one. Set 'ego.goal_lanelet_id' "
+                "(and optionally 'ego.goal_s') in the scenario config, pass an "
                 "EgoConfig carrying a goal_pose, or assign self.goal_pose in "
                 "setup() -- deriving it from what the scenario knows is a "
                 "supported way to have one, see derive_goal_from_route()."
@@ -328,7 +347,7 @@ class BaseScenario(ABC):
         in the config as well: the last of them becomes the goal.  A goal that
         reached the scenario another way -- ``ego.goal_lanelet_id``, or an
         :class:`EgoConfig` built with one -- wins, and an empty route leaves the
-        goal alone for :meth:`require_goal` to refuse.
+        goal unset, which only an ego that plans its own route is refused for.
 
         Call it from :meth:`setup` before :meth:`_setup_ego_spawn`, which is
         where the goal is handed to an ego that plans its own route.
@@ -342,13 +361,14 @@ class BaseScenario(ABC):
     ) -> None:
         """Register the :class:`RoutingAction` that routes an ego to :attr:`goal_pose`.
 
-        Every scenario says where its ego is going.  For an
+        For an
         :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
         the goal is what makes the ego move at all -- Autoware localizes at an
-        initial pose, plans a route to it, and only then engages -- and for an
-        ego that is driven for it, by the TrafficManager or a driver policy, it
-        is what the run was aiming at, which a scenario should not leave unsaid.
-        The action is a no-op for the latter, so this registers unconditionally.
+        initial pose, plans a route to it, and only then engages -- and such an
+        ego without one is refused.  For an ego that is driven for it, by the
+        TrafficManager or a driver policy, a goal is what the run was aiming at
+        when the scenario says so and nothing when it does not: the action is a
+        no-op either way, so it is registered only when there is one.
 
         Neither pose can be passed to the entity's constructor, because the
         runner builds the ego *before* :meth:`setup` and both are snapped onto
@@ -362,12 +382,16 @@ class BaseScenario(ABC):
                 attached actor.
 
         Raises:
-            ValueError: If :attr:`goal_pose` is ``None`` -- see
-                :meth:`require_goal`.  Asked here rather than at the start of
-                the run because setup is the last moment a scenario can name a
-                destination the config did not.
+            ValueError: If the ego plans its own route and :attr:`goal_pose` is
+                ``None`` -- see :meth:`require_goal`.  Asked here rather than at
+                the start of the run because setup is the last moment a scenario
+                can name a destination the config did not.
         """
         goal = self.require_goal()
+        if goal is None:
+            # An ego that is driven for it, and a scenario that named no
+            # destination: there is no mission to hand over.
+            return
 
         self.register_init(
             RoutingAction(

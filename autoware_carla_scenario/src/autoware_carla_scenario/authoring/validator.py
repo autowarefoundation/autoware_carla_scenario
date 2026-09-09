@@ -406,17 +406,19 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
 
 
 def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
-    """Check the entity's goal: the ego needs one, and nothing else may have one.
+    """Check the entity's goal: the ego may have one, and an Autoware ego must.
 
     A goal is read by a vehicle that plans its own route, and the ego is the
     only one that can have such a stack behind it -- the export renders the
     ego's goal and nothing else.  A goal stored on another vehicle would
     therefore be dropped in silence, so it is reported instead.
 
-    The ego's own goal is required, not optional.  A scenario is a drive from
-    somewhere to somewhere, and the document is where that is written down: an
-    ego with no destination runs an Autoware stack that never moves, and leaves
-    every other reader guessing where the run was meant to end.
+    Whether the ego needs one follows what drives it.  Autoware localizes at the
+    spawn, plans a route to the goal and only then engages, so an ``autoware``
+    ego without a goal never moves and the document is wrong.  An ego the
+    TrafficManager drives reads no goal at all, and a scenario about what
+    happens on the way -- a cut-in, a red light -- may legitimately name no
+    destination.
     """
     if entity.kind != "ego":
         if entity.goal is not None:
@@ -429,13 +431,14 @@ def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
             )
         return
     if entity.goal is None:
-        out.error(
-            f"{path}.goal",
-            "The ego has no goal. Pick one in the Goal section of its "
-            "inspector: it is where the run is meant to end, and an ego that "
-            "plans its own route will not move without it.",
-            entity.id,
-        )
+        if entity.driven_by == "autoware":
+            out.error(
+                f"{path}.goal",
+                "An Autoware ego has no goal. Pick one in the Goal section of "
+                "its inspector: Autoware plans its route to it and will not "
+                "move without one.",
+                entity.id,
+            )
     elif entity.goal.lanelet_id <= 0:
         out.error(
             f"{path}.goal.lanelet_id",

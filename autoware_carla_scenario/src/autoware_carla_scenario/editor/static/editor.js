@@ -426,6 +426,19 @@
       }
       return;
     }
+    // Emptying a picked value: the map can set a lanelet but not unset one, and
+    // a field that may be left blank -- the goal of an ego the TrafficManager
+    // drives -- needs a way back to blank. It goes through the same `change` the
+    // picker dispatches, so clearing and picking reach the server by one path.
+    var clearer = event.target.closest && event.target.closest('[data-clear-field]');
+    if (clearer) {
+      var field = document.getElementById(clearer.getAttribute('data-clear-field'));
+      if (field) {
+        field.value = '';
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return;
+    }
     // The scrim is the modal element itself; a click that lands on it rather
     // than on the panel inside is a click outside.
     var closer = event.target.closest && event.target.closest('[data-close-picker]');

@@ -567,19 +567,50 @@ class TestEntityEditing:
         assert ego.goal is not None
         assert (ego.goal.lanelet_id, ego.goal.s) == (265, 12.5)
 
-    def test_an_empty_goal_lanelet_stores_no_goal_and_is_reported(
+    def test_an_empty_goal_lanelet_clears_the_goal(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
-        # The inspector offers no way to blank it, but a hand-written form can:
-        # the document then says what it says, and validation calls it out.
+        # An ego the TrafficManager drives may have no destination, and Clear
+        # goal is how it goes back to having none.
         from autoware_carla_scenario.authoring.validator import validate_document
 
         client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": ""})
 
         assert _entity(store, draft_id, "ego").goal is None
+        assert validate_document(_document(store, draft_id)).ok
+
+    def test_an_autoware_ego_left_without_a_goal_is_reported(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"driven_by": "autoware", "goal_lanelet_id": ""},
+        )
+
+        entity = _entity(store, draft_id, "ego")
+        assert (entity.driven_by, entity.goal) == ("autoware", None)
         report = validate_document(_document(store, draft_id))
         assert not report.ok
         assert any("no goal" in issue.message for issue in report.errors)
+
+    def test_the_ego_says_which_stack_drives_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/entity/ego", data={"driven_by": "autoware"})
+        assert _entity(store, draft_id, "ego").driven_by == "autoware"
+
+        # An unknown value is ignored rather than stored: the document only ever
+        # holds a stack the export can name.
+        client.post(f"/draft/{draft_id}/entity/ego", data={"driven_by": "__nope__"})
+        assert _entity(store, draft_id, "ego").driven_by == "autoware"
+
+    def test_a_vehicle_that_is_not_the_ego_is_not_given_a_driver(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/entity/npc1", data={"driven_by": "autoware"})
+        assert _entity(store, draft_id, "npc1").driven_by == "autopilot"
 
     def test_a_partial_form_leaves_the_goal_alone(
         self, client: TestClient, store: DraftStore, draft_id: str

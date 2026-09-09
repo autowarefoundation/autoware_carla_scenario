@@ -371,10 +371,36 @@ class TestEgoGoal:
     def test_an_ego_with_a_goal_is_valid(self) -> None:
         assert validate_document(self._with_goal()).ok
 
-    def test_an_ego_needs_no_goal(self) -> None:
-        # Only an ego that plans its own route reads one; the document does not
-        # choose which stack drives, so a missing goal is not a finding.
-        assert validate_document(new_document()).ok
+    def test_an_ego_the_trafficmanager_drives_needs_no_goal(self) -> None:
+        # It reads none, and a scenario about what happens on the way -- a
+        # cut-in, a red light -- may legitimately name no destination.
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.goal = None
+
+        assert validate_document(document).ok
+
+    def test_an_autoware_ego_without_a_goal_is_an_error(self) -> None:
+        # Autoware plans its route to the goal and will not move without one.
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.driven_by = "autoware"
+        ego.goal = None
+
+        report = validate_document(document)
+
+        assert not report.ok
+        assert any("Autoware ego has no goal" in i.message for i in report.errors)
+
+    def test_an_autoware_ego_with_a_goal_is_valid(self) -> None:
+        document = self._with_goal()
+        ego = document.ego
+        assert ego is not None
+        ego.driven_by = "autoware"
+
+        assert validate_document(document).ok
 
     def test_a_goal_on_another_vehicle_is_an_error(self) -> None:
         from autoware_carla_scenario.authoring.models import GoalSpec

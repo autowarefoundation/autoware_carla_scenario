@@ -390,33 +390,44 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
-## Ego goal
+## Ego: who drives, and where to
 
-The ego's inspector has a **Goal** section beside its spawn, because the two are
-the ends of the same thing: where the run starts, and where the ego is meant to
-get to. A goal is picked from the map like a spawn is, and it is **required** —
-a document whose ego has no goal is a validation error, so pick another lanelet
-to change it rather than clearing it.
+The ego's inspector opens with **Driven by** — the stack that drives it, exported
+as `ego.entity`:
 
-It is not a card. A card happens *during* a run, and a goal is what the ego
+| Driven by | `ego.entity` | Goal |
+| --- | --- | --- |
+| TrafficManager (CARLA autopilot) | `autopilot` | optional — it reads none |
+| Autoware | `autoware` | **required** — it plans its route to the goal and will not move without one |
+
+(The framework's third value, `carla_driver`, needs a `driver` config group the
+editor does not author; a run can still select it from the command line.)
+
+The **Goal** section sits beside the spawn, because the two are the ends of the
+same thing: where the run starts, and where the ego is meant to get to. A goal is
+picked from the map like a spawn is. An Autoware ego without one is a validation
+error; an ego the TrafficManager drives may be given none — a cut-in or a
+red-light run is about what happens on the way — and **Clear goal** puts it back
+to that.
+
+A goal is not a card. A card happens *during* a run, and a goal is what the ego
 needs before one can start: Autoware localizes at the spawn, plans a route to
-the goal, and only then engages. The framework asks the same of every scenario —
-`BaseScenario.register_route_to_goal` refuses an ego that ends `setup()` with
-none — so the editor stores the goal on the ego and exports it as the
-framework's own keys:
+the goal, and only then engages. The framework asks the same of a hand-written
+scenario — `BaseScenario.require_goal()`, asked by `register_route_to_goal` and
+by `ScenarioRunner` once `setup()` returns — so the editor stores the goal on the
+ego and exports it as the framework's own keys:
 
 ```yaml
 ego:
   spawn_lanelet_id: 183
   spawn_s: 0.0
+  entity: autoware
   goal_lanelet_id: 265
   goal_s: 12.5
 ```
 
-The keys are written only when a goal is set, leaving the `ego` group's own
-`null` in place otherwise. A run whose ego plans its own route and reaches
-`setup()` with no goal — neither from the config nor derived by the scenario —
-is refused there.
+The goal keys are written only when a goal is set, leaving the `ego` group's own
+`null` in place otherwise.
 
 The **Set Goal** card still exists, for changing a destination mid-run or for a
 vehicle that is not the ego. One owned by the ego and left in the initialization

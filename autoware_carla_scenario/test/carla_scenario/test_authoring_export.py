@@ -124,6 +124,16 @@ class TestHydraConfig:
         assert config["ego"]["goal_lanelet_id"] == 265
         assert config["ego"]["goal_s"] == 12.5
 
+    def test_the_document_says_which_stack_drives_the_ego(self) -> None:
+        """``ego.entity`` is what selects the stack, so the document writes it."""
+        document = _document_with_goal(265)
+        ego = document.ego
+        assert ego is not None
+        ego.driven_by = "autoware"
+
+        assert build_scenario_config(document)["ego"]["entity"] == "autoware"
+        assert build_scenario_config(new_document())["ego"]["entity"] == "autopilot"
+
     def test_the_starter_carries_its_goal_into_the_config(self) -> None:
         config = build_scenario_config(new_document())
         assert config["ego"]["goal_lanelet_id"] > 0

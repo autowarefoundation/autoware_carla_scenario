@@ -292,11 +292,20 @@ class TestRouteToGoal:
 
         assert len(scenario._init_actions) == 1
 
-    def test_any_ego_without_a_goal_is_refused(self) -> None:
-        # Not only an Autoware one: a scenario that ends setup() with nowhere
-        # to send the ego has not said what it is testing.
+    def test_an_ego_driven_for_it_registers_nothing_without_a_goal(self) -> None:
+        # No destination named, and none needed: there is no mission to hand
+        # over, so nothing is registered and nothing is refused.
         scenario = _SimpleScenario(_make_ego_config())
-        with pytest.raises(ValueError, match="no goal"):
+
+        scenario.register_route_to_goal(self._initial_pose())
+
+        assert scenario._init_actions == []
+
+    def test_an_autoware_ego_without_a_goal_is_refused(self) -> None:
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = self._autoware_entity()
+
+        with pytest.raises(ValueError, match="plans its own route"):
             scenario.register_route_to_goal(self._initial_pose())
 
     def test_a_goal_registers_a_routing_action(self) -> None:
@@ -373,10 +382,32 @@ class TestRequireGoal:
 
         assert scenario.require_goal() is scenario.goal_pose
 
-    def test_no_goal_is_refused(self) -> None:
+    def test_an_ego_driven_for_it_may_have_no_goal(self) -> None:
+        # A cut-in or a red-light run is about what happens on the way; the
+        # TrafficManager reads no goal, so naming none is not an error.
         scenario = _SimpleScenario(_make_ego_config())
-        with pytest.raises(ValueError, match="no goal"):
+
+        assert scenario.require_goal() is None
+
+    def test_an_ego_that_plans_its_own_route_is_refused_without_one(self) -> None:
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
+
+        with pytest.raises(ValueError, match="plans its own route"):
             scenario.require_goal()
+
+    def test_the_rule_is_read_off_the_ego_type_when_no_entity_was_built(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_type = AutowareEgoEntity
+
+        assert scenario.ego_requires_goal is True
 
 
 class TestDeriveGoalFromRoute:

@@ -16,15 +16,16 @@ sub-tree so that they are addressable by the same plain ``key=value`` override
 mechanism -- the keys are written into the generated YAML precisely so that
 Hydra's struct mode accepts them.
 
-Goal keys
----------
-The ego's goal travels the same way, as ``ego.goal_lanelet_id`` /
-``ego.goal_s``.  Those are the keys the runner turns into the ego's
-configuration, so a document that sends the ego somewhere has to write them
-rather than hand the goal over some editor-only channel.  An authored document
-always has a goal -- one without is a validation error -- but the keys are
-emitted only when it does, so that a document being edited into shape leaves the
-``ego`` group's own ``null`` in place rather than a lanelet nobody chose.
+Ego keys
+--------
+The ego's goal travels the same way as its spawn, as ``ego.goal_lanelet_id`` /
+``ego.goal_s``, and which stack drives it as ``ego.entity``.  Those are the keys
+the runner turns into the ego's configuration, so a document that sends the ego
+somewhere has to write them rather than hand the goal over some editor-only
+channel.  The goal keys are emitted only when the document has a goal: an ego
+the TrafficManager drives may have no destination, and a document being edited
+into shape should leave the ``ego`` group's own ``null`` in place rather than a
+lanelet nobody chose.
 """
 
 from __future__ import annotations
@@ -140,6 +141,7 @@ def build_scenario_config(
             "initial_speed_kmh": ego.initial_speed_kmh,
             "spawn_lanelet_id": ego.spawn.lanelet_id,
             "spawn_s": ego.spawn.s.value,
+            "entity": ego.driven_by,
         }
         if ego.goal is not None:
             ego_overrides["goal_lanelet_id"] = ego.goal.lanelet_id

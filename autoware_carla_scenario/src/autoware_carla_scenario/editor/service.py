@@ -16,13 +16,14 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, get_args
 
 from ..authoring.models import (
     ActionNode,
     BindingRef,
     ConditionNode,
     ConstraintNode,
+    EgoDriver,
     Entity,
     GoalSpec,
     ScenarioDocument,
@@ -280,6 +281,11 @@ class EditorService:
                 form["initial_speed_kmh"], "Initial speed", entity.initial_speed_kmh
             )
 
+        if entity.kind == "ego" and "driven_by" in form:
+            driven_by = str(form["driven_by"])
+            if driven_by in get_args(EgoDriver):
+                entity.driven_by = driven_by  # type: ignore[assignment]
+
         self._update_goal(entity, form)
 
         spawn = entity.spawn
@@ -323,11 +329,12 @@ class EditorService:
     def _update_goal(entity: Entity, form: Mapping[str, Any]) -> None:
         """Apply the goal fields of the entity form.
 
-        The stored goal is whatever the field says, including nothing: the
-        picker offers no way to blank it -- every scenario needs a goal, and
+        The stored goal is whatever the field says, including nothing: an ego
+        the TrafficManager drives may have no destination, and blanking the
+        lanelet is how it goes back to having none.  An ``autoware`` ego cleared
+        that way is reported by
         :func:`~autoware_carla_scenario.authoring.validator.validate_document`
-        reports an ego without one -- but a document written by hand can arrive
-        in that state, and the form has to be able to say so.
+        rather than refused here -- an incomplete draft stays saveable.
 
         Only the ego carries a goal, so no other entity's form is read for one:
         the inspector does not offer the controls, and a goal stored elsewhere
