@@ -482,6 +482,9 @@ async def spawn_preview(request: Request, draft_id: str) -> HTMLResponse:
     form = dict(await request.form())
     entity_id = str(form.get("entity_id", ""))
     load_map = _checked(form, "load_map")
+    # The picker draws the matches on the map it already has open, so its
+    # variant of the partial is the readout without a second map.
+    in_picker = _checked(form, "in_picker")
 
     draft = _service(request).require_draft(draft_id)
     entity = draft.document.entity(entity_id)
@@ -497,6 +500,7 @@ async def spawn_preview(request: Request, draft_id: str) -> HTMLResponse:
             "document": draft.document,
             "entity": entity,
             "preview": result,
+            "in_picker": in_picker,
         },
     )
 

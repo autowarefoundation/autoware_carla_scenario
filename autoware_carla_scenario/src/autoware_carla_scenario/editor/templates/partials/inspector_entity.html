@@ -24,21 +24,21 @@
 
   <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Spawn</h4>
   <div class="ed-field">
-    <label class="ed-label">Spawn mode</label>
-    <select name="spawn_mode" class="ed-input">
-      <option value="fixed" {% if target.spawn.mode == 'fixed' %}selected{% endif %}>Fixed</option>
-      <option value="constraint_search" {% if target.spawn.mode == 'constraint_search' %}selected{% endif %}>
-        Constraint search
-      </option>
-    </select>
-    <p class="ed-help">
-      A constraint search hands the lanelet choice to the lanelet-constraint
-      sweeper; the ID below is the default a non-swept run uses.
-    </p>
-  </div>
-  <div class="ed-field">
     <label class="ed-label">Lanelet ID</label>
-    {{ f.lanelet_picker('spawn_lanelet_id', target.spawn.lanelet_id, draft, 'Lanelet ID') }}
+    {# The field here, the map -- and with it the choice between a pinned
+       lanelet and a constraint search -- behind Edit: a constraint is a
+       statement about the map, and this column is 384px wide. #}
+    {{ f.lanelet_field('spawn_lanelet_id', target.spawn.lanelet_id, draft) }}
+    <p class="ed-help">
+      {% if target.spawn.mode == 'fixed' %}
+        Pinned. Edit opens the map, where it can be handed to the
+        lanelet-constraint sweeper instead.
+      {% else %}
+        Searched: {{ target.spawn.constraints|length }} constraint{{ '' if target.spawn.constraints|length == 1 else 's' }},
+        with this ID as the default a non-swept run uses. Edit opens the map and
+        the search.
+      {% endif %}
+    </p>
   </div>
 
   <h4 class="ed-subheading">{{ ic.icon('bar', 12) }} Position on the matched lanelet</h4>
@@ -141,19 +141,65 @@
   {% endif %}
 </form>
 
-{% if target.spawn.mode == 'constraint_search' %}
-  <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Candidate lanelets</h4>
-  <div class="ed-constraint-root" style="margin-bottom:12px">
-    {% for node in target.spawn.constraints %}
-      {{ cons.render(node, draft, target, selected) }}
-    {% else %}
-      <p class="ed-help" style="margin:0 0 6px">No constraints yet: every lanelet matches.</p>
-    {% endfor %}
-    {{ cons.add_constraint(draft, target) }}
+{# Outside the form above, because the search built in here is made of forms
+   and a form cannot nest. The two halves find each other by id. #}
+{% call f.lanelet_modal('spawn_lanelet_id', target.spawn.lanelet_id, draft,
+                        'spawn lanelet') %}
+  {% set searching = target.spawn.mode == 'constraint_search' %}
+  <div class="ed-side-title">How this lanelet is chosen</div>
+  <div class="ed-radio-row">
+    {# Each radio posts on its own: this panel is moved out of the inspector's
+       form to be shown, so there is no form around it to submit. #}
+    <label class="ed-radio">
+      <input type="radio" name="spawn_mode" value="fixed"
+             {% if not searching %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+             hx-vals='{"spawn_mode": "fixed"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>Fixed</span>
+    </label>
+    <label class="ed-radio">
+      <input type="radio" name="spawn_mode" value="constraint_search"
+             {% if searching %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+             hx-vals='{"spawn_mode": "constraint_search"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>Constraint search</span>
+    </label>
   </div>
-{% else %}
-  <h4 class="ed-subheading">{{ ic.icon('map', 12) }} On the map</h4>
-{% endif %}
+
+  {% if not searching %}
+    <p class="ed-help">
+      Click a lanelet to pin it. A constraint search hands the choice to the
+      lanelet-constraint sweeper instead, which runs the scenario once per
+      matching lanelet.
+    </p>
+  {% else %}
+    <p class="ed-help">
+      The sweeper runs the scenario once per matching lanelet; the pinned ID
+      stays as the default a non-swept run uses.
+    </p>
+    <div class="ed-constraint-root">
+      {% for node in target.spawn.constraints %}
+        {{ cons.render(node, draft, target, selected, document, true) }}
+      {% else %}
+        <p class="ed-help" style="margin:0 0 6px">
+          No constraints yet: every lanelet matches.
+        </p>
+      {% endfor %}
+      {{ cons.add_constraint(draft, target) }}
+    </div>
+    <div id="picker-matches"
+         hx-post="/draft/{{ draft.id }}/spawn-preview"
+         hx-vals='{"entity_id": "{{ target.id }}", "in_picker": "1"}'
+         hx-trigger="load delay:200ms"
+         hx-swap="innerHTML">
+      <p class="ed-help">Loading&hellip;</p>
+    </div>
+  {% endif %}
+{% endcall %}
+
+<h4 class="ed-subheading">{{ ic.icon('map', 12) }} On the map</h4>
 
 {# Shown for both spawn modes: a hand-typed lanelet ID is worth seeing on a map
    too, and clicking one is the quickest way to change it. #}

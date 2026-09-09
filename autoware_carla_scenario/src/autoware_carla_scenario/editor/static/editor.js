@@ -390,11 +390,54 @@
     if (status) status.textContent = text;
   }
 
+  var openPicker = null;     // id of the picker currently portalled to <body>
+
   function closePickers() {
+    openPicker = null;
     document.querySelectorAll('[data-portalled]').forEach(function (modal) {
       modal.remove();
     });
     reapViewers();
+  }
+
+  /* Put the picker back after an edit made inside it.
+   *
+   * The side panel's controls -- the spawn's fixed/searched choice, its
+   * constraints -- post like every other control and swap `#editor-body`, which
+   * builds a fresh copy of the modal in the inspector while the open one hangs
+   * off <body>, now stale. Swapping the fresh one in keeps the panel in step
+   * with the document without the map closing under the person using it: the
+   * viewer itself is carried across by `reuseMap`, because the picker's frame
+   * is keyed.
+   *
+   * Runs after `reapViewers`, so the frame in the stale copy is still on the
+   * page when the reap decides what to destroy, and before `mountMaps`, which is
+   * what puts the live frame into the fresh copy. */
+  function reopenPicker() {
+    if (!openPicker) return;
+    var fresh = null;
+    var stale = null;
+    document.querySelectorAll('#' + CSS.escape(openPicker)).forEach(function (el) {
+      if (el.dataset.portalled) stale = el;
+      else fresh = el;
+    });
+    if (!fresh) return;
+    if (stale) stale.remove();
+    fresh.dataset.portalled = '1';
+    document.body.appendChild(fresh);
+    fresh.hidden = false;
+  }
+
+  /* The matches the server just counted, drawn on the map already open beside
+     them: the panel carries the ids, the frame is the one thing that can show
+     them. */
+  function syncPickerHighlight() {
+    var panel = document.querySelector('[data-portalled] [data-picker-highlight]');
+    if (!panel) return;
+    var frame = document.querySelector('[data-portalled] .ed-map-frame');
+    if (!frame) return;
+    frame.dataset.highlight = panel.dataset.pickerHighlight || '';
+    applyHighlight(frame);
   }
 
   /* A set is saved when the picker is closed, not on every click: sending the
@@ -416,9 +459,11 @@
   document.addEventListener('click', function (event) {
     var opener = event.target.closest && event.target.closest('[data-open-picker]');
     if (opener) {
-      var modal = document.getElementById(opener.getAttribute('data-open-picker'));
+      var pickerId = opener.getAttribute('data-open-picker');
+      var modal = document.getElementById(pickerId);
       if (modal) {
         closePickers();
+        openPicker = pickerId;
         modal.dataset.portalled = '1';
         document.body.appendChild(modal);
         modal.hidden = false;
@@ -505,8 +550,10 @@
     // Before mounting: a swap has just detached whatever was there, and the
     // replacements are about to allocate their own.
     reapViewers();
+    reopenPicker();
     scheduleRedraw();
     mountMaps();
+    syncPickerHighlight();
   }
 
   // `afterSettle` only: it fires after `afterSwap` for the same swap, and after

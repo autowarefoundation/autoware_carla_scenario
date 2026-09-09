@@ -347,6 +347,25 @@ class TestPages:
         field = body.split('id="pick-spawn_lanelet_id"')[0].rsplit("<input", 1)[1]
         assert "ed-input-locked" in field
 
+    def test_the_spawn_is_chosen_where_the_map_is(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Pinned or searched is a question about the map, so it is asked there.
+
+        The column states which it is and offers Edit; the choice, and the
+        search it leads to, live in the picker beside the map they are about.
+        """
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        picker = body.split('id="picker-spawn_lanelet_id"', 1)[1]
+        column = body.split('id="picker-spawn_lanelet_id"', 1)[0]
+
+        assert 'name="spawn_mode"' not in column
+        assert 'name="spawn_mode"' in picker
+        # The constraint tree, and each node's own parameters, come with it:
+        # the inspector column is behind the map while the picker is open.
+        assert "ed-constraint-fields" in picker
+        assert "ed-constraint" not in column
+
     def test_the_goal_is_picked_from_the_map_like_the_spawn(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -513,7 +532,7 @@ class TestPages:
     ) -> None:
         """?selected= renders server-side, so a deep link works and so do tests."""
         body = client.get(f"/draft/{draft_id}?selected=npc1").text
-        assert "Candidate lanelets" in body
+        assert "How this lanelet is chosen" in body
         assert "Constraint search" in body
 
 

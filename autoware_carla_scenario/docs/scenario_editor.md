@@ -273,19 +273,24 @@ Compose them with `ALL`, `ANY`, `NOT`, `Sticky` and `Persistent`, which map onto
 
 ## Entity spawn
 
-An entity spawns in one of two modes.
+An entity spawns in one of two modes, and which one is chosen **on the map**:
+the inspector column states how the lanelet is chosen and offers **Edit**, and
+the picker that opens has the choice — Fixed or Constraint search — beside the
+map, with the search itself under it. A constraint is a statement about the map,
+so it is written with the map it searches in view, and the matches are outlined
+on that same map as they are counted.
 
 **Fixed** pins a lanelet and an offset:
 
-| Field | Value |
-| --- | --- |
-| Spawn mode | Fixed |
-| Lanelet ID | 183 |
-| Offset | 12.5 m |
+| Field | Value | Where |
+| --- | --- | --- |
+| Lanelet ID | 183 | the picker, by clicking the map |
+| Offset | 12.5 m | the inspector column |
 
 **Constraint search** hands the lanelet choice to the existing
-lanelet-constraint sweeper. The constraint tree is edited as a tree and is
-serialised straight into `sweep.constraints`:
+lanelet-constraint sweeper. The tree is edited in the picker, each node with its
+own parameters — the inspector column is behind the map while it is open — and
+is serialised straight into `sweep.constraints`:
 
 ```yaml
 sweep:
@@ -348,8 +353,11 @@ for resizes, so lifting the canvas out would leave it measuring a node that is
 no longer on the page. Panning and zooming survive an edit as a consequence,
 which re-mounting had been silently throwing away.
 
-A picker has no key. It is mounted when someone opens it and destroyed when they
-close it, which is already once per deliberate act.
+A picker is keyed too. An edit made in its side panel — the spawn's fixed or
+searched choice, its constraints — posts like every other control and swaps the
+whole editor body, which builds a fresh copy of the modal while the open one
+hangs off `<body>`. The fresh copy is swapped in behind the person using it, and
+the key is what carries the parsed map across that, pan and zoom included.
 
 It is the **only** renderer. A server-rendered SVG used to sit behind it as an
 offline fallback, but the page loads htmx from a CDN and every control here is an
