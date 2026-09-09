@@ -355,6 +355,94 @@ class TestValidation:
         assert any("searches one entity" in i.message for i in report.warnings)
 
 
+class TestEgoGoal:
+    """The goal is the ego's, and it is stored beside the ego's spawn."""
+
+    @staticmethod
+    def _with_goal(lanelet_id: int = 265, s: float = 12.5):
+        from autoware_carla_scenario.authoring.models import GoalSpec
+
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.goal = GoalSpec(lanelet_id=lanelet_id, s=s)
+        return document
+
+    def test_an_ego_with_a_goal_is_valid(self) -> None:
+        assert validate_document(self._with_goal()).ok
+
+    def test_an_ego_needs_no_goal(self) -> None:
+        # Only an ego that plans its own route reads one; the document does not
+        # choose which stack drives, so a missing goal is not a finding.
+        assert validate_document(new_document()).ok
+
+    def test_a_goal_on_another_vehicle_is_an_error(self) -> None:
+        from autoware_carla_scenario.authoring.models import GoalSpec
+
+        document = new_document()
+        npc = document.entity("npc1")
+        assert npc is not None
+        npc.goal = GoalSpec(lanelet_id=265)
+
+        report = validate_document(document)
+
+        assert not report.ok
+        assert any("Only the ego" in issue.message for issue in report.errors)
+
+    def test_a_goal_without_a_lanelet_is_an_error(self) -> None:
+        report = validate_document(self._with_goal(lanelet_id=0))
+        assert not report.ok
+        assert any("positive lanelet ID" in issue.message for issue in report.errors)
+
+    def test_an_init_set_goal_card_for_the_ego_warns(self) -> None:
+        """Two goals delivered in one phase is one thing said twice."""
+        from autoware_carla_scenario.authoring.models import ActionNode
+
+        document = self._with_goal()
+        document.actions.append(
+            ActionNode(
+                type="routing",
+                title="Set Goal",
+                actor="ego",
+                phase="init",
+                params={"goal_lanelet_id": 300, "goal_s": 0.0},
+            )
+        )
+
+        report = validate_document(document)
+
+        assert report.ok  # a warning, not an error: the run is well defined
+        assert any("already delivered" in issue.message for issue in report.warnings)
+
+    def test_the_same_card_on_the_tick_loop_is_fine(self) -> None:
+        # Changing the destination mid-run is what the card is for.
+        from autoware_carla_scenario.authoring.models import ActionNode
+
+        document = self._with_goal()
+        document.actions.append(
+            ActionNode(
+                type="routing",
+                title="Set Goal",
+                actor="ego",
+                phase="pre_tick",
+                params={"goal_lanelet_id": 300, "goal_s": 0.0},
+            )
+        )
+
+        assert not any(
+            "already delivered" in issue.message
+            for issue in validate_document(document).warnings
+        )
+
+    def test_the_goal_survives_a_yaml_round_trip(self, tmp_path) -> None:
+        path = save_document(self._with_goal(), tmp_path / "document.yaml")
+        ego = load_document(path).ego
+
+        assert ego is not None
+        assert ego.goal is not None
+        assert (ego.goal.lanelet_id, ego.goal.s) == (265, 12.5)
+
+
 class TestCompilation:
     def test_roles_are_assigned_ego_first_then_numbered_npcs(self) -> None:
         compiled = compile_document(new_document())

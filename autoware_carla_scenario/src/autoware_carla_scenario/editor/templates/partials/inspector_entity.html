@@ -61,6 +61,39 @@
     <input type="number" step="any" name="spawn_s" class="ed-input" value="{{ target.spawn.s.value }}">
   </div>
 
+  {% if target.kind == 'ego' %}
+    {# The goal sits with the spawn because it is the other end of the same
+       thing: where the run starts and where it is meant to get to. It is not a
+       card, because a card happens *during* a run and a goal is what the ego
+       needs before one can start -- Autoware plans its route from the spawn to
+       the goal and only then engages. #}
+    <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Goal</h4>
+    <div class="ed-field">
+      <label class="ed-label">Goal lanelet</label>
+      {{ f.lanelet_picker('goal_lanelet_id',
+                          target.goal.lanelet_id if target.goal else none,
+                          draft, 'Goal lanelet') }}
+      <p class="ed-help">
+        Where the ego is being sent. An Autoware ego plans its route to it and
+        will not move without one; an ego driven by the TrafficManager or by a
+        driver policy ignores it.
+      </p>
+      {% if target.goal %}
+        <button type="button" class="ed-btn-sm" style="margin-top:6px"
+                data-clear-field="pick-goal_lanelet_id">Clear goal</button>
+      {% endif %}
+    </div>
+    {% if target.goal %}
+      <div class="ed-field">
+        <label class="ed-label">
+          Offset along the goal lanelet <span class="unit">(m)</span>
+        </label>
+        <input type="number" step="any" name="goal_s" class="ed-input"
+               value="{{ target.goal.s }}">
+      </div>
+    {% endif %}
+  {% endif %}
+
   {% if target.spawn.s.mode == 'derived' %}
     {% set binding = target.spawn.s.binding %}
     {% set binding_type = binding.type if binding else 'stop_line_offset' %}

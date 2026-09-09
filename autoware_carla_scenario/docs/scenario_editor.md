@@ -390,6 +390,38 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
+## Ego goal
+
+The ego's inspector has a **Goal** section beside its spawn, because the two are
+the ends of the same thing: where the run starts, and where the ego is meant to
+get to. A goal is picked from the map like a spawn is, and cleared with **Clear
+goal** — an ego with no destination is the ordinary case.
+
+It is not a card. A card happens *during* a run, and a goal is what the ego
+needs before one can start: Autoware localizes at the spawn, plans a route to
+the goal, and only then engages. The framework says the same thing in its types
+— an `AutowareEgoConfig` cannot be built without a goal — so the editor stores
+the goal on the ego and exports it as the framework's own keys:
+
+```yaml
+ego:
+  spawn_lanelet_id: 183
+  spawn_s: 0.0
+  goal_lanelet_id: 265
+  goal_s: 12.5
+```
+
+The keys are written only when a goal is set, leaving the `ego` group's own
+`null` in place otherwise. A run with `ego.entity=autoware` and no goal is
+refused while the scenario is being built.
+
+The **Set Goal** card still exists, for changing a destination mid-run or for a
+vehicle that is not the ego. One owned by the ego and left in the initialization
+phase is warned about: the ego's own goal is already delivered there, so the card
+would send a second destination in the same phase. Only a vehicle that plans its own route reads a
+goal at all, so a goal stored on any other entity is a validation error rather
+than something quietly dropped at export.
+
 ## Metadata-driven GUI
 
 Actions, conditions, constraints and bindings keep growing, so the templates

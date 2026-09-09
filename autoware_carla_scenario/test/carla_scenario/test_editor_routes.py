@@ -347,6 +347,29 @@ class TestPages:
         field = body.split('id="pick-spawn_lanelet_id"')[0].rsplit("<input", 1)[1]
         assert "ed-input-locked" in field
 
+    def test_the_goal_is_picked_from_the_map_like_the_spawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The ego's goal is a lanelet, so it is chosen the way every one is."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        assert 'id="pick-goal_lanelet_id"' in body
+        assert 'data-open-picker="picker-goal_lanelet_id"' in body
+        # Nothing to clear and no offset to give until a goal exists.
+        assert "data-clear-field" not in body
+        assert 'name="goal_s"' not in body
+
+        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": "265"})
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+
+        assert 'data-clear-field="pick-goal_lanelet_id"' in body
+        assert 'name="goal_s"' in body
+
+    def test_only_the_ego_is_offered_a_goal(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        assert "goal_lanelet_id" not in body
+
     def test_the_scenario_exclusion_list_is_picked_too(
         self, client: TestClient, draft_id: str
     ) -> None:
@@ -539,6 +562,50 @@ class TestEntityEditing:
         )
         assert entity.spawn.mode == "fixed"
         assert (entity.spawn.lanelet_id, entity.spawn.s.value) == (200, 12.5)
+
+    def test_the_ego_is_given_a_goal_beside_its_spawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"goal_lanelet_id": "265", "goal_s": "12.5"},
+        )
+        ego = _entity(store, draft_id, "ego")
+        assert ego.goal is not None
+        assert (ego.goal.lanelet_id, ego.goal.s) == (265, 12.5)
+
+    def test_an_empty_goal_lanelet_clears_the_goal(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # The picker can set a lanelet but not unset one, so blanking the field
+        # is how an ego goes back to having no destination.
+        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": "265"})
+        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": ""})
+
+        assert _entity(store, draft_id, "ego").goal is None
+
+    def test_a_partial_form_leaves_the_goal_alone(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Clicking a lanelet on the map posts the spawn alone; the goal stays."""
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"goal_lanelet_id": "265", "goal_s": "12.5"},
+        )
+        client.post(f"/draft/{draft_id}/entity/ego", data={"spawn_lanelet_id": "200"})
+
+        ego = _entity(store, draft_id, "ego")
+        assert ego.spawn.lanelet_id == 200
+        assert ego.goal is not None
+        assert ego.goal.lanelet_id == 265
+
+    def test_a_vehicle_that_is_not_the_ego_is_given_no_goal(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # The inspector offers the control for the ego only; a form that names
+        # one anyway must not store what validation would then reject.
+        client.post(f"/draft/{draft_id}/entity/npc1", data={"goal_lanelet_id": "265"})
+        assert _entity(store, draft_id, "npc1").goal is None
 
     def test_a_derived_offset_stores_a_binding(
         self, client: TestClient, store: DraftStore, draft_id: str

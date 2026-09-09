@@ -444,13 +444,21 @@ _DIRECTIONS: tuple[SelectOption, ...] = (
     SelectOption("right", "Right"),
 )
 
-_RULE_FIELD = FieldSpec(
-    name="rule",
-    label="Predicate",
-    kind="select",
-    default="less_than",
-    options=COMPARISON_RULES,
-)
+
+def _rule_field(default: str = "less_than") -> FieldSpec:
+    """Return the comparison-operator select, defaulting to *default*.
+
+    Taking the default as an argument rather than fixing it: a condition whose
+    natural reading is "at least" had to write the whole field out again to say
+    so, which is three more copies of the one place `COMPARISON_RULES` is used.
+    """
+    return FieldSpec(
+        name="rule",
+        label="Predicate",
+        kind="select",
+        default=default,
+        options=COMPARISON_RULES,
+    )
 
 
 def _entity_field(name: str, label: str) -> FieldSpec:
@@ -672,7 +680,8 @@ register_action_spec(
                     "Where this vehicle is being sent. Only one that plans its "
                     "own route reads it -- an Autoware ego -- and it will not "
                     "move without a goal; a TrafficManager or driver vehicle "
-                    "ignores it."
+                    "ignores it. The ego's own goal is set on the ego itself, "
+                    "beside its spawn."
                 ),
             ),
             FieldSpec(
@@ -687,10 +696,12 @@ register_action_spec(
         ),
         description=(
             "Give a vehicle a destination and let its stack plan the route. "
-            "The ego is routed once during initialization whether or not a card "
-            "says so -- it cannot start driving until it has -- so a card is "
-            "for changing that destination, or for a vehicle that is not the "
-            "ego. Only a vehicle that plans its own route reads it."
+            "The ego's destination belongs to the ego and is set there, beside "
+            "its spawn: it is routed once during initialization whether or not "
+            "a card says so, because it cannot start driving until it has. A "
+            "card is for changing that destination mid-run, or for a vehicle "
+            "that is not the ego. Only a vehicle that plans its own route "
+            "reads it."
         ),
     )
 )
@@ -866,7 +877,7 @@ register_condition_spec(
         fields=(
             _entity_field("source", "Subject"),
             _entity_field("target", "Target"),
-            _RULE_FIELD,
+            _rule_field(),
             FieldSpec(
                 name="distance", label="Distance", kind="number", default=20.0, unit="m"
             ),
@@ -894,7 +905,7 @@ register_condition_spec(
         fields=(
             _entity_field("source", "Subject"),
             _entity_field("target", "Target"),
-            _RULE_FIELD,
+            _rule_field(),
             FieldSpec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
@@ -925,13 +936,7 @@ register_condition_spec(
         ),
         fields=(
             _entity_field("entity", "Subject"),
-            FieldSpec(
-                name="rule",
-                label="Predicate",
-                kind="select",
-                default="greater_than",
-                options=COMPARISON_RULES,
-            ),
+            _rule_field("greater_than"),
             FieldSpec(
                 name="value", label="Speed", kind="number", default=10.0, unit="m/s"
             ),
@@ -1272,13 +1277,7 @@ register_condition_spec(
             metric="Elapsed time", rule="rule", value="duration_seconds", unit="s"
         ),
         fields=(
-            FieldSpec(
-                name="rule",
-                label="Predicate",
-                kind="select",
-                default="greater_than_or_equal",
-                options=COMPARISON_RULES,
-            ),
+            _rule_field("greater_than_or_equal"),
             FieldSpec(
                 name="duration_seconds",
                 label="Duration",
@@ -1584,13 +1583,7 @@ register_constraint_spec(
         title="Lanelet length",
         category="Geometry",
         fields=(
-            FieldSpec(
-                name="rule",
-                label="Predicate",
-                kind="select",
-                default="greater_than_or_equal",
-                options=COMPARISON_RULES,
-            ),
+            _rule_field("greater_than_or_equal"),
             FieldSpec(
                 name="value", label="Length", kind="number", default=10.0, unit="m"
             ),

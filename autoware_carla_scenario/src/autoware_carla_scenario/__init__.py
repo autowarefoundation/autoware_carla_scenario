@@ -27,6 +27,7 @@ Public API re-exported for convenience::
         SpeedDirection,
         StandstillCondition,
         StickyCondition,
+        AutowareEgoConfig,
         EgoConfig,
         EgoVehicle,
         Lanelet2Pose,
@@ -186,7 +187,11 @@ if TYPE_CHECKING:
         unregister_conf_dir as unregister_conf_dir,
         unregister_scenario as unregister_scenario,
     )
-    from .scenario_base import BaseScenario as BaseScenario, EgoConfig as EgoConfig
+    from .scenario_base import (
+        AutowareEgoConfig as AutowareEgoConfig,
+        BaseScenario as BaseScenario,
+        EgoConfig as EgoConfig,
+    )
     from .scenario_config import (
         DriverCameraSpec as DriverCameraSpec,
         DriverConfig as DriverConfig,
@@ -273,6 +278,7 @@ __all__ = [
     "DriverConfig",
     "DriverControlSpec",
     "EgoDriverGrpcClient",
+    "AutowareEgoConfig",
     "EgoConfig",
     "EgoVehicle",
     "SpawnLocation",
@@ -429,6 +435,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # scenario base
     "BaseScenario": (".scenario_base", "BaseScenario"),
     "EgoConfig": (".scenario_base", "EgoConfig"),
+    "AutowareEgoConfig": (".scenario_base", "AutowareEgoConfig"),
     # scenario package extension API (registry)
     "register_scenario": (".registry", "register_scenario"),
     "register_scenario_builder": (".registry", "register_scenario_builder"),

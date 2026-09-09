@@ -38,6 +38,7 @@ __all__ = [
     "ConstraintNode",
     "Entity",
     "EntityKind",
+    "GoalSpec",
     "MapRef",
     "ScenarioDocument",
     "SpawnMode",
@@ -225,12 +226,36 @@ class SpawnSpec(_Node):
         return [c.to_sweep_dict() for c in self.constraints]
 
 
+class GoalSpec(_Node):
+    """Where the ego is being sent.
+
+    A goal is not something that happens during a run: Autoware localizes at
+    the spawn pose, plans a route to the goal, and only then engages, so the
+    goal is part of what it takes to *initialize* the ego.  That is why it sits
+    on the entity next to its spawn -- both ends of the ego's run in one place
+    -- rather than being an action performed at some point in the loop.
+
+    It is rendered as the framework's own ``ego.goal_lanelet_id`` / ``ego.goal_s``
+    keys and reaches the runtime as
+    :class:`~autoware_carla_scenario.AutowareEgoConfig`, which cannot be built
+    without one.
+    """
+
+    lanelet_id: int = 0
+    s: float = 0.0
+
+
 class Entity(_Node):
     """A vehicle taking part in the scenario.
 
     Exactly one entity must have ``kind="ego"``; its
     :attr:`role_name` is fixed to the framework's ego role by the compiler.
     Other entities map onto ``npc<N>`` roles in registration order.
+
+    :attr:`goal` is the ego's alone.  Only a vehicle that plans its own route
+    reads a goal, and the ego is the only one that can have such a stack behind
+    it; a goal on any other entity is a validation error rather than something
+    quietly dropped at export.
     """
 
     id: str
@@ -239,6 +264,9 @@ class Entity(_Node):
     vehicle_type: str = "vehicle.mini.cooper"
     initial_speed_kmh: float = 0.0
     spawn: SpawnSpec = Field(default_factory=SpawnSpec)
+    #: Where the ego is routed to, or ``None`` when it is given no destination
+    #: -- the ordinary case for an ego that drives itself.
+    goal: Optional[GoalSpec] = None
 
     @field_validator("id")
     @classmethod

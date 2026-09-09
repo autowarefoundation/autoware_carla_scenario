@@ -106,6 +106,27 @@ class TestHydraConfig:
         assert swept_entity(document) is None
         assert "sweep" not in build_scenario_config(document)
 
+    def test_the_egos_goal_uses_the_frameworks_own_keys(self) -> None:
+        """The goal reaches the runner the way the spawn does: as ego.* keys."""
+        from autoware_carla_scenario.authoring.models import GoalSpec
+
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.goal = GoalSpec(lanelet_id=265, s=12.5)
+
+        config = build_scenario_config(document)
+
+        assert config["ego"]["goal_lanelet_id"] == 265
+        assert config["ego"]["goal_s"] == 12.5
+
+    def test_an_ego_with_no_goal_writes_no_goal_keys(self) -> None:
+        # An ego that drives itself needs none, and an emitted key would shadow
+        # the ego group's own null with the same value for no reason.
+        config = build_scenario_config(new_document())
+        assert "goal_lanelet_id" not in config["ego"]
+        assert "goal_s" not in config["ego"]
+
     def test_empty_map_fields_are_left_to_the_map_group(self) -> None:
         """An empty exclusion list must fall through, not shadow the group's."""
         config = build_scenario_config(new_document())

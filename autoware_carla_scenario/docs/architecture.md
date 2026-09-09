@@ -687,6 +687,11 @@ classDiagram
 
     class EgoConfig {
         +role_name = "Ego" (fixed)
+        +goal_pose: Lanelet2Pose | None
+    }
+
+    class AutowareEgoConfig {
+        +goal_pose: Lanelet2Pose (required)
     }
 
     class SpawnLocation {
@@ -709,6 +714,7 @@ classDiagram
 
     class EgoVehicle {
         +use_autopilot = true
+        +requires_goal = false
         +actor: carla.Actor | None
         +spawn(world, config) carla.Actor
         +on_scenario_start(world)
@@ -719,6 +725,7 @@ classDiagram
 
     class AutowareEntity {
         +use_autopilot = false
+        +requires_goal = true
     }
 
     class CarlaDriverEntity {
@@ -727,6 +734,7 @@ classDiagram
     }
 
     VehicleEntityConfig <|-- EgoConfig
+    EgoConfig <|-- AutowareEgoConfig
     SpawnLocation <|.. SpawnTransform
     SpawnLocation <|.. SpawnPointIndex
     VehicleEntityConfig --> SpawnLocation
@@ -745,6 +753,12 @@ that drives itself overrides them — see
 `set_autopilot(True)` on the ego actor. `EgoVehicle` opts in (TrafficManager drives);
 `AutowareEntity` opts out and nothing drives the actor; `CarlaDriverEntity` opts out and
 drives it itself from an external policy's plan.
+
+**Who needs a goal**: `requires_goal` says whether an entity plans its own route and so
+cannot start without a destination. `AutowareEntity` sets it; the run is refused while it
+is still being built (`build_ego_and_spawn` gives such an ego an `AutowareEgoConfig`,
+which has no form without a goal) and again in `BaseScenario.register_route_to_goal` for
+an ego config assembled by hand.
 
 **Spawn retry logic**: When a vehicle fails to spawn (e.g., collision with existing geometry), the spawn system retries with lateral (`t_step`) and vertical (`z_step`) offsets, up to `spawn_retry_max_count` attempts.
 

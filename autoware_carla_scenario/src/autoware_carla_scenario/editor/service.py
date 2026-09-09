@@ -24,6 +24,7 @@ from ..authoring.models import (
     ConditionNode,
     ConstraintNode,
     Entity,
+    GoalSpec,
     ScenarioDocument,
     SpawnSpec,
     as_action_phase,
@@ -263,7 +264,7 @@ class EditorService:
     def update_entity(
         self, document: ScenarioDocument, entity_id: str, form: Mapping[str, Any]
     ) -> None:
-        """Apply the entity inspector form, including its spawn definition."""
+        """Apply the entity inspector form, including its spawn and its goal."""
         entity = document.entity(entity_id)
         if entity is None:
             raise EditorError(f"No entity named {entity_id!r}.")
@@ -278,6 +279,8 @@ class EditorService:
             entity.initial_speed_kmh = _as_float(
                 form["initial_speed_kmh"], "Initial speed", entity.initial_speed_kmh
             )
+
+        self._update_goal(entity, form)
 
         spawn = entity.spawn
         if "spawn_mode" in form:
@@ -315,6 +318,31 @@ class EditorService:
             params = dict(existing)
             params.update(_parse(spec.fields, form, prefix="binding_"))
             spawn.s.binding = BindingRef(type=binding_type, params=params)
+
+    @staticmethod
+    def _update_goal(entity: Entity, form: Mapping[str, Any]) -> None:
+        """Apply the goal fields of the entity form.
+
+        The lanelet picker submits an empty value when nothing is chosen, and
+        that is how a goal is cleared: an ego with no destination is the
+        ordinary case, not an error.  Only the ego carries a goal, so no other
+        entity's form is read for one -- the inspector does not offer the
+        controls, and a goal stored elsewhere is a validation error.
+
+        Raises:
+            EditorError: If the goal offset is not a number.
+        """
+        if entity.kind != "ego" or "goal_lanelet_id" not in form:
+            return
+        raw = str(form["goal_lanelet_id"]).strip()
+        if not raw:
+            entity.goal = None
+            return
+        if entity.goal is None:
+            entity.goal = GoalSpec()
+        entity.goal.lanelet_id = _as_int(raw, "Goal lanelet ID", entity.goal.lanelet_id)
+        if "goal_s" in form:
+            entity.goal.s = _as_float(form["goal_s"], "Goal offset", entity.goal.s)
 
     # ------------------------------------------------------------------
     # Spawn constraints

@@ -352,6 +352,84 @@ class TestRouteToGoal:
         assert [g.lanelet_id for g in routed] == [123]
 
 
+# ---------------------------------------------------------------------------
+# Tests for the goal carried by the ego config
+# ---------------------------------------------------------------------------
+
+
+class TestGoalOnTheEgoConfig:
+    """Where the ego is going belongs to the ego, next to where it starts.
+
+    ``scenario.goal_pose`` is a view onto ``ego_config.goal_pose``, so a goal
+    set either way is the same goal, and an Autoware ego cannot be configured
+    without one.
+    """
+
+    def test_an_ego_config_has_no_goal_by_default(self) -> None:
+        # An ego that drives itself plans no route and needs no destination.
+        assert _make_ego_config().goal_pose is None
+
+    def test_the_scenario_reads_the_goal_off_its_ego_config(self) -> None:
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        goal = Lanelet2Pose(lanelet_id=265, s=12.5)
+        scenario = _SimpleScenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                ),
+                goal_pose=goal,
+            )
+        )
+
+        assert scenario.goal_pose is goal
+
+    def test_assigning_the_goal_writes_it_onto_the_ego_config(self) -> None:
+        # The CLI runner and a scenario that derives its goal in setup() both
+        # assign the attribute; there is still only one goal.
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=123, s=4.0)
+
+        assert scenario.ego_config.goal_pose is scenario.goal_pose
+        assert scenario.ego_config.goal_pose is not None
+        assert scenario.ego_config.goal_pose.lanelet_id == 123
+
+    def test_an_autoware_ego_config_cannot_be_built_without_a_goal(self) -> None:
+        from autoware_carla_scenario import AutowareEgoConfig
+
+        with pytest.raises(TypeError):
+            AutowareEgoConfig(  # type: ignore[call-arg]
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                )
+            )
+
+    def test_an_autoware_ego_config_routes_without_any_assignment(self) -> None:
+        from autoware_carla_scenario import AutowareEgoConfig, RoutingAction
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        scenario = _SimpleScenario(
+            AutowareEgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                ),
+                goal_pose=Lanelet2Pose(lanelet_id=265, s=12.5),
+            )
+        )
+        scenario.ego_entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
+
+        scenario.register_route_to_goal()
+
+        assert len(scenario._init_actions) == 1
+        action = scenario._init_actions[0]
+        assert isinstance(action, RoutingAction)
+        assert action.goal.lanelet_id == 265
+
+
 class TestInitPhase:
     """``register_init`` is the phase before the loop, in the shape of the loop.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Union
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
@@ -49,7 +49,18 @@ class EgoConfig(VehicleEntityConfig):
     Inherits all fields from :class:`VehicleEntityConfig` (``vehicle_type``,
     ``initial_speed_kmh``, etc.).  The ``role_name`` is automatically set to
     :data:`~autoware_carla_scenario.constants.EGO_ROLE_NAME`.
+
+    Both ends of the ego's run live here: *spawn_location* is where it starts
+    and *goal_pose* is where it is being sent.  The goal is optional because an
+    ego that drives itself -- CARLA's TrafficManager, an external driver policy
+    -- has no route to plan and never reads it.  An ego that Autoware drives
+    does, and :class:`AutowareEgoConfig` is this same configuration with the
+    goal made mandatory.
     """
+
+    #: Lanelet2 pose the ego is routed to, or ``None`` for an ego with no
+    #: mission to plan.
+    goal_pose: Optional[Lanelet2Pose]
 
     def __init__(
         self,
@@ -59,6 +70,8 @@ class EgoConfig(VehicleEntityConfig):
         spawn_retry_max_count: int = 0,
         spawn_retry_t_step: float = 0.1,
         spawn_retry_z_step: float = 0.5,
+        *,
+        goal_pose: Optional[Lanelet2Pose] = None,
     ) -> None:
         super().__init__(
             role_name=EGO_ROLE_NAME,
@@ -69,6 +82,27 @@ class EgoConfig(VehicleEntityConfig):
             spawn_retry_t_step=spawn_retry_t_step,
             spawn_retry_z_step=spawn_retry_z_step,
         )
+        self.goal_pose = goal_pose
+
+
+class AutowareEgoConfig(EgoConfig):
+    """An :class:`EgoConfig` for an ego that Autoware drives.
+
+    Autoware goes nowhere on its own: it localizes at an initial pose, plans a
+    route to a goal, and only then engages.  The goal is therefore part of what
+    it takes to *initialize* the ego rather than an optional extra, and this
+    type says so by requiring it.  A scenario configured with one of these has
+    a destination by construction, instead of discovering part-way through
+    :meth:`BaseScenario.setup` that its
+    :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
+    has nowhere to go.
+    """
+
+    def __init__(self, *args: Any, goal_pose: Lanelet2Pose, **kwargs: Any) -> None:
+        # Everything else is passed straight through: repeating the parameters
+        # would put :class:`EgoConfig`'s defaults in a second place, to keep in
+        # step with the first for the sake of narrowing one keyword.
+        super().__init__(*args, goal_pose=goal_pose, **kwargs)
 
 
 class BaseScenario(ABC):
@@ -92,7 +126,6 @@ class BaseScenario(ABC):
         *,
         spawn_pose: Lanelet2Pose | None = None,
         ground_projection: GroundProjectionConfig | None = None,
-        goal_pose: Lanelet2Pose | None = None,
         random_seed: int = DEFAULT_RANDOM_SEED,
         ego_type: type[EgoVehicle] | None = None,
         ego_entity: EgoVehicle | None = None,
@@ -100,20 +133,18 @@ class BaseScenario(ABC):
         """Initialize the scenario with an ego vehicle configuration.
 
         Args:
-            ego_config: Spawn configuration for the ego vehicle.
+            ego_config: Configuration for the ego vehicle: where it spawns and,
+                for an ego that plans its own route, where it is going.  An
+                :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
+                refuses to start without a goal, which is why
+                :class:`AutowareEgoConfig` requires one (see
+                :meth:`register_route_to_goal`).
             spawn_pose: Optional Lanelet2 pose for the ego spawn point.
                 When provided, :meth:`_setup_ego_spawn` can convert it to a
                 CARLA-snapped spawn location.
             ground_projection: Ground-projection settings used when snapping
                 poses to the CARLA road surface.  Defaults to
                 :class:`GroundProjectionConfig` with default values.
-            goal_pose: Optional Lanelet2 pose the ego is routed to.  Only an
-                ego entity that plans its own route reads it -- an
-                :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
-                needs one and refuses to start without it (see
-                :meth:`register_route_to_goal`).  Assigning
-                ``scenario.goal_pose`` after construction works too, which is
-                how the CLI runner passes ``ego.goal_lanelet_id`` in.
             random_seed: Seed for the CARLA TrafficManager random device.
                 Using a fixed seed ensures deterministic NPC behaviour across
                 runs.  Defaults to :attr:`DEFAULT_RANDOM_SEED` (``0``).
@@ -132,7 +163,6 @@ class BaseScenario(ABC):
         self.ego_config = ego_config
         self.ego_type = ego_type or _EgoVehicle
         self.ego_entity = ego_entity
-        self.goal_pose = goal_pose
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
         self.random_seed = random_seed
@@ -152,6 +182,22 @@ class BaseScenario(ABC):
     # ------------------------------------------------------------------
     # Ego construction
     # ------------------------------------------------------------------
+
+    @property
+    def goal_pose(self) -> Optional[Lanelet2Pose]:
+        """Where the ego is being sent, as held by :attr:`ego_config`.
+
+        The goal belongs to the ego, not to the scenario, so this reads and
+        writes :attr:`EgoConfig.goal_pose`.  Assigning ``scenario.goal_pose``
+        stays the way a scenario names its destination after construction --
+        that is how the CLI runner passes ``ego.goal_lanelet_id`` in, and how a
+        scenario that derives the goal in :meth:`setup` sets it.
+        """
+        return self.ego_config.goal_pose
+
+    @goal_pose.setter
+    def goal_pose(self, pose: Optional[Lanelet2Pose]) -> None:
+        self.ego_config.goal_pose = pose
 
     def create_ego(self) -> "EgoVehicle":
         """Return the ego entity :class:`ScenarioRunner` should spawn.
@@ -286,7 +332,8 @@ class BaseScenario(ABC):
 
         Every other ego entity drives itself and has no mission to set; the
         action is a no-op for it, so this registers unconditionally once a goal
-        exists.
+        exists.  Which of the two an entity is, it says itself:
+        :attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`.
 
         Args:
             initial_pose: The snapped CARLA world pose the ego is expected to
@@ -299,16 +346,16 @@ class BaseScenario(ABC):
                 of the run: the config that is missing a goal is the same one
                 that selected this entity.
         """
-        from .entity.autoware_entity import AutowareEgoEntity  # noqa: PLC0415
-
         if self.goal_pose is None:
-            if isinstance(self.ego_entity, AutowareEgoEntity):
+            if self.ego_entity is not None and self.ego_entity.requires_goal:
                 msg = (
-                    f"{type(self).__name__} selected an Autoware ego but set no "
-                    "goal. Autoware plans a route from the initial pose to a goal "
-                    "and will not move without one: set 'ego.goal_lanelet_id' (and "
-                    "optionally 'ego.goal_s') in the scenario config, or pass "
-                    "goal_pose= to the scenario constructor."
+                    f"{type(self).__name__} selected an ego that plans its own "
+                    f"route ({type(self.ego_entity).__name__}) but its EgoConfig "
+                    "carries no goal. Such an ego plans a route from the initial "
+                    "pose to a goal and will not move without one: build it with "
+                    "AutowareEgoConfig, which takes the goal as a required "
+                    "argument, or set 'ego.goal_lanelet_id' (and optionally "
+                    "'ego.goal_s') in the scenario config."
                 )
                 raise ValueError(msg)
             return

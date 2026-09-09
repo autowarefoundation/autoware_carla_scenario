@@ -24,7 +24,8 @@ and sensor types described below.
 | Symbol | Module | Purpose |
 |--------|--------|---------|
 | `BaseScenario` | `scenario_base` | Abstract base for user scenarios. Subclasses implement `setup()` and `is_done()`. |
-| `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME`. |
+| `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME` and carries the ego's `goal_pose` (optional: only an ego that plans its own route reads it). |
+| `AutowareEgoConfig` | `scenario_base` | `EgoConfig` for an ego Autoware drives, with `goal_pose` required — Autoware plans a route from the spawn to a goal and will not start without one. |
 | `ScenarioRunner` | `scenario_runner` | Executes a single `BaseScenario` against a CARLA world (sync mode tick loop, recording, cleanup). |
 | `ScenarioQueue` | `scenario_queue` | Context manager that owns a `CarlaServerManager` and runs registered scenarios sequentially with cooldown / retry. |
 | `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`. |
@@ -180,7 +181,7 @@ compiled and exported anywhere.
 | Symbol | Description |
 |--------|-------------|
 | `ScenarioDocument` | The Scenario IR: entities, actions, assertions, and a `ui` block that is presentation only. |
-| `Entity`, `SpawnSpec`, `SValue`, `BindingRef` | Actors and how they spawn (fixed lanelet, or a constraint search with an optionally derived offset). |
+| `Entity`, `SpawnSpec`, `SValue`, `BindingRef`, `GoalSpec` | Actors, how they spawn (fixed lanelet, or a constraint search with an optionally derived offset), and — for the ego alone — where they are sent. |
 | `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
 | `ActionSpec`, `ConditionSpec`, `ConstraintSpec`, `BindingSpec`, `FieldSpec`, `ConditionVisual` | Metadata describing how a primitive is presented, edited and built. |
 | `register_action_spec`, `register_condition_spec`, `register_constraint_spec`, `register_binding_spec` | Add a primitive; the GUI, validation and the compiler pick it up with no template change. |

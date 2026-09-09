@@ -42,6 +42,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 from autoware_carla_scenario import (
+    AutowareEgoConfig,
     BaseScenario,
     EgoConfig,
     EgoVehicle,
@@ -110,19 +111,44 @@ register_scenario("temporary_stop", TemporaryStopScenario, TemporaryStopConfig)
 
 
 def build_ego_and_spawn(
-    cfg: DictConfig,
+    cfg: DictConfig, *, ego_entity: EgoVehicle | None = None
 ) -> tuple[EgoConfig, Lanelet2Pose, GroundProjectionConfig]:
     """Extract :class:`EgoConfig`, spawn pose, and ground-projection config.
 
     This is the common preamble shared by all built-in scenarios.  Downstream
     projects can call this helper and then instantiate their own scenario class
     without duplicating the boilerplate.
+
+    The goal travels with the ego config, and whether one is required is the
+    *entity's* rule rather than the config's --
+    :attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`.  An
+    ego that plans its own route gets an :class:`AutowareEgoConfig`, which has
+    no form without a goal, and a config that selects such an ego and names no
+    destination is refused here, while the run is still being built, rather than
+    part-way through the scenario's ``setup()``.
+
+    Args:
+        cfg: Resolved Hydra config.
+        ego_entity: The entity that will drive the ego, when the caller has
+            already built it -- :func:`build_scenario` has, so the entity is
+            built once per run.  ``None`` builds it from *cfg* to read its rule.
     """
     ground_projection = GroundProjectionConfig(
         ray_distance_upper=float(cfg.entity.ground_projection_ray_distance_upper),
         ray_distance_lower=float(cfg.entity.ground_projection_ray_distance_lower),
     )
-    ego = EgoConfig(
+    goal_pose = build_goal_pose(cfg)
+    entity = ego_entity if ego_entity is not None else build_ego_entity(cfg)
+    requires_goal = entity is not None and entity.requires_goal
+    if requires_goal and goal_pose is None:
+        msg = (
+            f"ego.entity={cfg.ego.get('entity')} plans its own route and needs a "
+            "goal: it plans from the spawn pose to a goal and will not move "
+            "without one. Set 'ego.goal_lanelet_id' (and optionally 'ego.goal_s')."
+        )
+        raise ValueError(msg)
+    ego_cls: type[EgoConfig] = AutowareEgoConfig if requires_goal else EgoConfig
+    ego = ego_cls(
         spawn_location=SpawnTransform(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
         ),
@@ -131,6 +157,7 @@ def build_ego_and_spawn(
         spawn_retry_max_count=int(cfg.entity.spawn_retry_max_count),
         spawn_retry_t_step=float(cfg.entity.spawn_retry_t_step),
         spawn_retry_z_step=float(cfg.entity.spawn_retry_z_step),
+        goal_pose=goal_pose,
     )
     spawn_pose = Lanelet2Pose(
         lanelet_id=cfg.ego.spawn_lanelet_id,
@@ -177,9 +204,10 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # spawns and hands Autoware the scenario's mission over the bridge the
         # framework hosts.  The mission itself comes from the scenario, whose
         # ``setup()`` registers a ``RoutingAction`` for the spawn and
-        # ``ego.goal_lanelet_id`` snapped onto the live map -- poses that do not
-        # exist before then -- and the runner performs it in the init phase.  A
-        # config that selects this entity without a goal is refused during setup.
+        # the goal its ``EgoConfig`` carries, snapped onto the live map -- poses
+        # that do not exist before then -- and the runner performs it in the init
+        # phase.  A config that selects this entity without a goal is refused by
+        # ``build_ego_and_spawn``, which builds it an ``AutowareEgoConfig``.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,
@@ -231,17 +259,20 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
 
 
 def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
-    """Attach the configured ego entity and goal, keeping what the scenario set.
+    """Give a scenario the registry did not build the ego the config selects.
+
+    An injected ``build_scenario_fn`` brings its own :class:`EgoConfig`, so
+    neither the entity nor the goal has reached the scenario yet.  On the
+    registry path both arrive with the config :func:`build_ego_and_spawn`
+    builds, which is why this is the only caller left: applying the goal twice
+    would put two writers on one field.
 
     ``ego.entity=autopilot`` (the default) yields no entity and no goal, and
     overwriting ``scenario.ego_entity`` with ``None`` there would throw away an
     entity the scenario constructed in its own ``__init__``.  The goal follows
-    the same rule: a scenario that already knows where it is sending the ego
-    keeps its own.
-
-    The goal is set here rather than passed to the builder because
-    :data:`~autoware_carla_scenario.registry.ScenarioBuilder` is a published
-    signature that external scenario packages implement.
+    the same rule, and lands on the scenario's own ego config --
+    ``scenario.goal_pose`` reads and writes
+    :attr:`~autoware_carla_scenario.EgoConfig.goal_pose`.
     """
     entity = build_ego_entity(cfg)
     if entity is not None:
@@ -619,10 +650,15 @@ def build_scenario(
         )
         raise ValueError(msg)
 
-    ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
+    # Built once and handed on: the entity decides whether the ego config needs
+    # a goal, and building it twice would stand up two of whatever it owns (an
+    # Autoware ego holds a bridge server).
+    ego_entity = build_ego_entity(cfg)
+    ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg, ego_entity=ego_entity)
     scenario_dict = _to_dict(cfg.scenario)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
-    _apply_ego_config(cfg, scenario)
+    if ego_entity is not None:
+        scenario.ego_entity = ego_entity
     return ego, scenario
 
 
