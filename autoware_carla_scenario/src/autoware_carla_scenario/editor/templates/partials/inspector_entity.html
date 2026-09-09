@@ -157,34 +157,31 @@
     </div>
   {% endif %}
 
-  {# Where along the lanelet, in the same place as which lanelet: both are
-     answered by looking at the map, and a derived offset -- "15 m before the
-     stop line" -- is a statement about it. Its own form, because the panel is
-     shown outside the inspector's. #}
-  <div class="ed-side-title" style="margin-top:18px">
-    Position on the matched lanelet
-  </div>
+  {# Where along the lanelet, under the same heading as which lanelet: it is one
+     question -- where does this vehicle start -- and one panel answering it.
+     Its own form, because the panel is shown outside the inspector's. #}
   <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
-        hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
-    <div class="ed-radio-row">
-      <label class="ed-radio">
-        <input type="radio" name="spawn_s_mode" value="fixed"
-               {% if target.spawn.s.mode == 'fixed' %}checked{% endif %}>
-        <span>Fixed</span>
-      </label>
-      <label class="ed-radio">
-        <input type="radio" name="spawn_s_mode" value="derived"
-               {% if target.spawn.s.mode == 'derived' %}checked{% endif %}>
-        <span>Derived</span>
-      </label>
-    </div>
+        hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
+        style="margin-top:16px">
     <div class="ed-field">
-      <label class="ed-label">
-        {{ 'Offset' if target.spawn.s.mode == 'fixed' else 'Default offset' }}
-        <span class="unit">(m)</span>
-      </label>
+      <label class="ed-label">Position along it <span class="unit">(m)</span></label>
+      <div class="ed-radio-row" style="margin-bottom:8px">
+        <label class="ed-radio">
+          <input type="radio" name="spawn_s_mode" value="fixed"
+                 {% if target.spawn.s.mode == 'fixed' %}checked{% endif %}>
+          <span>Fixed</span>
+        </label>
+        <label class="ed-radio">
+          <input type="radio" name="spawn_s_mode" value="derived"
+                 {% if target.spawn.s.mode == 'derived' %}checked{% endif %}>
+          <span>Derived</span>
+        </label>
+      </div>
       <input type="number" step="any" name="spawn_s" class="ed-input"
              value="{{ target.spawn.s.value }}">
+      {% if target.spawn.s.mode == 'derived' %}
+        <p class="ed-help">The value a run falls back to when nothing derives it.</p>
+      {% endif %}
     </div>
 
     {% if target.spawn.s.mode == 'derived' %}
