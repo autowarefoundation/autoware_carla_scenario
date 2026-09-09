@@ -59,12 +59,18 @@ class DeclarativeScenarioConfig:
             lanelet-constraint sweeper can drive an NPC spawn with the same
             plain ``key=value`` overrides.  An exported package declares the
             keys in its YAML, so Hydra's struct mode accepts them.
+        param_overrides: Per-node parameter overrides, ``{node_id: {field:
+            value}}``.  The same channel as *spawn_overrides*, for the lanelet
+            an action or a condition names: a document may leave that lanelet to
+            the constraint sweeper too, and the sweeper only knows how to write
+            a Hydra key.
     """
 
     name: str = "declarative"
     document_path: Optional[str] = None
     timeout_seconds: Optional[float] = None
     spawn_overrides: dict[str, Any] = field(default_factory=dict)
+    param_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 class DeclarativeScenario(BaseScenario):
@@ -100,6 +106,7 @@ class DeclarativeScenario(BaseScenario):
         self._config = config or DeclarativeScenarioConfig()
         self._document = document or self._load_document(self._config)
         self._apply_spawn_overrides()
+        self._apply_param_overrides()
         self._apply_ego_goal()
         # Compiling here (not in setup) surfaces an invalid document before the
         # runner has spent anything on a CARLA session.
@@ -145,6 +152,31 @@ class DeclarativeScenario(BaseScenario):
             offset = override.get("s")
             if offset is not None:
                 entity.spawn.s.value = float(offset)
+
+    def _apply_param_overrides(self) -> None:
+        """Fold ``config.param_overrides`` into the document's action/condition params.
+
+        How a swept lanelet reaches a card: the sweeper writes
+        ``scenario.param_overrides.<node>.<field>=<id>`` and the value lands on
+        the node here, before compilation coerces it.  A node the document no
+        longer has is logged and skipped rather than raised on -- an override is
+        a run's opinion about a document, and a stale one must not make the
+        scenario unrunnable.
+        """
+        for node_id, override in (self._config.param_overrides or {}).items():
+            if override is None:
+                continue
+            node = self._document.action(str(node_id)) or self._document.condition(
+                str(node_id)
+            )
+            if node is None:
+                logger.warning(
+                    "param_overrides names unknown node %r; ignoring.", node_id
+                )
+                continue
+            for name, value in override.items():
+                if value is not None:
+                    node.params[str(name)] = value
 
     def _apply_ego_goal(self) -> None:
         """Give the ego the goal the document names, unless the run named one.

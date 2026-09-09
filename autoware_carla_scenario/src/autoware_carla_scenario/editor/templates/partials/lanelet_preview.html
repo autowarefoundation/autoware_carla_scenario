@@ -1,6 +1,6 @@
 {% import "partials/icons.html" as ic %}
-{# How many lanelets the spawn constraints match, beside the map in the
-   picker that is already drawing them.
+{# How many lanelets a field's constraints match, beside the map in the picker
+   that is already drawing them.
 
    The count comes from the sweeper's own constraint engine, so it cannot
    disagree with an actual sweep, and the ids go to the open map through
@@ -24,11 +24,11 @@
       {% endif %}
     </div>
     <button class="ed-btn-sm"
-            hx-post="/draft/{{ draft.id }}/spawn-preview"
-            hx-vals='{"entity_id": "{{ entity.id if entity else '' }}", "load_map": "1"}'
-            hx-target="#picker-matches" hx-swap="innerHTML"
-            hx-indicator="#picker-spinner">
-      <span id="picker-spinner" class="htmx-indicator ed-spinner"></span>
+            hx-post="/draft/{{ draft.id }}/lanelet-preview"
+            hx-vals='{"slot": "{{ slot_key }}", "load_map": "1"}'
+            hx-target="#{{ picker_matches_id(slot_key) }}" hx-swap="innerHTML"
+            hx-indicator="#{{ picker_matches_id(slot_key) }}-spinner">
+      <span id="{{ picker_matches_id(slot_key) }}-spinner" class="htmx-indicator ed-spinner"></span>
       {{ 'Refresh' if preview.map_loaded else 'Preview matches' }}
     </button>
   </div>

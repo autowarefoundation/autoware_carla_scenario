@@ -1,0 +1,109 @@
+{% import "partials/fields.html" as f %}
+{% import "partials/constraint_node.html" as cons %}
+{# Choosing which lanelet a field names, beside the map it is chosen on.
+
+   Every lanelet in a document is chosen the same way -- a spawn, the ego's
+   goal, the lanelet a condition watches -- so the panel that asks is one macro
+   rather than one per site.  It used to be written out inside the entity
+   inspector, and for as long as it was, the spawn was the only lanelet that
+   could be searched for at all.
+
+   It lives beside the map because a constraint is a statement *about* the map:
+   "the lane left of a junction, at least 30 m long" is written by looking at
+   one, and the matches are outlined on the same drawing as they are counted. #}
+
+
+{# The whole answer to "which lanelet is this", as the picker's side panel.
+
+   `slot` is a LaneletSlot: the address of one lanelet-valued field, whatever
+   holds it.  `selected` is the inspector's current object, carried through so a
+   constraint's own inspector form knows what to go back to. #}
+{% macro chooser(slot, draft, document, selected) %}
+  {%- set group = 'lanelet_mode_' ~ slot.key|replace('.', '_') -%}
+  <div class="ed-side-title">How this lanelet is chosen</div>
+  <div class="ed-radio-row">
+    {# Each radio posts on its own: this panel is moved out of the inspector's
+       form to be shown, so there is no form around it to submit.  The group
+       name carries the slot because every lanelet field on the inspector has a
+       modal in the page at once, and one shared name would make them one
+       radio group. #}
+    <label class="ed-radio">
+      <input type="radio" name="{{ group }}" value="fixed"
+             {% if not slot.searching %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/lanelet-mode"
+             hx-vals='{"slot": "{{ slot.key }}", "mode": "fixed"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>Fixed</span>
+    </label>
+    <label class="ed-radio">
+      <input type="radio" name="{{ group }}" value="constraint_search"
+             {% if slot.searching %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/lanelet-mode"
+             hx-vals='{"slot": "{{ slot.key }}", "mode": "constraint_search"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>Constraint search</span>
+    </label>
+  </div>
+
+  {% if not slot.searching %}
+    <p class="ed-help">
+      Click a lanelet to pin it. A constraint search hands the choice to the
+      lanelet-constraint sweeper instead, which runs the scenario once per
+      matching lanelet.
+    </p>
+  {% else %}
+    <p class="ed-help">
+      The sweeper runs the scenario once per matching lanelet; the pinned ID
+      stays as the default a non-swept run uses.
+    </p>
+    <div class="ed-constraint-root">
+      {% for node in slot.choice.constraints %}
+        {{ cons.render(node, draft, slot, selected, document, true) }}
+      {% else %}
+        <p class="ed-help" style="margin:0 0 6px">
+          No constraints yet: every lanelet matches.
+        </p>
+      {% endfor %}
+      {{ cons.add_constraint(draft, slot) }}
+    </div>
+    {# Counted only once the picker is actually open. Every lanelet field on the
+       inspector has one of these in the page, and `load` would have each of
+       them ask the server about a map nobody is looking at. #}
+    <div id="{{ picker_matches_id(slot.key) }}"
+         hx-post="/draft/{{ draft.id }}/lanelet-preview"
+         hx-vals='{"slot": "{{ slot.key }}"}'
+         hx-trigger="picker-open"
+         hx-swap="innerHTML">
+      <p class="ed-help">Loading&hellip;</p>
+    </div>
+  {% endif %}
+{% endmacro %}
+
+
+{# Every lanelet field of a spec, as pickers rendered *outside* the form that
+   holds their readouts.
+
+   They cannot go inline: a search is made of forms -- one per constraint node
+   -- and a form cannot nest inside another.  The two halves find each other by
+   id, so any template rendering `fields()` renders this straight after its
+   `</form>` and the pickers work. #}
+{% macro modals(specs, params, draft, document, owner_id, selected, prefix='') %}
+  {% for spec in specs %}
+    {%- set current = params.get(spec.name, spec.default) -%}
+    {% if spec.kind == 'lanelet' %}
+      {%- set slot = document.lanelet_slot(owner_id ~ '.' ~ spec.name) -%}
+      {% if slot %}
+        {% call f.lanelet_modal(prefix ~ spec.name, current, draft, spec.label) %}
+          {{ chooser(slot, draft, document, selected) }}
+        {% endcall %}
+      {% else %}
+        {{ f.lanelet_modal(prefix ~ spec.name, current, draft, spec.label) }}
+      {% endif %}
+    {% elif spec.kind == 'lanelet_list' %}
+      {# A set of lanelets is picked by hand: a search names *one* lanelet per
+         run -- that is what the sweeper enumerates -- so offering the same
+         choice here would promise that it fills the whole set. #}
+      {{ f.lanelet_modal(prefix ~ spec.name, current, draft, spec.label, many=true) }}
+    {% endif %}
+  {% endfor %}
+{% endmacro %}

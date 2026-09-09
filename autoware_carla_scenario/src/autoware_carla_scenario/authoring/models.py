@@ -24,6 +24,7 @@ be loaded, validated and compiled anywhere.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, Literal, Optional, cast, get_args
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
@@ -40,6 +41,9 @@ __all__ = [
     "Entity",
     "EntityKind",
     "GoalSpec",
+    "LaneletChoice",
+    "LaneletMode",
+    "LaneletSlot",
     "MapRef",
     "ScenarioDocument",
     "SpawnMode",
@@ -68,7 +72,17 @@ EntityKind = Literal["ego", "vehicle"]
 #: needs a ``driver`` config group the editor does not author; a run can still
 #: select it from the command line.)
 EgoDriver = Literal["autopilot", "autoware"]
-SpawnMode = Literal["fixed", "constraint_search"]
+#: How a lanelet-valued slot gets its lanelet.
+#:
+#: ``fixed`` pins the id the document carries.  ``constraint_search`` states a
+#: property of the lanelet instead and leaves finding it to the existing
+#: lanelet-constraint sweeper, which runs the scenario once per match.  The
+#: pair is the same wherever a lanelet is named -- a spawn, a goal, the lanelet
+#: a condition watches -- so it is one type rather than one per site.
+LaneletMode = Literal["fixed", "constraint_search"]
+#: The spawn's own name for :data:`LaneletMode`, kept because documents,
+#: forms and tests spell the spawn's mode with it.
+SpawnMode = LaneletMode
 #: When in a run an action is performed.  ``init`` is the scenario's
 #: initialization phase -- from the ego spawning until it reports ready -- which
 #: is a phase and not a tick: the clock has not started and no condition has been
@@ -215,7 +229,58 @@ class SValue(_Node):
     binding: Optional[BindingRef] = None
 
 
-class SpawnSpec(_Node):
+class LaneletChoice(_Node):
+    """How one lanelet-valued slot gets its lanelet.
+
+    ``mode="fixed"`` means the id stored beside this choice is the answer.
+    ``mode="constraint_search"`` states what the lanelet has to *be* instead --
+    a left-adjacent lane, one with a stop line, one at least 30 m long -- and
+    leaves finding it to the existing lanelet-constraint sweeper, which runs
+    the scenario once per matching lanelet with the id stored beside it as the
+    default a non-swept run keeps.
+
+    The pair is carried by everything that names a lanelet: an entity's spawn,
+    the ego's goal, and every ``lanelet`` parameter of an action or a condition.
+    They differ only in *where* the id lives -- which is what
+    :class:`LaneletSlot` exists to paper over -- so anything reading a document
+    for "what is searched here" reads this one class.
+    """
+
+    mode: LaneletMode = "fixed"
+    constraints: list[ConstraintNode] = Field(default_factory=list)
+
+    @property
+    def searching(self) -> bool:
+        """Whether the lanelet is left to the sweeper rather than pinned."""
+        return self.mode == "constraint_search"
+
+    def sweep_constraint_dicts(self) -> list[dict[str, Any]]:
+        """Return the constraint tree in ``sweep.constraints`` YAML form.
+
+        Empty unless the slot is actually searched: a tree left behind by
+        flipping back to Fixed is kept (so flipping forward again does not lose
+        it) and must not reach the sweeper.
+        """
+        if not self.searching:
+            return []
+        return [c.to_sweep_dict() for c in self.constraints]
+
+
+def _ensure_search(node: Any, field: str) -> LaneletChoice:
+    """Return *node*'s stored choice for *field*, attaching a pinned one if absent.
+
+    Attaching is deliberately not done on read: a document should carry a
+    ``searches`` entry for a parameter someone has actually opened the question
+    on, not one for every lanelet field every primitive happens to declare.
+    """
+    existing = node.searches.get(field)
+    if existing is None:
+        existing = LaneletChoice()
+        node.searches[field] = existing
+    return existing
+
+
+class SpawnSpec(LaneletChoice):
     """Where an entity starts.
 
     ``mode="fixed"`` pins :attr:`lanelet_id`.  ``mode="constraint_search"``
@@ -224,19 +289,11 @@ class SpawnSpec(_Node):
     :attr:`lanelet_id` becomes the concrete default the sweep overrides.
     """
 
-    mode: SpawnMode = "fixed"
     lanelet_id: int = 0
     s: SValue = Field(default_factory=SValue)
-    constraints: list[ConstraintNode] = Field(default_factory=list)
-
-    def sweep_constraint_dicts(self) -> list[dict[str, Any]]:
-        """Return the constraint tree in ``sweep.constraints`` YAML form."""
-        if self.mode != "constraint_search":
-            return []
-        return [c.to_sweep_dict() for c in self.constraints]
 
 
-class GoalSpec(_Node):
+class GoalSpec(LaneletChoice):
     """Where the ego is being sent.
 
     A goal is not something that happens during a run: Autoware localizes at
@@ -250,6 +307,10 @@ class GoalSpec(_Node):
     :class:`~autoware_carla_scenario.EgoConfig`.  An ``autoware`` ego is refused
     without one; an ego the TrafficManager drives may be given no destination at
     all, and then this is simply absent.
+
+    A goal is a lanelet like any other, so it inherits the same choice a spawn
+    has: it may be searched for, and then :attr:`lanelet_id` is the default the
+    sweep overrides through ``ego.goal_lanelet_id``.
     """
 
     lanelet_id: int = 0
@@ -317,6 +378,17 @@ class ConditionNode(_Node):
     type: str
     params: dict[str, Any] = Field(default_factory=dict)
     children: list[ConditionNode] = Field(default_factory=list)
+    #: Field name -> how that lanelet parameter is chosen.  Absent for a
+    #: parameter nobody has opened the question on, which reads as pinned.
+    searches: dict[str, LaneletChoice] = Field(default_factory=dict)
+
+    def search(self, field: str) -> Optional[LaneletChoice]:
+        """Return the stored choice for the lanelet parameter *field*."""
+        return self.searches.get(field)
+
+    def ensure_search(self, field: str) -> LaneletChoice:
+        """Return the choice for *field*, attaching a pinned one if absent."""
+        return _ensure_search(self, field)
 
     def walk(self) -> "list[ConditionNode]":
         """Return this node followed by every descendant, depth first."""
@@ -422,6 +494,17 @@ class ActionNode(_Node):
         default="pre_tick", validation_alias=AliasChoices("phase", "timing")
     )
     once: bool = True
+    #: Field name -> how that lanelet parameter is chosen; see
+    #: :attr:`ConditionNode.searches`.
+    searches: dict[str, LaneletChoice] = Field(default_factory=dict)
+
+    def search(self, field: str) -> Optional[LaneletChoice]:
+        """Return the stored choice for the lanelet parameter *field*."""
+        return self.searches.get(field)
+
+    def ensure_search(self, field: str) -> LaneletChoice:
+        """Return the choice for *field*, attaching a pinned one if absent."""
+        return _ensure_search(self, field)
 
     @property
     def takes_trigger(self) -> bool:
@@ -487,6 +570,83 @@ class MapRef(_Node):
 
 
 # ---------------------------------------------------------------------------
+# Lanelet slots
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LaneletSlot:
+    """One place in a document that names a lanelet, and how it is chosen.
+
+    A lanelet id is stored in three different shapes -- on a
+    :class:`SpawnSpec`, on a :class:`GoalSpec`, and in the ``params`` of an
+    action or a condition -- and *how* it is chosen is a
+    :class:`LaneletChoice` that either is the holder itself or hangs off its
+    ``searches`` mapping.  Every consumer of "where does this document name a
+    lanelet" -- the picker, the validator, the Hydra config -- would otherwise
+    branch on all three, and they did not stay in step: the goal could not be
+    searched for years after the spawn could.
+
+    This is a *view*, rebuilt on demand rather than stored: nothing in the
+    serialised document knows about it.
+
+    Attributes:
+        key: Stable address, ``"<owner id>.<field>"``, safe to put in a form.
+        label: How the slot is named to a person, for warnings and headings.
+        owner_id: What the inspector selects when this slot is edited.
+        holder: The object the id and the choice live on.
+        field: ``"spawn"``, ``"goal"``, or the name of a lanelet parameter.
+    """
+
+    key: str
+    label: str
+    owner_id: str
+    holder: Any
+    field: str
+
+    @property
+    def choice(self) -> LaneletChoice:
+        """How this slot's lanelet is chosen.
+
+        A parameter nobody has opened the question on has no stored choice, and
+        reads as a detached pinned one -- writing to it would be lost, so an
+        edit goes through :meth:`attach` instead.
+        """
+        if isinstance(self.holder, LaneletChoice):
+            return self.holder
+        return self.holder.searches.get(self.field) or LaneletChoice()
+
+    def attach(self) -> LaneletChoice:
+        """Return this slot's choice, storing one on the document if needed."""
+        if isinstance(self.holder, LaneletChoice):
+            return self.holder
+        return _ensure_search(self.holder, self.field)
+
+    @property
+    def searching(self) -> bool:
+        """Whether the lanelet is left to the sweeper rather than pinned."""
+        return self.choice.searching
+
+    @property
+    def lanelet_id(self) -> int:
+        """The pinned id, or the default a searched slot falls back to."""
+        if isinstance(self.holder, (SpawnSpec, GoalSpec)):
+            return self.holder.lanelet_id
+        raw = self.holder.params.get(self.field)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
+
+    def set_lanelet_id(self, value: int) -> None:
+        """Store *value* as this slot's lanelet id."""
+        if isinstance(self.holder, (SpawnSpec, GoalSpec)):
+            self.holder.lanelet_id = value
+        else:
+            self.holder.params[self.field] = value
+
+
+# ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
 
@@ -543,6 +703,107 @@ class ScenarioDocument(_Node):
         roots.extend(self.assertions.pass_conditions)
         roots.extend(self.assertions.fail_conditions)
         return roots
+
+    # -- lanelet slots --------------------------------------------------
+
+    def lanelet_slots(self) -> "list[LaneletSlot]":
+        """Return every place this document names a lanelet, in a stable order.
+
+        Entity spawns come first, then goals, then the lanelet parameters of
+        actions and of conditions.  The order is what decides which slot a
+        sweep drives when several are searched -- the sweeper enumerates one
+        target key per run -- so it is document order, not the order a template
+        happens to render in.
+        """
+        from .registry import (  # noqa: PLC0415 -- see the module docstring
+            get_condition_spec,
+            searchable_lanelet_fields,
+        )
+
+        slots: list[LaneletSlot] = []
+        for entity in self.entities:
+            name = entity.display_name
+            slots.append(
+                LaneletSlot(
+                    key=f"{entity.id}.spawn",
+                    label=f"{name}'s spawn lanelet",
+                    owner_id=entity.id,
+                    holder=entity.spawn,
+                    field="spawn",
+                )
+            )
+            if entity.goal is not None:
+                slots.append(
+                    LaneletSlot(
+                        key=f"{entity.id}.goal",
+                        label=f"{name}'s goal lanelet",
+                        owner_id=entity.id,
+                        holder=entity.goal,
+                        field="goal",
+                    )
+                )
+        for action in self.actions:
+            for spec_field in searchable_lanelet_fields(get_action_spec(action.type)):
+                slots.append(
+                    LaneletSlot(
+                        key=f"{action.id}.{spec_field.name}",
+                        label=f"{spec_field.label} on {action.title or action.type}",
+                        owner_id=action.id,
+                        holder=action,
+                        field=spec_field.name,
+                    )
+                )
+        for root in self.condition_roots():
+            for node in root.walk():
+                spec = get_condition_spec(node.type)
+                for spec_field in searchable_lanelet_fields(spec):
+                    title = spec.title if spec is not None else node.type
+                    slots.append(
+                        LaneletSlot(
+                            key=f"{node.id}.{spec_field.name}",
+                            label=f"{spec_field.label} on {title}",
+                            owner_id=node.id,
+                            holder=node,
+                            field=spec_field.name,
+                        )
+                    )
+        return slots
+
+    def lanelet_slot(
+        self, key: str, *, create: bool = False
+    ) -> "Optional[LaneletSlot]":
+        """Return the lanelet slot addressed by *key*, or ``None``.
+
+        An ego that has no goal yet has no goal slot in the document.  *create*
+        gives it one, which is what letting someone search for a goal before
+        pinning one takes: the search is how the goal is chosen, so it cannot
+        require the goal to already be chosen.  Without *create* the same key
+        answers with a **detached** slot -- a default nothing on the document
+        holds -- so a template can render the controls for a goal that does not
+        exist yet.  Anything that writes has to pass ``create=True``, or the
+        write lands on an object the document has already forgotten.
+        """
+        for slot in self.lanelet_slots():
+            if slot.key == key:
+                return slot
+        owner_id, _, field = key.rpartition(".")
+        entity = self.entity(owner_id)
+        if field == "goal" and entity is not None:
+            if create:
+                entity.goal = GoalSpec()
+                return self.lanelet_slot(key)
+            return LaneletSlot(
+                key=key,
+                label=f"{entity.display_name}'s goal lanelet",
+                owner_id=entity.id,
+                holder=GoalSpec(),
+                field="goal",
+            )
+        return None
+
+    def searched_lanelet_slots(self) -> "list[LaneletSlot]":
+        """Return the slots whose lanelet is left to the constraint sweeper."""
+        return [slot for slot in self.lanelet_slots() if slot.searching]
 
     # -- layout ---------------------------------------------------------
 

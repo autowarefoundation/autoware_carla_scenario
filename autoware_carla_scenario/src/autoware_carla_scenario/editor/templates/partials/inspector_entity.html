@@ -1,6 +1,9 @@
 {% import "partials/fields.html" as f %}
-{% import "partials/constraint_node.html" as cons %}
+{% import "partials/lanelet_search.html" as ls %}
 {% import "partials/icons.html" as ic %}
+
+{%- set spawn_slot = document.lanelet_slot(target.id ~ '.spawn') -%}
+{%- set goal_slot = document.lanelet_slot(target.id ~ '.goal') -%}
 
 <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
@@ -30,7 +33,7 @@
        statement about the map, and this column is 384px wide. #}
     {{ f.lanelet_field('spawn_lanelet_id', target.spawn.lanelet_id, draft) }}
     <p class="ed-help">
-      {% if target.spawn.mode == 'fixed' %}
+      {% if not target.spawn.searching %}
         Pinned,
       {% else %}
         Searched ({{ target.spawn.constraints|length }} constraint{{ '' if target.spawn.constraints|length == 1 else 's' }}, this ID the default a non-swept run uses),
@@ -71,10 +74,14 @@
     <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Goal</h4>
     <div class="ed-field">
       <label class="ed-label">Goal lanelet</label>
-      {{ f.lanelet_picker('goal_lanelet_id',
-                          target.goal.lanelet_id if target.goal else none,
-                          draft, 'Goal lanelet') }}
+      {# The readout only; the map -- and the same Fixed / Constraint search
+         choice the spawn has -- is below, outside this form. #}
+      {{ f.lanelet_field('goal_lanelet_id',
+                         target.goal.lanelet_id if target.goal else none, draft) }}
       <p class="ed-help">
+        {% if target.goal and target.goal.searching %}
+          Searched: the sweeper runs the scenario once per matching lanelet.
+        {% endif %}
         {% if autoware %}
           Required: Autoware plans its route to it and will not move without
           one.
@@ -104,58 +111,7 @@
    and a form cannot nest. The two halves find each other by id. #}
 {% call f.lanelet_modal('spawn_lanelet_id', target.spawn.lanelet_id, draft,
                         'spawn lanelet') %}
-  {% set searching = target.spawn.mode == 'constraint_search' %}
-  <div class="ed-side-title">How this lanelet is chosen</div>
-  <div class="ed-radio-row">
-    {# Each radio posts on its own: this panel is moved out of the inspector's
-       form to be shown, so there is no form around it to submit. #}
-    <label class="ed-radio">
-      <input type="radio" name="spawn_mode" value="fixed"
-             {% if not searching %}checked{% endif %}
-             hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
-             hx-vals='{"spawn_mode": "fixed"}'
-             hx-target="#editor-body" hx-swap="innerHTML">
-      <span>Fixed</span>
-    </label>
-    <label class="ed-radio">
-      <input type="radio" name="spawn_mode" value="constraint_search"
-             {% if searching %}checked{% endif %}
-             hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
-             hx-vals='{"spawn_mode": "constraint_search"}'
-             hx-target="#editor-body" hx-swap="innerHTML">
-      <span>Constraint search</span>
-    </label>
-  </div>
-
-  {% if not searching %}
-    <p class="ed-help">
-      Click a lanelet to pin it. A constraint search hands the choice to the
-      lanelet-constraint sweeper instead, which runs the scenario once per
-      matching lanelet.
-    </p>
-  {% else %}
-    <p class="ed-help">
-      The sweeper runs the scenario once per matching lanelet; the pinned ID
-      stays as the default a non-swept run uses.
-    </p>
-    <div class="ed-constraint-root">
-      {% for node in target.spawn.constraints %}
-        {{ cons.render(node, draft, target, selected, document, true) }}
-      {% else %}
-        <p class="ed-help" style="margin:0 0 6px">
-          No constraints yet: every lanelet matches.
-        </p>
-      {% endfor %}
-      {{ cons.add_constraint(draft, target) }}
-    </div>
-    <div id="picker-matches"
-         hx-post="/draft/{{ draft.id }}/spawn-preview"
-         hx-vals='{"entity_id": "{{ target.id }}"}'
-         hx-trigger="load delay:200ms"
-         hx-swap="innerHTML">
-      <p class="ed-help">Loading&hellip;</p>
-    </div>
-  {% endif %}
+  {{ ls.chooser(spawn_slot, draft, document, selected) }}
 
   {# Where along the lanelet, under the same heading as which lanelet: it is one
      question -- where does this vehicle start -- and one panel answering it.
@@ -209,6 +165,17 @@
     {% endif %}
   </form>
 {% endcall %}
+
+{% if target.kind == 'ego' %}
+  {# The goal's map, outside the form for the same reason the spawn's is. A goal
+     that has not been chosen yet still gets the panel: a search is *how* a goal
+     is chosen, so it cannot be made to wait until one has been pinned. #}
+  {% call f.lanelet_modal('goal_lanelet_id',
+                          target.goal.lanelet_id if target.goal else none,
+                          draft, 'Goal lanelet') %}
+    {{ ls.chooser(goal_slot, draft, document, selected) }}
+  {% endcall %}
+{% endif %}
 
 {% if target.kind != 'ego' or document.entities|length > 1 %}
   <button class="ed-btn-danger" style="width:100%; margin-top:16px"

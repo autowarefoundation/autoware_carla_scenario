@@ -354,28 +354,15 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
     """Validate one entity, its spawn definition and its goal."""
     _check_goal(out, path, entity)
     spawn = entity.spawn
-    if spawn.mode == "fixed":
-        if spawn.lanelet_id <= 0:
-            out.error(
-                f"{path}.spawn.lanelet_id",
-                "A fixed spawn needs a positive lanelet ID.",
-                entity.id,
-            )
-    else:
-        if not spawn.constraints:
-            out.error(
-                f"{path}.spawn.constraints",
-                "A constraint search needs at least one constraint.",
-                entity.id,
-            )
-        if spawn.lanelet_id <= 0:
-            out.warn(
-                f"{path}.spawn.lanelet_id",
-                "No default lanelet ID: the scenario cannot run without a sweep.",
-                entity.id,
-            )
-        for index, constraint in enumerate(spawn.constraints):
-            _check_constraint(out, f"{path}.spawn.constraints[{index}]", constraint)
+    # The search itself -- its constraints, and the default it falls back to --
+    # is checked with every other searched lanelet in `_check_lanelet_slots`,
+    # so a spawn, a goal and a condition's lanelet are held to one rule.
+    if not spawn.searching and spawn.lanelet_id <= 0:
+        out.error(
+            f"{path}.spawn.lanelet_id",
+            "A fixed spawn needs a positive lanelet ID.",
+            entity.id,
+        )
 
     if spawn.s.mode == "derived":
         binding = spawn.s.binding
@@ -439,7 +426,7 @@ def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
                 "move without one.",
                 entity.id,
             )
-    elif entity.goal.lanelet_id <= 0:
+    elif entity.goal.lanelet_id <= 0 and not entity.goal.searching:
         out.error(
             f"{path}.goal.lanelet_id",
             "A goal needs a positive lanelet ID.",
@@ -625,37 +612,71 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     if document.timeout_seconds <= 0:
         out.error("timeout_seconds", "The scenario timeout must be positive.")
 
+    _check_lanelet_slots(out, document)
     _check_sweep_shape(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
+
+
+def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
+    """Check every searched lanelet in the document, wherever it is named.
+
+    A spawn, a goal and a condition's lanelet ask the same two questions of a
+    search -- does it constrain anything, and does it leave a default behind for
+    a run that does not sweep -- so they are asked once here rather than at each
+    of the three sites, which is how the goal came to have no answer at all.
+    """
+    for slot in document.lanelet_slots():
+        choice = slot.choice
+        if not choice.searching:
+            continue
+        if not choice.constraints:
+            out.error(
+                f"{slot.key}.constraints",
+                f"The search for {slot.label} has no constraints: every lanelet "
+                "matches. Add one, or pin the lanelet instead.",
+                slot.owner_id,
+            )
+        if slot.lanelet_id <= 0:
+            out.warn(
+                f"{slot.key}.lanelet_id",
+                f"No default lanelet for {slot.label}: a run that does not "
+                "sweep has nothing to fall back to.",
+                slot.owner_id,
+            )
+        for index, constraint in enumerate(choice.constraints):
+            _check_constraint(out, f"{slot.key}.constraints[{index}]", constraint)
 
 
 def _check_sweep_shape(out: _Collector, document: ScenarioDocument) -> None:
     """Check the document against the lanelet-constraint sweeper's limits.
 
     The sweeper enumerates one target key per run, so a scenario can search for
-    at most one entity's spawn lanelet, and only that entity's offset can be
-    derived from a binding.  Both are warnings rather than errors: the scenario
-    still runs, it just runs with the extra entities pinned to their defaults.
+    one lanelet -- whichever slot names it -- and only the searched entity's
+    spawn offset can be derived from a binding.  Both are warnings rather than
+    errors: the scenario still runs, it just runs with everything else pinned to
+    its default.
     """
-    searching = [e for e in document.entities if e.spawn.mode == "constraint_search"]
-    for entity in searching[1:]:
+    searched = document.searched_lanelet_slots()
+    for slot in searched[1:]:
         out.warn(
-            f"entities[{document.entities.index(entity)}].spawn",
-            "The sweeper searches one entity's spawn per run; "
-            f"{searching[0].id!r} is used and {entity.id!r} keeps its default "
-            "lanelet.",
-            entity.id,
+            slot.key,
+            "The sweeper searches one lanelet per run; "
+            f"{searched[0].label} is used and {slot.label} keeps its default.",
+            slot.owner_id,
         )
 
-    swept = searching[0] if searching else None
+    swept = searched[0] if searched else None
+    swept_spawn = (
+        swept.owner_id if swept is not None and swept.field == "spawn" else None
+    )
     for entity in document.entities:
         if entity.spawn.s.mode != "derived":
             continue
-        if swept is None or entity.id != swept.id:
+        if entity.id != swept_spawn:
             out.warn(
                 f"entities[{document.entities.index(entity)}].spawn.s",
-                f"A derived offset only resolves for the searched entity; "
+                f"A derived offset only resolves for the searched spawn; "
                 f"{entity.id!r} keeps its fixed value of {entity.spawn.s.value}.",
                 entity.id,
             )

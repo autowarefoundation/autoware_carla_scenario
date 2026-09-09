@@ -271,27 +271,40 @@ Compose them with `ALL`, `ANY`, `NOT`, `Sticky` and `Persistent`, which map onto
 `AndCondition`, `OrCondition`, `NotCondition`, `StickyCondition` and
 `PersistentCondition`.
 
-## Entity spawn
+## Fixed or searched: every lanelet, one question
 
-An entity spawns in one of two modes, and which one is chosen **on the map**:
-the inspector column states how the lanelet is chosen and offers **Edit**, and
-the picker that opens has the choice — Fixed or Constraint search — beside the
-map, with the search itself under it. A constraint is a statement about the map,
-so it is written with the map it searches in view, and the matches are outlined
-on that same map as they are counted.
+**Edit** on any lanelet field opens the map, and the panel beside it asks the
+same thing wherever you opened it from — **Fixed** or **Constraint search**:
 
-**Fixed** pins a lanelet and an offset:
+| Where a lanelet is named | Slot | Hydra key a sweep writes |
+| --- | --- | --- |
+| An entity's spawn | `ego.spawn`, `npc1.spawn` | `ego.spawn_lanelet_id`, `scenario.spawn_overrides.npc1.lanelet_id` |
+| The ego's goal | `ego.goal` | `ego.goal_lanelet_id` |
+| A `lanelet` parameter of an action or a condition | `<node id>.<field>` | `scenario.param_overrides.<node id>.<field>` |
+
+A constraint is a statement about the map, so it is written with the map it
+searches in view, and the matches are outlined on that same map as they are
+counted. That is why the choice is in the picker and not in the 384px inspector
+column, which only states which mode is in force and offers Edit.
+
+A **set** of lanelets — `stop_lanelets`, the map's exclusion list — is picked by
+hand and gets no such panel: a search names *one* lanelet per run, because that
+is what the sweeper enumerates, so offering the choice there would promise that
+a search fills the whole set.
+
+**Fixed** pins the lanelet the field shows. For a spawn that is a lanelet and an
+offset:
 
 | Field | Value | Where |
 | --- | --- | --- |
 | Lanelet ID | 183 | the picker, by clicking the map |
-| Offset | 12.5 m | the inspector column |
+| Offset | 12.5 m | the picker, under the same heading |
 
-**Constraint search** hands the lanelet choice to the existing
-lanelet-constraint sweeper. The tree is edited in the picker, each node with its
-own parameters — the inspector column is behind the map while it is open — with
-the match count beside it outlining what it found on that same map, and is
-serialised straight into `sweep.constraints`:
+**Constraint search** hands the choice to the existing lanelet-constraint
+sweeper. The tree is edited in the picker, each node with its own parameters —
+the inspector column is behind the map while it is open — with the match count
+beside it outlining what it found on that same map, and is serialised straight
+into `sweep.constraints` under whichever key addresses the slot:
 
 ```yaml
 sweep:
@@ -312,10 +325,21 @@ sweep:
               values: ${map.no_3d_model_lanelet_ids}
 ```
 
+The id the field shows stays in the document under a search: it is the default a
+run that does not sweep falls back to, and the value the exported config
+declares so that Hydra's struct mode accepts the override at all.
+
+**One search per run.** The sweeper enumerates a single target key, so a
+document may search for one lanelet; a second search is a validation *warning*
+rather than an error — the scenario still runs, with everything else pinned to
+its default — and names which slot is being driven.
+
 **Preview matches** evaluates that tree against the real Lanelet2 map and
-reports, for example, `133 matched of 979 lanelets`. Loading a map is opt-in and
-cached; if the map files are missing the count is unavailable but the constraint
-editor keeps working.
+reports, for example, `133 matched of 979 lanelets`. It is counted when the
+picker is opened, not on every render: each lanelet field on the inspector has a
+picker in the page at once, and counting means parsing a city. Loading a map is
+opt-in and cached; if the map files are missing the count is unavailable but the
+constraint editor keeps working.
 
 ### The map
 
@@ -325,8 +349,8 @@ viewer — the same project that provides the `lanelet2` Python API this framewo
 runs on. The editor serves the scenario's `.osm` at
 `/draft/<id>/map.osm`, the viewer parses and renders it in the browser, and the
 editor drives it through two calls: `setHighlight()` with the matched IDs, and a
-`select` listener that turns **clicking a lanelet into setting the spawn
-lanelet**.
+`select` listener that turns **clicking a lanelet into setting whichever lanelet
+field the picker was opened from**.
 
 Constraint evaluation stays on the server, in the framework's own sweeper — the
 viewer only draws. That split is deliberate: a second constraint engine in
@@ -354,8 +378,8 @@ would leave it measuring a node that is no longer on the page. Panning and
 zooming survive an edit as a consequence, which re-mounting had been silently
 throwing away.
 
-That is what makes the picker editable. An edit in its side panel — the spawn's
-fixed or searched choice, its constraints, where along the lanelet — posts like
+That is what makes the picker editable. An edit in its side panel — the fixed or
+searched choice, the constraints, a spawn's offset along the lanelet — posts like
 every other control and swaps the whole editor body, which builds a fresh copy
 of the modal while the open one hangs off `<body>`. The fresh copy is swapped in
 behind the person using it, and the key carries the parsed map across, pan and
@@ -368,10 +392,9 @@ offline fallback, but the page loads htmx from a CDN and every control here is a
 same map on screen at once.
 
 The viewer has a single highlight channel — one outline colour, no second class
-— so **what is outlined follows the spawn mode**: a constraint search outlines
-its matches, a fixed spawn outlines the pinned lanelet. The caption under the map
-names which of the two it is, rather than showing colour swatches the viewer does
-not use.
+— so **what is outlined follows the mode**: a constraint search outlines its
+matches, a pinned lanelet outlines itself. The caption under the map names which
+of the two it is, rather than showing colour swatches the viewer does not use.
 
 ### Derived offsets
 
@@ -415,7 +438,8 @@ editor does not author; a run can still select it from the command line.)
 
 The **Goal** section sits beside the spawn, because the two are the ends of the
 same thing: where the run starts, and where the ego is meant to get to. A goal is
-picked from the map like a spawn is. An Autoware ego without one is a validation
+picked from the map like a spawn is, and may be **searched for** like one — the
+sweep then writes `ego.goal_lanelet_id`. An Autoware ego without one is a validation
 error; an ego the TrafficManager drives may be given none — a cut-in or a
 red-light run is about what happens on the way — and **Clear goal** puts it back
 to that.

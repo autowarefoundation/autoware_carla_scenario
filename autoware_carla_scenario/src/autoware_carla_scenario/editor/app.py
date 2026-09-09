@@ -98,6 +98,18 @@ class _RevalidatedStatics(StaticFiles):
 LANELET_PICK_LAYERS = ("lanelet_fill", "centerline", "direction")
 
 
+def picker_matches_id(slot_key: str) -> str:
+    """Return the DOM id of the match readout for one lanelet field.
+
+    Every lanelet field on the inspector has its picker in the page at once, so
+    the readout cannot simply be ``#picker-matches``: the second one would be a
+    duplicate id, and htmx would swap the wrong panel.  Derived from the slot
+    key in one place so the panel and the button that refreshes it cannot
+    disagree about what it is called.
+    """
+    return "picker-matches-" + slot_key.replace(".", "-")
+
+
 def map_viewer_url() -> str:
     """Return the URL the spawn preview loads the map viewer from."""
     return os.environ.get(MAP_VIEWER_ENV, DEFAULT_MAP_VIEWER_URL).strip()
@@ -143,6 +155,7 @@ def create_app(
     # on type, so the registry is the one global they genuinely need.
     templates.env.globals.update(
         map_viewer_url=map_viewer_url,
+        picker_matches_id=picker_matches_id,
         action_specs=registry.action_specs,
         condition_specs=registry.condition_specs,
         constraint_specs=registry.constraint_specs,

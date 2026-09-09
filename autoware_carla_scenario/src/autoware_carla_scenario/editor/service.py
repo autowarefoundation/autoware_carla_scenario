@@ -26,6 +26,7 @@ from ..authoring.models import (
     EgoDriver,
     Entity,
     GoalSpec,
+    LaneletSlot,
     ScenarioDocument,
     SpawnSpec,
     as_action_phase,
@@ -289,10 +290,9 @@ class EditorService:
         self._update_goal(entity, form)
 
         spawn = entity.spawn
-        if "spawn_mode" in form:
-            mode = str(form["spawn_mode"])
-            if mode in ("fixed", "constraint_search"):
-                spawn.mode = mode  # type: ignore[assignment]
+        # Fixed or searched is not asked here: it is the same question every
+        # lanelet field asks, and `set_lanelet_mode` is the one place that
+        # answers it -- see `/draft/<id>/lanelet-mode`.
         if "spawn_lanelet_id" in form:
             spawn.lanelet_id = _as_int(
                 form["spawn_lanelet_id"], "Lanelet ID", spawn.lanelet_id
@@ -356,20 +356,53 @@ class EditorService:
             entity.goal.s = _as_float(form["goal_s"], "Goal offset", entity.goal.s)
 
     # ------------------------------------------------------------------
-    # Spawn constraints
+    # Lanelet searches
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def require_slot(document: ScenarioDocument, slot_key: str) -> LaneletSlot:
+        """Return the lanelet slot *slot_key* addresses, ready to be written to.
+
+        Always with ``create=True``: every caller here is about to change the
+        document, and the read-only view a missing goal otherwise answers with
+        would swallow the change silently.
+
+        Raises:
+            EditorError: If nothing in the document is at that address.
+        """
+        slot = document.lanelet_slot(slot_key, create=True)
+        if slot is None:
+            raise EditorError(f"No lanelet field named {slot_key!r}.")
+        return slot
+
+    def set_lanelet_mode(
+        self, document: ScenarioDocument, slot_key: str, mode: str
+    ) -> str:
+        """Pin a lanelet slot or hand it to the constraint sweeper.
+
+        The constraint tree survives a flip back to Fixed: it is inert there --
+        nothing emits it -- and keeping it means changing one's mind twice does
+        not cost the search that was already written.
+
+        Returns:
+            The id of the object the inspector should show, so the picker
+            re-opens on the thing that was just edited.
+        """
+        if mode not in ("fixed", "constraint_search"):
+            raise EditorError(f"Unknown lanelet mode {mode!r}.")
+        slot = self.require_slot(document, slot_key)
+        slot.attach().mode = mode  # type: ignore[assignment]
+        return slot.owner_id
 
     def add_constraint(
         self,
         document: ScenarioDocument,
-        entity_id: str,
+        slot_key: str,
         type_id: str,
         parent_id: str | None = None,
     ) -> ConstraintNode:
-        """Add a constraint to an entity's spawn search."""
-        entity = document.entity(entity_id)
-        if entity is None:
-            raise EditorError(f"No entity named {entity_id!r}.")
+        """Add a constraint to the search that chooses one lanelet."""
+        slot = self.require_slot(document, slot_key)
         spec = get_constraint_spec(type_id)
         if spec is None:
             raise EditorError(f"Unknown constraint type {type_id!r}.")
@@ -392,7 +425,7 @@ class EditorService:
                 )
             parent.constraints.append(node)
         else:
-            entity.spawn.constraints.append(node)
+            slot.attach().constraints.append(node)
         return node
 
     def update_constraint(
@@ -408,9 +441,9 @@ class EditorService:
         node.params.update(_parse(spec.fields, form))
 
     def delete_constraint(self, document: ScenarioDocument, node_id: str) -> None:
-        """Remove a constraint subtree."""
-        for entity in document.entities:
-            roots = entity.spawn.constraints
+        """Remove a constraint subtree from whichever search holds it."""
+        for slot in document.lanelet_slots():
+            roots = slot.choice.constraints
             for index, root in enumerate(roots):
                 if root.id == node_id:
                     del roots[index]
@@ -757,10 +790,15 @@ def _attach_trigger(
 def find_constraint(
     document: ScenarioDocument, node_id: str
 ) -> tuple[str | None, ConstraintNode | None]:
-    """Find a constraint by id, with the id of the entity whose spawn holds it."""
-    for entity in document.entities:
-        for root in entity.spawn.constraints:
+    """Find a constraint by id, with the id of the object whose search holds it.
+
+    Every lanelet in a document may be searched for, not just a spawn, so the
+    owner is whatever the inspector selects to get back to the search: an
+    entity, an action, or a condition.
+    """
+    for slot in document.lanelet_slots():
+        for root in slot.choice.constraints:
             for candidate in root.walk():
                 if candidate.id == node_id:
-                    return entity.id, candidate
+                    return slot.owner_id, candidate
     return None, None

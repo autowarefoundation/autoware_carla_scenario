@@ -1,4 +1,4 @@
-"""Evaluate spawn constraints against a real Lanelet2 map, and draw the result.
+"""Evaluate lanelet constraints against a real Lanelet2 map, and draw the result.
 
 Two things make the constraint builder usable rather than theoretical: a match
 count, and seeing *where* the matches are.  Both come from the framework's own
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ..authoring.models import ConstraintNode, Entity, ScenarioDocument
+from ..authoring.models import ConstraintNode, LaneletSlot, ScenarioDocument
 from ..authoring.validator import MAP_EXCLUSION_REF
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ __all__ = [
     "MAP_ROOTS_ENV",
     "PreviewResult",
     "clear_cache",
-    "evaluate_spawn",
+    "evaluate_slot",
     "is_map_loaded",
     "lanelet2_source",
     "materialize_constraints",
@@ -56,12 +56,12 @@ class _LoadedMap:
 
 @dataclass
 class PreviewResult:
-    """What a spawn preview found.
+    """What a lanelet-search preview found.
 
     Attributes:
-        searching: Whether the entity spawns by constraint search.  A fixed
-            spawn has nothing to evaluate: its lanelet is the one the picker is
-            already outlining.
+        searching: Whether the slot's lanelet is left to a constraint search.  A
+            pinned one has nothing to evaluate: its lanelet is the one the
+            picker is already outlining.
         matched_ids: Lanelet IDs satisfying the constraints.
         total: Lanelets in the map, for "37 of 812".
         constraint_count: How many top-level constraints were evaluated.
@@ -82,8 +82,8 @@ class PreviewResult:
 
         The viewer has a single highlight channel -- one outline colour, no
         second class -- so the set has to mean exactly one thing, and here it
-        means "what the search found".  A fixed spawn asks for no preview at
-        all: the picker outlines the pinned lanelet from the field itself.
+        means "what the search found".  A pinned lanelet asks for no preview at
+        all: the picker outlines it from the field itself.
         """
         return list(self.matched_ids)
 
@@ -248,18 +248,18 @@ def _load(document: ScenarioDocument) -> _LoadedMap:
 # ---------------------------------------------------------------------------
 
 
-def evaluate_spawn(
-    document: ScenarioDocument, entity: Entity, *, load_map: bool = False
+def evaluate_slot(
+    document: ScenarioDocument, slot: LaneletSlot, *, load_map: bool = False
 ) -> PreviewResult:
-    """Evaluate *entity*'s spawn constraints against the document's map.
+    """Evaluate one lanelet slot's constraints against the document's map.
 
-    A fixed spawn is previewed too, without a match list: seeing where the
-    lanelet actually is -- and being able to click a different one -- is just as
-    useful when the ID was typed by hand.
+    Every slot is previewed the same way -- a spawn, the ego's goal, the lanelet
+    a condition watches -- because the question the preview answers ("which
+    lanelets satisfy this?") does not depend on what the lanelet is for.
 
     Args:
         document: The scenario being edited.
-        entity: The entity whose spawn is previewed.
+        slot: The lanelet slot whose search is previewed.
         load_map: Parse the map when it is not cached yet.  Left off, an
             unloaded map returns a result that still describes the constraints,
             so editing them never waits on a map.
@@ -269,8 +269,9 @@ def evaluate_spawn(
         :attr:`PreviewResult.error` rather than raised: the constraint builder
         has to keep working on a machine with no map files.
     """
-    searching = entity.spawn.mode == "constraint_search"
-    constraint_count = len(entity.spawn.constraints)
+    choice = slot.choice
+    searching = choice.searching
+    constraint_count = len(choice.constraints)
     result = PreviewResult(searching=searching, constraint_count=constraint_count)
 
     if searching and not constraint_count:
@@ -300,12 +301,12 @@ def evaluate_spawn(
     try:
         parsed = [
             parse_constraint(cfg)
-            for cfg in materialize_constraints(entity.spawn.constraints, document)
+            for cfg in materialize_constraints(choice.constraints, document)
         ]
         result.matched_ids = find_matching_lanelets(
             parsed, loaded.lanelet_map, loaded.routing_graph
         )
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not raised
-        logger.info("Spawn preview failed for %s: %s", entity.id, exc)
+        logger.info("Lanelet preview failed for %s: %s", slot.key, exc)
         result.error = f"Constraints could not be evaluated: {exc}"
     return result
