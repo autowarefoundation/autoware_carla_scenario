@@ -26,7 +26,6 @@ from .registry import default_params, get_action_spec, get_condition_spec
 
 __all__ = ["blank_document", "new_document"]
 
-#: Defaults for the built-in Nishishinjuku map, matching ``conf/map/nishishinjuku.yaml``.
 #: Where a starter sends its ego.  Lanelet 141 is up the road from the 183 both
 #: starters spawn on -- 183, 187, 348, 141 is the route the map's own routing
 #: graph gives -- so the ego has somewhere to drive to rather than arriving the
@@ -34,6 +33,7 @@ __all__ = ["blank_document", "new_document"]
 #: without one would open invalid.
 _DEFAULT_GOAL_LANELET_ID = 141
 
+#: Defaults for the built-in Nishishinjuku map, matching ``conf/map/nishishinjuku.yaml``.
 _DEFAULT_MAP = MapRef(
     group="nishishinjuku",
     name="NishishinjukuMap",

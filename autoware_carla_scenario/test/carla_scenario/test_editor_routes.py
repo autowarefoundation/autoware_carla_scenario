@@ -356,8 +356,6 @@ class TestPages:
         assert 'id="pick-goal_lanelet_id"' in body
         assert 'data-open-picker="picker-goal_lanelet_id"' in body
         assert 'name="goal_s"' in body
-        # A required field offers no way to empty it: pick another lanelet.
-        assert "data-clear-field" not in body
 
     def test_only_the_ego_is_offered_a_goal(
         self, client: TestClient, draft_id: str

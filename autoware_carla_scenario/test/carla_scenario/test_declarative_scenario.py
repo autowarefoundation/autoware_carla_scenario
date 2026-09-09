@@ -61,13 +61,14 @@ class TestTheEgoGoal:
     """A document names where the ego is going; the ego config carries it."""
 
     @staticmethod
-    def _document_with_goal(lanelet_id: int = 265, s: float = 12.5):
+    def _document_with_goal(lanelet_id: int | None = 265, s: float = 12.5):
+        """The starter document, with the goal replaced -- or removed."""
         from autoware_carla_scenario.authoring.models import GoalSpec
 
         document = new_document()
         ego = document.ego
         assert ego is not None
-        ego.goal = GoalSpec(lanelet_id=lanelet_id, s=s)
+        ego.goal = None if lanelet_id is None else GoalSpec(lanelet_id=lanelet_id, s=s)
         return document
 
     def test_the_documents_goal_lands_on_the_ego_config(self) -> None:
@@ -98,13 +99,8 @@ class TestTheEgoGoal:
         """Every scenario says where its ego is going, authored ones included."""
         from autoware_carla_scenario.authoring.compiler import CompilationError
 
-        document = new_document()
-        ego = document.ego
-        assert ego is not None
-        ego.goal = None
-
         with pytest.raises(CompilationError, match="no goal"):
-            _scenario(document)
+            _scenario(self._document_with_goal(lanelet_id=None))
 
     def test_the_starter_document_brings_its_own_goal(self) -> None:
         assert _scenario().goal_pose is not None

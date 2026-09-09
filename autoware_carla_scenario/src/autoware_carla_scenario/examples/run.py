@@ -152,8 +152,8 @@ def build_ego_and_spawn(
 def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
     """Extract the ego's goal pose from ``ego.goal_lanelet_id`` / ``ego.goal_s``.
 
-    Returns ``None`` when no goal is configured -- the ordinary case, since only
-    an ego that plans its own route (``ego.entity=autoware``) needs one.
+    Returns ``None`` when no goal is configured, which does not yet mean the run
+    has none: a scenario may derive its own in ``setup()``.
     """
     ego_cfg = cfg.get("ego") or {}
     goal_lanelet_id = ego_cfg.get("goal_lanelet_id")
@@ -251,10 +251,11 @@ def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
     builds, which is why this is the only caller left: applying the goal twice
     would put two writers on one field.
 
-    ``ego.entity=autopilot`` (the default) yields no entity and no goal, and
-    overwriting ``scenario.ego_entity`` with ``None`` there would throw away an
-    entity the scenario constructed in its own ``__init__``.  The goal follows
-    the same rule, and lands on the scenario's own ego config --
+    Each is applied only when the config names one: ``ego.entity=autopilot``
+    (the default) yields no entity, and overwriting ``scenario.ego_entity`` with
+    ``None`` would throw away an entity the scenario constructed in its own
+    ``__init__``; a config that names no goal leaves the scenario's own, which
+    it may have derived.  The goal lands on the scenario's ego config --
     ``scenario.goal_pose`` reads and writes
     :attr:`~autoware_carla_scenario.EgoConfig.goal_pose`.
     """

@@ -264,8 +264,8 @@ class Entity(_Node):
     vehicle_type: str = "vehicle.mini.cooper"
     initial_speed_kmh: float = 0.0
     spawn: SpawnSpec = Field(default_factory=SpawnSpec)
-    #: Where the ego is routed to, or ``None`` when it is given no destination
-    #: -- the ordinary case for an ego that drives itself.
+    #: Where the ego is routed to.  ``None`` only while a document is being
+    #: edited into shape: an ego without a goal is a validation error.
     goal: Optional[GoalSpec] = None
 
     @field_validator("id")

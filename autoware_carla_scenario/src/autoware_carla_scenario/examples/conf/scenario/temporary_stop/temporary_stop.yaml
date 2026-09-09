@@ -11,4 +11,5 @@ ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 285
   spawn_s: 0.0
+  # Past the stop line this run is about, and on up the road.
   goal_lanelet_id: 132

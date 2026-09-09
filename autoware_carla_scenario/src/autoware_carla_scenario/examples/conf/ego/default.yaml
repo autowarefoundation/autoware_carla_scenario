@@ -9,6 +9,9 @@ ego:
   # for it still had a destination the run was aiming at -- but it belongs to
   # the scenario, not to this group: a default here would silently override the
   # goal a scenario derives for itself.
+  #
+  # A scenario whose spawn is swept keeps whatever goal it names: the sweeper
+  # enumerates one target key per run, and it is the spawn.
   goal_lanelet_id: null
   goal_s: 0.0
   # Which entity drives the ego: autopilot | autoware | carla_driver

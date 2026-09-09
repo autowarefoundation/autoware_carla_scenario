@@ -371,9 +371,7 @@ def _is_carla_type(annotation: type) -> bool:
     file depend on which CARLA is installed when it is generated, and the
     committed one is checked against a freshly generated one on both.
     """
-    module = sys.modules.get("carla")
-    if module is None:
-        return False
+    module = importlib.import_module("carla")
     return getattr(module, annotation.__name__, None) is annotation
 
 

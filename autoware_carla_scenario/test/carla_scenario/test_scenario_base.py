@@ -299,12 +299,6 @@ class TestRouteToGoal:
         with pytest.raises(ValueError, match="no goal"):
             scenario.register_route_to_goal(self._initial_pose())
 
-    def test_an_autoware_ego_without_a_goal_is_refused(self) -> None:
-        scenario = _SimpleScenario(_make_ego_config())
-        scenario.ego_entity = self._autoware_entity()
-        with pytest.raises(ValueError, match="no goal"):
-            scenario.register_route_to_goal(self._initial_pose())
-
     def test_a_goal_registers_a_routing_action(self) -> None:
         from autoware_carla_scenario import RoutingAction
         from autoware_carla_scenario.coordinate import Lanelet2Pose
@@ -361,6 +355,58 @@ class TestRouteToGoal:
             clear_entities()
 
         assert [g.lanelet_id for g in routed] == [123]
+
+
+# ---------------------------------------------------------------------------
+# Tests for the rule every scenario is held to
+# ---------------------------------------------------------------------------
+
+
+class TestRequireGoal:
+    """One statement of "every scenario says where its ego is going"."""
+
+    def test_a_goal_is_returned(self) -> None:
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=141, s=0.0)
+
+        assert scenario.require_goal() is scenario.goal_pose
+
+    def test_no_goal_is_refused(self) -> None:
+        scenario = _SimpleScenario(_make_ego_config())
+        with pytest.raises(ValueError, match="no goal"):
+            scenario.require_goal()
+
+
+class TestDeriveGoalFromRoute:
+    """A scenario that declares its route has already named its destination."""
+
+    def test_the_last_lanelet_of_the_route_becomes_the_goal(self) -> None:
+        scenario = _SimpleScenario(_make_ego_config())
+
+        scenario.derive_goal_from_route([460, 265])
+
+        assert scenario.goal_pose is not None
+        assert scenario.goal_pose.lanelet_id == 265
+
+    def test_a_goal_that_arrived_another_way_wins(self) -> None:
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.goal_pose = Lanelet2Pose(lanelet_id=141, s=0.0)
+
+        scenario.derive_goal_from_route([460, 265])
+
+        assert scenario.goal_pose.lanelet_id == 141
+
+    def test_an_empty_route_names_nothing(self) -> None:
+        # Left for require_goal() to refuse, rather than invented here.
+        scenario = _SimpleScenario(_make_ego_config())
+
+        scenario.derive_goal_from_route([])
+
+        assert scenario.goal_pose is None
 
 
 # ---------------------------------------------------------------------------

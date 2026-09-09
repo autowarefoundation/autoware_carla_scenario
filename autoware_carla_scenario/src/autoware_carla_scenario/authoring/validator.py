@@ -418,25 +418,25 @@ def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
     ego with no destination runs an Autoware stack that never moves, and leaves
     every other reader guessing where the run was meant to end.
     """
-    if entity.goal is None:
-        if entity.kind == "ego":
+    if entity.kind != "ego":
+        if entity.goal is not None:
             out.error(
                 f"{path}.goal",
-                "The ego has no goal. Pick one in the Goal section of its "
-                "inspector: it is where the run is meant to end, and an ego "
-                "that plans its own route will not move without it.",
+                "Only the ego is routed to a goal; this vehicle would ignore "
+                "it. Use a Set Goal card if something should act on it during "
+                "the run.",
                 entity.id,
             )
         return
-    if entity.kind != "ego":
+    if entity.goal is None:
         out.error(
             f"{path}.goal",
-            "Only the ego is routed to a goal; this vehicle would ignore it. "
-            "Use a Set Goal card if something should act on it during the run.",
+            "The ego has no goal. Pick one in the Goal section of its "
+            "inspector: it is where the run is meant to end, and an ego that "
+            "plans its own route will not move without it.",
             entity.id,
         )
-        return
-    if entity.goal.lanelet_id <= 0:
+    elif entity.goal.lanelet_id <= 0:
         out.error(
             f"{path}.goal.lanelet_id",
             "A goal needs a positive lanelet ID.",
@@ -517,8 +517,8 @@ def _check_duplicate_ego_routing(out: _Collector, document: ScenarioDocument) ->
         out.warn(
             f"actions[{index}].phase",
             f"{action.title or 'Set Goal'} routes the ego during initialization, "
-            "where its own goal is already delivered. Clear the ego's goal, or "
-            "move this card onto the tick loop to change the destination mid-run.",
+            "where its own goal is already delivered. Move this card onto the "
+            "tick loop to change the destination mid-run.",
             action.id,
         )
 

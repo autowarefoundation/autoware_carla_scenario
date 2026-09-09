@@ -55,6 +55,17 @@ def package(tmp_path: Path) -> Path:
     return result.root
 
 
+def _document_with_goal(lanelet_id: int | None, s: float = 0.0):
+    """The starter document, with the ego's goal replaced -- or removed."""
+    from autoware_carla_scenario.authoring.models import GoalSpec
+
+    document = new_document()
+    ego = document.ego
+    assert ego is not None
+    ego.goal = None if lanelet_id is None else GoalSpec(lanelet_id=lanelet_id, s=s)
+    return document
+
+
 class TestHydraConfig:
     def test_ego_spawn_uses_the_frameworks_own_keys(self) -> None:
         """The sweeper already overrides these; an authored scenario must too."""
@@ -108,14 +119,7 @@ class TestHydraConfig:
 
     def test_the_egos_goal_uses_the_frameworks_own_keys(self) -> None:
         """The goal reaches the runner the way the spawn does: as ego.* keys."""
-        from autoware_carla_scenario.authoring.models import GoalSpec
-
-        document = new_document()
-        ego = document.ego
-        assert ego is not None
-        ego.goal = GoalSpec(lanelet_id=265, s=12.5)
-
-        config = build_scenario_config(document)
+        config = build_scenario_config(_document_with_goal(265, 12.5))
 
         assert config["ego"]["goal_lanelet_id"] == 265
         assert config["ego"]["goal_s"] == 12.5
@@ -128,12 +132,7 @@ class TestHydraConfig:
         # A document whose ego has no goal is a validation error, but the
         # renderer states only what the document says: an emitted key would
         # shadow the ego group's own null with a lanelet nobody chose.
-        document = new_document()
-        ego = document.ego
-        assert ego is not None
-        ego.goal = None
-
-        config = build_scenario_config(document)
+        config = build_scenario_config(_document_with_goal(None))
 
         assert "goal_lanelet_id" not in config["ego"]
         assert "goal_s" not in config["ego"]

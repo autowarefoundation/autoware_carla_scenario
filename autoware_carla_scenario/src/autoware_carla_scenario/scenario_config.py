@@ -134,9 +134,11 @@ class EgoVehicleConfig:
     #: Longitudinal offset along the lanelet centerline.
     spawn_s: float = 25.0
 
-    #: Lanelet the ego is routed to.  Autoware plans a route from the spawn
-    #: pose to this one and does not move without it, so ``entity: autoware``
-    #: requires it; the other entities drive themselves and ignore it.
+    #: Lanelet the ego is routed to.  Every scenario needs a goal -- an ego
+    #: that plans its own route (``entity: autoware``) will not move without
+    #: one, and one driven for it still had a destination the run was aiming at
+    #: -- but ``None`` is allowed here: a scenario may derive its own in
+    #: ``setup()``, and one that ends setup with neither is refused.
     goal_lanelet_id: int | None = None
 
     #: Longitudinal offset along the goal lanelet centerline.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Union
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
@@ -296,6 +296,47 @@ class BaseScenario(ABC):
 
         return od_pose
 
+    def require_goal(self) -> Lanelet2Pose:
+        """Return :attr:`goal_pose`, refusing a scenario that named none.
+
+        The one statement of the rule every scenario is held to: it says where
+        its ego is going.  :meth:`register_route_to_goal` asks because it cannot
+        route without an answer, and :class:`ScenarioRunner` asks once
+        :meth:`setup` returns, so that a scenario which snaps its own spawn
+        rather than calling :meth:`_setup_ego_spawn` is held to it too.
+
+        Raises:
+            ValueError: If :attr:`goal_pose` is ``None``.
+        """
+        if self.goal_pose is None:
+            msg = (
+                f"{type(self).__name__} has no goal for its ego. Every scenario "
+                "says where the ego is going: set 'ego.goal_lanelet_id' (and "
+                "optionally 'ego.goal_s') in the scenario config, pass an "
+                "EgoConfig carrying a goal_pose, or assign self.goal_pose in "
+                "setup() -- deriving it from what the scenario knows is a "
+                "supported way to have one, see derive_goal_from_route()."
+            )
+            raise ValueError(msg)
+        return self.goal_pose
+
+    def derive_goal_from_route(self, route_lanelet_ids: Sequence[int]) -> None:
+        """Send the ego to the end of the route the scenario asserts.
+
+        A scenario that declares the lanelets its ego must visit has already
+        said where the run is meant to end, and should not have to say it twice
+        in the config as well: the last of them becomes the goal.  A goal that
+        reached the scenario another way -- ``ego.goal_lanelet_id``, or an
+        :class:`EgoConfig` built with one -- wins, and an empty route leaves the
+        goal alone for :meth:`require_goal` to refuse.
+
+        Call it from :meth:`setup` before :meth:`_setup_ego_spawn`, which is
+        where the goal is handed to an ego that plans its own route.
+        """
+        if self.goal_pose is not None or not route_lanelet_ids:
+            return
+        self.goal_pose = Lanelet2Pose(lanelet_id=route_lanelet_ids[-1], s=0.0)
+
     def register_route_to_goal(
         self, initial_pose: Optional[CarlaWorldPose] = None
     ) -> None:
@@ -321,26 +362,17 @@ class BaseScenario(ABC):
                 attached actor.
 
         Raises:
-            ValueError: If :attr:`goal_pose` is ``None``.  Asked at the end of
-                the scenario's own setup, which is the last moment a scenario
-                can name a destination the config did not -- deriving one there
-                is a supported way to have a goal, see
-                :class:`~autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenario`.
+            ValueError: If :attr:`goal_pose` is ``None`` -- see
+                :meth:`require_goal`.  Asked here rather than at the start of
+                the run because setup is the last moment a scenario can name a
+                destination the config did not.
         """
-        if self.goal_pose is None:
-            msg = (
-                f"{type(self).__name__} has no goal for its ego. Every scenario "
-                "says where the ego is going: set 'ego.goal_lanelet_id' (and "
-                "optionally 'ego.goal_s') in the scenario config, pass an "
-                "EgoConfig carrying a goal_pose, or assign self.goal_pose in "
-                "setup() before this runs."
-            )
-            raise ValueError(msg)
+        goal = self.require_goal()
 
         self.register_init(
             RoutingAction(
                 EGO_ROLE_NAME,
-                self.goal_pose,
+                goal,
                 initial_pose=initial_pose,
                 ground_projection=self._ground_projection,
                 label="route_ego_to_goal",
