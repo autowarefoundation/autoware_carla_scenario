@@ -117,6 +117,15 @@ def build_ego_and_spawn(
     This is the common preamble shared by all built-in scenarios.  Downstream
     projects can call this helper and then instantiate their own scenario class
     without duplicating the boilerplate.
+
+    Both ends of the run travel with the ego config: ``ego.spawn_lanelet_id``
+    and ``ego.goal_lanelet_id``.  A config that names no goal is not refused
+    here, because it is not yet wrong -- a scenario may know the destination the
+    config does not, and derive it in ``setup()``, as
+    :class:`~autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenario`
+    does from the route it asserts.  The scenario is given its say first, and
+    :meth:`~autoware_carla_scenario.BaseScenario.register_route_to_goal` refuses
+    an ego that still has nowhere to go.
     """
     ground_projection = GroundProjectionConfig(
         ray_distance_upper=float(cfg.entity.ground_projection_ray_distance_upper),
@@ -131,6 +140,7 @@ def build_ego_and_spawn(
         spawn_retry_max_count=int(cfg.entity.spawn_retry_max_count),
         spawn_retry_t_step=float(cfg.entity.spawn_retry_t_step),
         spawn_retry_z_step=float(cfg.entity.spawn_retry_z_step),
+        goal_pose=build_goal_pose(cfg),
     )
     spawn_pose = Lanelet2Pose(
         lanelet_id=cfg.ego.spawn_lanelet_id,
@@ -142,8 +152,8 @@ def build_ego_and_spawn(
 def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
     """Extract the ego's goal pose from ``ego.goal_lanelet_id`` / ``ego.goal_s``.
 
-    Returns ``None`` when no goal is configured -- the ordinary case, since only
-    an ego that plans its own route (``ego.entity=autoware``) needs one.
+    Returns ``None`` when no goal is configured, which does not yet mean the run
+    has none: a scenario may derive its own in ``setup()``.
     """
     ego_cfg = cfg.get("ego") or {}
     goal_lanelet_id = ego_cfg.get("goal_lanelet_id")
@@ -177,9 +187,11 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # spawns and hands Autoware the scenario's mission over the bridge the
         # framework hosts.  The mission itself comes from the scenario, whose
         # ``setup()`` registers a ``RoutingAction`` for the spawn and
-        # ``ego.goal_lanelet_id`` snapped onto the live map -- poses that do not
-        # exist before then -- and the runner performs it in the init phase.  A
-        # config that selects this entity without a goal is refused during setup.
+        # the goal its ``EgoConfig`` carries, snapped onto the live map -- poses
+        # that do not exist before then -- and the runner performs it in the init
+        # phase.  The goal comes from the config (``ego.goal_lanelet_id``) or
+        # from the scenario itself; an ego that ends ``setup()`` with neither is
+        # refused there.
         from autoware_carla_scenario import (  # noqa: PLC0415
             AutowareBridgeConfig,
             AutowareEgoEntity,
@@ -231,17 +243,21 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
 
 
 def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
-    """Attach the configured ego entity and goal, keeping what the scenario set.
+    """Give a scenario the registry did not build the ego the config selects.
 
-    ``ego.entity=autopilot`` (the default) yields no entity and no goal, and
-    overwriting ``scenario.ego_entity`` with ``None`` there would throw away an
-    entity the scenario constructed in its own ``__init__``.  The goal follows
-    the same rule: a scenario that already knows where it is sending the ego
-    keeps its own.
+    An injected ``build_scenario_fn`` brings its own :class:`EgoConfig`, so
+    neither the entity nor the goal has reached the scenario yet.  On the
+    registry path both arrive with the config :func:`build_ego_and_spawn`
+    builds, which is why this is the only caller left: applying the goal twice
+    would put two writers on one field.
 
-    The goal is set here rather than passed to the builder because
-    :data:`~autoware_carla_scenario.registry.ScenarioBuilder` is a published
-    signature that external scenario packages implement.
+    Each is applied only when the config names one: ``ego.entity=autopilot``
+    (the default) yields no entity, and overwriting ``scenario.ego_entity`` with
+    ``None`` would throw away an entity the scenario constructed in its own
+    ``__init__``; a config that names no goal leaves the scenario's own, which
+    it may have derived.  The goal lands on the scenario's ego config --
+    ``scenario.goal_pose`` reads and writes
+    :attr:`~autoware_carla_scenario.EgoConfig.goal_pose`.
     """
     entity = build_ego_entity(cfg)
     if entity is not None:
@@ -622,7 +638,11 @@ def build_scenario(
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario_dict = _to_dict(cfg.scenario)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
-    _apply_ego_config(cfg, scenario)
+    # Built once: an Autoware ego holds a bridge server, and two of those cannot
+    # hold the same address.
+    ego_entity = build_ego_entity(cfg)
+    if ego_entity is not None:
+        scenario.ego_entity = ego_entity
     return ego, scenario
 
 

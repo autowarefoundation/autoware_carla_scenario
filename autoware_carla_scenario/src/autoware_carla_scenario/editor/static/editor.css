@@ -1086,9 +1086,41 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
   background: var(--surface-sunken);
   flex: none;
 }
+.ed-modal-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+}
+
 /* Anchors the mounting frame, which positions itself absolutely while it is
- * still invisible. */
-.ed-modal-body { position: relative; flex: 1; min-height: 0; padding: 12px; }
+ * still invisible -- scoped to the map column so it cannot cover the panel
+ * beside it. */
+.ed-modal-map { position: relative; flex: 1; min-width: 0; }
+
+/* Where the spawn's choice of lanelet is made: pinned or searched, and the
+ * search itself, beside the map it searches. */
+.ed-modal-side {
+  width: 340px;
+  flex: none;
+  overflow-y: auto;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+.ed-side-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+.ed-constraint-fields {
+  padding: 6px 8px 2px;
+  border-top: 1px dashed var(--line);
+}
+.ed-picker-matches { margin-top: 12px; }
 
 .ed-map-full { height: 100%; }
 

@@ -127,15 +127,11 @@ class IntersectionPassingScenario(BaseScenario):
         world = self.world
         cfg = self._config
 
-        # --- Route an ego that plans for itself to the end of that route ---
-        # An Autoware ego needs a goal or it never moves, and this scenario
-        # already declares where the ego is meant to end up: the last lanelet of
-        # the route it asserts.  Its start is where the pass condition latches,
-        # so that is the finish line.  A goal given in the config wins.
-        if self.goal_pose is None and cfg.expected_route_lanelet_ids:
-            self.goal_pose = Lanelet2Pose(
-                lanelet_id=cfg.expected_route_lanelet_ids[-1], s=0.0
-            )
+        # --- Route the ego to the end of the route this scenario asserts ---
+        # The scenario already declares where the ego is meant to end up, and
+        # the last lanelet of that route is where the pass condition latches --
+        # the finish line.  A goal given in the config wins.
+        self.derive_goal_from_route(cfg.expected_route_lanelet_ids)
 
         # --- Compute ego spawn from Lanelet2Pose via OpenDrivePose ---
         self._setup_ego_spawn()

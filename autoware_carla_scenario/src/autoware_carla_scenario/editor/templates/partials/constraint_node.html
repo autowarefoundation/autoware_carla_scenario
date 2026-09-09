@@ -1,10 +1,11 @@
 {% import "partials/icons.html" as ic %}
+{% import "partials/fields.html" as f %}
 {# One spawn constraint, rendered recursively.
 
    Children always nest in one list; how many a type takes comes from its
    spec, the same way a condition composition works. #}
 
-{% macro render(node, draft, entity, selected) %}
+{% macro render(node, draft, entity, selected, document=none, inline_fields=false) %}
   {%- set spec = get_constraint_spec(node.type) -%}
   <div class="ed-constraint {% if selected == node.id %}is-selected{% endif %}">
     <div class="ed-constraint-head" tabindex="0" role="button"
@@ -13,7 +14,9 @@
       <span class="ed-constraint-title">
         {% if spec %}{{ spec.title }}{% else %}<span style="color:var(--fail)">{{ node.type }}</span>{% endif %}
       </span>
-      <span class="ed-constraint-params">{{ constraint_summary(node, spec) }}</span>
+      {% if not inline_fields %}
+        <span class="ed-constraint-params">{{ constraint_summary(node, spec) }}</span>
+      {% endif %}
       <form hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
         <input type="hidden" name="selected" value="{{ entity.id }}">
@@ -21,10 +24,23 @@
       </form>
     </div>
 
+    {# Where the tree is the whole editor -- inside the map picker, with the
+       inspector column behind it -- each node carries its own parameters, so
+       nothing has to be selected somewhere the map is covering. #}
+    {% if inline_fields and spec and spec.fields %}
+      <form class="ed-constraint-fields"
+            hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}"
+            hx-trigger="change delay:200ms"
+            hx-target="#editor-body" hx-swap="innerHTML">
+        <input type="hidden" name="selected" value="{{ entity.id }}">
+        {{ f.fields(spec.fields, node.params, document, '', draft) }}
+      </form>
+    {% endif %}
+
     {% if spec and spec.accepts_children %}
       <div class="ed-constraint-children">
         {% for child in node.constraints %}
-          {{ render(child, draft, entity, selected) }}
+          {{ render(child, draft, entity, selected, document, inline_fields) }}
         {% endfor %}
         {% if spec.max_children is none or node.constraints|length < spec.max_children %}
           {{ add_constraint(draft, entity, node.id) }}

@@ -347,6 +347,46 @@ class TestPages:
         field = body.split('id="pick-spawn_lanelet_id"')[0].rsplit("<input", 1)[1]
         assert "ed-input-locked" in field
 
+    def test_the_spawn_is_chosen_where_the_map_is(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Pinned or searched is a question about the map, so it is asked there.
+
+        The column states which it is and offers Edit; the choice, and the
+        search it leads to, live in the picker beside the map they are about.
+        """
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        picker = body.split('id="picker-spawn_lanelet_id"', 1)[1]
+        column = body.split('id="picker-spawn_lanelet_id"', 1)[0]
+
+        assert 'name="spawn_mode"' not in column
+        assert 'name="spawn_mode"' in picker
+        # The constraint tree, and each node's own parameters, come with it:
+        # the inspector column is behind the map while the picker is open.
+        assert "ed-constraint-fields" in picker
+        assert "ed-constraint" not in column
+        # Where along the lanelet is the same kind of question, so it is asked
+        # in the same place -- the column only says what the answer is.
+        assert 'name="spawn_s_mode"' not in column
+        assert 'name="spawn_s_mode"' in picker
+        assert 'name="spawn_s"' in picker
+
+    def test_the_goal_is_picked_from_the_map_like_the_spawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The ego's goal is a lanelet, so it is chosen the way every one is."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+
+        assert 'id="pick-goal_lanelet_id"' in body
+        assert 'data-open-picker="picker-goal_lanelet_id"' in body
+        assert 'name="goal_s"' in body
+
+    def test_only_the_ego_is_offered_a_goal(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        assert "goal_lanelet_id" not in body
+
     def test_the_scenario_exclusion_list_is_picked_too(
         self, client: TestClient, draft_id: str
     ) -> None:
@@ -497,7 +537,7 @@ class TestPages:
     ) -> None:
         """?selected= renders server-side, so a deep link works and so do tests."""
         body = client.get(f"/draft/{draft_id}?selected=npc1").text
-        assert "Candidate lanelets" in body
+        assert "How this lanelet is chosen" in body
         assert "Constraint search" in body
 
 
@@ -539,6 +579,85 @@ class TestEntityEditing:
         )
         assert entity.spawn.mode == "fixed"
         assert (entity.spawn.lanelet_id, entity.spawn.s.value) == (200, 12.5)
+
+    def test_the_ego_is_given_a_goal_beside_its_spawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"goal_lanelet_id": "265", "goal_s": "12.5"},
+        )
+        ego = _entity(store, draft_id, "ego")
+        assert ego.goal is not None
+        assert (ego.goal.lanelet_id, ego.goal.s) == (265, 12.5)
+
+    def test_an_empty_goal_lanelet_clears_the_goal(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # An ego the TrafficManager drives may have no destination, and Clear
+        # goal is how it goes back to having none.
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        client.post(f"/draft/{draft_id}/entity/ego", data={"goal_lanelet_id": ""})
+
+        assert _entity(store, draft_id, "ego").goal is None
+        assert validate_document(_document(store, draft_id)).ok
+
+    def test_an_autoware_ego_left_without_a_goal_is_reported(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"driven_by": "autoware", "goal_lanelet_id": ""},
+        )
+
+        entity = _entity(store, draft_id, "ego")
+        assert (entity.driven_by, entity.goal) == ("autoware", None)
+        report = validate_document(_document(store, draft_id))
+        assert not report.ok
+        assert any("no goal" in issue.message for issue in report.errors)
+
+    def test_the_ego_says_which_stack_drives_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/entity/ego", data={"driven_by": "autoware"})
+        assert _entity(store, draft_id, "ego").driven_by == "autoware"
+
+        # An unknown value is ignored rather than stored: the document only ever
+        # holds a stack the export can name.
+        client.post(f"/draft/{draft_id}/entity/ego", data={"driven_by": "__nope__"})
+        assert _entity(store, draft_id, "ego").driven_by == "autoware"
+
+    def test_a_vehicle_that_is_not_the_ego_is_not_given_a_driver(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/entity/npc1", data={"driven_by": "autoware"})
+        assert _entity(store, draft_id, "npc1").driven_by == "autopilot"
+
+    def test_a_partial_form_leaves_the_goal_alone(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Clicking a lanelet on the map posts the spawn alone; the goal stays."""
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"goal_lanelet_id": "265", "goal_s": "12.5"},
+        )
+        client.post(f"/draft/{draft_id}/entity/ego", data={"spawn_lanelet_id": "200"})
+
+        ego = _entity(store, draft_id, "ego")
+        assert ego.spawn.lanelet_id == 200
+        assert ego.goal is not None
+        assert ego.goal.lanelet_id == 265
+
+    def test_a_vehicle_that_is_not_the_ego_is_given_no_goal(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # The inspector offers the control for the ego only; a form that names
+        # one anyway must not store what validation would then reject.
+        client.post(f"/draft/{draft_id}/entity/npc1", data={"goal_lanelet_id": "265"})
+        assert _entity(store, draft_id, "npc1").goal is None
 
     def test_a_derived_offset_stores_a_binding(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -773,19 +892,13 @@ class TestSpawnConstraints:
         assert response.status_code == 404
         assert "Lanelet2" in response.text
 
-    def test_the_preview_hands_the_viewer_what_it_needs(
+    def test_the_picker_hands_the_viewer_what_it_needs(
         self, client: TestClient, draft_id: str
     ) -> None:
         """The data attributes on the frame are the whole client-side contract."""
-        from autoware_carla_scenario.editor import map_preview
-
-        map_preview.clear_cache()
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
-        ).text
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
         assert 'data-map-src="/draft/%s/map.osm"' % draft_id in body
-        assert 'data-entity="npc1"' in body
+        assert 'data-picks-into="pick-spawn_lanelet_id"' in body
         assert "data-highlight=" in body
         assert "hakuturu583.github.io/simple_lanelet2/viewer.js" in body
 
@@ -793,14 +906,8 @@ class TestSpawnConstraints:
         self, client: TestClient, draft_id: str
     ) -> None:
         """An empty box where a map should be is worse than no box."""
-        from autoware_carla_scenario.editor import map_preview
-
-        map_preview.clear_cache()
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
-        ).text
-        assert '<div class="ed-map-frame" hidden' in body
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        assert '<div class="ed-map-frame ed-map-full" hidden' in body
         # The viewer is the only renderer; nothing is drawn server-side to sit
         # underneath it and be mistaken for a second map.
         assert "data-map-fallback" not in body
@@ -820,31 +927,19 @@ class TestSpawnConstraints:
             .headers["location"]
             .rsplit("/", 1)[-1]
         )
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "npc1", "load_map": "1"},
-        ).text
+        body = client.get(f"/draft/{draft_id}/inspector/npc1").text
         assert 'data-map-viewer="/vendor/viewer.js"' in body
 
-    def test_a_fixed_spawn_is_shown_on_the_map_too(
+    def test_a_fixed_spawn_outlines_the_lanelet_it_pins(
         self, client: TestClient, draft_id: str
     ) -> None:
-        """A hand-typed lanelet ID is worth seeing, and clicking one is faster."""
-        from autoware_carla_scenario.editor import map_preview
+        """Nothing is evaluated for it: the pinned id is what the map outlines."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        picker = body.split('id="picker-spawn_lanelet_id"', 1)[1]
 
-        map_preview.clear_cache()
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "ego", "load_map": "1"},
-        ).text
-        assert "ed-map-frame" in body
-        assert 'data-entity="ego"' in body
-        assert "183" in body  # the ego's fixed spawn lanelet
-        # No match list: there are no constraints to match.
-        assert "matched of" not in body
-        # The viewer has one highlight colour, so a fixed spawn outlines the
-        # pinned lanelet and nothing else.
-        assert 'data-highlight="183"' in body
+        assert 'data-highlight="183"' in picker  # the ego's fixed spawn lanelet
+        # No match readout: there are no constraints to match.
+        assert "picker-matches" not in picker
 
     def test_a_constraint_search_outlines_its_matches(
         self, client: TestClient, draft_id: str
@@ -861,7 +956,7 @@ class TestSpawnConstraints:
             f"/draft/{draft_id}/spawn-preview",
             data={"entity_id": "npc1", "load_map": "1"},
         ).text
-        highlight = body.split('data-highlight="')[1].split('"')[0]
+        highlight = body.split('data-picker-highlight="')[1].split('"')[0]
         matched = body.split("Matched IDs")[1]
         assert highlight, "a search with matches must outline them"
         assert all(f"{i}" in matched for i in highlight.split(",")[:5])
@@ -1081,14 +1176,12 @@ class TestMapViewerReuse:
     scene survives an edit instead of being fetched and parsed again.
     """
 
-    def test_the_preview_frame_is_marked_for_reuse(
+    def test_the_picker_frame_is_marked_for_reuse(
         self, client: TestClient, draft_id: str
     ) -> None:
-        body = client.post(
-            f"/draft/{draft_id}/spawn-preview",
-            data={"entity_id": "ego", "load_map": "1"},
-        ).text
-        assert 'data-viewer-key="spawn"' in body
+        """An edit made in the picker re-renders it; the parsed map is kept."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        assert 'data-viewer-key="picker-spawn_lanelet_id"' in body
 
     def test_the_script_still_honours_that_key(self) -> None:
         """The attribute is only worth rendering if something reads it."""

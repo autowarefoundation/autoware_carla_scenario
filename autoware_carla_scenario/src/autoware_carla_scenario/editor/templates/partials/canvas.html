@@ -219,6 +219,19 @@
               <span class="k">searched</span>
               {%- if entity.spawn.s.mode == 'derived' %}<br><span class="k">offset</span> <span class="v">derived</span>{% endif %}
             {% endif %}
+            {# Which stack drives the ego changes what the run is, so it reads
+               beside the spawn rather than only in the inspector. Only the ego
+               is driven by anything the document chooses. #}
+            {% if entity.kind == 'ego' and entity.driven_by != 'autopilot' %}
+              <br><span class="k">driven by</span> <span class="v">{{ entity.driven_by }}</span>
+            {% endif %}
+            {# The goal reads as part of the same line as the spawn because it
+               is the other end of it: where this vehicle starts, where it is
+               sent. Only the ego can carry one. #}
+            {% if entity.goal %}
+              <br><span class="k">goal</span> <span class="v">{{ entity.goal.lanelet_id }}</span>
+              <span class="k">at</span> <span class="v">{{ entity.goal.s }} m</span>
+            {% endif %}
           </div>
         </div>
 

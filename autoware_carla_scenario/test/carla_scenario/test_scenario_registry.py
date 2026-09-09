@@ -252,6 +252,29 @@ class TestBuildEgoEntity:
 # ---------------------------------------------------------------------------
 
 
+def _ego_and_spawn_cfg(**ego_overrides: object) -> DictConfig:
+    """Return a resolved-config shape build_ego_and_spawn() accepts."""
+    ego: dict[str, object] = {
+        "vehicle_type": "vehicle.tesla.model3",
+        "initial_speed_kmh": 30.0,
+        "spawn_lanelet_id": 42,
+        "spawn_s": 5.0,
+    }
+    ego.update(ego_overrides)
+    return OmegaConf.create(
+        {
+            "entity": {
+                "ground_projection_ray_distance_upper": 10.0,
+                "ground_projection_ray_distance_lower": 1.0,
+                "spawn_retry_max_count": 5,
+                "spawn_retry_t_step": 0.2,
+                "spawn_retry_z_step": 0.3,
+            },
+            "ego": ego,
+        }
+    )
+
+
 class TestBuildEgoAndSpawn:
     """Tests for the build_ego_and_spawn() helper."""
 
@@ -263,24 +286,7 @@ class TestBuildEgoAndSpawn:
         )
         from autoware_carla_scenario.examples.run import build_ego_and_spawn
 
-        cfg = OmegaConf.create(
-            {
-                "entity": {
-                    "ground_projection_ray_distance_upper": 10.0,
-                    "ground_projection_ray_distance_lower": 1.0,
-                    "spawn_retry_max_count": 5,
-                    "spawn_retry_t_step": 0.2,
-                    "spawn_retry_z_step": 0.3,
-                },
-                "ego": {
-                    "vehicle_type": "vehicle.tesla.model3",
-                    "initial_speed_kmh": 30.0,
-                    "spawn_lanelet_id": 42,
-                    "spawn_s": 5.0,
-                },
-            }
-        )
-        ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
+        ego, spawn_pose, ground_projection = build_ego_and_spawn(_ego_and_spawn_cfg())
 
         assert isinstance(ego, EgoConfig)
         assert ego.vehicle_type == "vehicle.tesla.model3"
@@ -293,6 +299,30 @@ class TestBuildEgoAndSpawn:
         assert isinstance(ground_projection, GroundProjectionConfig)
         assert ground_projection.ray_distance_upper == 10.0
         assert ground_projection.ray_distance_lower == 1.0
+
+    def test_the_configured_goal_travels_with_the_ego_config(self) -> None:
+        """The goal is part of the ego's configuration, not a separate parcel."""
+        from autoware_carla_scenario.examples.run import build_ego_and_spawn
+
+        cfg = _ego_and_spawn_cfg(goal_lanelet_id=265, goal_s=12.5)
+        ego, _, _ = build_ego_and_spawn(cfg)
+
+        assert ego.goal_pose is not None
+        assert ego.goal_pose.lanelet_id == 265
+        assert ego.goal_pose.s == 12.5
+
+    def test_a_config_without_a_goal_waits_for_the_scenario(self) -> None:
+        """A scenario may know the destination the config does not.
+
+        ``IntersectionPassingScenario`` derives the ego's goal in ``setup()``
+        from the route it asserts, so a config that names none is not yet wrong;
+        ``register_route_to_goal`` refuses an ego that still has nowhere to go.
+        """
+        from autoware_carla_scenario.examples.run import build_ego_and_spawn
+
+        ego, _, _ = build_ego_and_spawn(_ego_and_spawn_cfg(entity="autoware"))
+
+        assert ego.goal_pose is None
 
 
 # ---------------------------------------------------------------------------

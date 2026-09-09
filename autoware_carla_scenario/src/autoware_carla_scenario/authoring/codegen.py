@@ -362,6 +362,19 @@ class RenderedBuilder:
     needs_actor_assert: bool
 
 
+def _is_carla_type(annotation: type) -> bool:
+    """Whether *annotation* comes from the CARLA client library.
+
+    Asked of the module rather than read off ``__module__``, which spells
+    itself differently between clients -- ``carla`` in 0.10.0,
+    ``carla.libcarla`` in 0.9.16.  Reading the string would make the generated
+    file depend on which CARLA is installed when it is generated, and the
+    committed one is checked against a freshly generated one on both.
+    """
+    module = importlib.import_module("carla")
+    return getattr(module, annotation.__name__, None) is annotation
+
+
 def _field_expression(
     field: FieldSpec, parameter: _Parameter, where: str, package: str
 ) -> tuple[str, Optional[str]]:
@@ -375,7 +388,7 @@ def _field_expression(
     source = f'params["{field.name}"]'
     annotation = parameter.annotation
     if isinstance(annotation, type) and (
-        issubclass(annotation, enum.Enum) or annotation.__module__ == "carla"
+        issubclass(annotation, enum.Enum) or _is_carla_type(annotation)
     ):
         options = tuple(option.value for option in field.options)
         return _enum_expression(annotation, source, options, where, package)

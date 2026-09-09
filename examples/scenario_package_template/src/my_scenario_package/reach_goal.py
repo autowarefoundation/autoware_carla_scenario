@@ -49,12 +49,18 @@ class ReachGoalScenario(BaseScenario):
 
     def setup(self) -> None:
         """Snap the ego spawn and register the pass/fail conditions."""
-        # 1. Snap the Lanelet2 spawn pose to the CARLA road surface.
-        self._setup_ego_spawn()
-
         cfg = self._config
 
-        # 2. Pass condition: the ego reaches each goal lanelet (latched via Sticky).
+        # 1. Every scenario says where its ego is going, and this one already
+        #    has: the last road it asserts the ego reaches is the destination.
+        #    A goal given in the config wins.
+        self.derive_goal_from_route(cfg.goal_lanelet_ids)
+
+        # 2. Snap the Lanelet2 spawn pose to the CARLA road surface, which is
+        #    also where the goal is handed to an ego that plans its own route.
+        self._setup_ego_spawn()
+
+        # 3. Pass condition: the ego reaches each goal lanelet (latched via Sticky).
         stickies = []
         logger.info("Goal lanelets: %s", list(cfg.goal_lanelet_ids))
         for lanelet_id in cfg.goal_lanelet_ids:
@@ -73,7 +79,7 @@ class ReachGoalScenario(BaseScenario):
             )
         self.register_pass_condition(AndCondition(stickies))
 
-        # 3. Fail-safe timeout.
+        # 4. Fail-safe timeout.
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")
         )

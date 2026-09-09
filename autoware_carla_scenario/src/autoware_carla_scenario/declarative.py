@@ -100,6 +100,7 @@ class DeclarativeScenario(BaseScenario):
         self._config = config or DeclarativeScenarioConfig()
         self._document = document or self._load_document(self._config)
         self._apply_spawn_overrides()
+        self._apply_ego_goal()
         # Compiling here (not in setup) surfaces an invalid document before the
         # runner has spent anything on a CARLA session.
         self._compiled: CompiledScenario = compile_document(self._document)
@@ -144,6 +145,22 @@ class DeclarativeScenario(BaseScenario):
             offset = override.get("s")
             if offset is not None:
                 entity.spawn.s.value = float(offset)
+
+    def _apply_ego_goal(self) -> None:
+        """Give the ego the goal the document names, unless the run named one.
+
+        Where the ego is going belongs to the ego, so it lands on the scenario's
+        ego config.  An exported package renders this same goal into
+        ``ego.goal_lanelet_id``, which means a Hydra run arrives with it already
+        on the config -- and a CLI override naming a different goal has to win,
+        hence "unless".  Applying it here is what makes a document
+        self-sufficient when the scenario is built directly, with an ego config
+        the caller assembled itself.
+        """
+        ego = self._document.ego
+        if self.goal_pose is not None or ego is None or ego.goal is None:
+            return
+        self.goal_pose = Lanelet2Pose(lanelet_id=ego.goal.lanelet_id, s=ego.goal.s)
 
     @property
     def document(self) -> ScenarioDocument:

@@ -273,18 +273,24 @@ Compose them with `ALL`, `ANY`, `NOT`, `Sticky` and `Persistent`, which map onto
 
 ## Entity spawn
 
-An entity spawns in one of two modes.
+An entity spawns in one of two modes, and which one is chosen **on the map**:
+the inspector column states how the lanelet is chosen and offers **Edit**, and
+the picker that opens has the choice — Fixed or Constraint search — beside the
+map, with the search itself under it. A constraint is a statement about the map,
+so it is written with the map it searches in view, and the matches are outlined
+on that same map as they are counted.
 
 **Fixed** pins a lanelet and an offset:
 
-| Field | Value |
-| --- | --- |
-| Spawn mode | Fixed |
-| Lanelet ID | 183 |
-| Offset | 12.5 m |
+| Field | Value | Where |
+| --- | --- | --- |
+| Lanelet ID | 183 | the picker, by clicking the map |
+| Offset | 12.5 m | the inspector column |
 
 **Constraint search** hands the lanelet choice to the existing
-lanelet-constraint sweeper. The constraint tree is edited as a tree and is
+lanelet-constraint sweeper. The tree is edited in the picker, each node with its
+own parameters — the inspector column is behind the map while it is open — with
+the match count beside it outlining what it found on that same map, and is
 serialised straight into `sweep.constraints`:
 
 ```yaml
@@ -334,22 +340,26 @@ server and are unaffected.
 
 ### The map is parsed once
 
-htmx replaces the whole inspector on every edit, and the preview then re-renders
-itself, so the server sends a brand-new, empty map frame each time. Mounting
-that frame refetched the `.osm` and parsed it again in wasm — one fetch per
-edit, for a map that had not changed.
+htmx replaces the whole inspector on every edit, so the server sends a
+brand-new, empty map frame each time. Mounting that frame refetched the `.osm`
+and parsed it again in wasm — one fetch per edit, for a map that had not
+changed.
 
 The frame that already holds the parsed scene carries a `data-viewer-key`, and
 `reuseMap()` in `editor.js` swaps it back in over the fresh one, copying across
-only what actually differs: which entity the preview is for, and which lanelets
-are outlined. The whole frame moves rather than the canvas inside it — the
-viewer keeps a reference to the element it was constructed with and observes it
-for resizes, so lifting the canvas out would leave it measuring a node that is
-no longer on the page. Panning and zooming survive an edit as a consequence,
-which re-mounting had been silently throwing away.
+only what actually differs: which lanelets are outlined. The whole frame moves
+rather than the canvas inside it — the viewer keeps a reference to the element
+it was constructed with and observes it for resizes, so lifting the canvas out
+would leave it measuring a node that is no longer on the page. Panning and
+zooming survive an edit as a consequence, which re-mounting had been silently
+throwing away.
 
-A picker has no key. It is mounted when someone opens it and destroyed when they
-close it, which is already once per deliberate act.
+That is what makes the picker editable. An edit in its side panel — the spawn's
+fixed or searched choice, its constraints, where along the lanelet — posts like
+every other control and swaps the whole editor body, which builds a fresh copy
+of the modal while the open one hangs off `<body>`. The fresh copy is swapped in
+behind the person using it, and the key carries the parsed map across, pan and
+zoom included.
 
 It is the **only** renderer. A server-rendered SVG used to sit behind it as an
 offline fallback, but the page loads htmx from a CDN and every control here is an
@@ -389,6 +399,52 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_s` keys. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
+
+## Ego: who drives, and where to
+
+The ego's inspector opens with **Driven by** — the stack that drives it, exported
+as `ego.entity`:
+
+| Driven by | `ego.entity` | Goal |
+| --- | --- | --- |
+| TrafficManager (CARLA autopilot) | `autopilot` | optional — it reads none |
+| Autoware | `autoware` | **required** — it plans its route to the goal and will not move without one |
+
+(The framework's third value, `carla_driver`, needs a `driver` config group the
+editor does not author; a run can still select it from the command line.)
+
+The **Goal** section sits beside the spawn, because the two are the ends of the
+same thing: where the run starts, and where the ego is meant to get to. A goal is
+picked from the map like a spawn is. An Autoware ego without one is a validation
+error; an ego the TrafficManager drives may be given none — a cut-in or a
+red-light run is about what happens on the way — and **Clear goal** puts it back
+to that.
+
+A goal is not a card. A card happens *during* a run, and a goal is what the ego
+needs before one can start: Autoware localizes at the spawn, plans a route to
+the goal, and only then engages. The framework asks the same of a hand-written
+scenario — `BaseScenario.require_goal()`, asked by `register_route_to_goal` and
+by `ScenarioRunner` once `setup()` returns — so the editor stores the goal on the
+ego and exports it as the framework's own keys:
+
+```yaml
+ego:
+  spawn_lanelet_id: 183
+  spawn_s: 0.0
+  entity: autoware
+  goal_lanelet_id: 265
+  goal_s: 12.5
+```
+
+The goal keys are written only when a goal is set, leaving the `ego` group's own
+`null` in place otherwise.
+
+The **Set Goal** card still exists, for changing a destination mid-run or for a
+vehicle that is not the ego. One owned by the ego and left in the initialization
+phase is warned about: the ego's own goal is already delivered there, so the card
+would send a second destination in the same phase. Only a vehicle that plans its own route reads a
+goal at all, so a goal stored on any other entity is a validation error rather
+than something quietly dropped at export.
 
 ## Metadata-driven GUI
 

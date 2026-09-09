@@ -478,7 +478,11 @@ def delete_condition(request: Request, draft_id: str, node_id: str) -> HTMLRespo
 
 @router.post("/draft/{draft_id}/spawn-preview", response_class=HTMLResponse)
 async def spawn_preview(request: Request, draft_id: str) -> HTMLResponse:
-    """Evaluate an entity's spawn constraints and draw the matches."""
+    """Count the lanelets an entity's spawn constraints match.
+
+    The readout beside the map in the lanelet picker: the map itself is already
+    open there, and is handed the matching ids to outline.
+    """
     form = dict(await request.form())
     entity_id = str(form.get("entity_id", ""))
     load_map = _checked(form, "load_map")

@@ -24,91 +24,191 @@
 
   <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Spawn</h4>
   <div class="ed-field">
-    <label class="ed-label">Spawn mode</label>
-    <select name="spawn_mode" class="ed-input">
-      <option value="fixed" {% if target.spawn.mode == 'fixed' %}selected{% endif %}>Fixed</option>
-      <option value="constraint_search" {% if target.spawn.mode == 'constraint_search' %}selected{% endif %}>
-        Constraint search
-      </option>
-    </select>
+    <label class="ed-label">Lanelet ID</label>
+    {# The field here, the map -- and with it the choice between a pinned
+       lanelet and a constraint search -- behind Edit: a constraint is a
+       statement about the map, and this column is 384px wide. #}
+    {{ f.lanelet_field('spawn_lanelet_id', target.spawn.lanelet_id, draft) }}
     <p class="ed-help">
-      A constraint search hands the lanelet choice to the lanelet-constraint
-      sweeper; the ID below is the default a non-swept run uses.
+      {% if target.spawn.mode == 'fixed' %}
+        Pinned,
+      {% else %}
+        Searched ({{ target.spawn.constraints|length }} constraint{{ '' if target.spawn.constraints|length == 1 else 's' }}, this ID the default a non-swept run uses),
+      {% endif %}
+      {% if target.spawn.s.mode == 'fixed' %}
+        {{ target.spawn.s.value }} m along it.
+      {% else %}
+        offset derived from the map.
+      {% endif %}
+      Edit opens the map, where all of that is chosen.
     </p>
   </div>
-  <div class="ed-field">
-    <label class="ed-label">Lanelet ID</label>
-    {{ f.lanelet_picker('spawn_lanelet_id', target.spawn.lanelet_id, draft, 'Lanelet ID') }}
-  </div>
 
-  <h4 class="ed-subheading">{{ ic.icon('bar', 12) }} Position on the matched lanelet</h4>
-  <div class="ed-radio-row">
-    <label class="ed-radio">
-      <input type="radio" name="spawn_s_mode" value="fixed"
-             {% if target.spawn.s.mode == 'fixed' %}checked{% endif %}>
-      <span>Fixed</span>
-    </label>
-    <label class="ed-radio">
-      <input type="radio" name="spawn_s_mode" value="derived"
-             {% if target.spawn.s.mode == 'derived' %}checked{% endif %}>
-      <span>Derived</span>
-    </label>
-  </div>
-  <div class="ed-field">
-    <label class="ed-label">
-      {{ 'Offset' if target.spawn.s.mode == 'fixed' else 'Default offset' }} <span class="unit">(m)</span>
-    </label>
-    <input type="number" step="any" name="spawn_s" class="ed-input" value="{{ target.spawn.s.value }}">
-  </div>
+  {% if target.kind == 'ego' %}
+    {% set autoware = target.driven_by == 'autoware' %}
+    <h4 class="ed-subheading">{{ ic.icon('car', 12) }} Driven by</h4>
+    <div class="ed-field">
+      <select name="driven_by" class="ed-input">
+        <option value="autopilot" {% if not autoware %}selected{% endif %}>
+          TrafficManager (CARLA autopilot)
+        </option>
+        <option value="autoware" {% if autoware %}selected{% endif %}>
+          Autoware
+        </option>
+      </select>
+      <p class="ed-help">
+        Which stack drives the ego, exported as <code>ego.entity</code>.
+        Autoware plans its own route, so it needs a goal below; an ego the
+        TrafficManager drives reads none.
+      </p>
+    </div>
 
-  {% if target.spawn.s.mode == 'derived' %}
-    {% set binding = target.spawn.s.binding %}
-    {% set binding_type = binding.type if binding else 'stop_line_offset' %}
-    {% set binding_spec = get_binding_spec(binding_type) %}
-    <div class="ed-derived">
-      <div class="ed-field">
-        <label class="ed-label">Derived from</label>
-        <select name="binding_type" class="ed-input">
-          {% for spec in binding_specs() %}
-            <option value="{{ spec.type_id }}" {% if spec.type_id == binding_type %}selected{% endif %}>
-              {{ spec.title }}
-            </option>
-          {% endfor %}
-        </select>
-        {% if binding_spec and binding_spec.description %}
-          <p class="ed-help">{{ binding_spec.description }}</p>
+    {# The goal sits with the spawn because it is the other end of the same
+       thing: where the run starts and where it is meant to get to. It is not a
+       card, because a card happens *during* a run and a goal is what the ego
+       needs before one can start -- Autoware plans its route from the spawn to
+       the goal and only then engages. #}
+    <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Goal</h4>
+    <div class="ed-field">
+      <label class="ed-label">Goal lanelet</label>
+      {{ f.lanelet_picker('goal_lanelet_id',
+                          target.goal.lanelet_id if target.goal else none,
+                          draft, 'Goal lanelet') }}
+      <p class="ed-help">
+        {% if autoware %}
+          Required: Autoware plans its route to it and will not move without
+          one.
+        {% else %}
+          Optional: the TrafficManager drives this ego and reads no goal. Give
+          one to say where the run was meant to end.
         {% endif %}
-      </div>
-      {% if binding_spec %}
-        {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
+      </p>
+      {% if target.goal and not autoware %}
+        <button type="button" class="ed-btn-sm" style="margin-top:6px"
+                data-clear-field="pick-goal_lanelet_id">Clear goal</button>
       {% endif %}
     </div>
+    {% if target.goal %}
+      <div class="ed-field">
+        <label class="ed-label">
+          Offset along the goal lanelet <span class="unit">(m)</span>
+        </label>
+        <input type="number" step="any" name="goal_s" class="ed-input"
+               value="{{ target.goal.s }}">
+      </div>
+    {% endif %}
   {% endif %}
 </form>
 
-{% if target.spawn.mode == 'constraint_search' %}
-  <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Candidate lanelets</h4>
-  <div class="ed-constraint-root" style="margin-bottom:12px">
-    {% for node in target.spawn.constraints %}
-      {{ cons.render(node, draft, target, selected) }}
-    {% else %}
-      <p class="ed-help" style="margin:0 0 6px">No constraints yet: every lanelet matches.</p>
-    {% endfor %}
-    {{ cons.add_constraint(draft, target) }}
+{# Outside the form above, because the search built in here is made of forms
+   and a form cannot nest. The two halves find each other by id. #}
+{% call f.lanelet_modal('spawn_lanelet_id', target.spawn.lanelet_id, draft,
+                        'spawn lanelet') %}
+  {% set searching = target.spawn.mode == 'constraint_search' %}
+  <div class="ed-side-title">How this lanelet is chosen</div>
+  <div class="ed-radio-row">
+    {# Each radio posts on its own: this panel is moved out of the inspector's
+       form to be shown, so there is no form around it to submit. #}
+    <label class="ed-radio">
+      <input type="radio" name="spawn_mode" value="fixed"
+             {% if not searching %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+             hx-vals='{"spawn_mode": "fixed"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>Fixed</span>
+    </label>
+    <label class="ed-radio">
+      <input type="radio" name="spawn_mode" value="constraint_search"
+             {% if searching %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+             hx-vals='{"spawn_mode": "constraint_search"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>Constraint search</span>
+    </label>
   </div>
-{% else %}
-  <h4 class="ed-subheading">{{ ic.icon('map', 12) }} On the map</h4>
-{% endif %}
 
-{# Shown for both spawn modes: a hand-typed lanelet ID is worth seeing on a map
-   too, and clicking one is the quickest way to change it. #}
-<div id="spawn-preview"
-     hx-post="/draft/{{ draft.id }}/spawn-preview"
-     hx-vals='{"entity_id": "{{ target.id }}"}'
-     hx-trigger="load delay:200ms"
-     hx-swap="innerHTML">
-  <p class="ed-help">Loading&hellip;</p>
-</div>
+  {% if not searching %}
+    <p class="ed-help">
+      Click a lanelet to pin it. A constraint search hands the choice to the
+      lanelet-constraint sweeper instead, which runs the scenario once per
+      matching lanelet.
+    </p>
+  {% else %}
+    <p class="ed-help">
+      The sweeper runs the scenario once per matching lanelet; the pinned ID
+      stays as the default a non-swept run uses.
+    </p>
+    <div class="ed-constraint-root">
+      {% for node in target.spawn.constraints %}
+        {{ cons.render(node, draft, target, selected, document, true) }}
+      {% else %}
+        <p class="ed-help" style="margin:0 0 6px">
+          No constraints yet: every lanelet matches.
+        </p>
+      {% endfor %}
+      {{ cons.add_constraint(draft, target) }}
+    </div>
+    <div id="picker-matches"
+         hx-post="/draft/{{ draft.id }}/spawn-preview"
+         hx-vals='{"entity_id": "{{ target.id }}"}'
+         hx-trigger="load delay:200ms"
+         hx-swap="innerHTML">
+      <p class="ed-help">Loading&hellip;</p>
+    </div>
+  {% endif %}
+
+  {# Where along the lanelet, under the same heading as which lanelet: it is one
+     question -- where does this vehicle start -- and one panel answering it.
+     Its own form, because the panel is shown outside the inspector's. #}
+  <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+        hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
+        style="margin-top:16px">
+    <div class="ed-field">
+      <label class="ed-label">Position along it <span class="unit">(m)</span></label>
+      <div class="ed-radio-row" style="margin-bottom:8px">
+        <label class="ed-radio">
+          <input type="radio" name="spawn_s_mode" value="fixed"
+                 {% if target.spawn.s.mode == 'fixed' %}checked{% endif %}>
+          <span>Fixed</span>
+        </label>
+        <label class="ed-radio">
+          <input type="radio" name="spawn_s_mode" value="derived"
+                 {% if target.spawn.s.mode == 'derived' %}checked{% endif %}>
+          <span>Derived</span>
+        </label>
+      </div>
+      <input type="number" step="any" name="spawn_s" class="ed-input"
+             value="{{ target.spawn.s.value }}">
+      {% if target.spawn.s.mode == 'derived' %}
+        <p class="ed-help">The value a run falls back to when nothing derives it.</p>
+      {% endif %}
+    </div>
+
+    {% if target.spawn.s.mode == 'derived' %}
+      {% set binding = target.spawn.s.binding %}
+      {% set binding_type = binding.type if binding else 'stop_line_offset' %}
+      {% set binding_spec = get_binding_spec(binding_type) %}
+      <div class="ed-derived">
+        <div class="ed-field">
+          <label class="ed-label">Derived from</label>
+          <select name="binding_type" class="ed-input">
+            {% for spec in binding_specs() %}
+              <option value="{{ spec.type_id }}" {% if spec.type_id == binding_type %}selected{% endif %}>
+                {{ spec.title }}
+              </option>
+            {% endfor %}
+          </select>
+          {% if binding_spec and binding_spec.description %}
+            <p class="ed-help">{{ binding_spec.description }}</p>
+          {% endif %}
+        </div>
+        {% if binding_spec %}
+          {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
+        {% endif %}
+      </div>
+    {% endif %}
+  </form>
+{% endcall %}
 
 {% if target.kind != 'ego' or document.entities|length > 1 %}
   <button class="ed-btn-danger" style="width:100%; margin-top:16px"

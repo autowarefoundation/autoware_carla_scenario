@@ -68,6 +68,16 @@
    `params` mapping. One macro, or the two drift: the entity inspector kept a
    plain text box for months after the conditions stopped having one. #}
 {% macro lanelet_picker(name, current, draft, label='Lanelet', many=false) %}
+  {{ lanelet_field(name, current, draft, many) }}
+  {{ lanelet_modal(name, current, draft, label, many) }}
+{% endmacro %}
+
+
+{# The readout and the button that opens the map.  Split from the modal so a
+   caller can put the two in different places: the modal holds forms -- the
+   spawn's constraint tree -- and a form cannot sit inside the inspector's own
+   form.  The halves find each other by id, not by being adjacent. #}
+{% macro lanelet_field(name, current, draft, many=false) %}
   {%- set shown = (current if current is string
                    else (current or [])|join(', ')) if many
                   else ('' if current is none else current) -%}
@@ -79,12 +89,7 @@
      There is no "type it instead" fallback for a viewer that will not load,
      because the page fetches htmx from a CDN too: an editor that cannot reach
      the network has no working controls at all, so the fallback would only
-     ever run when nothing else does.
-
-     It opens over the whole viewport rather than sitting under the field,
-     because the inspector column is 384px wide and a city map that size
-     cannot be picked from. Opening it is also the first time the map is
-     fetched and parsed, instead of on every inspector render. #}
+     ever run when nothing else does. #}
   <div class="ed-pick-row">
     {# A text input even for a single id: `type=number` would let a browser
        offer spinners on a field nothing may type into. #}
@@ -98,6 +103,21 @@
       </button>
     {% endif %}
   </div>
+{% endmacro %}
+
+
+{# The map, over the whole viewport: the inspector column is 384px wide and a
+   city map that size cannot be picked from.  Opening it is also the first time
+   the map is fetched and parsed, instead of on every inspector render.
+
+   A caller block is rendered beside the map.  That is where the spawn puts the
+   choice between a pinned lanelet and a constraint search, and the search
+   itself: a constraint is a statement about the map, and is easier to write
+   with the map it searches in front of you. #}
+{% macro lanelet_modal(name, current, draft, label='Lanelet', many=false) %}
+  {%- set shown = (current if current is string
+                   else (current or [])|join(', ')) if many
+                  else ('' if current is none else current) -%}
   {% if draft %}
     <div class="ed-modal" id="picker-{{ name }}" hidden>
       <div class="ed-modal-panel">
@@ -124,19 +144,30 @@
           </div>
         </div>
         <div class="ed-modal-body">
-          <div class="ed-map-frame ed-map-full" hidden
-               data-map-viewer="{{ map_viewer_url() }}"
-               data-map-src="/draft/{{ draft.id }}/map.osm"
-               data-highlight="{{ shown|replace(' ', '') }}"
-               data-picks-into="pick-{{ name }}"
-               data-picks-layer="{{ lanelet_pick_layers }}"
-               {% if many %}data-picks-many="1"{% endif %}>
-            <noscript>The map picker needs JavaScript.</noscript>
+          <div class="ed-modal-map">
+            {# `data-viewer-key`: an edit made in the side panel re-renders the
+               whole editor body, and the picker is re-opened on the other side
+               of that swap. The key is what carries the parsed map across it,
+               pan and zoom included, instead of re-fetching the .osm. #}
+            <div class="ed-map-frame ed-map-full" hidden
+                 data-viewer-key="picker-{{ name }}"
+                 data-map-viewer="{{ map_viewer_url() }}"
+                 data-map-src="/draft/{{ draft.id }}/map.osm"
+                 data-highlight="{{ shown|replace(' ', '') }}"
+                 data-picks-into="pick-{{ name }}"
+                 data-picks-layer="{{ lanelet_pick_layers }}"
+                 {% if many %}data-picks-many="1"{% endif %}>
+              <noscript>The map picker needs JavaScript.</noscript>
+            </div>
+            <p class="ed-help" data-viewer-unavailable hidden>
+              The Lanelet2 map viewer could not be loaded, so there is nothing
+              to pick from. Check that this scenario's Lanelet2 file path is
+              right.
+            </p>
           </div>
-          <p class="ed-help" data-viewer-unavailable hidden>
-            The Lanelet2 map viewer could not be loaded, so there is nothing to
-            pick from. Check that this scenario's Lanelet2 file path is right.
-          </p>
+          {% if caller %}
+            <aside class="ed-modal-side">{{ caller() }}</aside>
+          {% endif %}
         </div>
       </div>
     </div>

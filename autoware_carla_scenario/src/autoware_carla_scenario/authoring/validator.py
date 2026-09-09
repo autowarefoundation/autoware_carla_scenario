@@ -351,7 +351,8 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
 
 
 def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
-    """Validate one entity and its spawn definition."""
+    """Validate one entity, its spawn definition and its goal."""
+    _check_goal(out, path, entity)
     spawn = entity.spawn
     if spawn.mode == "fixed":
         if spawn.lanelet_id <= 0:
@@ -402,6 +403,48 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
                         _NO_REFS,
                         entity.id,
                     )
+
+
+def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
+    """Check the entity's goal: the ego may have one, and an Autoware ego must.
+
+    A goal is read by a vehicle that plans its own route, and the ego is the
+    only one that can have such a stack behind it -- the export renders the
+    ego's goal and nothing else.  A goal stored on another vehicle would
+    therefore be dropped in silence, so it is reported instead.
+
+    Whether the ego needs one follows what drives it.  Autoware localizes at the
+    spawn, plans a route to the goal and only then engages, so an ``autoware``
+    ego without a goal never moves and the document is wrong.  An ego the
+    TrafficManager drives reads no goal at all, and a scenario about what
+    happens on the way -- a cut-in, a red light -- may legitimately name no
+    destination.
+    """
+    if entity.kind != "ego":
+        if entity.goal is not None:
+            out.error(
+                f"{path}.goal",
+                "Only the ego is routed to a goal; this vehicle would ignore "
+                "it. Use a Set Goal card if something should act on it during "
+                "the run.",
+                entity.id,
+            )
+        return
+    if entity.goal is None:
+        if entity.driven_by == "autoware":
+            out.error(
+                f"{path}.goal",
+                "An Autoware ego has no goal. Pick one in the Goal section of "
+                "its inspector: Autoware plans its route to it and will not "
+                "move without one.",
+                entity.id,
+            )
+    elif entity.goal.lanelet_id <= 0:
+        out.error(
+            f"{path}.goal.lanelet_id",
+            "A goal needs a positive lanelet ID.",
+            entity.id,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +498,30 @@ def _check_init_triggers(out: _Collector, document: ScenarioDocument) -> None:
             "which runs once and begins immediately, so it cannot wait for a "
             "condition. Remove the trigger, or move the action onto the tick "
             "loop.",
+            action.id,
+        )
+
+
+def _check_duplicate_ego_routing(out: _Collector, document: ScenarioDocument) -> None:
+    """Warn when an init Set Goal card repeats the goal the ego already carries.
+
+    The ego is routed to :attr:`~...models.Entity.goal` during initialization
+    whether or not a card says so, so an init ``routing`` card owned by the ego
+    sends it a second destination in the same phase, and which of the two
+    survives is the order the two are registered in.  A warning rather than an
+    error: the run is well defined, it just says one thing twice.
+    """
+    ego = document.ego
+    if ego is None or ego.goal is None:
+        return
+    for index, action in enumerate(document.actions):
+        if action.type != "routing" or action.actor != ego.id or action.phase != "init":
+            continue
+        out.warn(
+            f"actions[{index}].phase",
+            f"{action.title or 'Set Goal'} routes the ego during initialization, "
+            "where its own goal is already delivered. Move this card onto the "
+            "tick loop to change the destination mid-run.",
             action.id,
         )
 
@@ -537,6 +604,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_step_order(out, document)
     _check_untriggered_actions(out, document)
     _check_init_triggers(out, document)
+    _check_duplicate_ego_routing(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)

@@ -612,6 +612,11 @@ class ScenarioRunner:
             logger.info("[%s] === Setup start ===", scenario_name)
             scenario.set_client(self._client, tm_port=self._tm_port)
             scenario.setup()
+            # Setup is where a scenario may still name a destination the config
+            # did not, so an ego that cannot start without one is checked once
+            # setup returns -- and here rather than inside `_setup_ego_spawn`,
+            # which a scenario that snaps its own spawn never calls.
+            scenario.require_goal()
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             ego_actor = ego.spawn(world, scenario.ego_config)
             logger.info(

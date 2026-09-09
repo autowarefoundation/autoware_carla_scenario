@@ -16,14 +16,16 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, get_args
 
 from ..authoring.models import (
     ActionNode,
     BindingRef,
     ConditionNode,
     ConstraintNode,
+    EgoDriver,
     Entity,
+    GoalSpec,
     ScenarioDocument,
     SpawnSpec,
     as_action_phase,
@@ -263,7 +265,7 @@ class EditorService:
     def update_entity(
         self, document: ScenarioDocument, entity_id: str, form: Mapping[str, Any]
     ) -> None:
-        """Apply the entity inspector form, including its spawn definition."""
+        """Apply the entity inspector form, including its spawn and its goal."""
         entity = document.entity(entity_id)
         if entity is None:
             raise EditorError(f"No entity named {entity_id!r}.")
@@ -278,6 +280,13 @@ class EditorService:
             entity.initial_speed_kmh = _as_float(
                 form["initial_speed_kmh"], "Initial speed", entity.initial_speed_kmh
             )
+
+        if entity.kind == "ego" and "driven_by" in form:
+            driven_by = str(form["driven_by"])
+            if driven_by in get_args(EgoDriver):
+                entity.driven_by = driven_by  # type: ignore[assignment]
+
+        self._update_goal(entity, form)
 
         spawn = entity.spawn
         if "spawn_mode" in form:
@@ -315,6 +324,36 @@ class EditorService:
             params = dict(existing)
             params.update(_parse(spec.fields, form, prefix="binding_"))
             spawn.s.binding = BindingRef(type=binding_type, params=params)
+
+    @staticmethod
+    def _update_goal(entity: Entity, form: Mapping[str, Any]) -> None:
+        """Apply the goal fields of the entity form.
+
+        The stored goal is whatever the field says, including nothing: an ego
+        the TrafficManager drives may have no destination, and blanking the
+        lanelet is how it goes back to having none.  An ``autoware`` ego cleared
+        that way is reported by
+        :func:`~autoware_carla_scenario.authoring.validator.validate_document`
+        rather than refused here -- an incomplete draft stays saveable.
+
+        Only the ego carries a goal, so no other entity's form is read for one:
+        the inspector does not offer the controls, and a goal stored elsewhere
+        is a validation error.
+
+        Raises:
+            EditorError: If the goal offset is not a number.
+        """
+        if entity.kind != "ego" or "goal_lanelet_id" not in form:
+            return
+        raw = str(form["goal_lanelet_id"]).strip()
+        if not raw:
+            entity.goal = None
+            return
+        if entity.goal is None:
+            entity.goal = GoalSpec()
+        entity.goal.lanelet_id = _as_int(raw, "Goal lanelet ID", entity.goal.lanelet_id)
+        if "goal_s" in form:
+            entity.goal.s = _as_float(form["goal_s"], "Goal offset", entity.goal.s)
 
     # ------------------------------------------------------------------
     # Spawn constraints

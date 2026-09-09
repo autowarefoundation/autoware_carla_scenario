@@ -55,6 +55,17 @@ def package(tmp_path: Path) -> Path:
     return result.root
 
 
+def _document_with_goal(lanelet_id: int | None, s: float = 0.0):
+    """The starter document, with the ego's goal replaced -- or removed."""
+    from autoware_carla_scenario.authoring.models import GoalSpec
+
+    document = new_document()
+    ego = document.ego
+    assert ego is not None
+    ego.goal = None if lanelet_id is None else GoalSpec(lanelet_id=lanelet_id, s=s)
+    return document
+
+
 class TestHydraConfig:
     def test_ego_spawn_uses_the_frameworks_own_keys(self) -> None:
         """The sweeper already overrides these; an authored scenario must too."""
@@ -105,6 +116,36 @@ class TestHydraConfig:
         npc.spawn.mode = "fixed"
         assert swept_entity(document) is None
         assert "sweep" not in build_scenario_config(document)
+
+    def test_the_egos_goal_uses_the_frameworks_own_keys(self) -> None:
+        """The goal reaches the runner the way the spawn does: as ego.* keys."""
+        config = build_scenario_config(_document_with_goal(265, 12.5))
+
+        assert config["ego"]["goal_lanelet_id"] == 265
+        assert config["ego"]["goal_s"] == 12.5
+
+    def test_the_document_says_which_stack_drives_the_ego(self) -> None:
+        """``ego.entity`` is what selects the stack, so the document writes it."""
+        document = _document_with_goal(265)
+        ego = document.ego
+        assert ego is not None
+        ego.driven_by = "autoware"
+
+        assert build_scenario_config(document)["ego"]["entity"] == "autoware"
+        assert build_scenario_config(new_document())["ego"]["entity"] == "autopilot"
+
+    def test_the_starter_carries_its_goal_into_the_config(self) -> None:
+        config = build_scenario_config(new_document())
+        assert config["ego"]["goal_lanelet_id"] > 0
+
+    def test_an_ego_with_no_goal_writes_no_goal_keys(self) -> None:
+        # A document whose ego has no goal is a validation error, but the
+        # renderer states only what the document says: an emitted key would
+        # shadow the ego group's own null with a lanelet nobody chose.
+        config = build_scenario_config(_document_with_goal(None))
+
+        assert "goal_lanelet_id" not in config["ego"]
+        assert "goal_s" not in config["ego"]
 
     def test_empty_map_fields_are_left_to_the_map_group(self) -> None:
         """An empty exclusion list must fall through, not shadow the group's."""

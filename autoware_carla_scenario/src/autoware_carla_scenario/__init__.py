@@ -186,7 +186,10 @@ if TYPE_CHECKING:
         unregister_conf_dir as unregister_conf_dir,
         unregister_scenario as unregister_scenario,
     )
-    from .scenario_base import BaseScenario as BaseScenario, EgoConfig as EgoConfig
+    from .scenario_base import (
+        BaseScenario as BaseScenario,
+        EgoConfig as EgoConfig,
+    )
     from .scenario_config import (
         DriverCameraSpec as DriverCameraSpec,
         DriverConfig as DriverConfig,

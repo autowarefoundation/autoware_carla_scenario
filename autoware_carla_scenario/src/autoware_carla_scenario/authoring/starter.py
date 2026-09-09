@@ -16,6 +16,7 @@ from .models import (
     ConditionNode,
     ConstraintNode,
     Entity,
+    GoalSpec,
     MapRef,
     ScenarioDocument,
     SpawnSpec,
@@ -24,6 +25,13 @@ from .models import (
 from .registry import default_params, get_action_spec, get_condition_spec
 
 __all__ = ["blank_document", "new_document"]
+
+#: Where a starter sends its ego.  Lanelet 141 is up the road from the 183 both
+#: starters spawn on -- 183, 187, 348, 141 is the route the map's own routing
+#: graph gives -- so the ego has somewhere to drive to rather than arriving the
+#: moment it starts.  Every scenario needs a goal, and a starter that shipped
+#: without one would open invalid.
+_DEFAULT_GOAL_LANELET_ID = 141
 
 #: Defaults for the built-in Nishishinjuku map, matching ``conf/map/nishishinjuku.yaml``.
 _DEFAULT_MAP = MapRef(
@@ -72,6 +80,7 @@ def blank_document(
                 kind="ego",
                 title="Ego",
                 spawn=SpawnSpec(mode="fixed", lanelet_id=183, s=SValue(value=0.0)),
+                goal=GoalSpec(lanelet_id=_DEFAULT_GOAL_LANELET_ID),
             )
         ],
         assertions=Assertions(
@@ -101,6 +110,7 @@ def new_document(
         title="Ego",
         initial_speed_kmh=10.0,
         spawn=SpawnSpec(mode="fixed", lanelet_id=183, s=SValue(value=0.0)),
+        goal=GoalSpec(lanelet_id=_DEFAULT_GOAL_LANELET_ID),
     )
     npc = Entity(
         id="npc1",

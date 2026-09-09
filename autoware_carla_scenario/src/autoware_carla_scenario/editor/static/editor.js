@@ -187,7 +187,7 @@
      than captured at mount: under reuse the frame outlives several renders of
      the fragment around it, and the caption is a fresh element every time. */
   function previewOf(frame) {
-    return frame.closest('.ed-preview, .ed-modal-body') || document;
+    return frame.closest('.ed-modal-body') || document;
   }
 
   function revealHint(frame) {
@@ -304,41 +304,29 @@
           return;
         }
 
-        var into = frame.dataset.picksInto;
-        if (into) {
-          var input = document.getElementById(into);
-          if (!input) return;
+        // Every map on the page is a picker's: the field it writes into is
+        // what the map was opened from.
+        var input = document.getElementById(frame.dataset.picksInto || '');
+        if (!input) return;
 
-          if (frame.dataset.picksMany) {
-            // Toggling, so a set is built by clicking rather than by typing a
-            // comma-separated list nobody can check by eye.
-            var chosen = ids(input.value);
-            var at = chosen.indexOf(Number(picked));
-            if (at >= 0) chosen.splice(at, 1);
-            else chosen.push(Number(picked));
-            input.value = chosen.join(', ');
-            viewer.setHighlight(chosen);
-            say(frame, chosen.length + ' selected');
-            return;
-          }
-
-          input.value = String(picked);
-          closePickers();
-          // Dispatched last: the form's `change` trigger re-renders the whole
-          // inspector, taking this modal with it.
-          input.dispatchEvent(new Event('change', { bubbles: true }));
+        if (frame.dataset.picksMany) {
+          // Toggling, so a set is built by clicking rather than by typing a
+          // comma-separated list nobody can check by eye.
+          var chosen = ids(input.value);
+          var at = chosen.indexOf(Number(picked));
+          if (at >= 0) chosen.splice(at, 1);
+          else chosen.push(Number(picked));
+          input.value = chosen.join(', ');
+          viewer.setHighlight(chosen);
+          say(frame, chosen.length + ' selected');
           return;
         }
 
-        if (!window.htmx) return;
-        var draft = frame.dataset.draft;
-        var entity = frame.dataset.entity;
-        if (!draft || !entity) return;
-        window.htmx.ajax('POST', '/draft/' + draft + '/entity/' + entity, {
-          target: '#editor-body',
-          swap: 'innerHTML',
-          values: { spawn_lanelet_id: String(picked) },
-        });
+        input.value = String(picked);
+        closePickers();
+        // Dispatched last: the form's `change` trigger re-renders the whole
+        // inspector, taking this modal with it.
+        input.dispatchEvent(new Event('change', { bubbles: true }));
       });
 
       viewer.loadUrl(frame.dataset.mapSrc);
@@ -390,11 +378,54 @@
     if (status) status.textContent = text;
   }
 
+  var openPicker = null;     // id of the picker currently portalled to <body>
+
   function closePickers() {
+    openPicker = null;
     document.querySelectorAll('[data-portalled]').forEach(function (modal) {
       modal.remove();
     });
     reapViewers();
+  }
+
+  /* Put the picker back after an edit made inside it.
+   *
+   * The side panel's controls -- the spawn's fixed/searched choice, its
+   * constraints -- post like every other control and swap `#editor-body`, which
+   * builds a fresh copy of the modal in the inspector while the open one hangs
+   * off <body>, now stale. Swapping the fresh one in keeps the panel in step
+   * with the document without the map closing under the person using it: the
+   * viewer itself is carried across by `reuseMap`, because the picker's frame
+   * is keyed.
+   *
+   * Runs after `reapViewers`, so the frame in the stale copy is still on the
+   * page when the reap decides what to destroy, and before `mountMaps`, which is
+   * what puts the live frame into the fresh copy. */
+  function reopenPicker() {
+    if (!openPicker) return;
+    var fresh = null;
+    var stale = null;
+    document.querySelectorAll('#' + CSS.escape(openPicker)).forEach(function (el) {
+      if (el.dataset.portalled) stale = el;
+      else fresh = el;
+    });
+    if (!fresh) return;
+    if (stale) stale.remove();
+    fresh.dataset.portalled = '1';
+    document.body.appendChild(fresh);
+    fresh.hidden = false;
+  }
+
+  /* The matches the server just counted, drawn on the map already open beside
+     them: the panel carries the ids, the frame is the one thing that can show
+     them. */
+  function syncPickerHighlight() {
+    var panel = document.querySelector('[data-portalled] [data-picker-highlight]');
+    if (!panel) return;
+    var frame = document.querySelector('[data-portalled] .ed-map-frame');
+    if (!frame) return;
+    frame.dataset.highlight = panel.dataset.pickerHighlight || '';
+    applyHighlight(frame);
   }
 
   /* A set is saved when the picker is closed, not on every click: sending the
@@ -416,13 +447,28 @@
   document.addEventListener('click', function (event) {
     var opener = event.target.closest && event.target.closest('[data-open-picker]');
     if (opener) {
-      var modal = document.getElementById(opener.getAttribute('data-open-picker'));
+      var pickerId = opener.getAttribute('data-open-picker');
+      var modal = document.getElementById(pickerId);
       if (modal) {
         closePickers();
+        openPicker = pickerId;
         modal.dataset.portalled = '1';
         document.body.appendChild(modal);
         modal.hidden = false;
         mountMaps();
+      }
+      return;
+    }
+    // Emptying a picked value: the map can set a lanelet but not unset one, and
+    // a field that may be left blank -- the goal of an ego the TrafficManager
+    // drives -- needs a way back to blank. It goes through the same `change` the
+    // picker dispatches, so clearing and picking reach the server by one path.
+    var clearer = event.target.closest && event.target.closest('[data-clear-field]');
+    if (clearer) {
+      var field = document.getElementById(clearer.getAttribute('data-clear-field'));
+      if (field) {
+        field.value = '';
+        field.dispatchEvent(new Event('change', { bubbles: true }));
       }
       return;
     }
@@ -492,8 +538,10 @@
     // Before mounting: a swap has just detached whatever was there, and the
     // replacements are about to allocate their own.
     reapViewers();
+    reopenPicker();
     scheduleRedraw();
     mountMaps();
+    syncPickerHighlight();
   }
 
   // `afterSettle` only: it fires after `afterSwap` for the same swap, and after

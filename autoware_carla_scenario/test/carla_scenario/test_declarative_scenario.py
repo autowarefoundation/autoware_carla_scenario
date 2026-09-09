@@ -57,6 +57,67 @@ def _scenario(document=None, config=None) -> DeclarativeScenario:
     )
 
 
+class TestTheEgoGoal:
+    """A document names where the ego is going; the ego config carries it."""
+
+    @staticmethod
+    def _document_with_goal(lanelet_id: int | None = 265, s: float = 12.5):
+        """The starter document, with the goal replaced -- or removed."""
+        from autoware_carla_scenario.authoring.models import GoalSpec
+
+        document = new_document()
+        ego = document.ego
+        assert ego is not None
+        ego.goal = None if lanelet_id is None else GoalSpec(lanelet_id=lanelet_id, s=s)
+        return document
+
+    def test_the_documents_goal_lands_on_the_ego_config(self) -> None:
+        scenario = _scenario(self._document_with_goal())
+
+        assert scenario.goal_pose is not None
+        assert (scenario.goal_pose.lanelet_id, scenario.goal_pose.s) == (265, 12.5)
+        assert scenario.ego_config.goal_pose is scenario.goal_pose
+
+    def test_a_goal_already_on_the_config_wins(self) -> None:
+        """A CLI override reaches the scenario as a goal on the ego config."""
+        ego_config = EgoConfig(
+            spawn_location=SpawnTransform(
+                carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
+            ),
+            goal_pose=Lanelet2Pose(lanelet_id=42, s=1.0),
+        )
+        scenario = DeclarativeScenario(
+            ego_config,
+            spawn_pose=Lanelet2Pose(lanelet_id=183, s=0.0),
+            document=self._document_with_goal(),
+        )
+
+        assert scenario.goal_pose is not None
+        assert scenario.goal_pose.lanelet_id == 42
+
+    def test_an_autoware_document_without_a_goal_does_not_run(self) -> None:
+        """Autoware will not move without one, so the document cannot compile."""
+        from autoware_carla_scenario.authoring.compiler import CompilationError
+
+        document = self._document_with_goal(lanelet_id=None)
+        ego = document.ego
+        assert ego is not None
+        ego.driven_by = "autoware"
+
+        with pytest.raises(CompilationError, match="no goal"):
+            _scenario(document)
+
+    def test_a_trafficmanager_document_without_a_goal_runs(self) -> None:
+        # The ego is driven for it and reads no goal: the run is about what
+        # happens on the way.
+        scenario = _scenario(self._document_with_goal(lanelet_id=None))
+
+        assert scenario.goal_pose is None
+
+    def test_the_starter_document_brings_its_own_goal(self) -> None:
+        assert _scenario().goal_pose is not None
+
+
 class TestConstruction:
     def test_the_document_is_compiled_up_front(self) -> None:
         """An invalid document should not cost a CARLA session to discover."""
