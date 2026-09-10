@@ -278,26 +278,25 @@ def lanelet2_source(
     the ``.osm``; this is the one place that decides which file that is -- and
     therefore the one place that has to refuse the wrong one.
 
-    A *typed* path is the untrusted one.  It comes from a document field anyone
-    using the editor can fill in, and the editor binds ``0.0.0.0`` by default.
-    Handed straight to a ``FileResponse`` that made ``/draft/<id>/map.osm`` an
-    arbitrary local file read for anyone who could reach the port: create a
-    draft, point it at ``/etc/passwd``, download it.  So a typed path is
-    accepted only when it resolves inside one of :func:`map_roots` and names a
-    ``.osm``.
+    Every path is checked the same way: it must resolve inside one of
+    :func:`map_roots` and name a ``.osm``.  The editor binds ``0.0.0.0`` with no
+    authentication, so without that, ``/draft/<id>/map.osm`` is an arbitrary
+    local file read for anyone who can reach the port.
 
-    A path the resolver produced is not typed: it names a file inside the map
-    cache that this process just checked out, and it is accepted as such.  That
-    keeps :func:`map_roots` meaning "where a typed path may point" rather than
-    growing a new entry every time the framework learns another place to keep a
-    map.
+    A *typed* path is the obvious way in -- create a draft, point it at
+    ``/etc/passwd``, download it -- but it is not the only one.  A path the
+    resolver produced used to be trusted on the grounds that it names a file
+    inside the map cache this process just checked out.  What that missed is
+    that the *contents* of a checkout are the repository's, and git carries
+    symlinks: a repository whose ``lanelet2_map.osm`` is a symlink to any
+    readable file on the host resolves, passes ``is_file()`` -- which follows
+    it -- and is served.  Resolving before the containment check is what closes
+    that, because a link out of the cache lands outside every root.
     """
     paths = map_paths(document) if paths is None else paths
     if paths.lanelet2_path is None:
         return None
     path = paths.lanelet2_path.expanduser()
-    if paths.from_source:
-        return path if path.is_file() else None
     if not path.is_absolute():
         path = Path.cwd() / path
     try:

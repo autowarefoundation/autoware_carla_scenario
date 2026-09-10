@@ -129,9 +129,19 @@ def list_maps(
             continue
         chosen = PREFERRED_LANELET2_NAME if PREFERRED_LANELET2_NAME in osm else osm[0]
         at_directory = parsed.with_path(directory)
+        # A directory holding several `.osm` and none named the way Autoware
+        # names one is ambiguous to the resolver, which refuses to guess.  The
+        # entry has already had to choose which file it advertises, so it says
+        # so in the source too -- otherwise the library offers a map that
+        # cannot be opened, and says why only once someone has picked it.
+        ambiguous = len(osm) > 1 and chosen != PREFERRED_LANELET2_NAME
         entries.append(
             MapEntry(
-                source=at_directory,
+                source=(
+                    parsed.with_path(f"{directory}/{chosen}" if directory else chosen)
+                    if ambiguous
+                    else at_directory
+                ),
                 name=at_directory.name,
                 path=directory,
                 lanelet2_name=chosen,

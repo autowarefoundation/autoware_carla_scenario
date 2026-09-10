@@ -103,19 +103,40 @@ def _include_patterns(path: str) -> tuple[str, ...]:
     return tuple(f"{prefix}{pattern}" for pattern in MAP_FILE_PATTERNS)
 
 
+def _is_map_file(directory: Path, candidate: Path) -> bool:
+    """Whether *candidate* is a real file belonging to the map in *directory*.
+
+    A checkout's contents are the repository's, and git carries symlinks, so a
+    ``.osm`` in a map directory is not necessarily that map's geometry: it can
+    be a link to any readable file on the host.  ``is_file()`` follows one
+    without saying so, which made a repository able to name a file outside the
+    cache and have this framework read it -- and, through the editor's map
+    route, serve it.  Refused here rather than at each consumer, because this
+    is where every one of them arrives.
+    """
+    try:
+        root = directory.resolve()
+        real = candidate.resolve()
+    except OSError:
+        return False
+    return real.is_file() and (real == root or root in real.parents)
+
+
 def _find_lanelet2(directory: Path, source: MapSource) -> Path:
     """Return the Lanelet2 map in *directory*.
 
     Raises:
-        MapResolutionError: If there is no ``.osm``, or more than one and none
-            of them is named the way Autoware names it.
+        MapResolutionError: If there is no ``.osm`` that belongs to the map, or
+            more than one and none of them is named the way Autoware names it.
     """
     if source.path.endswith(".osm"):
         named = directory / Path(source.path).name
-        if named.is_file():
+        if _is_map_file(directory, named):
             return named
 
-    candidates = sorted(p for p in directory.glob("*.osm") if p.is_file())
+    candidates = sorted(
+        p for p in directory.glob("*.osm") if _is_map_file(directory, p)
+    )
     if not candidates:
         raise MapResolutionError(
             f"{source.uri} has no Lanelet2 (.osm) file in {source.path or '/'}."
@@ -123,7 +144,7 @@ def _find_lanelet2(directory: Path, source: MapSource) -> Path:
     if len(candidates) == 1:
         return candidates[0]
     preferred = directory / PREFERRED_LANELET2_NAME
-    if preferred.is_file():
+    if _is_map_file(directory, preferred):
         return preferred
     names = ", ".join(p.name for p in candidates)
     raise MapResolutionError(

@@ -327,6 +327,53 @@ class TestCachedMap:
         assert cached_map(_uri(origin_repo), cache=cache) is None
 
 
+class TestAMapThatIsNotAMap:
+    """A checkout's contents are the repository's, and git carries symlinks.
+
+    Pointing a scenario at a repository is not the same as trusting it, and the
+    editor binds ``0.0.0.0`` with no authentication -- so a ``.osm`` that is a
+    link to any readable file on the host has to be refused rather than read.
+    """
+
+    @pytest.fixture
+    def hostile_repo(self, tmp_path: Path) -> Path:
+        """A repository whose map is a symlink to a file outside it."""
+        secret = tmp_path / "secret.txt"
+        secret.write_text("CANARY")
+
+        repo = tmp_path / "hostile"
+        (repo / "autoware_maps" / "EvilTown").mkdir(parents=True)
+        (repo / "autoware_maps" / "EvilTown" / "lanelet2_map.osm").symlink_to(secret)
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "A map that is a link")
+        return repo
+
+    def test_the_resolver_refuses_it(
+        self, hostile_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Refused where every consumer arrives, not at each of them."""
+        with pytest.raises(MapResolutionError):
+            resolve_map(_uri(hostile_repo, "autoware_maps/EvilTown"), cache=cache)
+
+    def test_the_editor_does_not_serve_it(
+        self, editor: "TestClient", hostile_repo: Path
+    ) -> None:
+        """The route this protects: ``/draft/<id>/map.osm``.
+
+        The map is never adopted, so the draft keeps the one it had -- what must
+        not happen is the canary coming back down the wire.
+        """
+        draft_id = _new_draft(editor)
+        editor.post(
+            f"/draft/{draft_id}/map/use",
+            data={"uri": _uri(hostile_repo, "autoware_maps/EvilTown")},
+        )
+
+        served = editor.get(f"/draft/{draft_id}/map.osm")
+        assert "CANARY" not in served.text
+
+
 class TestProvisionedMaps:
     """A map Autoware's own setup already downloaded is a map we have."""
 
@@ -695,6 +742,32 @@ class TestEditorMapLibrary:
     ) -> None:
         response = editor.get("/maps", params={"repo": f"file://{origin_repo}@main"})
         assert "TownA" in response.text and "TownB" in response.text
+
+    def test_an_ambiguous_directory_is_offered_as_the_file_it_advertises(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """The library must not offer a map the resolver then refuses.
+
+        A directory with several `.osm` and none named the way Autoware names
+        one is ambiguous. The entry already chose which file to show, so the
+        source names it -- otherwise picking the advertised map fails.
+        """
+        town = origin_repo / "autoware_maps" / "TownC"
+        town.mkdir()
+        (town / "alpha.osm").write_text(_OSM)
+        (town / "beta.osm").write_text(_OSM)
+        _git(origin_repo, "add", "-A")
+        _git(origin_repo, "commit", "--quiet", "-m", "A directory with two maps")
+
+        entry = next(
+            e
+            for e in list_maps(f"file://{origin_repo}@main", cache=cache)
+            if e.path == "autoware_maps/TownC"
+        )
+        assert entry.lanelet2_name == "alpha.osm"
+        # The advertised entry resolves rather than raising "several ... and
+        # none is named lanelet2_map.osm".
+        assert resolve_map(entry.uri, cache=cache).lanelet2_path.name == "alpha.osm"
 
     def test_offers_the_repositories_it_knows_about(self, editor: "TestClient") -> None:
         assert "carla-ue5-maps" in editor.get("/maps").text
