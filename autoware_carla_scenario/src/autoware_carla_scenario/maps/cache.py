@@ -1,37 +1,23 @@
 """A local cache of HD map repositories, filled by ``git``.
 
-The cache is the point of the feature, not an optimisation.  An HD map lives in
-a git repository so that it is versioned and shared, but a scenario is edited,
+The cache is the point of the feature, not an optimisation: a map is edited,
 previewed and swept over and over, and none of that should touch the network.
-So :meth:`GitMapCache.checkout` answers from disk whenever the files it was
-asked for are already there, and only clones when they are not.  ``refresh=True``
-is the one way to make it go and look again.
+:meth:`GitMapCache.checkout` answers from disk whenever the files it was asked
+for are already there; ``refresh=True`` is the one way to make it look again.
 
-Three details make this workable against a real HD map repository:
+Two details make this workable against a real HD map repository. **LFS is
+skipped** (``GIT_LFS_SKIP_SMUDGE=1``) so a checkout materialises pointer files,
+and only the patterns asked for are pulled -- the repository this was written
+against keeps a 22 MB point cloud and a 466 MB ``.usdz`` beside a 2 MB ``.osm``.
+And **blobs are fetched lazily** (``--filter=blob:none``) into a **sparse**
+checkout, which is also what makes :meth:`GitMapCache.list_files` cheap enough
+to browse a repository with.
 
-* **LFS is skipped by default.**  ``GIT_LFS_SKIP_SMUDGE=1`` is set for every
-  git invocation, so a checkout materialises pointer files -- a few hundred
-  bytes each -- and :meth:`GitMapCache.checkout` then pulls only the patterns it
-  was asked for.  The AutowareFoundation map repository keeps a 22 MB
-  ``pointcloud_map.pcd`` and a 466 MB ``.usdz`` beside a 2 MB ``.osm``; without
-  this, asking for the ``.osm`` downloads all three.
-* **The checkout is sparse.**  Only the map directory is materialised.
-* **Blobs are fetched lazily** (``--filter=blob:none``), so the clone itself
-  transfers the commit and tree objects and nothing else.  That is also what
-  makes :meth:`GitMapCache.list_files` cheap enough to browse a repository
-  with: the tree is local, the file contents are not.
-
-Where the cache lives
----------------------
-
-``~/autoware_data/maps``, which is where Autoware's own ``demo_artifacts``
-ansible role downloads map datasets to -- ``carla-ue5-maps`` included, unpacked
-at its repository-relative ``autoware_maps/<World>/``.  That is not a
-coincidence to be tidied away later: it means a machine that has run the
-Autoware setup **already has the map**, and :meth:`GitMapCache.provisioned`
-finds it there and clones nothing at all.  A map this cache had to clone itself
-lands under ``.repos/`` in the same root, so the two never overwrite each other
-and the provisioned copy always wins.
+The root is ``~/autoware_data/maps``, where Autoware's own ``demo_artifacts``
+role downloads map datasets to, unpacked at their repository-relative paths.
+That is not a coincidence to be tidied away: a machine that has run the Autoware
+setup already has the map, and :meth:`GitMapCache.provisioned` finds it there.
+A map this cache cloned itself lands under ``.repos/`` in the same root.
 """
 
 from __future__ import annotations
@@ -161,11 +147,8 @@ class GitMapCache:
 
         A downloader that keeps repository-relative paths -- ``hf download
         --local-dir``, which is what Autoware's setup runs -- leaves a map at
-        exactly ``<root>/<path>``.  Finding one there means the map is present
-        without this cache having cloned anything, so no git command runs and
-        the ref is not consulted: what the machine has is what gets used, and
-        ``refresh=True`` is how a caller says to go and look at the repository
-        instead.
+        exactly ``<root>/<path>``.  Finding one there means no git command runs
+        and the ref is not consulted: what the machine has is what gets used.
         """
         if not source.path:
             return None
@@ -226,14 +209,9 @@ class GitMapCache:
             source: The repository and ref to have locally.
             include: Gitignore-style patterns, relative to the repository root,
                 whose LFS content is needed.  Everything else stays a pointer.
-            materialise: Check the files out.  Left off, only the repository's
-                commit and tree objects are needed, which is enough to list what
-                it holds.
+            materialise: Check the files out.  Left off, only the commit and
+                tree objects are needed, which is enough to list what it holds.
             refresh: Fetch the ref again even when the cache already has it.
-
-        Returns:
-            The cache entry, with :attr:`CachedRepo.worktree` materialised for
-            :attr:`MapSource.path`.
 
         Raises:
             MapCacheError: If git is unavailable, or the clone or fetch failed.
@@ -253,62 +231,8 @@ class GitMapCache:
 
     # -- git ------------------------------------------------------------
 
-    def _adopt(self, source: MapSource) -> Optional[CachedRepo]:
-        """Return a copy of a sibling entry that already holds this commit.
-
-        Entries are addressed by repository *and ref*, so pinning a scenario --
-        rewriting ``@main`` to the commit behind it -- asks for an entry that
-        does not exist yet, and the naive answer is to fetch the whole thing
-        again from the network.  But a sibling entry for the same repository may
-        already be checked out at exactly that commit, in which case its bytes
-        are the answer by definition.  Copying it is offline and exact; only a
-        full commit hash is trusted this way, because only that names one
-        revision.
-        """
-        if not source.pinned:
-            return None
-        repos = self.root / REPOS_SUBDIR
-        if not repos.is_dir():
-            return None
-        for sibling in sorted(repos.iterdir()):
-            meta = self._read_meta(sibling)
-            if meta.get("repo_url") != source.repo_url:
-                continue
-            if str(meta.get("commit", "")) != source.ref:
-                continue
-            if not (sibling / "repo" / ".git").is_dir():
-                continue
-            entry = self.entry_dir(source)
-            staging = Path(
-                tempfile.mkdtemp(prefix=f".{entry.name}.", dir=str(entry.parent))
-            )
-            try:
-                shutil.copytree(sibling, staging, dirs_exist_ok=True)
-                self._record(staging, ref=source.ref)
-                try:
-                    staging.replace(entry)
-                except OSError:
-                    if not (entry / "repo" / ".git").exists():
-                        raise
-            finally:
-                shutil.rmtree(staging, ignore_errors=True)
-            adopted = self.peek(source)
-            if adopted is not None:
-                logger.info(
-                    "Took %s@%s from %s, which is already at that commit",
-                    source.repo_url,
-                    source.ref[:10],
-                    sibling.name,
-                )
-                return adopted
-        return None
-
     def _clone(self, source: MapSource) -> CachedRepo:
         """Clone *source* into a staging directory and move it into place."""
-        adopted = self._adopt(source)
-        if adopted is not None:
-            return adopted
-
         entry = self.entry_dir(source)
         entry.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(

@@ -113,7 +113,6 @@ def _context(
         "constraint_owner": constraint_owner,
         "error": error,
         "notice": notice,
-        "map_paths": paths,
         "map_loaded": map_preview.is_map_loaded(document, paths),
         "map_status": map_preview.map_status(document, paths),
         "carla_host": opendrive.DEFAULT_HOST,

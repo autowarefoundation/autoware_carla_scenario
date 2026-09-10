@@ -1,33 +1,19 @@
 """From a map source to the files on disk a scenario actually reads.
 
-Everything upstream of this module talks about a repository; everything
-downstream -- the Lanelet2 loader, the sweeper, the preview, the runtime --
-takes paths.  This is the seam, and it is deliberately the only one: a document
-that names a remote map and a document that names local files reach the same
-loader by the same route.
+Everything upstream talks about a repository; everything downstream -- the
+Lanelet2 loader, the sweeper, the preview, the runtime -- takes paths.  This is
+the seam, and deliberately the only one.
 
-What a map directory is expected to hold is what Autoware writes beside a map:
+A map directory is expected to hold what Autoware writes beside a map: a
+``.osm``, optionally ``map_projector_info.yaml``, and optionally an OpenDRIVE
+``.xodr``.  Most maps ship no OpenDRIVE, because the roads CARLA simulates come
+from the CARLA asset; :mod:`~autoware_carla_scenario.maps.opendrive` fetches
+that one and leaves it in the map root's ``derived`` directory.
 
-* ``lanelet2_map.osm`` -- the Lanelet2 map.  Any single ``.osm`` in the
-  directory is accepted, since the name is a convention rather than a rule.
-* ``map_projector_info.yaml`` -- optional, and read by
-  :mod:`~autoware_carla_scenario.coordinate.projection` straight off disk.
-* an OpenDRIVE ``.xodr`` -- optional.  A map published for Autoware usually has
-  none, because the road network CARLA simulates comes from the CARLA asset
-  itself; :mod:`~autoware_carla_scenario.maps.opendrive` fetches that one from a
-  running server and leaves it in the map root's ``derived`` directory, which is
-  where this module then finds it.
-
-A map already unpacked under the map root -- which is what Autoware's setup
-leaves behind for ``carla-ue5-maps`` -- is used as it stands, without cloning
-anything.  See :meth:`~autoware_carla_scenario.maps.cache.GitMapCache.provisioned`.
-
-That shortcut is off for a *pinned* source.  A directory on disk carries no
-record of which revision it was downloaded at, so handing it back for a source
-that named an exact commit would quietly answer a question about one revision
-with the bytes of another -- which is the one thing pinning exists to prevent.
-A pinned map is therefore always resolved through git, where the commit is
-checked rather than assumed.
+A map already unpacked under the map root -- what Autoware's setup leaves behind
+-- is used as it stands.  That shortcut is off for a *pinned* source: a
+directory carries no record of which revision it was downloaded at, so honouring
+it would answer a question about one revision with the bytes of another.
 """
 
 from __future__ import annotations
@@ -99,11 +85,8 @@ class ResolvedMap:
     def derived_xodr(self, name: str = "") -> Path:
         """Return where an OpenDRIVE taken from CARLA for this map is written.
 
-        The one place the derived file's name is decided.  Both the config
-        layer, which tells a run where to put the OpenDRIVE it captures, and
-        :func:`~autoware_carla_scenario.maps.opendrive.ensure_xodr`, which
-        fetches one ahead of time, ask here -- if they disagreed, the editor
-        would cache a file the runner then failed to find.
+        The one place the derived file's name is decided: if the run and the
+        editor disagreed, one would cache a file the other failed to find.
         """
         return self.derived / f"{name or self.name}.xodr"
 
@@ -184,23 +167,26 @@ def resolve_map(
         MapCacheError: If the repository could not be cloned or updated.
         MapResolutionError: If the repository holds no Lanelet2 map there.
     """
-    ask = _Ask.of(source, cache)
+    parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
+    store = cache or GitMapCache()
+    at_directory = parsed.with_path(parsed.directory)
+    derived = store.derived_dir(parsed.directory)
 
-    directory = None if (refresh or ask.source.pinned) else ask.provisioned()
+    directory = None if (refresh or parsed.pinned) else store.provisioned(at_directory)
     if directory is not None:
-        return _describe(ask, directory, provisioned=True)
+        return _describe(parsed, directory, derived, provisioned=True)
 
-    repo = ask.store.checkout(
-        ask.at_directory,
-        include=_include_patterns(ask.directory_path),
+    repo = store.checkout(
+        at_directory,
+        include=_include_patterns(parsed.directory),
         refresh=refresh,
     )
-    directory = ask.in_worktree(repo)
+    directory = _in_worktree(repo, parsed.directory)
     if not directory.is_dir():
         raise MapResolutionError(
-            f"{ask.source.uri} does not name a directory in the repository."
+            f"{parsed.uri} does not name a directory in the repository."
         )
-    return _describe(ask, directory, commit=repo.commit)
+    return _describe(parsed, directory, derived, commit=repo.commit)
 
 
 def cached_map(
@@ -219,26 +205,29 @@ def cached_map(
     Raises:
         MapSourceError: If *source* is not a usable URI.
     """
-    ask = _Ask.of(source, cache)
+    parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
+    store = cache or GitMapCache()
+    at_directory = parsed.with_path(parsed.directory)
+    derived = store.derived_dir(parsed.directory)
 
-    directory = None if ask.source.pinned else ask.provisioned()
+    directory = None if parsed.pinned else store.provisioned(at_directory)
     provisioned = directory is not None
     commit = ""
     if directory is None:
-        repo = ask.store.peek(ask.at_directory)
+        repo = store.peek(at_directory)
         if repo is None:
             return None
-        if ask.source.pinned and repo.commit != ask.source.ref:
+        if parsed.pinned and repo.commit != parsed.ref:
             # The cache holds this repository, but at another revision. Saying
             # "not cached" sends the caller to resolve_map, which checks it out.
             return None
         commit = repo.commit
-        directory = ask.in_worktree(repo)
+        directory = _in_worktree(repo, parsed.directory)
     if not directory.is_dir():
         return None
 
     try:
-        lanelet2_path = _find_lanelet2(directory, ask.source)
+        lanelet2_path = _find_lanelet2(directory, parsed)
     except MapResolutionError:
         return None
     if is_lfs_pointer(lanelet2_path):
@@ -246,8 +235,9 @@ def cached_map(
         # a Lanelet2 parser reports a broken map rather than a missing fetch.
         return None
     return _describe(
-        ask,
+        parsed,
         directory,
+        derived,
         commit=commit,
         provisioned=provisioned,
         lanelet2_path=lanelet2_path,
@@ -295,54 +285,15 @@ def pin_source(
     return parsed.at(resolved.commit).uri
 
 
-@dataclass(frozen=True)
-class _Ask:
-    """One request to resolve a map, addressed.
-
-    Both entry points below start by working out the same four things, and they
-    have to agree on all of them -- which directory in the repository, which
-    cache entry, where derived files go -- or a map described by one would not
-    be the map fetched by the other.
-    """
-
-    source: MapSource
-    store: GitMapCache
-    directory_path: str
-    derived: Path
-
-    @classmethod
-    def of(cls, source: "str | MapSource", cache: Optional[GitMapCache]) -> "_Ask":
-        """Return the addressed form of *source*."""
-        parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
-        store = cache or GitMapCache()
-        return cls(
-            source=parsed,
-            store=store,
-            directory_path=parsed.directory,
-            derived=store.derived_dir(parsed.directory),
-        )
-
-    @property
-    def at_directory(self) -> MapSource:
-        """The source, pointed at the map's directory rather than a file."""
-        return self.source.with_path(self.directory_path)
-
-    def provisioned(self) -> Optional[Path]:
-        """The already-unpacked map directory, if there is one."""
-        return self.store.provisioned(self.at_directory)
-
-    def in_worktree(self, repo: CachedRepo) -> Path:
-        """Where the map sits inside *repo*'s checkout."""
-        return (
-            repo.worktree / self.directory_path
-            if self.directory_path
-            else repo.worktree
-        )
+def _in_worktree(repo: CachedRepo, directory_path: str) -> Path:
+    """Where the map sits inside *repo*'s checkout."""
+    return repo.worktree / directory_path if directory_path else repo.worktree
 
 
 def _describe(
-    ask: _Ask,
+    source: MapSource,
     directory: Path,
+    derived: Path,
     *,
     commit: str = "",
     provisioned: bool = False,
@@ -353,8 +304,6 @@ def _describe(
     *lanelet2_path* lets a caller that has already found the ``.osm`` say so,
     rather than have the directory scanned for it twice.
     """
-    source = ask.source
-    derived = ask.derived
     projector_info = directory / "map_projector_info.yaml"
     xodr_path, xodr_is_derived = _find_xodr(directory, derived)
     return ResolvedMap(

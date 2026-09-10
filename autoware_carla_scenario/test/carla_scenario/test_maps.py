@@ -716,19 +716,3 @@ class TestCacheEconomy:
 
         assert again.lanelet2_path.read_text() == _OSM
         assert calls == []
-
-    def test_pinning_adopts_the_checkout_already_at_that_commit(
-        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Resolving the branch leaves an entry at the commit behind it. Pinning
-        # asks for a different entry naming the same commit, and re-fetching it
-        # from the network would download a map already a directory away.
-        resolve_map(_uri(origin_repo), cache=cache)
-        head = _head(origin_repo)
-
-        calls = self._git_calls(monkeypatch)
-        pinned = resolve_map(_uri(origin_repo, ref=head), cache=cache)
-
-        assert pinned.commit == head
-        assert pinned.lanelet2_path.read_text() == _OSM
-        assert "fetch" not in calls and "clone" not in calls

@@ -1,29 +1,22 @@
-"""Where an HD map comes from, written as one string.
+r"""Where an HD map comes from, written as one string.
 
-A scenario names its map with a single URI so that the same value can be typed
-into a form field, passed as a Hydra override (``map.source=...``), and stored
-in a document without a nested structure that only one of those three can
-express.
+A scenario names its map with a single URI so the same value can be typed into a
+form field, passed as a Hydra override (``map.source=...``), and stored in a
+document.  The canonical form is::
 
-The canonical form is::
+    git+https://huggingface.co/datasets/OWNER/NAME@REF#PATH
+    \______________ repository ____________/ \ref/ \path/
 
-    git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@splatsim#autoware_maps/Town10HD_Opt
-    \\_________________ repository ________________________________/ \\_ ref _/ \\______ path ______/
+Only the repository is required; ``@ref`` defaults to the default branch and
+``#path`` to the repository root.  A ref that is a full commit hash *pins* the
+map -- the same URI names the same bytes forever, which is what makes a
+scenario's result reproducible -- so :meth:`MapSource.pinned` is what the rest
+of this package asks before taking any shortcut that could hand back a different
+revision.
 
-Only the repository is required.  ``@ref`` selects a branch, tag or commit and
-defaults to the repository's own default branch; ``#path`` selects the
-directory holding the map and defaults to the repository root.
-
-A ref that is a full commit hash *pins* the map: the same URI names the same
-bytes forever, which is what makes a scenario's result reproducible.  A branch
-does not -- it means "whatever is there now" -- so
-:meth:`MapSource.pinned` is what the rest of this package asks before it takes
-any shortcut that could hand back a different revision.
-
-The URL a person actually has is the one in their browser's address bar, so
-:meth:`MapSource.parse` also accepts the ``/tree/<ref>/<path>`` (and GitHub's
-``/blob/``, and HuggingFace's ``/resolve/``) forms of both hosts and normalises
-them.  Pasting the page you are looking at is the intended way in.
+:meth:`MapSource.parse` also accepts the ``/tree/<ref>/<path>`` URLs of both
+hosts (and GitHub's ``/blob/``, HuggingFace's ``/resolve/``).  Pasting the page
+you are looking at is the intended way in.
 """
 
 from __future__ import annotations

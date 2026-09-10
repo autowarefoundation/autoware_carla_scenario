@@ -1,15 +1,12 @@
 """What maps a repository offers.
 
-An HD map repository is a directory tree, not a list, and the person choosing a
-map knows the repository rather than the path inside it.  So the editor asks
-this module what is in there and shows the answer; a map is any directory
-holding a Lanelet2 ``.osm``, which is the same rule
+An HD map repository is a directory tree, and the person choosing a map knows
+the repository rather than the path inside it.  A map is any directory holding a
+Lanelet2 ``.osm`` -- the same rule
 :mod:`~autoware_carla_scenario.maps.resolver` resolves one by.
 
 Listing costs a clone of the repository's commit and tree objects and nothing
-else -- no file content, no LFS -- and that clone is the same cache entry the
-map itself is later resolved out of, so browsing a repository and then picking
-a map from it downloads the map once.
+else, and that clone is the entry the map is later resolved out of.
 """
 
 from __future__ import annotations

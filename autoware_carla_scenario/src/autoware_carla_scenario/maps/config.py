@@ -1,20 +1,15 @@
 """Turn a ``map`` config into the paths the rest of the framework reads.
 
-Three places ask the same question -- the sweeper before CARLA is started, the
-runner as it builds a queue, and the editor's preview -- and they all ask it of
-the same ``map`` group:
+The sweeper before CARLA is started, the runner as it builds a queue, and the
+editor's preview all ask the same question of the same ``map`` group:
+``map.source`` names a git repository, ``map.lanelet2_path`` and
+``map.xodr_path`` name files directly.
 
-* ``map.source`` names a git repository holding the HD map, and is resolved
-  through :func:`~autoware_carla_scenario.maps.resolver.resolve_map`;
-* ``map.lanelet2_path`` and ``map.xodr_path`` name files directly.
+An explicitly configured path always wins over the source, which is what keeps
+``map.xodr_path=/tmp/patched.xodr`` working as an override: the source says
+where the map *lives*, not what a run is forbidden to replace.
 
-An explicitly configured path always wins over the source.  That is what keeps
-``map.xodr_path=/tmp/patched.xodr`` working as an override on a scenario whose
-map comes from a repository -- the source says where the map *lives*, not what
-the run is forbidden to replace.
-
-Nothing here imports CARLA, Lanelet2 or Hydra, so the editor and the sweeper can
-both call it.
+Nothing here imports CARLA, Lanelet2 or Hydra.
 """
 
 from __future__ import annotations
@@ -28,10 +23,10 @@ from .resolver import ResolvedMap, cached_map, resolve_map
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MapPaths", "map_setting", "resolve_map_paths"]
+__all__ = ["MapPaths", "resolve_map_paths"]
 
 
-def map_setting(map_config: Any, key: str) -> Optional[str]:
+def _setting(map_config: Any, key: str) -> Optional[str]:
     """Read one ``map`` setting off a config, whatever shape it has.
 
     The same map is described by a :class:`~...scenario_config.MapConfig`, by an
@@ -95,10 +90,9 @@ class MapPaths:
     def install_xodr(self) -> Optional[Path]:
         """The OpenDRIVE that has to be written into the CARLA installation.
 
-        A map describing roads CARLA does not ship -- one the config names, or
-        one the repository carries beside the Lanelet2 map -- has to replace the
-        simulator's own road network before the world is loaded.  An OpenDRIVE
-        read back *from* CARLA never does.
+        A map describing roads CARLA does not ship has to replace the
+        simulator's own road network before the world is loaded.  One read back
+        *from* CARLA never does.
         """
         return None if self.xodr_is_derived else self.xodr_path
 
@@ -107,8 +101,7 @@ class MapPaths:
         """The OpenDRIVE to read geometry from, without installing it.
 
         Either one already derived from CARLA, or where to put one when the run
-        reaches a loaded world -- which is the only moment a map that ships no
-        OpenDRIVE can get one.
+        reaches a loaded world.
         """
         if self.xodr_is_derived:
             return self.xodr_path
@@ -123,30 +116,27 @@ def resolve_map_paths(
 ) -> MapPaths:
     """Return the local map files *map_config* names.
 
+    A config naming neither a source nor any file comes back empty rather than
+    raising: a scenario is edited into shape long before it has a map.
+
     Args:
         map_config: The ``map`` config group, in any of the shapes
-            :func:`map_setting` reads.
+            :func:`_setting` reads.
         allow_fetch: Whether a source that is not cached yet may be cloned.
             Left off, an uncached source contributes no paths -- which is what
             the editor wants on a render, where fetching is a button rather
             than a side effect of drawing the page.
         refresh: Fetch the map repository again even when it is already cached.
 
-    Returns:
-        The resolved paths.  A config naming neither a source nor any file
-        comes back empty rather than raising: a scenario is edited into shape
-        long before it has a map.
-
     Raises:
-        MapSourceError: If ``map.source`` is not a usable URI.
-        MapCacheError: If the repository could not be cloned or updated.
-        MapResolutionError: If the repository holds no Lanelet2 map there.
+        MapSourceError, MapCacheError, MapResolutionError: If ``map.source`` is
+            set and cannot be resolved.
     """
-    source = map_setting(map_config, "source")
-    lanelet2 = map_setting(map_config, "lanelet2_path")
-    xodr = map_setting(map_config, "xodr_path")
-    name = map_setting(map_config, "name") or ""
-    projector_type = map_setting(map_config, "projector_type")
+    source = _setting(map_config, "source")
+    lanelet2 = _setting(map_config, "lanelet2_path")
+    xodr = _setting(map_config, "xodr_path")
+    name = _setting(map_config, "name") or ""
+    projector_type = _setting(map_config, "projector_type")
 
     resolved: Optional[ResolvedMap] = None
     if source is not None:

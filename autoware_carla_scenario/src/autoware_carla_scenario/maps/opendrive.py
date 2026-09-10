@@ -1,27 +1,16 @@
 """Where the OpenDRIVE for a remote Lanelet2 map comes from: CARLA.
 
-An HD map published for Autoware ships a Lanelet2 ``.osm`` and the projection
-it was written in, and stops there -- the road network the simulator drives on
-belongs to the CARLA asset, not to the map repository.  But this framework
-needs OpenDRIVE for two things a scenario cannot do without: the
-``geoReference`` that says where on Earth the Lanelet2 map is (see
-:mod:`~autoware_carla_scenario.sweeper.map_loader`), and the road geometry
+An HD map published for Autoware ships a Lanelet2 map and stops there -- the
+road network belongs to the CARLA asset, not to the map repository.  But a run
+needs OpenDRIVE for the road geometry
 :class:`~autoware_carla_scenario.coordinate.map_manager.MapManager` converts
-poses through.
+poses through, so it is taken from CARLA itself, in the order that costs least:
+one already cached or shipped; the asset inside a local CARLA installation,
+named by the ``<MAP_NAME>_PATH`` variable ``load_map_by_overwriting_xodr``
+writes to; a running server; or the world a run has already loaded.
 
-So the OpenDRIVE is taken from CARLA itself, in the order that costs least:
-
-1. one already in the map directory, or already derived into the cache;
-2. the asset file inside a local CARLA installation, named by the same
-   ``<MAP_NAME>_PATH`` environment variable
-   :meth:`~autoware_carla_scenario.scenario_runner.ScenarioRunner.load_map_by_overwriting_xodr`
-   writes to;
-3. a running server, over the CARLA Python API --
-   ``world.get_map().to_opendrive()``.
-
-Whatever it comes from is written into the cache entry's ``derived`` directory,
-so the answer is found at step 1 from then on and neither CARLA nor the network
-is needed to open the scenario again.
+Whatever it comes from is written into the map root's ``derived`` directory, so
+the answer is found without CARLA from then on.
 """
 
 from __future__ import annotations
@@ -42,7 +31,6 @@ __all__ = [
     "ensure_xodr",
     "installed_xodr",
     "map_asset_env_var",
-    "opendrive_from_server",
 ]
 
 #: Default CARLA RPC endpoint, matching
@@ -62,21 +50,10 @@ class OpenDriveUnavailable(RuntimeError):
 def map_asset_env_var(map_name: str) -> str:
     """Convert a CamelCase map name to its ``UPPER_SNAKE_CASE_PATH`` variable.
 
-    The variable names the ``.xodr`` inside the CARLA installation, which is
-    both where this module reads one from and where
-    ``load_map_by_overwriting_xodr`` writes one to.
-
-    Examples::
-
-        map_asset_env_var("NishishinjukuMap")  # -> "NISHISHINJUKU_MAP_PATH"
-        map_asset_env_var("Town01")            # -> "TOWN01_PATH"
-        map_asset_env_var("Town10HD_Opt")      # -> "TOWN10_HD_OPT_PATH"
-
-    Args:
-        map_name: CamelCase CARLA map name.
-
-    Returns:
-        The derived environment variable name.
+    The variable names the ``.xodr`` inside the CARLA installation -- both where
+    this module reads one from and where ``load_map_by_overwriting_xodr`` writes
+    one to.  ``NishishinjukuMap`` -> ``NISHISHINJUKU_MAP_PATH``, ``Town10HD_Opt``
+    -> ``TOWN10_HD_OPT_PATH``.
     """
     # Insert underscore between a lowercase/digit and the following uppercase letter
     snake = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", map_name)
@@ -106,18 +83,16 @@ def _short_map_name(name: str) -> str:
 def capture_opendrive(world: Any, destination: Path) -> Path:
     """Write *world*'s OpenDRIVE to *destination*, and return it.
 
-    The fourth way a map can get its OpenDRIVE, and the cheapest: a run already
-    has the town loaded, so the road network is right there.  It lives here
-    beside the other three so that "where a derived OpenDRIVE comes from and
-    where it is written" stays one answer -- a run fills the same cache file
-    the editor's Fetch button does, and the sweeper finds it either way.
+    The cheapest of the four sources: a run already has the town loaded.  It
+    lives beside the other three so a run fills the same cache file the editor's
+    Fetch button does.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(str(world.get_map().to_opendrive()), encoding="utf-8")
     return destination
 
 
-def opendrive_from_server(
+def _from_server(
     map_name: str,
     *,
     host: str = DEFAULT_HOST,
@@ -128,16 +103,9 @@ def opendrive_from_server(
     """Return *map_name*'s OpenDRIVE as read from a running CARLA server.
 
     Args:
-        map_name: The CARLA map, e.g. ``Town10HD_Opt``.
-        host: CARLA RPC host.
-        port: CARLA RPC port.
-        timeout: Seconds to wait for the server.
         load: Load *map_name* when the server currently has another world open.
             Left off, a mismatch is an error rather than a world reload, which
             is what a caller sharing the server with a run wants.
-
-    Returns:
-        The OpenDRIVE document as text.
 
     Raises:
         OpenDriveUnavailable: If the CARLA client is not installed, the server
@@ -202,7 +170,7 @@ def ensure_xodr(
         timeout: Seconds to wait for the server.
         allow_server: Whether a running CARLA server may be contacted.  Left
             off, only a file already on disk is accepted.
-        load: Passed to :func:`opendrive_from_server`.
+        load: Passed to :func:`_from_server`.
         refresh: Fetch again even when a cached ``.xodr`` is already there.
 
     Returns:
@@ -231,7 +199,7 @@ def ensure_xodr(
             "installation."
         )
 
-    text = opendrive_from_server(name, host=host, port=port, timeout=timeout, load=load)
+    text = _from_server(name, host=host, port=port, timeout=timeout, load=load)
     destination.write_text(text, encoding="utf-8")
     logger.info("Fetched OpenDRIVE for %s from %s:%s", name, host, port)
     return destination

@@ -2,16 +2,13 @@
 
 A scenario names its map with one URI -- see
 :class:`~autoware_carla_scenario.maps.source.MapSource` -- and everything else
-follows from that: the repository is cloned into a local map root, the map's
-files are found in it, and the OpenDRIVE that CARLA needs but the repository
-does not carry is fetched from CARLA itself.  All of it is cached, so opening
-the same scenario again touches neither the network nor the simulator.
+follows: the repository is cloned into a local map root, the map's files are
+found in it, and the OpenDRIVE that CARLA needs but the repository does not
+carry is fetched from CARLA.  All of it is cached.
 
-The map root defaults to ``~/autoware_data/maps``, which is where Autoware's own
-setup downloads map datasets to, so a map its ``demo_artifacts`` role already
-fetched is used exactly as it sits.
-
-Typical use::
+The map root defaults to ``~/autoware_data/maps``, where Autoware's own setup
+downloads map datasets, so a map its ``demo_artifacts`` role already fetched is
+used as it sits::
 
     from autoware_carla_scenario.maps import resolve_map
 
@@ -21,8 +18,7 @@ Typical use::
     )
     hd_map.lanelet2_path  # -> .../autoware_maps/Town10HD_Opt/lanelet2_map.osm
 
-Nothing here imports CARLA or Lanelet2 at module level, so the editor can use it
-in a process that has neither.
+Nothing here imports CARLA or Lanelet2, so the editor can use it.
 """
 
 from __future__ import annotations
