@@ -72,8 +72,8 @@ def run_uv(
     uv = uv_executable()
     if uv is None:
         raise UvUnavailable(
-            "uv is not installed, so the package's dependencies cannot be "
-            "locked. An unlocked package is not reproducible."
+            "uv is not installed, so the package's dependencies can be neither "
+            "resolved nor built. An export needs both."
         )
     environment = dict(os.environ)
     # A parent VIRTUAL_ENV would make uv operate on the editor's environment

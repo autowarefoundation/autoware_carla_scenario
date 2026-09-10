@@ -106,7 +106,8 @@ def offline_export(monkeypatch: pytest.MonkeyPatch) -> None:
             root=destination,
             distribution=distribution,
             version="0.1.0",
-            wheels=[wheel],
+            wheels=(wheel,),
+            size_bytes=0,
             python_tag="3.10",
         )
 
@@ -1326,13 +1327,9 @@ class TestValidateSaveExport:
         )
 
     def test_a_failed_export_is_reported_as_a_failure(
-        self,
-        client: TestClient,
-        offline_export: None,
-        store: DraftStore,
-        tmp_path: Path,
-        draft_id: str,
+        self, client: TestClient, store: DraftStore, tmp_path: Path, draft_id: str
     ) -> None:
+        """No stubbing needed: validation refuses this before any tool runs."""
         draft = _draft(store, draft_id)
         draft.document.assertions.pass_conditions = []
         store.save(draft)

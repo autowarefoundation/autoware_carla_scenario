@@ -669,11 +669,14 @@ tests against it. That project is now a **build input**: the wheels are resolved
 from its lockfile and the project itself does not leave the server.
 
 The CARLA client is vendored into it (`carla_wheels/`, reached by a relative
-`[tool.uv] find-links`) and requested through the framework's `carla` extra,
-because a scenario that cannot `import carla` cannot run and the client is on no
-index. When no client wheel can be found -- a framework installed from a wheel
-rather than run out of its repository -- the export says so in its warnings and
-leaves the client out.
+`[tool.uv] find-links`) and requested through one of the framework's client
+extras, because a scenario that cannot `import carla` cannot run and neither
+client is on any index. *Which* extra is read off the client installed in the
+editor's own environment -- `carla` for 0.10.0, `carla-0-9-16` for the legacy
+one -- so a scenario is exported against the client it was authored against
+rather than a fixed one. When no client wheel can be found -- a framework
+installed from a wheel rather than run out of its repository -- the export says
+so in its warnings and leaves the client out.
 
 There is no destination field. The editor is routinely used from another machine
 on the LAN, where a path typed into it would name a directory on the host running
@@ -703,7 +706,7 @@ It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA |
 | `autoware-lanelet2-to-opendrive` | the same way as the framework |
-| `carla` | the wheel vendored in the repository, at the version the framework's `carla` extra names |
+| `carla` | the wheel vendored in the repository, at the version the client extra in use pins |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |

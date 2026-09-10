@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import shutil
 import tempfile
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, get_args
@@ -81,6 +82,23 @@ SLOT_FAIL = "fail"
 
 class EditorError(Exception):
     """Raised when a request asks for something the document cannot do."""
+
+
+def _zip_directory(source: Path, archive: Path) -> None:
+    """Zip *source* to *archive*, keeping the directory itself as the one root.
+
+    Stored rather than deflated. The payload is a wheelhouse -- a couple of
+    hundred megabytes of wheels, which are themselves deflate-compressed zips --
+    so re-compressing it costs about eight seconds of the request thread to
+    shave one percent off the download. ``shutil.make_archive`` has no way to
+    say that, hence the explicit loop.
+    """
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.unlink(missing_ok=True)
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+        for path in sorted(source.rglob("*")):
+            if path.is_file():
+                bundle.write(path, source.name / path.relative_to(source))
 
 
 @contextmanager
@@ -167,22 +185,15 @@ class EditorService:
         try:
             result = export_package(draft.document, build_dir, **options)
             if result.wheelhouse is None:
+                # Only reachable by asking for an unlocked export, which this
+                # form cannot; the log is carried anyway, since it is the only
+                # thing that would explain it.
                 raise PackageExportError(
                     "The export produced no wheelhouse, so there is nothing "
-                    "that can be installed without uv and a network."
+                    "that can be installed without uv and a network.",
+                    log=result.log,
                 )
-            archive = self.archive_path(draft)
-            archive.parent.mkdir(parents=True, exist_ok=True)
-            archive.unlink(missing_ok=True)
-            # `base_dir` keeps the wheelhouse folder inside the zip, so
-            # unpacking produces one directory rather than spraying a couple of
-            # hundred wheels into the CWD.
-            shutil.make_archive(
-                str(archive.with_suffix("")),
-                "zip",
-                root_dir=str(result.wheelhouse.root.parent),
-                base_dir=result.wheelhouse.root.name,
-            )
+            _zip_directory(result.wheelhouse.root, self.archive_path(draft))
             return result
         finally:
             shutil.rmtree(build_dir, ignore_errors=True)

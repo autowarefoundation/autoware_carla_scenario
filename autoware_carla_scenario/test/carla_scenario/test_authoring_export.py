@@ -43,6 +43,7 @@ from autoware_carla_scenario.authoring.starter import new_document
 from autoware_carla_scenario.authoring.wheelhouse import (
     WheelhouseError,
     build_wheelhouse,
+    carla_extra,
     carla_wheels,
 )
 
@@ -54,7 +55,6 @@ OFFLINE = {
     "lock": False,
     "verify": False,
     "run_tests": False,
-    "wheelhouse": False,
 }
 
 
@@ -392,7 +392,7 @@ class TestVendoredCarlaClient:
         if not carla_wheels():
             pytest.skip("no CARLA wheel is vendored in this checkout")
         data = tomllib.loads((package / "pyproject.toml").read_text())
-        assert f"{DISTRIBUTION}[carla]" in data["project"]["dependencies"]
+        assert f"{DISTRIBUTION}[{carla_extra()}]" in data["project"]["dependencies"]
         # Relative, so the package resolves wherever it is copied.
         assert data["tool"]["uv"]["find-links"] == ["carla_wheels"]
         assert list((package / "carla_wheels").glob("carla-*.whl"))
@@ -403,7 +403,7 @@ class TestVendoredCarlaClient:
         """A scenario that cannot import carla cannot run; saying so is the point."""
         import autoware_carla_scenario.authoring.package_export as module
 
-        monkeypatch.setattr(module, "carla_wheels", list)
+        monkeypatch.setattr(module, "carla_wheels", lambda _extra: [])
         result = export_package(new_document(), tmp_path, **OFFLINE)
         data = tomllib.loads((result.root / "pyproject.toml").read_text())
         assert DISTRIBUTION in data["project"]["dependencies"]
@@ -415,7 +415,13 @@ class TestWheelhouseRefusals:
     def test_a_wheelhouse_needs_a_lock(self, tmp_path: Path) -> None:
         """It *is* the lockfile resolved into wheels; there is nothing else to build."""
         with pytest.raises(WheelhouseError):
-            build_wheelhouse(tmp_path, tmp_path / "out", distribution="nothing")
+            build_wheelhouse(
+                tmp_path,
+                tmp_path / "out",
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
 
     def test_a_non_empty_destination_is_refused(self, tmp_path: Path) -> None:
         """A stale wheel left in the directory would be installed."""
@@ -424,20 +430,19 @@ class TestWheelhouseRefusals:
         destination.mkdir()
         (destination / "stale-1.0-py3-none-any.whl").write_text("", encoding="utf-8")
         with pytest.raises(WheelhouseError):
-            build_wheelhouse(tmp_path, destination, distribution="nothing")
+            build_wheelhouse(
+                tmp_path,
+                destination,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
 
     def test_skipping_the_lock_records_why_there_is_no_wheelhouse(
         self, tmp_path: Path
     ) -> None:
-        result = export_package(
-            new_document(),
-            tmp_path,
-            dev_mode=True,
-            lock=False,
-            verify=False,
-            run_tests=False,
-            wheelhouse=True,
-        )
+        """There is a wheelhouse exactly when there is a lock to resolve."""
+        result = export_package(new_document(), tmp_path, **OFFLINE)
         assert result.wheelhouse is None
         assert any("No wheelhouse was built" in w for w in result.warnings)
 
@@ -496,36 +501,28 @@ class TestExportSelfCheck:
         installing from PyPI: if a single wheel were missing, pip has nowhere
         else to look and the install fails.
         """
-        import os
-        import shutil
         import subprocess
 
-        uv = shutil.which("uv")
-        assert uv is not None
+        from autoware_carla_scenario.authoring.uv_tool import run_uv
+        from autoware_carla_scenario.authoring.wheelhouse import venv_python
+
         result = exported
         assert result.wheelhouse is not None, result.log
 
         # `uv venv --seed` rather than the stdlib `venv`: the consumer's venv
         # needs pip in it, and uv is already required by this test.
         target = tmp_path / "venv"
-        environment = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-        created = subprocess.run(  # noqa: S603
-            [
-                uv,
-                "venv",
-                str(target),
-                "--python",
-                result.wheelhouse.python_tag,
-                "--seed",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+        created = run_uv(
+            tmp_path,
+            "venv",
+            str(target),
+            "--python",
+            result.wheelhouse.python_tag,
+            "--seed",
             timeout=300,
-            env=environment,
         )
         assert created.returncode == 0, created.stdout + created.stderr
-        python = target / "bin" / "python"
+        python = venv_python(target)
         installed = subprocess.run(  # noqa: S603
             [
                 str(python),
@@ -560,7 +557,7 @@ class TestExportSelfCheck:
             timeout=300,
         )
         assert probe.returncode == 0, probe.stdout + probe.stderr
-        assert (target / "bin" / "scenario").exists()
+        assert (venv_python(target).parent / "scenario").exists()
 
 
 class TestFreeFormTextReachesTheManifest:

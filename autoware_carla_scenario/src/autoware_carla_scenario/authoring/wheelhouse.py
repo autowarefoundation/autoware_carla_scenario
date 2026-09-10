@@ -37,31 +37,34 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from ..templating import code_environment
+from .framework_pin import DISTRIBUTION, framework_source_root
 from .uv_tool import UvUnavailable, run_uv
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CARLA_EXTRA",
     "CARLA_WHEELS_ENV",
+    "DEFAULT_CARLA_EXTRA",
     "Wheelhouse",
     "WheelhouseError",
     "build_wheelhouse",
+    "carla_extra",
     "carla_wheels",
+    "venv_python",
 ]
 
 #: Directory holding the ``*.jinja`` templates for a generated package.
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
-#: The framework extra that provides the CARLA client an exported scenario runs
-#: against.  ``carla==0.10.0`` is not published to PyPI, so the only copy that
-#: exists is the wheel vendored in this repository.
-CARLA_EXTRA = "carla"
+#: The framework extra to fall back on when no CARLA client is installed to
+#: read the answer off.  Neither client is published to PyPI, so the only copies
+#: that exist are the wheels vendored in this repository.
+DEFAULT_CARLA_EXTRA = "carla"
 
 #: Overrides where the vendored CARLA wheels are looked for.
 CARLA_WHEELS_ENV = "SCENARIO_EXPORT_CARLA_WHEELS"
@@ -87,15 +90,22 @@ class WheelhouseError(RuntimeError):
         self.log = log
 
 
-@dataclass
+@dataclass(frozen=True)
 class Wheelhouse:
     """What a wheelhouse build produced.
+
+    Frozen, and :attr:`size_bytes` is a recorded number rather than a property
+    that stats :attr:`root`: the editor deletes the build tree as soon as it has
+    zipped it, and a report rendered afterwards would otherwise say the
+    wheelhouse it just handed over is empty.  Use :func:`dataclasses.replace` to
+    say where the directory ended up.
 
     Attributes:
         root: The wheelhouse directory.
         distribution: Distribution name to install from it.
         version: Version of that distribution.
         wheels: Every wheel filename in the directory, sorted.
+        size_bytes: What those wheels came to, which is what a download costs.
         python_tag: The interpreter the wheels were resolved for, e.g. ``3.10``.
         log: Combined output of the tools that ran.
     """
@@ -103,18 +113,10 @@ class Wheelhouse:
     root: Path
     distribution: str
     version: str
-    wheels: list[str] = field(default_factory=list)
+    wheels: tuple[str, ...] = ()
+    size_bytes: int = 0
     python_tag: str = ""
     log: str = ""
-
-    @property
-    def size_bytes(self) -> int:
-        """Total size of the wheels, which is what a download will cost."""
-        return sum(
-            (self.root / name).stat().st_size
-            for name in self.wheels
-            if (self.root / name).is_file()
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +124,8 @@ class Wheelhouse:
 # ---------------------------------------------------------------------------
 
 
-def _carla_pin() -> Optional[str]:
-    """Return the version the framework's ``carla`` extra pins, e.g. ``0.10.0``.
+def _carla_pins() -> dict[str, str]:
+    """Return the client version each of the framework's CARLA extras pins.
 
     Read from the framework's own metadata rather than hard-coded here, so the
     two cannot disagree about which client a scenario runs against.
@@ -131,16 +133,40 @@ def _carla_pin() -> Optional[str]:
     from importlib import metadata  # noqa: PLC0415
 
     try:
-        requirements = metadata.requires("autoware-carla-scenario") or []
+        requirements = metadata.requires(DISTRIBUTION) or []
     except metadata.PackageNotFoundError:  # pragma: no cover - always installed
-        return None
+        return {}
+    pins: dict[str, str] = {}
     for requirement in requirements:
-        if not re.search(rf"extra\s*==\s*[\"']{CARLA_EXTRA}[\"']", requirement):
-            continue
-        match = re.match(r"\s*carla\s*==\s*([0-9][^\s;]*)", requirement)
-        if match:
-            return match.group(1)
-    return None
+        pinned = re.match(r"\s*carla\s*==\s*([0-9][^\s;]*)", requirement)
+        extra = re.search(r"extra\s*==\s*[\"']([^\"']+)[\"']", requirement)
+        if pinned and extra:
+            pins[extra.group(1)] = pinned.group(1)
+    return pins
+
+
+def carla_extra() -> str:
+    """Return the framework extra that installs the client this export needs.
+
+    The framework declares two mutually exclusive clients -- ``carla`` for
+    0.10.0 and ``carla-0-9-16`` for the legacy one -- and a scenario was
+    authored against whichever of them is installed here.  Naming a fixed one
+    would hand somebody working on the legacy client an export that installs
+    cleanly and cannot run, with nothing saying why.
+
+    Falls back to :data:`DEFAULT_CARLA_EXTRA` when no client is installed to
+    read the answer off.
+    """
+    from importlib import metadata  # noqa: PLC0415
+
+    try:
+        installed = metadata.version("carla")
+    except metadata.PackageNotFoundError:
+        return DEFAULT_CARLA_EXTRA
+    for extra, pinned in _carla_pins().items():
+        if pinned == installed:
+            return extra
+    return DEFAULT_CARLA_EXTRA
 
 
 def _wheel_search_root() -> Optional[Path]:
@@ -150,27 +176,25 @@ def _wheel_search_root() -> Optional[Path]:
         candidate = Path(override).expanduser()
         return candidate if candidate.is_dir() else None
 
-    from .framework_pin import framework_source_root  # noqa: PLC0415
-
     # <repo>/autoware_carla_scenario -> <repo>/carla_wheels.  An installed
     # framework has no repository above it and so has no vendored wheels.
     candidate = framework_source_root().parent / VENDORED_WHEELS_DIR
     return candidate if candidate.is_dir() else None
 
 
-def carla_wheels() -> list[Path]:
-    """Return the vendored CARLA wheels matching the framework's ``carla`` extra.
+def carla_wheels(extra: str = "") -> list[Path]:
+    """Return the vendored CARLA wheels for *extra*, defaulting to this export's.
 
-    Only the pinned version is returned: the repository also vendors a wheel for
-    the legacy 0.9.16 client, and shipping both would put two mutually exclusive
-    CARLA clients in the same wheelhouse.
+    Only the one version is returned: the framework's two client extras are
+    mutually exclusive, and shipping both would put two CARLA clients that
+    cannot coexist in the same wheelhouse.
 
     Returns:
         The matching wheels, or an empty list when none can be found -- which is
         the normal case for a framework installed from a wheel rather than run
         out of its repository.
     """
-    version = _carla_pin()
+    version = _carla_pins().get(extra or carla_extra())
     root = _wheel_search_root()
     if version is None or root is None:
         return []
@@ -182,25 +206,10 @@ def carla_wheels() -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _venv_python(venv: Path) -> Path:
+def venv_python(venv: Path) -> Path:
     """Return the interpreter inside *venv*."""
     posix = venv / "bin" / "python"
     return posix if posix.exists() else venv / "Scripts" / "python.exe"
-
-
-def _strip_generated_header(text: str) -> str:
-    """Return *text* without the leading comment block a tool wrote into it.
-
-    ``uv export`` opens with a note naming the command that produced the file.
-    The wheelhouse writes its own, so the two are not stacked.
-    """
-    lines = text.splitlines()
-    start = 0
-    while start < len(lines) and (
-        lines[start].startswith("#") or not lines[start].strip()
-    ):
-        start += 1
-    return "\n".join(lines[start:]).strip()
 
 
 def _export_requirements(package_root: Path) -> tuple[str, str]:
@@ -220,8 +229,7 @@ def _export_requirements(package_root: Path) -> tuple[str, str]:
     Raises:
         WheelhouseError: If the lock could not be exported.
     """
-    result = run_uv(
-        package_root,
+    arguments = (
         "export",
         "--format",
         "requirements-txt",
@@ -229,19 +237,19 @@ def _export_requirements(package_root: Path) -> tuple[str, str]:
         "--no-hashes",
         "--no-editable",
         "--no-emit-project",
-        timeout=_EXPORT_TIMEOUT_SECONDS,
+        # The wheelhouse writes its own header onto this; uv's would sit above
+        # it saying the same thing about a file the user never asked uv for.
+        "--no-header",
     )
-    log = (
-        "$ uv export --format requirements-txt --locked --no-hashes "
-        f"--no-editable --no-emit-project\n{result.stderr}"
-    )
+    result = run_uv(package_root, *arguments, timeout=_EXPORT_TIMEOUT_SECONDS)
+    log = f"$ uv {' '.join(arguments)}\n{result.stderr}"
     if result.returncode != 0:
         raise WheelhouseError(
             "The package's lockfile could not be exported, so there is no "
             "pinned dependency set to build a wheelhouse from.",
             log=log,
         )
-    return _strip_generated_header(result.stdout), log
+    return result.stdout.strip(), log
 
 
 def _build_project_wheel(package_root: Path, destination: Path) -> str:
@@ -286,7 +294,7 @@ def _builder_environment(parent: Path, python: str) -> tuple[Path, str]:
         timeout=_BUILD_TIMEOUT_SECONDS,
     )
     log = f"$ uv venv --python {python} --seed\n{result.stdout}{result.stderr}"
-    if result.returncode != 0 or not _venv_python(venv).exists():
+    if result.returncode != 0 or not venv_python(venv).exists():
         raise WheelhouseError(
             f"No Python {python} environment could be created to build the "
             "wheelhouse with. A wheelhouse is only valid for the interpreter "
@@ -309,7 +317,7 @@ def _download_wheels(
         WheelhouseError: If any wheel could not be produced.
     """
     command = [
-        str(_venv_python(venv)),
+        str(venv_python(venv)),
         "-m",
         "pip",
         "wheel",
@@ -343,10 +351,9 @@ def build_wheelhouse(
     destination: Path,
     *,
     distribution: str,
-    version: str = "0.1.0",
+    version: str,
+    run_command: str,
     python: str = "",
-    scenario_id: str = "",
-    map_group: str = "",
 ) -> Wheelhouse:
     """Build a self-contained wheelhouse for the package at *package_root*.
 
@@ -355,12 +362,14 @@ def build_wheelhouse(
         destination: Directory to fill.  Created if missing; it must be empty
             or absent, since a stale wheel left in it would be installed.
         distribution: Distribution name a consumer installs from the wheelhouse.
-        version: That distribution's version, recorded in ``requirements.txt``.
+        version: That distribution's version.  It has to be the one the
+            package's own ``pyproject.toml`` declares, or the
+            ``requirements.txt`` written here names a wheel that is not in the
+            directory.
+        run_command: The command that runs the scenario once installed, for the
+            directory's own README.
         python: Interpreter version to resolve the wheels for.  Defaults to the
             package's ``.python-version``.
-        scenario_id: Name the installed ``scenario`` command selects the
-            scenario by, for the directory's own README.
-        map_group: Map group that scenario runs on, likewise.
 
     Returns:
         The :class:`Wheelhouse` describing what was built.
@@ -420,38 +429,23 @@ def build_wheelhouse(
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
-    wheels = sorted(path.name for path in destination.glob("*.whl"))
-    _write_install_files(
-        destination,
-        distribution=distribution,
-        version=version,
-        python=python,
-        requirements=requirements,
-        wheels=wheels,
-        scenario_id=scenario_id,
-        map_group=map_group,
-    )
-    logger.info("Built a wheelhouse of %d wheels at %s", len(wheels), destination)
-    return Wheelhouse(
+    wheels = sorted(destination.glob("*.whl"))
+    built = Wheelhouse(
         root=destination,
         distribution=distribution,
         version=version,
-        wheels=wheels,
+        wheels=tuple(path.name for path in wheels),
+        size_bytes=sum(path.stat().st_size for path in wheels),
         python_tag=python,
         log=log,
     )
+    _write_install_files(built, requirements=requirements, run_command=run_command)
+    logger.info("Built a wheelhouse of %d wheels at %s", len(wheels), destination)
+    return built
 
 
 def _write_install_files(
-    destination: Path,
-    *,
-    distribution: str,
-    version: str,
-    python: str,
-    requirements: str,
-    wheels: list[str],
-    scenario_id: str,
-    map_group: str,
+    wheelhouse: Wheelhouse, *, requirements: str, run_command: str
 ) -> None:
     """Write the two files that make the directory installable by hand.
 
@@ -460,25 +454,24 @@ def _write_install_files(
     pip pick from the directory; ``README.md`` says how, for the person who
     unzips it a month later.
     """
-    (destination / "requirements.txt").write_text(
+    (wheelhouse.root / "requirements.txt").write_text(
         "# Every distribution this scenario needs, pinned to what the package's\n"
         "# uv.lock resolved. Install it against this directory and nothing is\n"
         "# fetched from an index:\n"
         "#\n"
         "#     pip install --no-index --find-links . -r requirements.txt\n"
-        f"{distribution}=={version}\n"
+        f"{wheelhouse.distribution}=={wheelhouse.version}\n"
         f"{requirements}\n",
         encoding="utf-8",
     )
     environment = code_environment(TEMPLATES_DIR)
-    (destination / "README.md").write_text(
+    (wheelhouse.root / "README.md").write_text(
         environment.get_template("wheelhouse_README.md.jinja").render(
-            distribution=distribution,
-            version=version,
-            python=python,
-            wheel_count=len(wheels),
-            scenario_id=scenario_id,
-            map_group=map_group,
+            distribution=wheelhouse.distribution,
+            version=wheelhouse.version,
+            python=wheelhouse.python_tag,
+            wheel_count=len(wheelhouse.wheels),
+            run_command=run_command,
         ),
         encoding="utf-8",
     )
