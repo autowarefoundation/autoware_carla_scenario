@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block title %}Map library · Scenario Editor{% endblock %}
+
+{% block crumb %}
+  <div class="ed-crumb">
+    <span class="ed-crumb-sep">/</span>
+    <span class="ed-crumb-name">Map library</span>
+  </div>
+{% endblock %}
+
+{% block content %}
+<div style="display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:16px; align-items:start; padding-top:20px">
+  <section class="ed-panel">
+    <div class="ed-panel-head">
+      <div>
+        <div class="ed-panel-title">Maps</div>
+        <div class="ed-panel-sub">
+          {% if repo %}
+            In <code class="mono">{{ repo }}</code>
+          {% else %}
+            Choose a repository to browse the HD maps it publishes
+          {% endif %}
+        </div>
+      </div>
+      {% if repo %}
+        <span class="ed-pill ed-pill-ok">{{ entries|length }} found</span>
+      {% endif %}
+    </div>
+
+    {% if error %}
+      <div class="ed-panel-body">
+        <div class="ed-notice ed-notice-bad">
+          {{ ic.icon('alert', 15) }}
+          <div><div class="ed-notice-title">That repository could not be read</div>{{ error }}</div>
+        </div>
+      </div>
+    {% elif entries %}
+      <ul>
+        {% for entry in entries %}
+        <li class="ed-draft">
+          <div style="min-width:0">
+            <span class="ed-draft-name">{{ entry.name }}</span>
+            <div class="ed-draft-meta">
+              <span class="mono">{{ entry.path }}</span>
+              <span class="sep">·</span>
+              <span>{{ entry.lanelet2_name }}</span>
+              {% if entry.has_projector_info %}
+                <span class="sep">·</span><span>projection</span>
+              {% endif %}
+              <span class="sep">·</span>
+              <span>{% if entry.has_xodr %}ships OpenDRIVE{% else %}OpenDRIVE from CARLA{% endif %}</span>
+            </div>
+            <div class="ed-draft-meta mono" style="font-size:10.5px">{{ entry.uri }}</div>
+          </div>
+          {% if draft_id %}
+            <button class="ed-btn-primary ed-btn-sm"
+                    hx-post="/draft/{{ draft_id }}/map/use"
+                    hx-vals='{"uri": {{ entry.uri|tojson }}}'
+                    hx-target="body" hx-swap="none"
+                    hx-on::after-request="window.location = '/draft/{{ draft_id }}'">
+              {{ ic.icon('check', 13) }} Use in this scenario
+            </button>
+          {% else %}
+            <form method="post" action="/maps/new">
+              <input type="hidden" name="uri" value="{{ entry.uri }}">
+              <button class="ed-btn-primary ed-btn-sm" type="submit">
+                {{ ic.icon('plus', 13) }} New scenario
+              </button>
+            </form>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    {% elif repo %}
+      <div class="ed-empty">
+        <div class="ed-empty-title">No maps in that repository</div>
+        <p>A map is a directory holding a Lanelet2 <code>.osm</code> file.</p>
+      </div>
+    {% else %}
+      <div class="ed-empty">
+        <div class="ed-empty-title">Nothing browsed yet</div>
+        <p>Pick a repository on the right, or paste the URL of one.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="ed-panel">
+    <div class="ed-panel-head">
+      <div class="ed-panel-title">Repository</div>
+    </div>
+    <div class="ed-panel-body">
+      <form method="get" action="/maps">
+        {% if draft_id %}<input type="hidden" name="draft" value="{{ draft_id }}">{% endif %}
+        <div class="ed-field">
+          <label class="ed-label" for="repo-uri">Git URL</label>
+          <input id="repo-uri" name="repo" class="ed-input mono" style="font-size:11.5px"
+                 value="{{ repo }}"
+                 placeholder="https://huggingface.co/datasets/OWNER/NAME/tree/REF">
+          <p class="ed-help">
+            Any git repository — HuggingFace, GitHub, your own server. Paste the
+            page URL; a <code>@ref</code> selects a branch, tag or commit.
+          </p>
+        </div>
+        <button type="submit" class="ed-btn-primary" style="width:100%">
+          {{ ic.icon('repo', 14) }} Browse
+        </button>
+      </form>
+
+      {% if repo %}
+        <form method="get" action="/maps" style="margin-top:8px">
+          {% if draft_id %}<input type="hidden" name="draft" value="{{ draft_id }}">{% endif %}
+          <input type="hidden" name="repo" value="{{ repo }}">
+          <input type="hidden" name="refresh" value="1">
+          <button type="submit" class="ed-btn" style="width:100%">
+            {{ ic.icon('globe', 14) }} Refresh from the server
+          </button>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="ed-panel-head" style="border-top:1px solid var(--line)">
+      <div class="ed-panel-title">Known repositories</div>
+    </div>
+    <ul>
+      {% for known in repositories %}
+      <li class="ed-draft">
+        <div style="min-width:0">
+          <a class="ed-draft-name"
+             href="/maps?repo={{ known.uri|urlencode }}{% if draft_id %}&draft={{ draft_id }}{% endif %}">
+            {{ known.label }}
+          </a>
+          <div class="ed-draft-meta">{{ known.description }}</div>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

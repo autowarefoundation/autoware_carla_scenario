@@ -15,6 +15,7 @@ from .scenario_runner import ScenarioRunner
 from .conditions import ScenarioResult
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
+from .maps import capture_opendrive
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 
@@ -55,6 +56,7 @@ class ScenarioQueue:
         server: Optional[CarlaServerManager] = None,
         *,
         xodr_path: Optional[Path] = None,
+        opendrive_path: Optional[Path] = None,
         lanelet2_path: Optional[Path] = None,
         map_name: Optional[str] = None,
         host: str = "localhost",
@@ -78,9 +80,16 @@ class ScenarioQueue:
                 together with *map_name*: the file at the
                 ``<MAP_NAME_PATH>`` env var is replaced with *xodr_path*,
                 then the map is loaded by name (retains full CARLA assets).
+            opendrive_path: Where to read OpenDRIVE from *without* installing
+                it into CARLA -- for a map whose roads the simulator already
+                ships, such as an Autoware map published for a CARLA town.  The
+                file is written from the loaded world when it is not there yet,
+                so the first run of such a scenario fills it and later ones read
+                it.  Ignored when *xodr_path* is given.
             lanelet2_path: Lanelet2 map file path (optional).  When provided
-                together with *xodr_path*, :class:`MapManager` is initialised
-                so that coordinate transforms (Lanelet2 ↔ OpenDRIVE) work.
+                together with an OpenDRIVE file, :class:`MapManager` is
+                initialised so that coordinate transforms (Lanelet2 ↔
+                OpenDRIVE) work.
             map_name: Built-in CARLA map name to load on start (optional).
                 Used alone or together with *xodr_path*.
             host: CARLA RPC host.
@@ -115,6 +124,7 @@ class ScenarioQueue:
             self._owns_server = True
 
         self._xodr_path = xodr_path
+        self._opendrive_path = opendrive_path
         self._lanelet2_path = lanelet2_path
         self._map_name = map_name
         self._host = host
@@ -266,14 +276,36 @@ class ScenarioQueue:
         # Initialise MapManager when both map files are available.
         # Pass the CARLA world so that spawn-point-based z_offset averaging
         # is used instead of single-point sampling.
-        if self._xodr_path is not None and self._lanelet2_path is not None:
+        xodr_path = self._xodr_path or self._capture_opendrive()
+        if xodr_path is not None and self._lanelet2_path is not None:
             MapManager.reset()
             MapManager.get_instance().initialize(
-                xodr_path=self._xodr_path,
+                xodr_path=xodr_path,
                 lanelet2_path=self._lanelet2_path,
                 carla_world=self._runner._world,
                 projector_type=self._projector_type,
             )
+
+    def _capture_opendrive(self) -> Optional[Path]:
+        """Return the OpenDRIVE for the loaded world, writing it out once.
+
+        A map published for Autoware carries no OpenDRIVE, because the roads
+        belong to the CARLA town it was recorded on.  The town is loaded by the
+        time this runs, so the road network is right there in the world -- and
+        writing it to *opendrive_path* means the sweeper and the editor, which
+        run before any world exists, find it on disk from then on.
+        """
+        destination = self._opendrive_path
+        if destination is None or self._runner is None:
+            return None
+        if destination.is_file():
+            return destination
+        world = self._runner._world
+        if world is None:
+            return None
+        written = capture_opendrive(world, destination)
+        logger.info("Wrote the loaded world's OpenDRIVE to %s", written)
+        return written
 
     def stop(self) -> None:
         """Stop the server if owned by this queue."""

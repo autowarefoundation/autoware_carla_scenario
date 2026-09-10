@@ -17,6 +17,11 @@ traffic_manager:
 
 map:
   name: ???
+  # A git repository holding the HD map, e.g.
+  #   map.source=git+https://huggingface.co/datasets/OWNER/NAME@REF#PATH
+  # Declared here so Hydra's struct mode accepts it as an override; see
+  # autoware_carla_scenario.maps for what it resolves to.
+  source: null
   xodr_path: null
   lanelet2_path: null
   no_3d_model_lanelet_ids: []

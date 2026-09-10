@@ -15,6 +15,14 @@
       <div><div class="ed-notice-title">That edit was not applied</div>{{ error }}</div>
     </div>
   {% endif %}
+
+  {# A map action can succeed quietly and slowly -- a clone, a fetch from
+     CARLA -- so it says so, where a field edit does not need to. #}
+  {% if notice %}
+    {% with tone = 'ok', message = notice %}
+      {% include "partials/status.html" %}
+    {% endwith %}
+  {% endif %}
 </div>
 
 {# `display: contents` on both, so the timeline and the inspector are items of

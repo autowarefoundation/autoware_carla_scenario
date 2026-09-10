@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Mapping, get_args
+from typing import TYPE_CHECKING, Any, Mapping, get_args
 
 from ..authoring.models import (
     ActionNode,
@@ -41,14 +42,33 @@ from ..authoring.registry import (
     get_constraint_spec,
 )
 from ..authoring.starter import blank_document, new_document
+from ..maps import (
+    KNOWN_REPOSITORIES,
+    MapCacheError,
+    MapResolutionError,
+    MapRepository,
+    MapSource,
+    MapSourceError,
+    OpenDriveUnavailable,
+    ensure_xodr,
+    list_maps,
+    pin_source,
+    resolve_map,
+)
 from ..authoring.validator import ValidationReport, validate_document
 from .forms import parse_params
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from ..maps import MapEntry
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "EditorError",
     "EditorService",
+    "as_int",
     "SLOT_FAIL",
     "SLOT_PASS",
     "condition_actions",
@@ -61,6 +81,27 @@ SLOT_FAIL = "fail"
 
 class EditorError(Exception):
     """Raised when a request asks for something the document cannot do."""
+
+
+@contextmanager
+def _map_errors(prefix: str = "") -> "Iterator[None]":
+    """Turn any map problem into something the editor can show.
+
+    Every map operation can fail four ways -- an unusable URI, an unreachable
+    repository, a repository with no map in it, no OpenDRIVE to be had -- and
+    all four mean the same thing to the person who pressed the button.  Deciding
+    that once is what stops a fifth failure mode from escaping as a 500 because
+    one method's ``except`` clause was not updated with the others.
+    """
+    try:
+        yield
+    except (
+        MapSourceError,
+        MapCacheError,
+        MapResolutionError,
+        OpenDriveUnavailable,
+    ) as exc:
+        raise EditorError(f"{prefix}: {exc}" if prefix else str(exc)) from exc
 
 
 class EditorService:
@@ -209,10 +250,15 @@ class EditorService:
             document.timeout_seconds = _as_float(
                 form["timeout_seconds"], "Timeout", document.timeout_seconds
             )
-        for attribute in ("group", "name", "xodr_path", "lanelet2_path"):
+        for attribute in ("group", "name", "source", "xodr_path", "lanelet2_path"):
             key = f"map_{attribute}"
             if key in form:
                 setattr(document.map, attribute, str(form[key]).strip() or None)
+        if document.map.source:
+            # Normalise whatever was pasted -- a browser URL, most likely --
+            # into the canonical form, so the field shows what will be stored
+            # and two spellings of one map are one string.
+            document.map.source = self._canonical_source(document.map.source)
         # ``group`` and ``name`` are plain strings, never None.
         document.map.group = document.map.group or "nishishinjuku"
         document.map.name = document.map.name or "Town10HD_Opt"
@@ -223,6 +269,149 @@ class EditorService:
             document.map.no_3d_model_lanelet_ids = (
                 parsed if isinstance(parsed, list) else []
             )
+
+    # ------------------------------------------------------------------
+    # Maps
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _canonical_source(uri: str) -> str:
+        """Return *uri* in canonical form, or raise a message worth showing.
+
+        Raises:
+            EditorError: If it names no repository.
+        """
+        with _map_errors("Map source"):
+            return MapSource.parse(uri).uri
+
+    def map_repositories(self) -> tuple[MapRepository, ...]:
+        """Return the map repositories the library offers before anyone types one."""
+        return KNOWN_REPOSITORIES
+
+    def use_map(self, document: ScenarioDocument, uri: str) -> None:
+        """Point *document* at the map *uri* names, and download it.
+
+        Naming a map and having it are one action here: a scenario cannot be
+        edited against a map that is not on the machine, so choosing one from
+        the library that left it undownloaded would only defer the same wait to
+        the first thing that needed it.
+
+        Raises:
+            EditorError: If the map could not be fetched.
+        """
+        document.map.source = self._canonical_source(uri)
+        # A source supersedes whatever files the document named before it;
+        # leaving them would silently keep resolving to the old map.
+        document.map.lanelet2_path = None
+        document.map.xodr_path = None
+        self.fetch_map(document)
+
+    def fetch_map(self, document: ScenarioDocument, *, refresh: bool = False) -> str:
+        """Download *document*'s map, and return a line saying what happened.
+
+        Args:
+            document: The scenario being edited.
+            refresh: Fetch the repository again rather than trusting the cache.
+
+        Raises:
+            EditorError: If the document names no source, or it could not be
+                resolved.
+        """
+        source = self._require_source(document)
+        with _map_errors():
+            resolved = resolve_map(source, refresh=refresh)
+
+        # The directory name is the CARLA world name -- that is the convention
+        # a published Autoware map follows -- so taking it saves the one piece
+        # of the map config a source cannot otherwise supply.
+        document.map.name = resolved.name
+        where = "already on disk" if resolved.provisioned else "cached"
+        commit = f" at {resolved.commit[:10]}" if resolved.commit else ""
+        return f"{resolved.name} {where}{commit}."
+
+    def pin_map(self, document: ScenarioDocument) -> str:
+        """Rewrite the map source to the exact commit it resolves to.
+
+        Raises:
+            EditorError: If the document names no source, or the commit behind
+                it could not be established.
+        """
+        source = self._require_source(document)
+        with _map_errors():
+            # Refreshed, so the pin names the repository's current tip rather
+            # than whichever revision this machine happens to have cached.
+            pinned = pin_source(source, refresh=True)
+        document.map.source = pinned
+        # The cache is keyed by ref, so the pinned URI addresses an entry the
+        # branch's own checkout is not in.  Resolving it now means pinning
+        # leaves the map ready rather than apparently un-downloaded -- and it
+        # costs no network, because the cache adopts the entry already at that
+        # commit.
+        self.fetch_map(document)
+        return f"Pinned to {MapSource.parse(pinned).ref[:10]}."
+
+    def fetch_opendrive(
+        self, document: ScenarioDocument, *, host: str, port: int
+    ) -> str:
+        """Read the map's OpenDRIVE from a CARLA server and cache it.
+
+        Raises:
+            EditorError: If the map is not downloaded yet, or CARLA could not
+                be reached.
+        """
+        source = self._require_source(
+            document,
+            "OpenDRIVE is fetched for a map named by a source. This scenario "
+            "names its files directly, so set the .xodr path.",
+        )
+        with _map_errors():
+            path = ensure_xodr(
+                resolve_map(source),
+                map_name=document.map.name or None,
+                host=host,
+                port=port,
+                refresh=True,
+            )
+        from . import map_preview  # noqa: PLC0415 -- imports this module back
+
+        # The preview keys its parsed maps on the file paths, and the map just
+        # gained one it did not have; without this the next preview would be
+        # answered from a parse made when there was no OpenDRIVE.
+        map_preview.clear_cache()
+        return f"OpenDRIVE written to {path.name}."
+
+    def browse_maps(self, uri: str, *, refresh: bool = False) -> list[MapEntry]:
+        """Return the maps the repository *uri* names offers.
+
+        Raises:
+            EditorError: If the repository could not be read.
+        """
+        with _map_errors():
+            return list(list_maps(uri, refresh=refresh))
+
+    @staticmethod
+    def _require_source(document: ScenarioDocument, message: str = "") -> str:
+        """Return the document's map source, or say it has none.
+
+        Raises:
+            EditorError: If the document names no map source.
+        """
+        if not document.map.source:
+            raise EditorError(message or "This scenario names no map source.")
+        return document.map.source
+
+    def create_draft_for_map(self, uri: str, title: str = "") -> Draft:
+        """Create a draft whose map is the one *uri* names.
+
+        Raises:
+            EditorError: If the map could not be fetched.
+        """
+        draft = self.create_draft(kind="blank", title=title)
+        self.use_map(draft.document, uri)
+        if not title:
+            draft.document.title = f"New scenario on {draft.document.map.name}"
+        draft.title = draft.document.title
+        return self.save(draft)
 
     # ------------------------------------------------------------------
     # Entities
@@ -294,7 +483,7 @@ class EditorService:
         # lanelet field asks, and `set_lanelet_mode` is the one place that
         # answers it -- see `/draft/<id>/lanelet-mode`.
         if "spawn_lanelet_id" in form:
-            spawn.lanelet_id = _as_int(
+            spawn.lanelet_id = as_int(
                 form["spawn_lanelet_id"], "Lanelet ID", spawn.lanelet_id
             )
         if "spawn_s_mode" in form:
@@ -351,7 +540,7 @@ class EditorService:
             return
         if entity.goal is None:
             entity.goal = GoalSpec()
-        entity.goal.lanelet_id = _as_int(raw, "Goal lanelet ID", entity.goal.lanelet_id)
+        entity.goal.lanelet_id = as_int(raw, "Goal lanelet ID", entity.goal.lanelet_id)
         if "goal_s" in form:
             entity.goal.s = _as_float(form["goal_s"], "Goal offset", entity.goal.s)
 
@@ -712,7 +901,7 @@ def _as_float(raw: Any, label: str, fallback: float) -> float:
         raise EditorError(f"{label} must be a number, got {raw!r}.") from exc
 
 
-def _as_int(raw: Any, label: str, fallback: int) -> int:
+def as_int(raw: Any, label: str, fallback: int) -> int:
     """Return *raw* as an int, or raise a user-facing error."""
     text = str(raw).strip()
     if not text:

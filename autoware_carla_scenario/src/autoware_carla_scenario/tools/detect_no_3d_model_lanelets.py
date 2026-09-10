@@ -52,7 +52,7 @@ from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s as _interpolate_at_s_4,
 )
-from autoware_carla_scenario.scenario_runner import _map_name_to_env_var
+from autoware_carla_scenario.maps.opendrive import map_asset_env_var
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +400,7 @@ def main() -> None:
 
     # Overwrite the CARLA-internal XODR and load the map (same as
     # ScenarioRunner.load_map_by_overwriting_xodr).
-    env_var = _map_name_to_env_var(map_name)
+    env_var = map_asset_env_var(map_name)
     dest_str = os.environ.get(env_var)
     if dest_str:
         dest = Path(dest_str)

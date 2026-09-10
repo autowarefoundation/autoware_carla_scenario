@@ -31,7 +31,6 @@ offset above zero.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
@@ -39,7 +38,12 @@ import lanelet2.core
 import lanelet2.io
 from pyxodr.road_objects.network import RoadNetwork
 
-from .projection import resolve_projector
+# ``_parse_geo_reference`` moved to `projection`, beside `map_origin`, which is
+# the only thing that consults it now.  Re-exported because it is the
+# geoReference parser this package has always offered under this name.
+from .projection import _parse_geo_reference, map_origin, resolve_projector
+
+__all__ = ["MapManager", "_parse_geo_reference"]
 from .road_lanelet_mapping import RoadLaneletMapping
 
 logger = logging.getLogger(__name__)
@@ -144,12 +148,20 @@ class MapManager:
         if not lanelet2_path.exists():
             raise FileNotFoundError(f"Lanelet2 file not found: {lanelet2_path}")
 
-        # Parse geoReference from XODR to get the UTM origin
-        xodr_content = xodr_path.read_text(encoding="utf-8")
-        lat, lon, alt = _parse_geo_reference(xodr_content)
+        # Where the map is anchored, decided the way the sweeper decides it:
+        # the map's own descriptor first, the OpenDRIVE geoReference second.
+        # Reading it one way here and another there is how a vehicle ends up
+        # somewhere the sweep never looked.
+        (lat, lon, alt), anchored_by = map_origin(lanelet2_path, xodr_path)
         self._geo_origin = (lat, lon, alt)
+        logger.info(
+            "Anchoring %s at (%s, %s) from %s",
+            lanelet2_path.name,
+            lat,
+            lon,
+            anchored_by,
+        )
 
-        # Load Lanelet2 map using the same origin as the XODR
         origin = lanelet2.io.Origin(lat, lon)
         projector, projector_type = resolve_projector(
             lanelet2_path, origin, projector_type
@@ -197,7 +209,9 @@ class MapManager:
             self._road_lanelet_mapping = None
 
         # Build carla.Map for waypoint-based road/lane lookups (optional).
-        self._build_carla_map(xodr_content, xodr_path.stem, carla_world)
+        self._build_carla_map(
+            xodr_path.read_text(encoding="utf-8"), xodr_path.stem, carla_world
+        )
 
     # ------------------------------------------------------------------
     # Properties
@@ -430,61 +444,3 @@ class MapManager:
                 best_z = float(np.interp(arc[min_idx], arc, z_coords))
 
         return ll2_z - best_z
-
-
-# ------------------------------------------------------------------
-# Helper: parse geoReference PROJ string from XODR header
-# ------------------------------------------------------------------
-
-
-def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
-    """Extract (lat, lon, alt) from the geoReference PROJ string in an XODR file.
-
-    Parameters
-    ----------
-    xodr_content:
-        Full text content of the .xodr file.
-
-    Returns
-    -------
-    tuple[float, float, float]
-        (latitude, longitude, altitude).  Altitude defaults to 0.0 if absent.
-
-    Raises
-    ------
-    ValueError
-        If lat_0 or lon_0 cannot be found.
-    """
-    # Extract the geoReference element content
-    geo_ref_match = re.search(
-        r"<geoReference>\s*<!\[CDATA\[(.*?)\]\]>\s*</geoReference>",
-        xodr_content,
-        re.DOTALL,
-    )
-    if geo_ref_match is None:
-        # Fallback: try without CDATA wrapper
-        geo_ref_match = re.search(
-            r"<geoReference>(.*?)</geoReference>",
-            xodr_content,
-            re.DOTALL,
-        )
-    if geo_ref_match is None:
-        raise ValueError("No <geoReference> element found in XODR file.")
-
-    proj_string = geo_ref_match.group(1)
-
-    lat_match = re.search(r"\+lat_0=([-\d.]+)", proj_string)
-    lon_match = re.search(r"\+lon_0=([-\d.]+)", proj_string)
-
-    if lat_match is None:
-        raise ValueError(f"Could not find +lat_0 in geoReference: {proj_string!r}")
-    if lon_match is None:
-        raise ValueError(f"Could not find +lon_0 in geoReference: {proj_string!r}")
-
-    lat = float(lat_match.group(1))
-    lon = float(lon_match.group(1))
-
-    alt_match = re.search(r"\+h_0=([-\d.]+)", proj_string)
-    alt = float(alt_match.group(1)) if alt_match else 0.0
-
-    return lat, lon, alt

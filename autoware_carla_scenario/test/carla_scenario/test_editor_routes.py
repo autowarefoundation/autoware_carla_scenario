@@ -1169,7 +1169,7 @@ class TestSpawnConstraints:
             data={"slot": "npc1.spawn", "load_map": "1"},
         )
         assert response.status_code == 200
-        assert "no map files configured" in response.text
+        assert "no map configured" in response.text
 
 
 class TestScenarioMetadata:

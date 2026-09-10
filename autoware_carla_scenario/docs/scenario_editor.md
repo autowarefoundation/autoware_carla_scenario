@@ -27,6 +27,18 @@ There is no editor-only runtime. Every action a document names is built by
 `autoware_carla_scenario.conditions`, and every spawn constraint is evaluated by
 the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
+## Which map: the Map library
+
+A scenario's map is named by a **source URI** pointing at a git repository, and
+the editor fetches and caches it. **Map library** in the header browses a
+repository -- HuggingFace, GitHub, your own -- and lists every map in it; the
+Scenario inspector shows, per scenario, whether the map is downloaded and
+whether its revision is pinned.
+
+See [HD Maps from a Git Repository](maps.md). Two things are worth knowing here:
+a map Autoware's own setup already downloaded is used as it sits, and OpenDRIVE
+is not needed to author a scenario -- lanelets are.
+
 ## Where it happens: the places panel
 
 One map carries every lanelet the scenario names -- each entity's spawn, the

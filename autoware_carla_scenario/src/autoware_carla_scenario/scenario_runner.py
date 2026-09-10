@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import time
 from pathlib import Path
@@ -21,6 +20,7 @@ from .entity.registry import clear_entities, register_entity
 from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
+from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
@@ -28,29 +28,6 @@ from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 
 logger = logging.getLogger(__name__)
-
-
-def _map_name_to_env_var(map_name: str) -> str:
-    """Convert a CamelCase map name to an UPPER_SNAKE_CASE environment variable name.
-
-    A ``_PATH`` suffix is appended so callers can use the variable to locate
-    the ``.xodr`` file inside the CARLA installation.
-
-    Examples::
-
-        _map_name_to_env_var("NishishinjukuMap")  # -> "NISHISHINJUKU_MAP_PATH"
-        _map_name_to_env_var("Town01")             # -> "TOWN01_PATH"
-        _map_name_to_env_var("Town10HD_Opt")       # -> "TOWN10_HD_OPT_PATH"
-
-    Args:
-        map_name: CamelCase CARLA map name.
-
-    Returns:
-        The derived environment variable name.
-    """
-    # Insert underscore between a lowercase/digit and the following uppercase letter
-    snake = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", map_name)
-    return snake.upper() + "_PATH"
 
 
 #: Log ego OpenDRIVE position every N ticks (~1 s at 20 Hz).
@@ -398,7 +375,7 @@ class ScenarioRunner:
             RuntimeError: If the derived environment variable is not set.
             FileNotFoundError: If *xodr_path* does not exist.
         """
-        env_var = _map_name_to_env_var(map_name)
+        env_var = map_asset_env_var(map_name)
         dest_str = os.environ.get(env_var)
         if not dest_str:
             raise RuntimeError(
