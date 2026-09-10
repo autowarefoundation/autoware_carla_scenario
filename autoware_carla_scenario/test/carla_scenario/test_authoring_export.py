@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -377,6 +378,40 @@ class TestExportRefusals:
             export_package(new_document(), tmp_path, dev_mode=True)
         assert list(tmp_path.iterdir()) == []
 
+    def test_a_failed_final_check_takes_the_wheelhouse_with_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`uv lock --check` runs after both directories are in place.
+
+        A wheelhouse left behind by a failed export looks finished, and blocks
+        the next export unless it is forced.
+        """
+        import autoware_carla_scenario.authoring.package_export as module
+
+        def _lock(root: Path) -> str:
+            (root / "uv.lock").write_text("# stub\n", encoding="utf-8")
+            return ""
+
+        def _wheelhouse(_root: Path, destination: Path, **_: Any) -> Any:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "stub-0.1.0-py3-none-any.whl").write_text("")
+            return module.Wheelhouse(
+                root=destination, distribution="stub", version="0.1.0"
+            )
+
+        def _refuse(_root: Path) -> str:
+            raise PackageExportError("lock no longer matches")
+
+        monkeypatch.setattr(module, "_lock", _lock)
+        monkeypatch.setattr(module, "_verify_sync", lambda _root: "")
+        monkeypatch.setattr(module, "_run_tests", lambda _root: (True, ""))
+        monkeypatch.setattr(module, "build_wheelhouse", _wheelhouse)
+        monkeypatch.setattr(module, "_check_lock", _refuse)
+
+        with pytest.raises(PackageExportError):
+            export_package(new_document(), tmp_path, dev_mode=True)
+        assert list(tmp_path.iterdir()) == []
+
 
 class TestVendoredCarlaClient:
     """The client is on no index, so a package that does not carry it cannot run."""
@@ -433,18 +468,68 @@ class TestVendoredCarlaClient:
         assert data["tool"]["uv"]["find-links"] == ["carla_wheels"]
         assert list((package / "carla_wheels").glob("carla-*.whl"))
 
-    def test_a_missing_client_is_a_warning_not_a_silent_omission(
+    def test_the_extra_is_asked_for_even_with_no_wheel_to_vendor(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A scenario that cannot import carla cannot run; saying so is the point."""
+        """Vendoring answers *where from*, not *whether*.
+
+        The legacy client is published to PyPI, so nothing has to be vendored
+        for it -- and an export that dropped the extra because it found no
+        local wheel would build a wheelhouse with no `carla` in it and report
+        success. A scenario that cannot import carla cannot run.
+        """
         import autoware_carla_scenario.authoring.package_export as module
 
         monkeypatch.setattr(module, "carla_wheels", lambda _extra: [])
         result = export_package(new_document(), tmp_path, **OFFLINE)
         data = tomllib.loads((result.root / "pyproject.toml").read_text())
-        assert DISTRIBUTION in data["project"]["dependencies"]
+        assert f"{DISTRIBUTION}[{carla_extra()}]" in data["project"]["dependencies"]
+        # Nothing to point a relative find-links at.
         assert "find-links" not in data.get("tool", {}).get("uv", {})
-        assert any("CARLA client wheel" in warning for warning in result.warnings)
+        assert any("No local wheel was vendored" in w for w in result.warnings)
+
+
+class TestShippedRequirements:
+    """`-r requirements.txt` has to install with `--no-index` like the rest."""
+
+    def test_direct_references_become_the_version_that_was_built(self) -> None:
+        """A git or path source sends pip to the network whatever --find-links says.
+
+        `uv export` keeps those sources as direct references, so copying its
+        output verbatim would ship a file that clones the repository -- on a
+        machine chosen for having no network.
+        """
+        from autoware_carla_scenario.authoring.wheelhouse import (
+            _pin_direct_references,
+        )
+
+        exported = "\n".join(
+            [
+                "annotated-types==0.8.0",
+                f"{DISTRIBUTION}[carla] @ git+https://example.com/r@abc"
+                "#subdirectory=autoware_carla_scenario",
+                "    # via cut-in-scenario",
+                f"{CONVERTER_DISTRIBUTION} @ file:///somewhere/local",
+                "colorama==0.4.6 ; sys_platform == 'win32'",
+                "unbuilt @ git+https://example.com/nope",
+            ]
+        )
+        rewritten = _pin_direct_references(
+            exported,
+            (
+                "annotated_types-0.8.0-py3-none-any.whl",
+                "autoware_carla_scenario-0.1.0-py3-none-any.whl",
+                "autoware_lanelet2_to_opendrive-2.62.0-py3-none-any.whl",
+            ),
+        ).splitlines()
+
+        assert f"{DISTRIBUTION}[carla]==0.1.0" in rewritten
+        assert f"{CONVERTER_DISTRIBUTION}==2.62.0" in rewritten
+        # Markers travel; comments and unbuilt requirements are left alone.
+        assert "colorama==0.4.6 ; sys_platform == 'win32'" in rewritten
+        assert "    # via cut-in-scenario" in rewritten
+        assert "unbuilt @ git+https://example.com/nope" in rewritten
+        assert not any(" @ git+https://example.com/r" in line for line in rewritten)
 
 
 class TestWheelhouseRefusals:
@@ -527,6 +612,18 @@ class TestExportSelfCheck:
             assert "carla-" in names
         assert (wheelhouse.root / "requirements.txt").is_file()
         assert (wheelhouse.root / "README.md").is_file()
+
+        # The manifest is read after the export, so it has to name the
+        # directory that is there -- not the temporary one it was built in.
+        recorded = result.manifest["wheelhouse"]
+        assert recorded["directory"] == wheelhouse.root.name
+        assert (result.root.parent / recorded["directory"]).is_dir()
+
+        # `-r requirements.txt` is documented as an offline install, so nothing
+        # in it may send pip to a network.
+        shipped = (wheelhouse.root / "requirements.txt").read_text()
+        assert " @ git+" not in shipped
+        assert " @ file://" not in shipped
 
     def test_the_wheelhouse_installs_with_pip_and_nothing_else(
         self, exported: ExportResult, tmp_path: Path

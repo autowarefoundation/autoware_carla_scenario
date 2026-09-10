@@ -449,6 +449,46 @@ def build_wheelhouse(
     return built
 
 
+def _canonical(name: str) -> str:
+    """Return *name* in PEP 503 normalised form, for comparing distributions."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _pin_direct_references(requirements: str, wheels: tuple[str, ...]) -> str:
+    """Rewrite ``name @ <url>`` requirements to the version built for them.
+
+    ``uv export`` keeps a git or path source as a *direct reference*, and pip
+    honours a direct reference however many ``--find-links`` it was given: it
+    clones the repository, or reads a directory on the exporting machine.  Both
+    are exactly what a wheelhouse exists to avoid, and neither is there on the
+    target.  The wheel is already in the directory, so naming it by version is
+    what makes ``-r requirements.txt`` an offline install.
+
+    A requirement whose wheel is not in the directory is left alone rather than
+    guessed at.
+    """
+    versions = {}
+    for wheel in wheels:
+        name, version = wheel.split("-")[:2]
+        versions[_canonical(name)] = version
+
+    lines = []
+    for line in requirements.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or " @ " not in stripped:
+            lines.append(line)
+            continue
+        head, _, rest = stripped.partition(" @ ")
+        pinned = versions.get(_canonical(head.split("[")[0]))
+        if pinned is None:
+            lines.append(line)
+            continue
+        # Markers travel with the requirement; the source does not.
+        marker = f" ;{rest.split(';', 1)[1]}" if ";" in rest else ""
+        lines.append(f"{head}=={pinned}{marker}")
+    return "\n".join(lines)
+
+
 def _write_install_files(
     wheelhouse: Wheelhouse, *, requirements: str, run_command: str
 ) -> None:
@@ -466,7 +506,7 @@ def _write_install_files(
         "#\n"
         "#     pip install --no-index --find-links . -r requirements.txt\n"
         f"{wheelhouse.distribution}=={wheelhouse.version}\n"
-        f"{requirements}\n",
+        f"{_pin_direct_references(requirements, wheelhouse.wheels)}\n",
         encoding="utf-8",
     )
     environment = code_environment(TEMPLATES_DIR)

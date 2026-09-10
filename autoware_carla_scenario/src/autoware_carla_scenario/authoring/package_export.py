@@ -250,28 +250,31 @@ def _pin_summary(pin: Pin) -> str:
 def _vendor_carla_wheels(root: Path, extra: str, warnings: list[str]) -> Optional[str]:
     """Copy the CARLA client wheels into the package.  Returns their directory.
 
-    The client is not published to any index, so a package that merely *names*
-    it cannot install anywhere.  Copying the wheel in and pointing uv at it with
-    a relative ``find-links`` keeps the package self-contained wherever it is
-    copied, and puts the client in the wheelhouse built from it -- without which
-    the installed scenario cannot import ``carla`` and cannot run.
+    The package always *asks* for the client through the framework's extra; the
+    question here is only where the client comes from.  0.10.0 is published to
+    no index, so the wheel has to travel with the package: copying it in and
+    pointing uv at it with a relative ``find-links`` keeps the package
+    self-contained wherever it is copied.  0.9.16 is on PyPI, so nothing needs
+    vendoring and the resolver finds it.
 
     Args:
         root: The package being written.
         extra: The framework extra whose client to vendor.
-        warnings: Appended to when no client wheel could be found.
+        warnings: Appended to when no local wheel was found.
 
     Returns:
-        The relative directory the wheels were copied into, or ``None`` when no
-        wheel could be found -- which is what happens when the framework is
-        installed rather than run out of its repository.
+        The relative directory the wheels were copied into, or ``None`` when
+        there was no local wheel to copy -- either because the client is on an
+        index, or because the framework is installed rather than run out of its
+        repository.
     """
     wheels = carla_wheels(extra)
     if not wheels:
         warnings.append(
-            "No CARLA client wheel was found to vendor, so the package does "
-            "not install one. It is not published to any index either, so the "
-            "scenario will not run until a client is installed by hand."
+            f"No local wheel was vendored for the '{extra}' CARLA client, so "
+            "it has to resolve from an index. If that client is not published "
+            "there, locking will fail -- point SCENARIO_EXPORT_CARLA_WHEELS at "
+            "a directory holding its wheel."
         )
         return None
     destination = root / VENDORED_WHEELS_DIR
@@ -701,11 +704,14 @@ def export_package(
     log = ""
     built: Optional[Wheelhouse] = None
     try:
+        # The extra is requested whichever way the client is obtained: it is
+        # what puts `carla` in the wheelhouse, and a scenario that cannot
+        # import it cannot run. Vendoring is the separate question of whether
+        # a copy has to travel with the package -- 0.10.0 is on no index, so
+        # it does; 0.9.16 is on PyPI, so it does not.
         extra = carla_extra()
+        pin = replace(pin, extras=(extra,))
         vendored = _vendor_carla_wheels(staging, extra, warnings)
-        if vendored is not None:
-            # The client only reaches the wheelhouse if the package asks for it.
-            pin = replace(pin, extras=(extra,))
 
         files = _write_package_tree(
             staging, document, names, pin, uv_version, vendored, warnings
@@ -723,6 +729,10 @@ def export_package(
         if locked:
             built = _build_wheelhouse(staging, wheelhouse_staging, document, names)
             log += built.log
+            # Named for where it is about to be moved: the manifest below
+            # records the directory a reader will actually find, not the
+            # temporary one it was assembled in.
+            built = replace(built, root=wheelhouse_target)
         else:
             warnings.append(
                 "No wheelhouse was built: it is the lockfile resolved into "
@@ -748,15 +758,16 @@ def export_package(
             if wheelhouse_target.exists():
                 shutil.rmtree(wheelhouse_target)
             shutil.move(str(wheelhouse_staging), str(wheelhouse_target))
-            built = replace(built, root=wheelhouse_target)
 
         if locked:
             try:
                 log += _check_lock(target)
             except PackageExportError:
-                # The package is already in place; an export that cannot be
-                # synced must not be left behind looking finished.
+                # Both are already in place; an export that cannot be synced
+                # must not be left behind looking finished -- and a wheelhouse
+                # left there would also block the next export without `force`.
                 shutil.rmtree(target, ignore_errors=True)
+                shutil.rmtree(wheelhouse_target, ignore_errors=True)
                 raise
     except PackageExportError as exc:
         exc.log = f"{exc.log}\n{log}" if exc.log else log
