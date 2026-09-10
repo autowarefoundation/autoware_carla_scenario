@@ -41,6 +41,7 @@ __all__ = [
     "map_paths",
     "map_status",
     "materialize_constraints",
+    "missing_map_reason",
 ]
 
 #: Parsed maps kept in memory, newest last.  Parsing is measured in seconds, so
@@ -349,12 +350,24 @@ def clear_cache() -> None:
     _MAP_CACHE.clear()
 
 
-def _missing_map_reason(document: ScenarioDocument) -> str:
-    """Say why the document has no Lanelet2 map, and what to do about it."""
+def missing_map_reason(document: ScenarioDocument) -> str:
+    """Say why the document has no readable Lanelet2 map, and what to do.
+
+    Said in two places -- where the map would have been drawn, and where a
+    preview would have been evaluated -- so it is worded once.  A scenario that
+    names a map repository is not misconfigured, it is just not downloaded yet,
+    and telling that person to type a path would be telling them to undo the
+    thing they did.
+    """
     if document.map.source:
         return (
             "This scenario's map has not been downloaded yet. Fetch it from "
             "the Map library, or clear the source and name a local file."
+        )
+    if document.map.lanelet2_path:
+        return (
+            "The Lanelet2 file this scenario names cannot be read: "
+            f"{document.map.lanelet2_path}"
         )
     return (
         "The scenario has no map configured. Set a map source, or the Lanelet2 "
@@ -371,7 +384,7 @@ def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     """
     key = _cache_key(paths)
     if key is None:
-        raise FileNotFoundError(_missing_map_reason(document))
+        raise FileNotFoundError(missing_map_reason(document))
     cached = _MAP_CACHE.get(key)
     if cached is not None:
         _MAP_CACHE.move_to_end(key)

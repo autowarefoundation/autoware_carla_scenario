@@ -607,6 +607,37 @@ class TestEditorMapSource:
         assert response.status_code == 200
         assert response.text == _OSM
 
+    def test_the_places_panel_draws_the_map_it_came_from(
+        self, editor: "TestClient", origin_repo: Path
+    ) -> None:
+        """The panel asks the *resolved* map, not the field a source empties.
+
+        Choosing a map from the library clears ``map.lanelet2_path`` -- the
+        source supersedes it -- so a panel that asked that field whether there
+        was a map drew nothing for every scenario naming a repository, while
+        ``/map.osm`` beside it served the same map perfectly well.
+        """
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+
+        body = editor.get(f"/draft/{draft_id}/map-view").text
+        assert 'data-viewer-key="scenario-map"' in body
+        assert "No map" not in body
+
+    def test_a_map_not_downloaded_yet_says_so_rather_than_asking_for_a_path(
+        self, editor: "TestClient", origin_repo: Path
+    ) -> None:
+        """Telling that person to type a path is telling them to undo the source."""
+        draft_id = _new_draft(editor)
+        editor.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_source": _uri(origin_repo), "map_lanelet2_path": ""},
+        )
+
+        body = editor.get(f"/draft/{draft_id}/map-view").text
+        assert "No map" in body
+        assert "has not been downloaded yet" in body
+
     def test_the_exported_config_carries_the_source(
         self, editor: "TestClient", drafts: "DraftStore", origin_repo: Path
     ) -> None:
