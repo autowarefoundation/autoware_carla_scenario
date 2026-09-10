@@ -47,7 +47,7 @@ KNOWN_REPOSITORIES: tuple[MapRepository, ...] = (
         label="AutowareFoundation / carla-ue5-maps",
         uri=(
             "git+https://huggingface.co/datasets/AutowareFoundation/"
-            "carla-ue5-maps@splatsim"
+            "carla-ue5-maps@main"
         ),
         description=(
             "Autoware maps for the CARLA 0.10 towns, one directory per world. "

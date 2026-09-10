@@ -252,7 +252,7 @@ def pin_source(
 ) -> str:
     """Return *source* rewritten to name the exact commit it resolves to now.
 
-    A scenario that says ``@splatsim`` runs against whatever that branch holds
+    A scenario that says ``@main`` runs against whatever that branch holds
     on the day it runs; the same scenario pinned to the commit behind that
     branch runs against the same map for as long as the repository exists.
     Pinning is therefore what makes a result comparable to an older one, and

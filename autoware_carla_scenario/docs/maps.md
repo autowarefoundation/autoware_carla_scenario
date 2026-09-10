@@ -8,7 +8,7 @@ caches it, and reads it from there:
 ```yaml
 map:
   name: Town10HD_Opt
-  source: git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@6e3105d6709008a32cffcdf235ebc2410377275c#autoware_maps/Town10HD_Opt
+  source: git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@dea2cfeab0e00238c3bdbefc48621cefb3dc04a2#autoware_maps/Town10HD_Opt
 ```
 
 Everything below is available two ways, because a scenario is written two ways:
@@ -147,12 +147,12 @@ single file can be overridden without abandoning the source.
 ```python
 from autoware_carla_scenario.maps import list_maps, resolve_map
 
-for entry in list_maps("https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@splatsim"):
+for entry in list_maps("https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@main"):
     print(entry.name, entry.uri)
 
 hd_map = resolve_map(
     "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
-    "@splatsim#autoware_maps/Town10HD_Opt"
+    "@main#autoware_maps/Town10HD_Opt"
 )
 hd_map.lanelet2_path   # -> Path to the .osm, downloaded if it was not there
 hd_map.commit          # -> the revision it is at

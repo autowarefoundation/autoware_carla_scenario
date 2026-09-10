@@ -86,7 +86,7 @@ class MapConfig:
 
     #: Optional git repository holding the HD map, as a single URI::
     #:
-    #:     git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@splatsim#autoware_maps/Town10HD_Opt
+    #:     git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@main#autoware_maps/Town10HD_Opt
     #:
     #: The repository is cloned into ``~/autoware_data/maps`` -- the same place
     #: Autoware's own setup downloads map datasets to, so a map it already

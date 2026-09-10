@@ -14,7 +14,7 @@ used as it sits::
 
     hd_map = resolve_map(
         "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
-        "@splatsim#autoware_maps/Town10HD_Opt"
+        "@main#autoware_maps/Town10HD_Opt"
     )
     hd_map.lanelet2_path  # -> .../autoware_maps/Town10HD_Opt/lanelet2_map.osm
 

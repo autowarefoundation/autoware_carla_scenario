@@ -10,6 +10,11 @@
 #
 #   uv run scenario map=town10hd_opt
 #
+# This revision is the tip of `main`, and the first that tags junction
+# lanelets with `turn_direction` -- 86 of the 168 -- so a scenario can say
+# "a lanelet in an intersection" on this town at all. Node, way and lanelet
+# ids are unchanged from the revision before it.
+#
 # The revision is pinned to a commit rather than a branch so that two runs of
 # the same scenario are two runs against the same map. Move the pin
 # deliberately, and re-record any lanelet ids the scenarios name:
@@ -21,7 +26,7 @@
 # beside the map the first time a run loads the world.
 map:
   name: Town10HD_Opt
-  source: "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@6e3105d6709008a32cffcdf235ebc2410377275c#autoware_maps/Town10HD_Opt"
+  source: "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@dea2cfeab0e00238c3bdbefc48621cefb3dc04a2#autoware_maps/Town10HD_Opt"
   # Lanelet IDs to exclude from scenario sweeps. Empty until a sweep on this
   # map turns up lanelets CARLA cannot spawn on -- see
   # autoware_carla_scenario.tools.detect_no_3d_model_lanelets.
