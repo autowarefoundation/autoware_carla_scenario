@@ -23,27 +23,51 @@
     <input type="number" step="any" name="timeout_seconds" class="ed-input"
            value="{{ document.timeout_seconds }}">
   </div>
+</form>
 
-  <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Map</h4>
+<h4 class="ed-subheading">{{ ic.icon('map', 12) }} Map</h4>
+
+{# The source and its actions come first: a scenario that names a repository
+   gets its files from there, and the fields below are then overrides rather
+   than the answer. #}
+{% include "partials/map_source.html" %}
+
+<form hx-post="/draft/{{ draft.id }}/scenario"
+      hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <div class="ed-field">
+    <label class="ed-label">CARLA map name</label>
+    <input type="text" name="map_name" class="ed-input" value="{{ document.map.name }}">
+    <p class="ed-help">The world CARLA loads. Taken from the map's directory when one is downloaded.</p>
+  </div>
   <div class="ed-field">
     <label class="ed-label">Hydra map group</label>
     <input type="text" name="map_group" class="ed-input mono" value="{{ document.map.group }}">
     <p class="ed-help">Selected as <code>map={{ document.map.group }}</code> when running.</p>
   </div>
   <div class="ed-field">
-    <label class="ed-label">CARLA map name</label>
-    <input type="text" name="map_name" class="ed-input" value="{{ document.map.name }}">
-  </div>
-  <div class="ed-field">
-    <label class="ed-label">Lanelet2 file (.osm)</label>
+    <label class="ed-label">
+      Lanelet2 file (.osm)
+      {% if document.map.source %}<span class="unit">override</span>{% endif %}
+    </label>
     <input type="text" name="map_lanelet2_path" class="ed-input mono" style="font-size:11.5px"
-           value="{{ document.map.lanelet2_path or '' }}">
+           value="{{ document.map.lanelet2_path or '' }}"
+           placeholder="{{ map_status.lanelet2_path or '' }}">
   </div>
   <div class="ed-field">
-    <label class="ed-label">OpenDRIVE file (.xodr)</label>
+    <label class="ed-label">
+      OpenDRIVE file (.xodr)
+      {% if document.map.source %}<span class="unit">override</span>{% endif %}
+    </label>
     <input type="text" name="map_xodr_path" class="ed-input mono" style="font-size:11.5px"
-           value="{{ document.map.xodr_path or '' }}">
-    <p class="ed-help">Both are needed for the spawn preview and for a sweep.</p>
+           value="{{ document.map.xodr_path or '' }}"
+           placeholder="{{ map_status.xodr_path or '' }}">
+    <p class="ed-help">
+      {% if document.map.source %}
+        Both are resolved from the source above; set one here only to override it.
+      {% else %}
+        Both are needed for the spawn preview and for a sweep.
+      {% endif %}
+    </p>
   </div>
   <div class="ed-field">
     <label class="ed-label">Excluded lanelet IDs</label>

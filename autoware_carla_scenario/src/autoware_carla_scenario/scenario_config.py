@@ -84,7 +84,24 @@ class MapConfig:
     #: Built-in CARLA map name (e.g. ``Town10HD_Opt``).  **Required**.
     name: str = MISSING
 
+    #: Optional git repository holding the HD map, as a single URI::
+    #:
+    #:     git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@main#autoware_maps/Town10HD_Opt
+    #:
+    #: The repository is cloned into ``~/autoware_data/maps`` -- the same place
+    #: Autoware's own setup downloads map datasets to, so a map it already
+    #: fetched is used as it sits -- and its ``lanelet2_map.osm`` becomes this
+    #: scenario's Lanelet2 map.  See :mod:`autoware_carla_scenario.maps`.
+    #:
+    #: ``xodr_path`` and ``lanelet2_path`` still win where they are set, so a
+    #: single file can be overridden without abandoning the source.
+    source: str | None = None
+
     #: Optional path to a custom OpenDRIVE file that overwrites the built-in map.
+    #:
+    #: Leave it unset for a map whose roads CARLA already ships: the OpenDRIVE
+    #: is then read back from CARLA itself and cached, rather than installed
+    #: into it.
     xodr_path: str | None = None
 
     #: Optional path to a Lanelet2 (.osm) file for coordinate transforms.

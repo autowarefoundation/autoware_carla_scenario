@@ -73,7 +73,11 @@
 
   <div class="ed-mapview-body">
     <div class="ed-mapview-map" data-viewer-scope>
-      {% if document.map.lanelet2_path %}
+      {# The *resolved* map, not the typed field: a scenario that names a map
+         repository leaves `map.lanelet2_path` empty and reads its map out of
+         the cache, so asking the field whether there is a map to draw on made
+         every git-sourced map draw nothing. #}
+      {% if view.has_map %}
         {# `data-viewer-key` parks the parsed map across a re-render, exactly as
            the picker's does: this panel re-renders on every edit, and refetching
            a city each time is what that key exists to avoid.  No `picks_into`:
@@ -102,8 +106,7 @@
       {% else %}
         <div class="ed-empty ed-mapview-none">
           <div class="ed-empty-title">No map</div>
-          <p>Set this scenario's Lanelet2 (.osm) path in the Scenario inspector
-             to see where it happens.</p>
+          <p>{{ view.map_hint }}</p>
         </div>
       {% endif %}
     </div>

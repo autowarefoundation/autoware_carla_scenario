@@ -79,6 +79,24 @@ uv run scenario scenario='*/*'
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
 - A summary table is printed at the end with per-scenario pass/fail status
 
+### Selecting a Published HD Map
+
+A map group can name a git repository instead of local files, and the map is
+fetched into `~/autoware_data/maps` on first use -- the same directory
+Autoware's own setup downloads maps into, so a machine that has run it clones
+nothing:
+
+```bash
+# Town10HD_Opt, as published for CARLA 0.10, pinned to a commit
+uv run scenario scenario=intersection_passing/straight map=town10hd_opt
+
+# Any repository, any revision
+uv run scenario map=town10hd_opt \
+  map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'
+```
+
+See [HD Maps from a Git Repository](maps.md).
+
 ### Lanelet Constraint Sweeping
 
 The package ships a Hydra `Sweeper` plugin

@@ -24,6 +24,9 @@ from typing import Any, Optional
 
 from ..authoring.models import ConstraintNode, LaneletSlot, ScenarioDocument
 from ..authoring.validator import MAP_EXCLUSION_REF
+from ..maps import MapCacheError, MapPaths, MapSource, MapSourceError, map_root
+from ..maps.config import resolve_map_paths
+from ..maps.resolver import MapResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +36,12 @@ __all__ = [
     "clear_cache",
     "evaluate_slot",
     "is_map_loaded",
+    "MapStatus",
     "lanelet2_source",
+    "map_paths",
+    "map_status",
     "materialize_constraints",
+    "missing_map_reason",
 ]
 
 #: Parsed maps kept in memory, newest last.  Parsing is measured in seconds, so
@@ -43,7 +50,7 @@ __all__ = [
 #: one map at a time.
 _MAP_CACHE_SIZE = 2
 
-_MAP_CACHE: "OrderedDict[tuple[str, str], _LoadedMap]" = OrderedDict()
+_MAP_CACHE: "OrderedDict[tuple[str, str, str], _LoadedMap]" = OrderedDict()
 
 #: Distinct constraint trees whose matches are remembered per map.  A session
 #: writes a bounded number of them -- one per edit to a search -- and each is a
@@ -143,36 +150,153 @@ MAP_ROOTS_ENV = "SCENARIO_EDITOR_MAP_ROOTS"
 
 
 def map_roots() -> tuple[Path, ...]:
-    """Return the directories a Lanelet2 map may be loaded from."""
+    """Return the directories a Lanelet2 map may be loaded from.
+
+    The map cache is always one of them.  A map named by ``map.source`` is
+    resolved to a file inside it, and the sandbox below is what decides whether
+    that file may be served -- so leaving the cache out would make every remote
+    map unservable, while the check still bounds a *typed* path to where the
+    editor was started.
+    """
     configured = os.environ.get(MAP_ROOTS_ENV, "")
     roots = [
         Path(part).expanduser().resolve()
         for part in configured.split(os.pathsep)
         if part.strip()
     ]
-    return tuple(roots) or (Path.cwd().resolve(),)
+    return (*(roots or (Path.cwd().resolve(),)), map_root())
 
 
-def lanelet2_source(document: ScenarioDocument) -> Optional[Path]:
+def map_paths(
+    document: ScenarioDocument, *, allow_fetch: bool = False, refresh: bool = False
+) -> MapPaths:
+    """Return the document's map files, resolving ``map.source`` if it has one.
+
+    Args:
+        document: The scenario being edited.
+        allow_fetch: Whether an uncached source may be cloned.  Off by default,
+            because this is called on every render.
+        refresh: Fetch the repository again even when it is already cached.
+
+    Returns:
+        The resolved paths.  A source that is unusable, unreachable or simply
+        not cached yet contributes nothing rather than raising -- the editor
+        stays usable without a map, and reports the reason where the map would
+        have been.
+    """
+    try:
+        return resolve_map_paths(document.map, allow_fetch=allow_fetch, refresh=refresh)
+    except (MapSourceError, MapCacheError, MapResolutionError):
+        if allow_fetch or refresh:
+            raise
+        logger.debug("Map source not resolvable yet", exc_info=True)
+        return MapPaths(name=document.map.name)
+
+
+@dataclass
+class MapStatus:
+    """What the Scenario inspector says about the map, without fetching it.
+
+    Everything here is answerable from disk, because the inspector re-renders on
+    every keystroke: downloading a map is a button, not a consequence of typing
+    into the field above it.
+
+    Attributes:
+        source: The source URI as the document holds it.
+        error: Why the source cannot be used, if it cannot be parsed.
+        cached: Whether the Lanelet2 map is on this machine already.
+        provisioned: Whether it was found unpacked under the map root -- that
+            is, downloaded by Autoware's own setup rather than by this editor.
+        pinned: Whether the source names an exact commit.
+        commit: The commit the cached copy is at, when that is known.
+        lanelet2_path: The Lanelet2 file, once cached.
+        xodr_path: The OpenDRIVE file, once it exists.
+    """
+
+    source: str = ""
+    error: str = ""
+    cached: bool = False
+    provisioned: bool = False
+    pinned: bool = False
+    commit: str = ""
+    lanelet2_path: Optional[Path] = None
+    xodr_path: Optional[Path] = None
+
+    @property
+    def has_source(self) -> bool:
+        """Whether the scenario names a map repository at all."""
+        return bool(self.source)
+
+    @property
+    def needs_opendrive(self) -> bool:
+        """Whether the map has no OpenDRIVE yet.
+
+        Not a blocker for authoring.  A scenario is written against Lanelet2 --
+        lanelets are what a spawn, a goal and a search all name -- so the
+        preview and a sweep work without one.  A *run* needs it, and takes it
+        from CARLA when it loads the world.
+        """
+        return self.cached and self.xodr_path is None
+
+
+def map_status(
+    document: ScenarioDocument, paths: Optional[MapPaths] = None
+) -> MapStatus:
+    """Return what is known about *document*'s map, touching no network.
+
+    Args:
+        document: The scenario being edited.
+        paths: Already-resolved paths, when the caller has them.  A render
+            resolves the map once and hands the result to everything that asks
+            about it, rather than each asking the filesystem again.
+    """
+    source = (document.map.source or "").strip()
+    status = MapStatus(source=source)
+    if source:
+        try:
+            status.pinned = MapSource.parse(source).pinned
+        except MapSourceError as exc:
+            status.error = str(exc)
+            return status
+
+    paths = map_paths(document) if paths is None else paths
+    status.lanelet2_path = paths.lanelet2_path
+    status.xodr_path = paths.xodr_path
+    status.cached = paths.lanelet2_path is not None
+    if paths.resolved is not None:
+        status.provisioned = paths.resolved.provisioned
+        status.commit = paths.resolved.commit
+    return status
+
+
+def lanelet2_source(
+    document: ScenarioDocument, paths: Optional[MapPaths] = None
+) -> Optional[Path]:
     """Return the document's Lanelet2 file, if it is configured and readable.
 
     The wasm viewer renders the map itself, so the editor only has to hand it
     the ``.osm``; this is the one place that decides which file that is -- and
     therefore the one place that has to refuse the wrong one.
 
-    The path comes from a document field anyone using the editor can type, and
-    the editor binds ``0.0.0.0`` by default.  Handed straight to a
-    ``FileResponse`` that made ``/draft/<id>/map.osm`` an arbitrary local file
-    read for anyone who could reach the port: create a draft, point it at
-    ``/etc/passwd``, download it.  A path is accepted only when it resolves
-    inside one of :func:`map_roots` and names a ``.osm``, so what the route can
-    serve is bounded by where the editor was started rather than by what the
-    process can read.
+    Every path is checked the same way: it must resolve inside one of
+    :func:`map_roots` and name a ``.osm``.  The editor binds ``0.0.0.0`` with no
+    authentication, so without that, ``/draft/<id>/map.osm`` is an arbitrary
+    local file read for anyone who can reach the port.
+
+    A *typed* path is the obvious way in -- create a draft, point it at
+    ``/etc/passwd``, download it -- but it is not the only one.  A path the
+    resolver produced used to be trusted on the grounds that it names a file
+    inside the map cache this process just checked out.  What that missed is
+    that the *contents* of a checkout are the repository's, and git carries
+    symlinks: a repository whose ``lanelet2_map.osm`` is a symlink to any
+    readable file on the host resolves, passes ``is_file()`` -- which follows
+    it -- and is served.  Resolving before the containment check is what closes
+    that, because a link out of the cache lands outside every root.
     """
-    configured = document.map.lanelet2_path
-    if not configured:
+    paths = map_paths(document) if paths is None else paths
+    if paths.lanelet2_path is None:
         return None
-    path = Path(configured).expanduser()
+    path = paths.lanelet2_path.expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
     try:
@@ -195,18 +319,28 @@ def lanelet2_source(document: ScenarioDocument) -> Optional[Path]:
     return resolved if resolved.is_file() else None
 
 
-def _cache_key(document: ScenarioDocument) -> Optional[tuple[str, str]]:
-    """Return the cache key for the document's map, or ``None`` when unset."""
-    lanelet2_path = document.map.lanelet2_path
-    xodr_path = document.map.xodr_path
-    if not lanelet2_path or not xodr_path:
+def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
+    """Return the cache key for a resolved map, or ``None`` when it has none.
+
+    Every input :func:`~autoware_carla_scenario.sweeper.map_loader.load_map`
+    reads is in the key.  The OpenDRIVE and the projection are not required --
+    a map read without them lands in the same place, because the origin they
+    would have supplied is the one its own descriptor states -- but a map that
+    *gains* either has to be re-read rather than answered from the earlier
+    parse.
+    """
+    if paths.lanelet2_path is None:
         return None
-    return (str(Path(lanelet2_path).expanduser()), str(Path(xodr_path).expanduser()))
+    return (
+        str(paths.lanelet2_path),
+        str(paths.xodr_path or ""),
+        paths.projector_type or "",
+    )
 
 
-def is_map_loaded(document: ScenarioDocument) -> bool:
+def is_map_loaded(document: ScenarioDocument, paths: Optional[MapPaths] = None) -> bool:
     """Whether the document's map is already parsed and cached."""
-    key = _cache_key(document)
+    key = _cache_key(map_paths(document) if paths is None else paths)
     return key is not None and key in _MAP_CACHE
 
 
@@ -215,30 +349,51 @@ def clear_cache() -> None:
     _MAP_CACHE.clear()
 
 
-def _load(document: ScenarioDocument) -> _LoadedMap:
+def missing_map_reason(document: ScenarioDocument) -> str:
+    """Say why the document has no readable Lanelet2 map, and what to do.
+
+    Said in two places -- where the map would have been drawn, and where a
+    preview would have been evaluated -- so it is worded once.  A scenario that
+    names a map repository is not misconfigured, it is just not downloaded yet,
+    and telling that person to type a path would be telling them to undo the
+    thing they did.
+    """
+    if document.map.source:
+        return (
+            "This scenario's map has not been downloaded yet. Fetch it from "
+            "the Map library, or clear the source and name a local file."
+        )
+    if document.map.lanelet2_path:
+        return (
+            "The Lanelet2 file this scenario names cannot be read: "
+            f"{document.map.lanelet2_path}"
+        )
+    return (
+        "The scenario has no map configured. Set a map source, or the Lanelet2 "
+        "(.osm) path, in the Scenario inspector."
+    )
+
+
+def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     """Parse the document's map, or return the cached parse.
 
     Raises:
         FileNotFoundError: If the map files are not configured or missing.
         RuntimeError: If Lanelet2 could not parse the map.
     """
-    key = _cache_key(document)
+    key = _cache_key(paths)
     if key is None:
-        raise FileNotFoundError(
-            "The scenario has no map files configured. Set the Lanelet2 (.osm) "
-            "and OpenDRIVE (.xodr) paths in the Scenario inspector."
-        )
+        raise FileNotFoundError(missing_map_reason(document))
     cached = _MAP_CACHE.get(key)
     if cached is not None:
         _MAP_CACHE.move_to_end(key)
         return cached
 
     from ..sweeper.constraints import create_routing_graph  # noqa: PLC0415
-    from ..sweeper.map_loader import load_lanelet2_map  # noqa: PLC0415
+    from ..sweeper.map_loader import load_map  # noqa: PLC0415
 
-    lanelet2_path, xodr_path = key
     try:
-        lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path)
+        lanelet_map = load_map(paths)
         routing_graph = create_routing_graph(lanelet_map)
     except FileNotFoundError:
         raise
@@ -262,7 +417,11 @@ def _load(document: ScenarioDocument) -> _LoadedMap:
 
 
 def evaluate_slot(
-    document: ScenarioDocument, slot: LaneletSlot, *, load_map: bool = False
+    document: ScenarioDocument,
+    slot: LaneletSlot,
+    *,
+    load_map: bool = False,
+    paths: Optional[MapPaths] = None,
 ) -> PreviewResult:
     """Evaluate one lanelet slot's constraints against the document's map.
 
@@ -276,6 +435,7 @@ def evaluate_slot(
         load_map: Parse the map when it is not cached yet.  Left off, an
             unloaded map returns a result that still describes the constraints,
             so editing them never waits on a map.
+        paths: Already-resolved paths, when the caller has them.
 
     Returns:
         A :class:`PreviewResult`.  Failures are reported in
@@ -291,11 +451,12 @@ def evaluate_slot(
         result.error = "Add a constraint to see which lanelets match."
         return result
 
-    if not load_map and not is_map_loaded(document):
+    resolved = map_paths(document) if paths is None else paths
+    if not load_map and not is_map_loaded(document, resolved):
         return result
 
     try:
-        loaded = _load(document)
+        loaded = _load(document, resolved)
     except (FileNotFoundError, RuntimeError) as exc:
         result.error = str(exc)
         return result

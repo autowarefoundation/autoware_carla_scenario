@@ -1,0 +1,91 @@
+{% import "partials/icons.html" as ic %}
+{# The map a scenario runs on, when it comes from a repository rather than from
+   files on this machine.  Outside the scenario form on purpose: these are
+   actions that reach the network, not fields that save as you type. #}
+<div class="ed-field">
+  <label class="ed-label">Map source <span class="unit">(git)</span></label>
+  <form hx-post="/draft/{{ draft.id }}/scenario"
+        hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+    <input type="text" name="map_source" class="ed-input mono" style="font-size:11.5px"
+           value="{{ document.map.source or '' }}"
+           placeholder="https://huggingface.co/datasets/OWNER/NAME/tree/REF/PATH">
+  </form>
+  <p class="ed-help">
+    Paste a repository page URL, or use the
+    <a href="/maps?draft={{ draft.id }}">Map library</a>. The map is downloaded
+    once into <code class="mono">~/autoware_data/maps</code> — the same place
+    Autoware's own setup puts it — and read from there afterwards.
+  </p>
+</div>
+
+{% if map_status.error %}
+  {% with tone = 'error', message = map_status.error %}
+    {% include "partials/status.html" %}
+  {% endwith %}
+{% elif map_status.has_source %}
+  <div class="ed-kv" style="margin-bottom:8px">
+    <span class="ed-pill {{ 'ed-pill-ok' if map_status.cached else 'ed-pill-warn' }}">
+      {{ ic.icon('check' if map_status.cached else 'alert', 12) }}
+      {% if map_status.provisioned %}already on disk
+      {% elif map_status.cached %}downloaded
+      {% else %}not downloaded{% endif %}
+    </span>
+    <span class="ed-pill {{ 'ed-pill-ok' if map_status.pinned else 'ed-pill-warn' }}">
+      {{ ic.icon('pin', 12) }}
+      {% if map_status.pinned %}pinned{% else %}unpinned{% endif %}
+    </span>
+    {% if map_status.commit %}
+      <span class="mono" style="font-size:11px">{{ map_status.commit[:10] }}</span>
+    {% endif %}
+  </div>
+
+  {% if not map_status.pinned %}
+    <p class="ed-help" style="margin-top:0">
+      This source names a branch, so every download resolves it again and the
+      map can move under the scenario. Pin it to a commit to keep results
+      comparable across runs.
+    </p>
+  {% endif %}
+
+  <div class="ed-pick-row" style="margin-bottom:10px">
+    <button type="button" class="ed-btn-sm"
+            hx-post="/draft/{{ draft.id }}/map/fetch"
+            hx-target="#editor-body" hx-swap="innerHTML">
+      {{ ic.icon('download', 13) }}
+      {% if map_status.cached %}Re-check{% else %}Download map{% endif %}
+    </button>
+    <button type="button" class="ed-btn-sm"
+            hx-post="/draft/{{ draft.id }}/map/fetch" hx-vals='{"refresh": "1"}'
+            hx-target="#editor-body" hx-swap="innerHTML">
+      {{ ic.icon('globe', 13) }} Refresh
+    </button>
+    <button type="button" class="ed-btn-sm"
+            hx-post="/draft/{{ draft.id }}/map/pin"
+            hx-target="#editor-body" hx-swap="innerHTML">
+      {{ ic.icon('pin', 13) }} Pin to commit
+    </button>
+  </div>
+
+  {% if map_status.needs_opendrive %}
+    {# OpenDRIVE is the one part of the map no repository carries: the roads
+       belong to the CARLA town, so they are read back out of CARLA. Nothing
+       here waits for it -- a scenario is written against Lanelet2 -- so this
+       says what is missing without standing in the way. #}
+    <p class="ed-help" style="margin-top:0">
+      No OpenDRIVE for this map yet. Editing, the preview and a sweep do not
+      need one; a run reads it from CARLA when it loads the world. Fetch it now
+      to have it cached beforehand.
+    </p>
+    <form hx-post="/draft/{{ draft.id }}/map/opendrive"
+          hx-target="#editor-body" hx-swap="innerHTML"
+          class="ed-pick-row" style="margin-bottom:10px">
+      <input type="text" name="carla_host" class="ed-input-sm mono"
+             value="{{ carla_host }}" style="max-width:130px" aria-label="CARLA host">
+      <input type="number" name="carla_port" class="ed-input-sm mono"
+             value="{{ carla_port }}" style="max-width:80px" aria-label="CARLA port">
+      <button type="submit" class="ed-btn-sm">
+        {{ ic.icon('download', 13) }} Fetch OpenDRIVE
+      </button>
+    </form>
+  {% endif %}
+{% endif %}

@@ -96,6 +96,13 @@ class MapView:
         pattern_count: How many lanelets the search matched, which is also
             whether a pattern is bound at all.
         error: Why no pattern could be bound.
+        has_map: Whether there is a Lanelet2 file to draw the places *on*.  It
+            is the resolved file rather than ``map.lanelet2_path``, because a
+            scenario naming a map repository leaves that field empty and its
+            map lives in the cache -- gating the drawing on the field meant a
+            git-sourced map drew nothing while the viewer's own ``map.osm``
+            served it perfectly well.
+        map_hint: Why there is none, for the empty state to say.
     """
 
     points: list[MapPoint] = field(default_factory=list)
@@ -104,6 +111,8 @@ class MapView:
     pattern: int = 0
     pattern_count: int = 0
     error: str = ""
+    has_map: bool = False
+    map_hint: str = ""
 
     @property
     def highlight_ids(self) -> list[int]:
@@ -189,13 +198,22 @@ def build_map_view(
     """
     view = MapView()
 
+    # Resolved once and handed on: this asks the same question the preview
+    # below would ask again, and a resolve walks the map cache.
+    paths = map_preview.map_paths(document)
+    view.has_map = map_preview.lanelet2_source(document, paths) is not None
+    if not view.has_map:
+        view.map_hint = map_preview.missing_map_reason(document)
+
     slots = document.lanelet_slots()
     swept = swept_slot(document)
     bound_id = 0
     if swept is not None:
         view.swept_key = swept.key
         view.swept_label = swept.label
-        result = map_preview.evaluate_slot(document, swept, load_map=load_map)
+        result = map_preview.evaluate_slot(
+            document, swept, load_map=load_map, paths=paths
+        )
         view.error = result.error
         view.pattern_count = len(result.matched_ids)
         if result.matched_ids:

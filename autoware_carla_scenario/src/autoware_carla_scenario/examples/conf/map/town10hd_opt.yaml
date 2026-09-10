@@ -1,0 +1,33 @@
+# @package _global_
+# Town10HD_Opt, as CARLA 0.10 re-authored it, with the Autoware map recorded
+# from that build.
+#
+# The map is not a file in this repository: it is published in
+# AutowareFoundation/carla-ue5-maps and fetched on first use into
+# ~/autoware_data/maps, which is where Autoware's own `demo_artifacts` setup
+# downloads it to as well -- so a machine that has run that setup uses the copy
+# it already has and clones nothing.
+#
+#   uv run scenario map=town10hd_opt
+#
+# This revision is the tip of `main`, and the first that tags junction
+# lanelets with `turn_direction` -- 86 of the 168 -- so a scenario can say
+# "a lanelet in an intersection" on this town at all. Node, way and lanelet
+# ids are unchanged from the revision before it.
+#
+# The revision is pinned to a commit rather than a branch so that two runs of
+# the same scenario are two runs against the same map. Move the pin
+# deliberately, and re-record any lanelet ids the scenarios name:
+#
+#   uv run scenario map=town10hd_opt map.source='...@<other commit>#autoware_maps/Town10HD_Opt'
+#
+# There is no OpenDRIVE in the dataset, and none is wanted: the roads belong to
+# the CARLA town, so the framework reads them back out of CARLA and caches them
+# beside the map the first time a run loads the world.
+map:
+  name: Town10HD_Opt
+  source: "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@dea2cfeab0e00238c3bdbefc48621cefb3dc04a2#autoware_maps/Town10HD_Opt"
+  # Lanelet IDs to exclude from scenario sweeps. Empty until a sweep on this
+  # map turns up lanelets CARLA cannot spawn on -- see
+  # autoware_carla_scenario.tools.detect_no_3d_model_lanelets.
+  no_3d_model_lanelet_ids: []

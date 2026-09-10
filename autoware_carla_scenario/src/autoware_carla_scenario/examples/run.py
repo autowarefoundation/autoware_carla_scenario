@@ -52,6 +52,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
+from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.registry import (
     BuildScenarioFn,
     get_conf_dirs,
@@ -275,6 +276,7 @@ def run_scenario_with_queue(
     port: int = 2000,
     tm_port: int = DEFAULT_TM_PORT,
     xodr_path: Path | None = None,
+    opendrive_path: Path | None = None,
     lanelet2_path: Path | None = None,
     map_name: str | None = None,
     cooldown_seconds: float = 0.0,
@@ -301,6 +303,7 @@ def run_scenario_with_queue(
         port=port,
         tm_port=tm_port,
         xodr_path=xodr_path,
+        opendrive_path=opendrive_path,
         lanelet2_path=lanelet2_path,
         map_name=map_name,
         cooldown_seconds=cooldown_seconds,
@@ -319,11 +322,6 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
-
-
-def _optional_str(value: object) -> str | None:
-    """Read an optional string config value that may be absent or null."""
-    return None if value is None else str(value)
 
 
 def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
@@ -555,14 +553,7 @@ def run_batch(
 
     first_cfg = configs[0]
 
-    xodr_path = (
-        Path(first_cfg.map.xodr_path) if first_cfg.map.get("xodr_path") else None
-    )
-    lanelet2_path = (
-        Path(first_cfg.map.lanelet2_path)
-        if first_cfg.map.get("lanelet2_path")
-        else None
-    )
+    map_paths = resolve_map_paths(first_cfg.map)
 
     cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
@@ -575,9 +566,10 @@ def run_batch(
         host=first_cfg.server.host,
         port=first_cfg.server.port,
         tm_port=first_cfg.traffic_manager.port,
-        xodr_path=xodr_path,
-        lanelet2_path=lanelet2_path,
-        map_name=first_cfg.map.name,
+        xodr_path=map_paths.install_xodr,
+        opendrive_path=map_paths.opendrive_path,
+        lanelet2_path=map_paths.lanelet2_path,
+        map_name=map_paths.name,
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
@@ -586,7 +578,7 @@ def run_batch(
         # localize, route and engage.
         timeout_seconds=float(first_cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
-        projector_type=_optional_str(first_cfg.map.get("projector_type")),
+        projector_type=map_paths.projector_type,
     )
 
     for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
@@ -671,10 +663,7 @@ def run_scenario(
 
     _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
 
-    xodr_path = Path(cfg.map.xodr_path) if cfg.map.get("xodr_path") else None
-    lanelet2_path = (
-        Path(cfg.map.lanelet2_path) if cfg.map.get("lanelet2_path") else None
-    )
+    map_paths = resolve_map_paths(cfg.map)
     cooldown = float(cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(cfg.server.get("cooldown_max_retries", 0))
 
@@ -687,9 +676,10 @@ def run_scenario(
         host=cfg.server.host,
         port=cfg.server.port,
         tm_port=cfg.traffic_manager.port,
-        xodr_path=xodr_path,
-        lanelet2_path=lanelet2_path,
-        map_name=cfg.map.name,
+        xodr_path=map_paths.install_xodr,
+        opendrive_path=map_paths.opendrive_path,
+        lanelet2_path=map_paths.lanelet2_path,
+        map_name=map_paths.name,
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
@@ -697,7 +687,7 @@ def run_scenario(
         # an Autoware stack needs to localize, route and engage.
         timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
-        projector_type=_optional_str(cfg.map.get("projector_type")),
+        projector_type=map_paths.projector_type,
     )
 
     status = "PASSED" if result.passed else "FAILED"

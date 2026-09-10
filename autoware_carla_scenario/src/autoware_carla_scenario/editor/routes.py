@@ -14,6 +14,7 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -25,8 +26,9 @@ from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, dump_document_yaml
 from ..authoring.registry import TRUTHY_VALUES
+from ..maps import opendrive
 from . import map_preview, scenario_map
-from .service import EditorError, EditorService, find_constraint
+from .service import EditorError, EditorService, as_int, find_constraint
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,7 @@ def _context(
     selected: str = "scenario",
     *,
     error: str = "",
+    notice: str = "",
     validate: bool = True,
 ) -> dict[str, Any]:
     """Build the template context shared by every editor render.
@@ -96,6 +99,10 @@ def _context(
     kind, target, constraint_owner = _resolve_target(document, selected)
     if kind == "missing":
         kind, target, selected = "scenario", document, "scenario"
+    # Resolved once and shared: the inspector, the map panel and the "is the map
+    # parsed yet" badge all describe the same map, and each resolving it for
+    # itself meant three walks of the cache per keystroke.
+    paths = map_preview.map_paths(document)
     return {
         "draft": draft,
         "document": document,
@@ -105,7 +112,11 @@ def _context(
         "target": target,
         "constraint_owner": constraint_owner,
         "error": error,
-        "map_loaded": map_preview.is_map_loaded(document),
+        "notice": notice,
+        "map_loaded": map_preview.is_map_loaded(document, paths),
+        "map_status": map_preview.map_status(document, paths),
+        "carla_host": opendrive.DEFAULT_HOST,
+        "carla_port": opendrive.DEFAULT_PORT,
         "page": "editor",
     }
 
@@ -117,12 +128,23 @@ def _body(request: Request, context: dict[str, Any]) -> HTMLResponse:
     )
 
 
-def _apply(request: Request, draft_id: str, selected: str, mutate: Any) -> HTMLResponse:
+def _apply(
+    request: Request,
+    draft_id: str,
+    selected: str,
+    mutate: Any,
+    *,
+    notify: bool = False,
+) -> HTMLResponse:
     """Run *mutate* against the draft, persist it, and re-render the body.
 
     A rejected edit re-renders the *unmodified* draft with the reason attached,
     so a typo shows an explanation instead of silently doing nothing or storing
     a broken value.
+
+    *notify* changes what a returned string means.  An ordinary edit returns the
+    id to select next; a map operation returns a sentence about what it did,
+    because it took seconds, reached the network, and can succeed quietly.
     """
     service = _service(request)
     draft = service.require_draft(draft_id)
@@ -132,8 +154,9 @@ def _apply(request: Request, draft_id: str, selected: str, mutate: Any) -> HTMLR
         fresh = service.require_draft(draft_id)
         return _body(request, _context(request, fresh, selected, error=str(exc)))
     service.save(draft)
-    focus = result if isinstance(result, str) else selected
-    return _body(request, _context(request, draft, focus))
+    message = result if notify and isinstance(result, str) else ""
+    focus = result if not notify and isinstance(result, str) else selected
+    return _body(request, _context(request, draft, focus, notice=message))
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +264,117 @@ def document_yaml(request: Request, draft_id: str) -> PlainTextResponse:
     """Return the Scenario IR as YAML -- the canonical form, viewable as-is."""
     draft = _service(request).require_draft(draft_id)
     return PlainTextResponse(dump_document_yaml(draft.document))
+
+
+async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse:
+    """Run a map operation off the event loop, then re-render the editor body.
+
+    Every operation here can clone a repository or load a CARLA town -- tens of
+    seconds of blocking work.  Run inline it would stall the whole ASGI loop, so
+    no other tab, and no other request from this one, would be served while a
+    map downloaded.
+    """
+    return await run_in_threadpool(
+        _apply, request, draft_id, "scenario", act, notify=True
+    )
+
+
+@router.post("/draft/{draft_id}/map/fetch", response_class=HTMLResponse)
+async def fetch_map(request: Request, draft_id: str) -> HTMLResponse:
+    """Download the map the scenario names, or refresh what is cached."""
+    form = dict(await request.form())
+    refresh = str(form.get("refresh", "")).lower() in TRUTHY_VALUES
+    service = _service(request)
+    return await _map_action(
+        request, draft_id, lambda doc: service.fetch_map(doc, refresh=refresh)
+    )
+
+
+@router.post("/draft/{draft_id}/map/pin", response_class=HTMLResponse)
+async def pin_map(request: Request, draft_id: str) -> HTMLResponse:
+    """Pin the map source to the exact commit it resolves to."""
+    service = _service(request)
+    return await _map_action(request, draft_id, service.pin_map)
+
+
+@router.post("/draft/{draft_id}/map/opendrive", response_class=HTMLResponse)
+async def fetch_opendrive(request: Request, draft_id: str) -> HTMLResponse:
+    """Read the map's OpenDRIVE from a running CARLA server and cache it."""
+    form = dict(await request.form())
+    service = _service(request)
+
+    def _act(document: ScenarioDocument) -> str:
+        # Parsed here rather than above, so a bad port is refused the way every
+        # other bad field on this panel is -- inline, on the re-rendered body.
+        host = str(form.get("carla_host", "") or opendrive.DEFAULT_HOST).strip()
+        port = as_int(form.get("carla_port", ""), "CARLA port", opendrive.DEFAULT_PORT)
+        return service.fetch_opendrive(document, host=host, port=port)
+
+    return await _map_action(request, draft_id, _act)
+
+
+@router.post("/draft/{draft_id}/map/use", response_class=HTMLResponse)
+async def use_map(request: Request, draft_id: str) -> HTMLResponse:
+    """Point the scenario at a map chosen in the library."""
+    form = dict(await request.form())
+    uri = str(form.get("uri", "")).strip()
+    service = _service(request)
+
+    def _act(document: ScenarioDocument) -> str:
+        service.use_map(document, uri)
+        return f"Now editing on {document.map.name}."
+
+    return await _map_action(request, draft_id, _act)
+
+
+# ---------------------------------------------------------------------------
+# Map library
+# ---------------------------------------------------------------------------
+
+
+@router.get("/maps", response_class=HTMLResponse)
+def map_library(
+    request: Request, repo: str = "", draft: str = "", refresh: str = ""
+) -> HTMLResponse:
+    """Browse the maps a repository offers.
+
+    Reachable on its own and from a draft.  With ``draft`` set, every map
+    carries a button that points *that* scenario at it; without one, a map
+    starts a new scenario instead.
+    """
+    service = _service(request)
+    entries: list[Any] = []
+    error = ""
+    if repo:
+        try:
+            entries = service.browse_maps(
+                repo, refresh=refresh.lower() in TRUTHY_VALUES
+            )
+        except EditorError as exc:
+            error = str(exc)
+    return _templates(request).TemplateResponse(
+        request=request,
+        name="maps.html",
+        context={
+            "repositories": service.map_repositories(),
+            "repo": repo,
+            "entries": entries,
+            "error": error,
+            "draft_id": draft,
+            "page": "maps",
+        },
+    )
+
+
+@router.post("/maps/new", response_class=HTMLResponse)
+async def new_draft_on_map(request: Request) -> RedirectResponse:
+    """Start a scenario on a map chosen in the library."""
+    form = dict(await request.form())
+    uri = str(form.get("uri", "")).strip()
+    title = str(form.get("title", "")).strip()
+    service = _service(request)
+    draft = await run_in_threadpool(service.create_draft_for_map, uri, title=title)
+    return RedirectResponse(f"/draft/{draft.id}", status_code=303)
 
 
 # ---------------------------------------------------------------------------

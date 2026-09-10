@@ -560,10 +560,16 @@ class MapRef(_Node):
     existing built-in group (e.g. ``nishishinjuku``) so an exported package can
     just select it; the paths are carried too so the editor can load the
     Lanelet2 map for spawn previews without composing Hydra.
+
+    ``source`` names a git repository instead of a path, and is the same string
+    the framework's ``map.source`` takes -- so a scenario authored against a
+    published HD map exports to a package that finds the same map on any
+    machine, rather than to one that names a file only this machine has.
     """
 
     group: str = "nishishinjuku"
     name: str = "NishishinjukuMap"
+    source: Optional[str] = None
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     no_3d_model_lanelet_ids: list[int] = Field(default_factory=list)

@@ -47,7 +47,7 @@ def resolve_sweep(
         parse_constraint,
     )
     from autoware_carla_scenario.sweeper.map_loader import (  # noqa: PLC0415
-        load_lanelet2_map,
+        load_map,
     )
 
     # -- 1. Compose the Hydra config ------------------------------------
@@ -73,16 +73,15 @@ def resolve_sweep(
         return []
 
     # -- 3. Resolve map paths -------------------------------------------
-    lanelet2_path = OmegaConf.select(cfg, "map.lanelet2_path")
-    xodr_path = OmegaConf.select(cfg, "map.xodr_path")
-    if lanelet2_path is None or xodr_path is None:
-        raise ValueError(
-            f"Sweep resolution requires map.lanelet2_path and map.xodr_path "
-            f"for scenario {scenario_name}."
-        )
+    from autoware_carla_scenario.maps import resolve_map_paths  # noqa: PLC0415
+
+    paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
 
     # -- 4. Load lanelet2 map (lightweight, no CARLA) -------------------
-    lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path)
+    try:
+        lanelet_map = load_map(paths)
+    except FileNotFoundError as exc:
+        raise ValueError(f"Sweep resolution for {scenario_name}: {exc}") from exc
 
     # -- 5. Parse constraints and find matching lanelets ----------------
     all_constraints = []

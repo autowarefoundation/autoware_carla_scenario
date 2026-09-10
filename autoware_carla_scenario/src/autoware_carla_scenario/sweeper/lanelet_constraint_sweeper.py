@@ -34,7 +34,8 @@ from .constraints import (
     find_matching_lanelets,
     parse_constraint,
 )
-from .map_loader import load_lanelet2_map
+from ..maps import resolve_map_paths
+from .map_loader import load_map
 
 logger = logging.getLogger(__name__)
 
@@ -219,16 +220,16 @@ class LaneletConstraintSweeper(Sweeper):
         cfg = self.config
 
         # -- 1. Resolve map paths ------------------------------------------
-        lanelet2_path = OmegaConf.select(cfg, "map.lanelet2_path")
-        xodr_path = OmegaConf.select(cfg, "map.xodr_path")
-        if lanelet2_path is None or xodr_path is None:
-            raise ValueError(
-                "LaneletConstraintSweeper requires both map.lanelet2_path and "
-                "map.xodr_path to be set in the config."
-            )
+        # A map named by `map.source` is cloned (or found already downloaded)
+        # here, so a sweep runs against a published HD map without anyone
+        # having to name a local file for it first.
+        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
 
         # -- 2. Load the Lanelet2 map (lightweight) ------------------------
-        lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path)
+        try:
+            lanelet_map = load_map(paths)
+        except FileNotFoundError as exc:
+            raise ValueError(f"LaneletConstraintSweeper: {exc}") from exc
 
         # -- 3. Parse constraints ------------------------------------------
         sweep_cfg = OmegaConf.select(cfg, "sweep")
