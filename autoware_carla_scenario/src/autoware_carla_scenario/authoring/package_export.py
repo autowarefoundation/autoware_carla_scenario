@@ -758,6 +758,11 @@ def export_package(
             if wheelhouse_target.exists():
                 shutil.rmtree(wheelhouse_target)
             shutil.move(str(wheelhouse_staging), str(wheelhouse_target))
+        elif wheelhouse_target.exists():
+            # An earlier export left one and this one has none to put there.
+            # Leaving it would sit stale wheels next to a fresh manifest that
+            # says the package has no wheelhouse at all.
+            shutil.rmtree(wheelhouse_target)
 
         if locked:
             try:

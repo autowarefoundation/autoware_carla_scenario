@@ -378,6 +378,23 @@ class TestExportRefusals:
             export_package(new_document(), tmp_path, dev_mode=True)
         assert list(tmp_path.iterdir()) == []
 
+    def test_a_forced_unlocked_export_clears_a_previous_wheelhouse(
+        self, tmp_path: Path
+    ) -> None:
+        """`force` replaces both directories, including the one not rebuilt.
+
+        An unlocked export has no wheelhouse to put there, so a previous
+        export's would otherwise stay -- stale wheels beside a fresh manifest
+        that says the package has none.
+        """
+        stale = tmp_path / "cut_in_scenario_wheelhouse"
+        stale.mkdir()
+        (stale / "old-0.0.1-py3-none-any.whl").write_text("", encoding="utf-8")
+
+        result = export_package(new_document(), tmp_path, force=True, **OFFLINE)
+        assert result.wheelhouse is None
+        assert not stale.exists()
+
     def test_a_failed_final_check_takes_the_wheelhouse_with_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
