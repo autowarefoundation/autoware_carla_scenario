@@ -104,6 +104,19 @@ def _uri(repo: Path, path: str = "autoware_maps/TownA", ref: str = "main") -> st
     return f"git+file://{repo}@{ref}#{path}"
 
 
+def _git_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the git subcommand of every git invocation the cache makes."""
+    seen: list[str] = []
+    original = GitMapCache._git
+
+    def _spy(self: Any, cwd: Any, *args: str, **kwargs: Any) -> str:
+        seen.append(args[0])
+        return str(original(self, cwd, *args, **kwargs))
+
+    monkeypatch.setattr(GitMapCache, "_git", _spy)
+    return seen
+
+
 def _head(repo: Path) -> str:
     """Return the repository's current commit."""
     return subprocess.run(
@@ -284,6 +297,24 @@ class TestCachedMap:
     ) -> None:
         resolve_map(_uri(origin_repo), cache=cache)
         assert cached_map(_uri(origin_repo), cache=cache) is not None
+
+    def test_a_branch_is_found_under_the_commit_it_resolved_to(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The render path never asks the network, so it follows the note.
+
+        A branch is filed under the commit it resolved to. Looking under the
+        branch's own name would report a map that is on the machine as missing
+        -- and this is what the editor's "downloaded" badge reads.
+        """
+        resolve_map(_uri(origin_repo), cache=cache)
+
+        seen = _git_calls(monkeypatch)
+        found = cached_map(_uri(origin_repo), cache=cache)
+
+        assert found is not None
+        assert found.commit == _head(origin_repo)
+        assert seen == [], "the render path went to the network"
 
     def test_an_unpulled_lfs_pointer_does_not_count_as_cached(
         self, origin_repo: Path, cache: GitMapCache
@@ -723,27 +754,70 @@ class TestEditorWithoutOpenDrive:
 class TestCacheEconomy:
     """What the cache is for: not doing the work again."""
 
-    def _git_calls(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-        """Record the git subcommand of every git invocation the cache makes."""
-        from autoware_carla_scenario.maps import cache as cache_module
-
-        seen: list[str] = []
-        original = cache_module.GitMapCache._git
-
-        def _spy(self: Any, cwd: Any, *args: str, **kwargs: Any) -> str:
-            seen.append(args[0])
-            return str(original(self, cwd, *args, **kwargs))
-
-        monkeypatch.setattr(cache_module.GitMapCache, "_git", _spy)
-        return seen
-
-    def test_a_warm_resolve_runs_no_git_at_all(
+    def test_a_warm_pinned_resolve_runs_no_git_at_all(
         self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        resolve_map(_uri(origin_repo), cache=cache)
+        """A commit cannot have moved, so nothing is worth asking anyone."""
+        pinned = _uri(origin_repo, ref=_head(origin_repo))
+        resolve_map(pinned, cache=cache)
 
-        calls = self._git_calls(monkeypatch)
-        again = resolve_map(_uri(origin_repo), cache=cache)
+        calls = _git_calls(monkeypatch)
+        again = resolve_map(pinned, cache=cache)
 
         assert again.lanelet2_path.read_text() == _OSM
         assert calls == []
+
+    def test_a_warm_branch_resolve_costs_one_ls_remote_and_nothing_else(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A branch can have moved, so it is asked -- and only asked.
+
+        The question is one ``ls-remote``, and the answer being the commit
+        already checked out is what stops everything after it: no fetch, no
+        clone, no re-checkout of a working tree that has not moved.
+        """
+        resolve_map(_uri(origin_repo), cache=cache)
+
+        calls = _git_calls(monkeypatch)
+        again = resolve_map(_uri(origin_repo), cache=cache)
+
+        assert again.lanelet2_path.read_text() == _OSM
+        assert calls == ["ls-remote"]
+
+    def test_a_branch_that_moved_is_resolved_to_the_new_commit(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """The point of asking: the ref means what it says.
+
+        And the new commit lands at a *new path*, which is what anything
+        downstream keyed on the file -- the editor's parsed-map cache above all
+        -- needs in order to notice at all.
+        """
+        first = resolve_map(_uri(origin_repo), cache=cache)
+
+        (origin_repo / "autoware_maps" / "TownA" / "lanelet2_map.osm").write_text(
+            _OSM.replace("<osm", "<!--moved--><osm", 1)
+        )
+        _git(origin_repo, "add", "-A")
+        _git(origin_repo, "commit", "--quiet", "-m", "Move the branch on")
+
+        again = resolve_map(_uri(origin_repo), cache=cache)
+        assert again.commit == _head(origin_repo) != first.commit
+        assert again.lanelet2_path != first.lanelet2_path
+        assert "<!--moved-->" in again.lanelet2_path.read_text()
+
+    def test_an_unreachable_remote_falls_back_to_the_commit_it_last_named(
+        self, origin_repo: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        """Asking is best-effort: a machine with no route still runs.
+
+        The fallback is the *note*, not the branch: the checkout is filed under
+        the commit, so handing the branch back would look under a name nothing
+        was ever filed under and try to clone from the remote that just failed.
+        """
+        first = resolve_map(_uri(origin_repo), cache=cache)
+        (origin_repo / ".git").rename(tmp_path / "moved-away")
+
+        again = resolve_map(_uri(origin_repo), cache=cache)
+        assert again.lanelet2_path == first.lanelet2_path
+        assert again.commit == first.commit

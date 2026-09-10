@@ -14,6 +14,12 @@ A map already unpacked under the map root -- what Autoware's setup leaves behind
 -- is used as it stands.  That shortcut is off for a *pinned* source: a
 directory carries no record of which revision it was downloaded at, so honouring
 it would answer a question about one revision with the bytes of another.
+
+Past that shortcut, every source is pinned.  A branch is replaced by the commit
+it names right now -- :meth:`~...maps.cache.GitMapCache.at_tip` -- so a ref
+means what it says instead of meaning "whatever this machine cloned first", and
+the checkout it lands in is immutable.  :func:`cached_map` cannot ask, because
+it runs on every editor render, so it follows the note that resolve left behind.
 """
 
 from __future__ import annotations
@@ -176,6 +182,19 @@ def resolve_map(
     if directory is not None:
         return _describe(parsed, directory, derived, provisioned=True)
 
+    # Below this line every source is pinned: a branch is replaced by the commit
+    # it names right now.  A branch ref reads as "the latest" but never behaved
+    # that way -- a cached entry was answered from without the remote being
+    # consulted at all -- and the entry it was answered from was a directory
+    # whose bytes changed under a path that did not, which is what left the
+    # editor drawing a map it had parsed before the branch moved.  Asking first
+    # makes the ref mean what it says, and makes the checkout immutable.
+    #
+    # It is deliberately *after* the shortcut above: a map Autoware's own setup
+    # unpacked under the map root is still used as it sits, which is the whole
+    # reason the cache lives where it does.
+    at_directory = store.at_tip(at_directory)
+
     repo = store.checkout(
         at_directory,
         include=_include_patterns(parsed.directory),
@@ -189,6 +208,22 @@ def resolve_map(
     return _describe(parsed, directory, derived, commit=repo.commit)
 
 
+def _peek_ref(store: GitMapCache, source: MapSource) -> Optional[CachedRepo]:
+    """Return the cache entry holding *source*'s ref, without fetching anything.
+
+    A branch is filed under the commit it resolved to, so that is looked for
+    first -- looking under the branch's own name would report a map that is on
+    the machine as missing.  The branch's own entry is still checked, because a
+    resolve made while the remote was unreachable clones under that name.
+    """
+    tip = store.last_tip(source)
+    if tip:
+        at_commit = store.peek(source.at(tip))
+        if at_commit is not None:
+            return at_commit
+    return store.peek(source)
+
+
 def cached_map(
     source: "str | MapSource", *, cache: Optional[GitMapCache] = None
 ) -> Optional[ResolvedMap]:
@@ -196,7 +231,9 @@ def cached_map(
 
     The editor re-renders on every keystroke and cannot spend a clone on each
     one, so this is what it asks: describe the map if the machine already has
-    it, and otherwise say nothing.  Fetching stays an explicit action.
+    it, and otherwise say nothing.  Fetching stays an explicit action -- and so
+    is asking a remote what a branch points at, which is why a branch is looked
+    up through the commit a previous resolve recorded for it.
 
     Returns:
         The resolved map, or ``None`` if it is not cached, not downloaded, or
@@ -214,7 +251,7 @@ def cached_map(
     provisioned = directory is not None
     commit = ""
     if directory is None:
-        repo = store.peek(at_directory)
+        repo = _peek_ref(store, at_directory)
         if repo is None:
             return None
         if parsed.pinned and repo.commit != parsed.ref:

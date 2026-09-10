@@ -5,6 +5,13 @@ previewed and swept over and over, and none of that should touch the network.
 :meth:`GitMapCache.checkout` answers from disk whenever the files it was asked
 for are already there; ``refresh=True`` is the one way to make it look again.
 
+The one thing that *is* asked over the network before anything is fetched is
+what a branch points at -- :meth:`GitMapCache.at_tip`, one ``ls-remote``.  That
+turns every entry into a commit's, which is what makes an entry immutable:
+without it a branch names a directory whose bytes change under a path that does
+not, and everything downstream keyed on that path goes on believing the map it
+read before.
+
 Two details make this workable against a real HD map repository. **LFS is
 skipped** (``GIT_LFS_SKIP_SMUDGE=1``) so a checkout materialises pointer files,
 and only the patterns asked for are pulled -- the repository this was written
@@ -47,6 +54,7 @@ __all__ = [
     "MapCacheError",
     "is_lfs_pointer",
     "map_root",
+    "TIP_SUFFIX",
 ]
 
 #: Environment variable overriding where maps are kept, cloned or downloaded.
@@ -66,6 +74,12 @@ REPOS_SUBDIR = ".repos"
 #: Artefacts generated from a map -- an OpenDRIVE fetched from CARLA -- kept
 #: out of both the downloaded trees and the git checkouts.
 DERIVED_SUBDIR = ".derived"
+
+#: Suffix of the note recording which commit a branch last resolved to.  It sits
+#: *beside* that ref's cache entry rather than inside it, because a resolve made
+#: while the remote was unreachable clones under the branch's own name and
+#: replaces that directory wholesale.
+TIP_SUFFIX = ".tip.json"
 
 #: How long a git call may take before it is abandoned.  A clone of a map
 #: repository is seconds; anything approaching this is a hung transport.
@@ -158,6 +172,92 @@ class GitMapCache:
         if not directory.is_dir():
             return None
         return directory if any(directory.glob("*.osm")) else None
+
+    def tip_file(self, source: MapSource) -> Path:
+        """Return where *source*'s ref-to-commit note is kept."""
+        entry = self.entry_dir(source)
+        return entry.parent / f"{entry.name}{TIP_SUFFIX}"
+
+    def at_tip(self, source: MapSource) -> MapSource:
+        """Return *source* pinned to the commit its ref names on the remote now.
+
+        A branch is not a revision, and a cache entry named after one is a
+        directory whose contents change under it.  Asking the remote what the
+        branch points at *before* anything is fetched turns the rest of the
+        resolve into the pinned case: the entry is named after a commit, so it
+        is immutable, and anything downstream keyed on the file paths inside it
+        -- the editor's parsed-map cache, most of all -- sees a new path when
+        the branch moves rather than the same path with different bytes.
+
+        This is the one place the resolver touches the network without being
+        asked to fetch, so it fails soft: a machine with no route to the remote
+        gets the source back unchanged and carries on with whatever it cached,
+        which is what it would have done before.
+        """
+        if source.pinned:
+            return source
+        ref = source.ref or "HEAD"
+        try:
+            listing = self._git(None, "ls-remote", source.repo_url, ref, capture=True)
+        except MapCacheError:
+            # Falling back to the *note* rather than to the branch: the entry
+            # this cache holds is named after the commit the ref last resolved
+            # to, so handing the branch back would look under a name nothing
+            # was ever filed under and re-clone from a remote that is not
+            # answering.
+            remembered = self.last_tip(source)
+            logger.warning(
+                "Could not ask %s which commit %s is at; using %s.",
+                source.repo_url,
+                ref,
+                f"the cached {remembered[:10]}" if remembered else "what is cached",
+            )
+            return source.at(remembered) if remembered else source
+        fields = listing.split()
+        at_commit = source.at(fields[0]) if fields else source
+        if not at_commit.pinned:
+            logger.warning("%s names no ref in %s.", ref, source.repo_url)
+            return source
+        self.remember_tip(source, at_commit.ref)
+        return at_commit
+
+    def remember_tip(self, source: MapSource, commit: str) -> None:
+        """Record which commit *source*'s ref resolved to.
+
+        What lets :func:`~...maps.resolver.cached_map` answer for a branch
+        without a network call: the checkout is filed under the commit, so
+        looking under the branch's own name would report nothing.
+        """
+        path = self.tip_file(source)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "repo_url": source.repo_url,
+                    "ref": source.ref,
+                    "commit": commit,
+                    "resolved_at": time.time(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def last_tip(self, source: MapSource) -> str:
+        """Return the commit *source*'s ref last resolved to, or ``""``.
+
+        Empty for a pinned source, which is already the commit, and for a ref
+        this cache has never resolved.
+        """
+        if source.pinned:
+            return ""
+        try:
+            raw = self.tip_file(source).read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            return ""
+        commit = str(data.get("commit", "")) if isinstance(data, dict) else ""
+        return commit if source.at(commit).pinned else ""
 
     # -- reading --------------------------------------------------------
 

@@ -67,14 +67,26 @@ and a source naming that path resolves to it in about a millisecond, cloning
 nothing. A map this framework did fetch itself lands under `.repos/` in the same
 root, so the two never collide and the copy Autoware provisioned always wins.
 
-Nothing re-reads the network once a map is cached. `refresh` is the only way to
-make it look again.
+Nothing re-reads a map's *contents* over the network once it is cached;
+`refresh` is the only way to make it fetch again.
+
+One question is asked, though, and it is asked before anything is fetched: when
+the ref is a branch, a single `git ls-remote` resolves it to the commit it
+points at right now, and everything after that runs as if the source had been
+pinned to that commit. So a branch tracks, which is what it reads like -- and,
+just as importantly, the cache entry is named after a commit, so a map that
+moves lands at a *new path* rather than replacing the bytes under an old one.
+Anything holding a parsed map keyed on its path therefore notices.
+
+A machine that cannot reach the remote falls back to the commit that ref last
+resolved to, so an offline run still works exactly as it did before.
 
 ## Pinning, and why it matters
 
-A source naming a branch means "whatever is on that branch today". Two runs of
-the same scenario a month apart are then two runs against two different maps,
-and the result of one says nothing about the other.
+A source naming a branch means "whatever is on that branch today" -- and, since
+the branch is re-resolved on every fetch, it means it literally. Two runs of the
+same scenario a month apart are then two runs against two different maps, and
+the result of one says nothing about the other.
 
 A source naming a **full commit hash** is pinned: the same URI names the same
 bytes forever.
