@@ -2,7 +2,7 @@
 name = "my-scenario-package"
 version = "0.1.0"
 description = "Example standalone scenario package for autoware_carla_scenario"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     # The scenario framework provides the public API (register_scenario,
     # register_conf_dir, BaseScenario, the shared config dataclasses, ...).

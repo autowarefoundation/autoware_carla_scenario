@@ -8,15 +8,18 @@ generated files themselves runs unconditionally.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-# tomllib landed in 3.11; the workspace is capped at 3.10 by the CARLA wheel.
-try:
+# tomllib landed in 3.11, and 3.10 is still the floor of the supported range.
+# Branching on sys.version_info rather than catching ImportError keeps mypy from
+# reading the fallback as a redefinition when it checks against 3.11+.
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - 3.11+ has it in the stdlib
+else:  # pragma: no cover - only taken on 3.10
     import tomli as tomllib
 
 from autoware_carla_scenario.authoring.framework_pin import (
@@ -574,10 +577,8 @@ class TestFreeFormTextReachesTheManifest:
     def test_a_description_survives_into_a_parsable_pyproject(
         self, tmp_path: Path, description: str
     ) -> None:
-        import tomli
-
         document = new_document()
         document.description = description
         result = export_package(document, tmp_path, **OFFLINE)
-        parsed = tomli.loads((result.root / "pyproject.toml").read_text())
+        parsed = tomllib.loads((result.root / "pyproject.toml").read_text())
         assert parsed["project"]["description"] == description

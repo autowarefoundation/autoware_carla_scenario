@@ -11,8 +11,9 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### Python Version
 
-- **Python 3.10** — `pyproject.toml` pins `requires-python = ">=3.10,<3.11"`
-  because the `carla` wheels are built for CPython 3.10 only. Check your
+- **Python 3.10 – 3.12** — `pyproject.toml` declares
+  `requires-python = ">=3.10,<3.13"`. The ceiling is the `carla` wheels, which
+  are built for CPython 3.12 and below; nothing else here has one. Check your
   version with `python --version`.
 
 ### CARLA Simulator

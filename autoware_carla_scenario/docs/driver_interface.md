@@ -16,7 +16,7 @@ separate process serving `egodriver.EgodriverService`.
 
 ```mermaid
 flowchart LR
-    subgraph scenario["Scenario process (Python 3.10)"]
+    subgraph scenario["Scenario process (Python 3.10-3.12)"]
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
@@ -212,9 +212,9 @@ pass condition.
 ## Protobuf definitions
 
 The protobuf definitions are **vendored**, not installed. `carla-driver-interface` and
-its `alpasim-grpc` dependency require Python ≥ 3.11, while this package is pinned to
-3.10 by the CPython-3.10-only CARLA 0.10.0 wheel, so the two cannot share an
-environment. Instead the `.proto` files are copied verbatim from two upstreams
+its `alpasim-grpc` dependency require Python ≥ 3.11, while this package supports 3.10
+onwards -- Autoware's own environment is 3.10 -- so depending on them would drop
+3.10 support. Instead the `.proto` files are copied verbatim from two upstreams
 (both Apache-2.0) and compiled locally:
 
 | Proto | Source | Carries |

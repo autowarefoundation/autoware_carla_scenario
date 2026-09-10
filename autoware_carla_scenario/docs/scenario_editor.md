@@ -635,7 +635,7 @@ cut_in-wheelhouse.zip
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
     |-- autoware_lanelet2_to_opendrive-*.whl
-    |-- carla-0.10.0-cp310-cp310-linux_x86_64.whl  # not published to any index
+    |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl  # not published to any index
     |-- ... every transitive dependency, ~70 wheels
     |-- requirements.txt                           # the whole set, pinned
     `-- README.md                                  # how to install it
@@ -691,11 +691,13 @@ the file itself would throw away the very things an export is checked for.
 
 ### One platform, one interpreter
 
-A wheelhouse is resolved *by* an interpreter *for* a platform. The wheels the
-editor builds are the ones Python 3.10 on the exporting machine selected, and the
-CARLA client in particular is a compiled CPython-3.10-only extension. Installing
-them under a different Python or on a different platform fails on the first wheel
-with no matching tag; re-export on a matching machine instead.
+A wheelhouse is resolved *by* an interpreter *for* a platform: the wheels are the
+ones the exporting machine's Python selected, and the CARLA client in particular
+is a compiled extension with one wheel per interpreter. Installing them under a
+different Python or on a different platform fails on the first wheel with no
+matching tag; export from an interpreter matching the target instead. The
+supported range is 3.10 - 3.12 (`requires-python = ">=3.10,<3.13"`), which is as
+far as the vendored CARLA wheels go.
 
 It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
 160 MB. That is the cost of not needing a network at install time.
@@ -739,12 +741,12 @@ The manifest records only values that were actually observed:
 ```yaml
 format_version: 2
 scenario: {id: cut_in, title: Cut in, document_version: 1, package: cut-in-scenario}
-runtime: {python: 3.10.20, uv: 0.12.0, requires_python: '>=3.10,<3.11'}
+runtime: {python: 3.12.10, uv: 0.12.0, requires_python: '>=3.10,<3.13'}
 wheelhouse:
   directory: cut_in_scenario_wheelhouse
   install: pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
   wheels: 70
-  python: '3.10.20'
+  python: '3.12.10'
 autoware_carla_scenario:
   source: git
   repository: https://github.com/tier4/autoware_lanelet2_to_opendrive
