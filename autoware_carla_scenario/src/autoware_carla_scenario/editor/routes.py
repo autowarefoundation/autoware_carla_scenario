@@ -751,10 +751,15 @@ def delete_draft(request: Request, draft_id: str) -> RedirectResponse:
 
 @router.post("/draft/{draft_id}/export", response_class=HTMLResponse)
 async def export(request: Request, draft_id: str) -> HTMLResponse:
-    """Export the draft as a reproducible Scenario Package, ready to download.
+    """Export the draft as a wheelhouse, ready to download.
 
-    The package is built and zipped server-side but is not left there: the
-    editor is routinely used from another machine on the LAN, where "written to
+    What is handed back is every wheel the scenario needs, so that installing it
+    where it runs is ``pip install --no-index --find-links`` and nothing else --
+    no uv, no git, no network.  The uv project the wheels were resolved from is
+    a build input and does not survive the request.
+
+    It is built and zipped server-side but is not left there: the editor is
+    routinely used from another machine on the LAN, where "written to
     ./scenario_packages" means written somewhere the person exporting cannot
     reach.  The response is the report -- warnings, the tool log, whether the
     package's tests passed -- with a link to the archive, because throwing that
@@ -771,9 +776,10 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     service = _service(request)
     draft = service.require_draft(draft_id)
 
+    # Locking is not offered as a choice: a wheelhouse *is* the lockfile
+    # resolved into wheels, so an export without one has nothing to hand back.
     options = {
         "dev_mode": _checked(form, "dev_mode"),
-        "lock": _checked(form, "lock"),
         "verify": _checked(form, "verify"),
         "run_tests": _checked(form, "run_tests"),
     }
@@ -782,7 +788,7 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
         try:
             result = service.export_archive(draft, **options)
         except PackageExportError as exc:
-            logger.warning("Scenario package export failed: %s", exc)
+            logger.warning("Scenario wheelhouse export failed: %s", exc)
             # The exporter attaches the failing tool's output to the exception.
             return None, str(exc), exc.log
         return result, "", result.log
@@ -801,9 +807,9 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     )
 
 
-@router.get("/draft/{draft_id}/package.zip")
-def download_package(request: Request, draft_id: str) -> FileResponse:
-    """Serve the archive the last export staged for this draft.
+@router.get("/draft/{draft_id}/wheelhouse.zip")
+def download_wheelhouse(request: Request, draft_id: str) -> FileResponse:
+    """Serve the wheelhouse the last export staged for this draft.
 
     Raises:
         EditorError: If nothing has been exported yet, or the archive has since
@@ -813,11 +819,11 @@ def download_package(request: Request, draft_id: str) -> FileResponse:
     draft = service.require_draft(draft_id)
     archive = service.archive_path(draft)
     if not archive.is_file():
-        raise EditorError("No exported package to download. Run the export again.")
+        raise EditorError("No exported wheelhouse to download. Run the export again.")
     return FileResponse(
         archive,
         media_type="application/zip",
-        filename=f"{draft.document.id}.zip",
+        filename=archive.name,
     )
 
 

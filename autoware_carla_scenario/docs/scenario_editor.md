@@ -1,7 +1,7 @@
 # Scenario Editor
 
 The Scenario Editor is a web UI for authoring scenarios declaratively and
-exporting them as reproducible **Scenario Packages**. It runs as its own
+exporting them as self-contained **wheelhouses**. It runs as its own
 application:
 
 ```bash
@@ -622,46 +622,80 @@ rather than by what the process can read.
 That is a bound, not authentication: the editor still has none, so it belongs on
 a network you trust.
 
-## Save Draft vs Export Package
+## Save Draft vs Export Wheelhouse
 
 **Save Draft** writes the working document to `scenario_drafts/<id>.yaml`.
 
-**Export Package** produces a `.zip` **the browser downloads**, holding a
-directory another machine can unpack and run:
+**Export Wheelhouse** produces a `.zip` **the browser downloads**, holding every
+wheel the scenario needs:
 
 ```
-cut_in.zip
-`-- cut_in_scenario/
-    |-- pyproject.toml              # dependencies, pinned exactly
-    |-- uv.lock                     # the resolved graph (tracked in git)
-    |-- .python-version             # e.g. 3.10.20 -- the exact patch version
-    |-- README.md
-    |-- conf/scenario/cut_in.yaml   # Hydra config
-    |-- scenario/
-    |   |-- document.yaml           # the Scenario IR
-    |   `-- manifest.yaml           # what this package was generated from
-    |-- src/cut_in_scenario/        # register() + the DeclarativeScenario binding
-    `-- tests/test_scenario.py      # loads, validates and compiles -- no CARLA needed
+cut_in-wheelhouse.zip
+`-- cut_in_scenario_wheelhouse/
+    |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
+    |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
+    |-- autoware_lanelet2_to_opendrive-*.whl
+    |-- carla-0.10.0-cp310-cp310-linux_x86_64.whl  # not published to any index
+    |-- ... every transitive dependency, ~70 wheels
+    |-- requirements.txt                           # the whole set, pinned
+    `-- README.md                                  # how to install it
 ```
+
+Install it with pip and nothing else -- no `uv`, no `git`, no network, no
+resolution:
+
+```bash
+unzip cut_in-wheelhouse.zip
+python3 -m venv .venv
+.venv/bin/pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
+.venv/bin/scenario scenario=cut_in map=nishishinjuku
+```
+
+That is the point of the format. Autoware's `scenario_bridge` installs a
+scenario into a venv built from `python3-venv` and `python3-pip` -- the two
+things rosdep can resolve -- and has neither uv nor, on a vehicle, a network
+route. A uv project needs all three; a wheelhouse needs none.
+
+The scenario's document and Hydra config travel **inside** its wheel, so an
+installed scenario is self-contained: there is no directory that has to be kept
+beside it.
+
+### What the wheelhouse is built from
+
+The exporter still generates the uv project it always did -- `pyproject.toml`
+with the framework pinned to an exact commit, `uv.lock`, the document, the Hydra
+config, the package's own tests -- and still runs `uv sync --locked` and those
+tests against it. That project is now a **build input**: the wheels are resolved
+from its lockfile and the project itself does not leave the server.
+
+The CARLA client is vendored into it (`carla_wheels/`, reached by a relative
+`[tool.uv] find-links`) and requested through the framework's `carla` extra,
+because a scenario that cannot `import carla` cannot run and the client is on no
+index. When no client wheel can be found -- a framework installed from a wheel
+rather than run out of its repository -- the export says so in its warnings and
+leaves the client out.
 
 There is no destination field. The editor is routinely used from another machine
 on the LAN, where a path typed into it would name a directory on the host running
-the server -- not one the person exporting can reach. The package is built in a
-temporary directory, zipped, and handed back; the build tree is removed, so the
-only thing that outlives the request is the archive, and re-exporting never has
-to overwrite a half-written one.
+the server -- not one the person exporting can reach. Everything is built in a
+temporary directory, the wheelhouse is zipped, and the build tree is removed, so
+the only thing that outlives the request is the archive, and re-exporting never
+has to overwrite a half-written one.
 
 The response is still the **report** -- warnings, the tool log, whether the
 package's own tests passed -- with the download link in it. Making the response
 the file itself would throw away the very things an export is checked for.
 
-Unpack and run it with:
+### One platform, one interpreter
 
-```bash
-unzip cut_in.zip && cd cut_in_scenario
-uv sync --locked
-uv run scenario scenario=cut_in map=nishishinjuku
-```
+A wheelhouse is resolved *by* an interpreter *for* a platform. The wheels the
+editor builds are the ones Python 3.10 on the exporting machine selected, and the
+CARLA client in particular is a compiled CPython-3.10-only extension. Installing
+them under a different Python or on a different platform fails on the first wheel
+with no matching tag; re-export on a matching machine instead.
+
+It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
+160 MB. That is the cost of not needing a network at install time.
 
 ### Reproducibility
 
@@ -669,9 +703,10 @@ uv run scenario scenario=cut_in map=nishishinjuku
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA |
 | `autoware-lanelet2-to-opendrive` | the same way as the framework |
+| `carla` | the wheel vendored in the repository, at the version the framework's `carla` extra names |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
-| Everything else | `uv.lock` |
+| Everything else | `uv.lock`, and then the wheels built from it |
 
 Both workspace projects are declared because the framework imports the
 converter at module scope (`coordinate.road_lanelet_mapping`) without declaring
@@ -685,27 +720,37 @@ than guessing. A local-path dependency is only produced by an explicit
 development export, which says so in its README and manifest.
 
 Set `SCENARIO_EXPORT_FRAMEWORK_VERSION` to pin a published release instead of
-the current checkout's commit.
+the current checkout's commit, and `SCENARIO_EXPORT_CARLA_WHEELS` to point the
+export at a directory of client wheels other than the repository's own.
 
 ### Export is atomic
 
 The exporter builds into a temporary directory and runs `uv lock`, then
-`uv sync --locked`, then the generated package's own tests. **If dependency
-locking or verification fails, nothing is written** -- a package whose
-dependencies never resolved is not a successful export.
+`uv sync --locked`, then the generated package's own tests, then the wheelhouse.
+**If locking, verification or the wheelhouse fails, nothing is written** -- a
+package whose dependencies never resolved, or that no environment can install,
+is not a successful export.
 
 The manifest records only values that were actually observed:
 
 ```yaml
-format_version: 1
+format_version: 2
 scenario: {id: cut_in, title: Cut in, document_version: 1, package: cut-in-scenario}
-runtime: {python: 3.10.20, uv: 0.9.7, requires_python: '>=3.10,<3.11'}
+runtime: {python: 3.10.20, uv: 0.12.0, requires_python: '>=3.10,<3.11'}
+wheelhouse:
+  directory: cut_in_scenario_wheelhouse
+  install: pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
+  wheels: 70
+  python: '3.10.20'
 autoware_carla_scenario:
   source: git
   repository: https://github.com/tier4/autoware_lanelet2_to_opendrive
   commit: 0123456789abcdef0123456789abcdef01234567
   subdirectory: autoware_carla_scenario
-files: {document: scenario/document.yaml, hydra_config: conf/scenario/cut_in.yaml}
+  extras: [carla]
+files:
+  document: src/cut_in_scenario/document.yaml
+  hydra_config: src/cut_in_scenario/conf/scenario/cut_in.yaml
 notes: []
 ```
 
@@ -717,7 +762,7 @@ guess.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's `.zip` is staged until the browser fetches it |
+| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged until the browser fetches it |
 | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
 | `SCENARIO_EDITOR_HOST` | `0.0.0.0` | Bind address |
 | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
@@ -725,16 +770,15 @@ guess.
 
 ## Running an authored scenario
 
-An exported package plugs in through the same entry point any scenario package
-uses (see [Architecture](architecture.md)):
+An exported scenario plugs in through the same entry point any scenario package
+uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
+`scenario` command is on the venv's `PATH`:
 
 ```bash
-cd cut_in_scenario
-uv sync --locked
-uv run scenario scenario=cut_in map=nishishinjuku
+.venv/bin/scenario scenario=cut_in map=nishishinjuku
 
 # Sweep every lanelet the spawn constraints match:
-uv run scenario --multirun scenario=cut_in map=nishishinjuku \
+.venv/bin/scenario --multirun scenario=cut_in map=nishishinjuku \
     hydra/sweeper=lanelet_constraint
 ```
 

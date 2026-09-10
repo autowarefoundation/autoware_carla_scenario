@@ -111,11 +111,11 @@ class EditorService:
         """
         Args:
             store: Where drafts are read and written.
-            export_dir: Where a finished export's ``.zip`` is staged until the
-                browser has fetched it.  The editor hands packages to whoever
-                is using it rather than leaving them on the machine it happens
-                to run on -- over a LAN those are not the same machine -- so
-                this is a holding area, not a destination anyone browses.
+            export_dir: Where a finished export's wheelhouse ``.zip`` is staged
+                until the browser has fetched it.  The editor hands packages to
+                whoever is using it rather than leaving them on the machine it
+                happens to run on -- over a LAN those are not the same machine
+                -- so this is a holding area, not a destination anyone browses.
         """
         self.store = store
         self.export_dir = (
@@ -129,16 +129,21 @@ class EditorService:
     # ------------------------------------------------------------------
 
     def archive_path(self, draft: Draft) -> Path:
-        """Return where *draft*'s exported archive is staged."""
-        return self.export_dir / f"{draft.document.id}.zip"
+        """Return where *draft*'s exported wheelhouse is staged."""
+        return self.export_dir / f"{draft.document.id}-wheelhouse.zip"
 
     def export_archive(self, draft: Draft, **options: Any) -> Any:
-        """Export *draft* as a Scenario Package and zip it for download.
+        """Export *draft* and zip its wheelhouse for download.
 
-        The package is built in a temporary directory and removed once zipped:
-        the only artefact that outlives the request is the archive, so an export
-        never leaves a half-written tree behind and re-exporting needs no
-        ``force`` flag to overwrite one.
+        What comes back is the **wheelhouse**, not the uv project it was built
+        from.  The project needs `uv`, `git` and a network to install; the
+        wheelhouse needs pip and none of them, which is all the environment a
+        scenario actually runs in is guaranteed to have.  The project is a build
+        input, so it stays in the temporary directory and is removed with it.
+
+        Only the archive outlives the request, so an export never leaves a
+        half-written tree behind and re-exporting needs no ``force`` flag to
+        overwrite one.
 
         Args:
             draft: The draft to export.
@@ -150,24 +155,33 @@ class EditorService:
             :meth:`archive_path`, which the download route asks for directly.
 
         Raises:
-            PackageExportError: If the export itself failed.  Nothing is staged
-                in that case.
+            PackageExportError: If the export itself failed, or produced no
+                wheelhouse.  Nothing is staged in that case.
         """
-        from ..authoring.package_export import export_package  # noqa: PLC0415
+        from ..authoring.package_export import (  # noqa: PLC0415
+            PackageExportError,
+            export_package,
+        )
 
         build_dir = Path(tempfile.mkdtemp(prefix="scenario-export-"))
         try:
             result = export_package(draft.document, build_dir, **options)
+            if result.wheelhouse is None:
+                raise PackageExportError(
+                    "The export produced no wheelhouse, so there is nothing "
+                    "that can be installed without uv and a network."
+                )
             archive = self.archive_path(draft)
             archive.parent.mkdir(parents=True, exist_ok=True)
             archive.unlink(missing_ok=True)
-            # `base_dir` keeps the package folder inside the zip, so unpacking
-            # produces one directory rather than spraying files into the CWD.
+            # `base_dir` keeps the wheelhouse folder inside the zip, so
+            # unpacking produces one directory rather than spraying a couple of
+            # hundred wheels into the CWD.
             shutil.make_archive(
                 str(archive.with_suffix("")),
                 "zip",
-                root_dir=str(result.root.parent),
-                base_dir=result.root.name,
+                root_dir=str(result.wheelhouse.root.parent),
+                base_dir=result.wheelhouse.root.name,
             )
             return result
         finally:

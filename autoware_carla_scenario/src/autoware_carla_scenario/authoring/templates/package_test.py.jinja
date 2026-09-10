@@ -16,11 +16,12 @@ from {{ package_name }}.scenario import document_path, load_document
 
 
 def test_document_loads() -> None:
-    """The document ships with the package and parses."""
+    """The document ships *inside* the package -- in the wheel -- and parses."""
     assert document_path().is_file()
     document = load_document()
     assert document.id == "{{ scenario_id }}"
     assert document.entities, "the scenario has no entities"
+    assert document_path().is_relative_to({{ package_name }}.PACKAGE_DIR)
 
 
 def test_document_validates() -> None:

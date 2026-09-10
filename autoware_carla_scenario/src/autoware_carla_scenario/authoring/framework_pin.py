@@ -74,6 +74,7 @@ class Pin:
         commit: Full 40-character commit SHA, for ``kind="git"``.
         subdirectory: Path of the framework project inside the repository.
         path: Absolute local path, for ``kind="path"`` (development only).
+        extras: Extras to request of this distribution, e.g. ``("carla",)``.
         warnings: Reproducibility caveats worth surfacing to the user.
     """
 
@@ -84,17 +85,21 @@ class Pin:
     commit: Optional[str] = None
     subdirectory: Optional[str] = None
     path: Optional[str] = None
+    extras: tuple[str, ...] = field(default=())
     warnings: tuple[str, ...] = field(default=())
 
     # -- rendering ------------------------------------------------------
 
     def requirement(self) -> str:
         """Return the PEP 508 requirement for ``project.dependencies``."""
+        name = self.distribution
+        if self.extras:
+            name += f"[{','.join(self.extras)}]"
         if self.kind == "version":
-            return f"{self.distribution}=={self.version}"
+            return f"{name}=={self.version}"
         # git and path pins carry their locator in [tool.uv.sources]; the
         # requirement itself stays a bare name so the two never disagree.
-        return self.distribution
+        return name
 
     def uv_source(self) -> Optional[dict[str, Any]]:
         """Return the ``[tool.uv.sources]`` entry, or ``None`` for a version pin."""
@@ -127,6 +132,8 @@ class Pin:
             entry["subdirectory"] = self.subdirectory
         if self.path is not None:
             entry["path"] = self.path
+        if self.extras:
+            entry["extras"] = list(self.extras)
         return entry
 
     @property
@@ -139,7 +146,8 @@ class Pin:
 
         Pinned the same way as the framework -- same release, same commit, or
         the sibling checkout -- so the two halves of the workspace can never
-        drift apart in an exported package.
+        drift apart in an exported package.  Extras are not carried across:
+        they belong to the distribution that declares them.
         """
         if self.kind == "git":
             return replace(
@@ -147,6 +155,7 @@ class Pin:
                 distribution=CONVERTER_DISTRIBUTION,
                 subdirectory=CONVERTER_SUBDIRECTORY,
                 version=_installed_version(CONVERTER_DISTRIBUTION),
+                extras=(),
                 warnings=(),
             )
         if self.kind == "path":
@@ -160,6 +169,7 @@ class Pin:
                 distribution=CONVERTER_DISTRIBUTION,
                 path=sibling,
                 version=_installed_version(CONVERTER_DISTRIBUTION),
+                extras=(),
                 warnings=(),
             )
         return Pin(

@@ -3,22 +3,28 @@
   <div class="ed-notice ed-notice-ok">
     {{ ic.icon('check', 15) }}
     <div style="min-width:0">
-      <div class="ed-notice-title">Package exported</div>
-      <p class="mono" style="font-size:12px; margin-top:2px">{{ result.root.name }}/</p>
+      <div class="ed-notice-title">Wheelhouse exported</div>
+      <p class="mono" style="font-size:12px; margin-top:2px">{{ result.wheelhouse.root.name }}/</p>
       {# A plain link, not htmx: this response is a file, and swapping a zip
          into the page is not a thing. #}
       <a class="ed-btn-primary" style="margin:8px 0 4px"
-         href="/draft/{{ draft.id }}/package.zip" download>
-        {{ ic.icon('package', 14) }} Download {{ draft.document.id }}.zip
+         href="/draft/{{ draft.id }}/wheelhouse.zip" download>
+        {{ ic.icon('package', 14) }} Download {{ draft.document.id }}-wheelhouse.zip
       </a>
+      <p style="font-size:12px; margin:2px 0 6px">Install it anywhere with pip alone:</p>
+      <pre class="ed-log" style="margin:0 0 4px">pip install --no-index --find-links {{ result.wheelhouse.root.name }} {{ result.wheelhouse.distribution }}</pre>
       <dl class="ed-kv">
+        <div><dt>Wheels</dt><dd>{{ result.wheelhouse.wheels | length }} ({{ (result.wheelhouse.size_bytes / 1048576) | round | int }} MB)</dd></div>
         <div><dt>Framework</dt><dd>{{ result.pin.kind }}{% if result.pin.commit %} @ {{ result.pin.commit[:12] }}{% elif result.pin.version %} {{ result.pin.version }}{% endif %}</dd></div>
         <div><dt>Python</dt><dd>{{ result.manifest.runtime.python }}</dd></div>
         <div><dt>uv</dt><dd>{{ result.manifest.runtime.uv or 'not recorded' }}</dd></div>
-        <div><dt>uv.lock generated</dt><dd>{{ 'yes' if result.locked else 'no' }}</dd></div>
         <div><dt>uv sync --locked</dt><dd>{{ 'verified' if result.verified else 'not run' }}</dd></div>
         <div><dt>Package tests</dt><dd>{{ 'passed' if result.tested else 'not run' }}</dd></div>
       </dl>
+      <p style="font-size:12px; margin-top:6px">
+        These wheels were resolved for Python {{ result.wheelhouse.python_tag }} on this
+        machine's platform, and install only there.
+      </p>
       {% if result.warnings %}
         <ul style="margin-top:8px">
           {% for warning in result.warnings %}<li>&#9888; {{ warning }}</li>{% endfor %}

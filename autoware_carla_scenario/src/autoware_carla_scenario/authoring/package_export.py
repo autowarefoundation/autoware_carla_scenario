@@ -9,10 +9,16 @@ machine can copy, sync and run:
 4. pin the framework to an exact version or commit (never a branch);
 5. record the exporting Python's exact patch version and the uv version;
 6. generate ``uv.lock``;
-7. write a machine-readable manifest;
-8. verify the result with ``uv sync --locked`` and the package's own tests.
+7. build a wheelhouse: the whole locked graph, as wheels;
+8. write a machine-readable manifest;
+9. verify the result with ``uv sync --locked`` and the package's own tests.
 
-Steps 6 and 8 can fail for reasons outside the scenario (no network, an
+Step 7 is what makes the export *usable* rather than merely reproducible.  The
+directory itself is a uv project and needs uv, git and a network to install;
+the wheelhouse built from it needs pip and none of those, which is what the
+environments scenarios actually run in have.  See :mod:`.wheelhouse`.
+
+Steps 6, 7 and 9 can fail for reasons outside the scenario (no network, an
 unpushed commit).  When they do, the export **fails**: a package whose
 dependencies never resolved is not a successful export, so the half-built
 directory is discarded rather than left behind looking finished.  Everything is
@@ -22,13 +28,12 @@ built in a temporary directory and moved into place only once the checks pass.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -38,7 +43,17 @@ from .framework_pin import Pin, PinResolutionError, resolve_framework_pin
 from .hydra_config import dump_scenario_config
 from .models import ScenarioDocument
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
+from .uv_tool import UvUnavailable, run_uv
+from .uv_tool import uv_version as _uv_version
 from .validator import validate_document
+from .wheelhouse import (
+    CARLA_EXTRA,
+    VENDORED_WHEELS_DIR,
+    Wheelhouse,
+    WheelhouseError,
+    build_wheelhouse,
+    carla_wheels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +65,10 @@ __all__ = [
     "package_names",
 ]
 
-#: Bumped when the manifest's own shape changes.
-MANIFEST_FORMAT_VERSION = 1
+#: Bumped when the manifest's own shape changes.  Version 2 moved the document
+#: and the Hydra config inside the package module, so that they reach the wheel,
+#: and added the ``wheelhouse`` section.
+MANIFEST_FORMAT_VERSION = 2
 
 #: Directory holding the ``*.jinja`` templates for a generated package.
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -83,6 +100,8 @@ class ExportResult:
         locked: Whether ``uv.lock`` was generated.
         verified: Whether ``uv sync --locked`` succeeded against it.
         tested: Whether the package's own tests were run and passed.
+        wheelhouse: The pip-installable wheelhouse built from the lock, when
+            one was asked for and could be built.
         warnings: Reproducibility caveats worth showing the user.
         log: Combined output of the tools that ran.
     """
@@ -93,6 +112,7 @@ class ExportResult:
     locked: bool = False
     verified: bool = False
     tested: bool = False
+    wheelhouse: Optional[Wheelhouse] = None
     warnings: list[str] = field(default_factory=list)
     log: str = ""
 
@@ -128,32 +148,6 @@ def package_names(document: ScenarioDocument) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Environment probing
 # ---------------------------------------------------------------------------
-
-
-def _uv_executable() -> Optional[str]:
-    """Return the path to ``uv``, or ``None`` when it is not installed."""
-    return shutil.which("uv")
-
-
-def _uv_version() -> Optional[str]:
-    """Return the exact uv version, or ``None`` when it cannot be determined.
-
-    A version is never guessed: when uv cannot be interrogated the manifest
-    records the absence instead of inventing a plausible number.
-    """
-    uv = _uv_executable()
-    if uv is None:
-        return None
-    try:
-        result = subprocess.run(  # noqa: S603
-            [uv, "--version"], capture_output=True, text=True, check=False, timeout=30
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    match = re.search(r"(\d+\.\d+\.\d+)", result.stdout)
-    return match.group(1) if match else None
 
 
 @lru_cache(maxsize=1)
@@ -248,12 +242,42 @@ def _pin_summary(pin: Pin) -> str:
     return f"local path `{pin.path}` -- **not portable**"
 
 
+def _vendor_carla_wheels(root: Path, warnings: list[str]) -> Optional[str]:
+    """Copy the CARLA client wheel into the package.  Returns its directory.
+
+    The client is not published to any index, so a package that merely *names*
+    it cannot install anywhere.  Copying the wheel in and pointing uv at it with
+    a relative ``find-links`` keeps the package self-contained wherever it is
+    copied, and puts the client in the wheelhouse built from it -- without which
+    the installed scenario cannot import ``carla`` and cannot run.
+
+    Returns:
+        The relative directory the wheels were copied into, or ``None`` when no
+        wheel could be found -- which is what happens when the framework is
+        installed rather than run out of its repository.
+    """
+    wheels = carla_wheels()
+    if not wheels:
+        warnings.append(
+            "No CARLA client wheel was found to vendor, so the package does "
+            "not install one. It is not published to any index either, so the "
+            "scenario will not run until a client is installed by hand."
+        )
+        return None
+    destination = root / VENDORED_WHEELS_DIR
+    destination.mkdir(parents=True, exist_ok=True)
+    for wheel in wheels:
+        shutil.copy2(wheel, destination / wheel.name)
+    return VENDORED_WHEELS_DIR
+
+
 def _write_package_tree(
     root: Path,
     document: ScenarioDocument,
     names: dict[str, str],
     pin: Pin,
     uv_version: Optional[str],
+    vendored_wheels: Optional[str],
     warnings: list[str],
 ) -> dict[str, str]:
     """Render every file of the package under *root*.  Returns the file map."""
@@ -275,6 +299,7 @@ def _write_package_tree(
         "pin_summaries": [(p.distribution, _pin_summary(p)) for p in pins],
         "pin_note": _pin_note(pin),
         "uv_required_version": uv_version,
+        "vendored_wheels": vendored_wheels,
         "uv_pin_summary": (
             f"`{uv_version}` (`tool.uv.required-version`)"
             if uv_version
@@ -306,8 +331,11 @@ def _write_package_tree(
     (root / ".python-version").write_text(f"{_python_version()}\n", encoding="utf-8")
     (root / "src" / package_name / "py.typed").write_text("", encoding="utf-8")
 
-    document_rel = "scenario/document.yaml"
-    hydra_rel = f"conf/scenario/{scenario_id}.yaml"
+    # Inside the module, not beside it: everything under ``src/<package>/``
+    # reaches the wheel, and an installed scenario has no project directory
+    # left to read a document out of.
+    document_rel = f"src/{package_name}/document.yaml"
+    hydra_rel = f"src/{package_name}/conf/scenario/{scenario_id}.yaml"
 
     document_path = root / document_rel
     document_path.parent.mkdir(parents=True, exist_ok=True)
@@ -321,6 +349,7 @@ def _write_package_tree(
         "# uv.lock is intentionally tracked: it is what makes this package\n"
         "# reproducible. Everything below is build output.\n"
         ".venv/\n"
+        f"{package_name}_wheelhouse/\n"
         "__pycache__/\n"
         "*.egg-info/\n"
         "dist/\n"
@@ -335,6 +364,7 @@ def _write_package_tree(
         "manifest": "scenario/manifest.yaml",
         "lockfile": "uv.lock",
         "python_version": ".python-version",
+        "wheelhouse": f"{package_name}_wheelhouse",
     }
 
 
@@ -344,6 +374,7 @@ def _build_manifest(
     pin: Pin,
     uv_version: Optional[str],
     files: dict[str, str],
+    wheelhouse: Optional[Wheelhouse],
     warnings: list[str],
 ) -> dict[str, Any]:
     """Return the machine-readable manifest for the exported package.
@@ -372,6 +403,19 @@ def _build_manifest(
             "package": names["distribution_name"],
         },
         "runtime": runtime,
+        "wheelhouse": (
+            {
+                "directory": files["wheelhouse"],
+                "install": (
+                    f"pip install --no-index --find-links {files['wheelhouse']} "
+                    f"{wheelhouse.distribution}"
+                ),
+                "wheels": len(wheelhouse.wheels),
+                "python": wheelhouse.python_tag,
+            }
+            if wheelhouse is not None
+            else None
+        ),
         "autoware_carla_scenario": pin.manifest(),
         "dependencies": {p.distribution: p.manifest() for p in _pins(pin)},
         "generated_by": {
@@ -394,25 +438,10 @@ def _run_uv(root: Path, *args: str, timeout: int) -> subprocess.CompletedProcess
     Raises:
         PackageExportError: If uv is not installed.
     """
-    uv = _uv_executable()
-    if uv is None:
-        raise PackageExportError(
-            "uv is not installed, so the package's dependencies cannot be "
-            "locked. An unlocked package is not reproducible."
-        )
-    env = dict(os.environ)
-    # A parent VIRTUAL_ENV would make uv operate on the editor's environment
-    # instead of the package's own.
-    env.pop("VIRTUAL_ENV", None)
-    return subprocess.run(  # noqa: S603
-        [uv, *args],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-        env=env,
-    )
+    try:
+        return run_uv(root, *args, timeout=timeout)
+    except UvUnavailable as exc:
+        raise PackageExportError(str(exc)) from exc
 
 
 def _lock(root: Path) -> str:
@@ -549,6 +578,34 @@ def _self_check(
     return (True, True, passed), log
 
 
+def _build_wheelhouse(
+    staging: Path,
+    document: ScenarioDocument,
+    names: dict[str, str],
+    files: dict[str, str],
+) -> tuple[Wheelhouse, str]:
+    """Build the package's wheelhouse.
+
+    Raises:
+        PackageExportError: If it could not be built.  A scenario that cannot
+            be installed where it runs is not an export anyone can use, so this
+            fails the whole thing rather than coming back half-done.
+    """
+    try:
+        wheelhouse = build_wheelhouse(
+            staging,
+            staging / files["wheelhouse"],
+            distribution=names["distribution_name"],
+            scenario_id=names["scenario_id"],
+            map_group=document.map.group,
+        )
+    except WheelhouseError as exc:
+        raise PackageExportError(
+            f"The wheelhouse could not be built: {exc}", log=exc.log
+        ) from exc
+    return wheelhouse, wheelhouse.log
+
+
 def export_package(
     document: ScenarioDocument,
     destination: str | Path,
@@ -557,6 +614,7 @@ def export_package(
     lock: bool = True,
     verify: bool = True,
     run_tests: bool = True,
+    wheelhouse: bool = True,
     pin_uv_version: bool = True,
     force: bool = False,
 ) -> ExportResult:
@@ -574,6 +632,8 @@ def export_package(
         run_tests: Run the generated package's own tests after syncing.  A test
             failure is reported as a warning, not an export failure -- the
             dependency graph is what an export guarantees.
+        wheelhouse: Build the pip-installable wheelhouse.  Requires *lock*:
+            a wheelhouse is the lockfile resolved into wheels.
         pin_uv_version: Write ``[tool.uv] required-version`` when the uv version
             could be determined.
         force: Replace an existing package directory of the same name.
@@ -624,7 +684,14 @@ def export_package(
 
     log = ""
     try:
-        files = _write_package_tree(staging, document, names, pin, uv_version, warnings)
+        vendored = _vendor_carla_wheels(staging, warnings)
+        if vendored is not None:
+            # The client only reaches the wheelhouse if the package asks for it.
+            pin = replace(pin, extras=(CARLA_EXTRA,))
+
+        files = _write_package_tree(
+            staging, document, names, pin, uv_version, vendored, warnings
+        )
 
         checks, check_log = _self_check(
             staging, lock=lock, verify=verify, run_tests=run_tests, warnings=warnings
@@ -632,7 +699,19 @@ def export_package(
         locked, verified, tested = checks
         log += check_log
 
-        manifest = _build_manifest(document, names, pin, uv_version, files, warnings)
+        built: Optional[Wheelhouse] = None
+        if wheelhouse and not locked:
+            warnings.append(
+                "No wheelhouse was built: it is the lockfile resolved into "
+                "wheels, and this package was exported without a lock."
+            )
+        elif wheelhouse:
+            built, wheelhouse_log = _build_wheelhouse(staging, document, names, files)
+            log += wheelhouse_log
+
+        manifest = _build_manifest(
+            document, names, pin, uv_version, files, built, warnings
+        )
         manifest_path = staging / files["manifest"]
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(
@@ -661,6 +740,9 @@ def export_package(
         shutil.rmtree(staging, ignore_errors=True)
 
     logger.info("Exported scenario package to %s", target)
+    if built is not None:
+        # It was built in the staging directory, which has just been moved.
+        built.root = target / files["wheelhouse"]
     return ExportResult(
         root=target,
         manifest=manifest,
@@ -668,6 +750,7 @@ def export_package(
         locked=locked,
         verified=verified,
         tested=tested,
+        wheelhouse=built,
         warnings=warnings,
         log=log,
     )
