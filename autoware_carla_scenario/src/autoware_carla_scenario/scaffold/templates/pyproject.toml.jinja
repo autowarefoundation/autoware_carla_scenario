@@ -2,7 +2,9 @@
 name = "{{ distribution_name }}"
 version = "0.1.0"
 description = "{{ description }}"
-requires-python = ">=3.10,<3.11"
+# Whatever the framework this was scaffolded against supports, so the two
+# cannot disagree about which interpreters the package installs on.
+requires-python = "{{ requires_python }}"
 dependencies = [
     # The framework provides the public API (register_scenario,
     # register_conf_dir, BaseScenario, the shared config dataclasses, ...).

@@ -38,7 +38,7 @@ has to be kept next to it.
 
 A wheelhouse is resolved for one interpreter on one platform: these wheels were
 selected by Python {{ python }} on the machine that exported the package, and
-the CARLA client in particular is a compiled, CPython-3.10-only extension.
-Installing them under a different Python or on a different platform will fail on
-the first wheel that has no matching tag -- re-export on a matching machine
-instead.
+the CARLA client in particular is a compiled extension with one wheel per
+interpreter. Installing them under a different Python or on a different platform
+will fail on the first wheel that has no matching tag -- re-export on a matching
+machine instead.

@@ -24,7 +24,7 @@ wheelhouse rather than of this code:
 
 * it is built **for one platform and one Python**, the exporting machine's.
   Wheels are selected by the interpreter that resolves them, so a wheelhouse
-  built on cp310/linux-x86_64 installs on cp310/linux-x86_64;
+  built on cp312/linux-x86_64 installs on cp312/linux-x86_64;
 * it is **large** -- the CARLA client, OpenCV and the lanelet2 bindings alone
   are most of a hundred megabytes.  That is the cost of not needing a network.
 """
@@ -185,9 +185,9 @@ def _wheel_search_root() -> Optional[Path]:
 def carla_wheels(extra: str = "") -> list[Path]:
     """Return the vendored CARLA wheels for *extra*, defaulting to this export's.
 
-    Only the one version is returned: the framework's two client extras are
-    mutually exclusive, and shipping both would put two CARLA clients that
-    cannot coexist in the same wheelhouse.
+    One version, every interpreter tag of it. Only the one version, because the
+    framework's two client extras are mutually exclusive and shipping both
+    would put two CARLA clients that cannot coexist in the same wheelhouse.
 
     Returns:
         The matching wheels, or an empty list when none can be found -- which is
@@ -198,6 +198,11 @@ def carla_wheels(extra: str = "") -> list[Path]:
     root = _wheel_search_root()
     if version is None or root is None:
         return []
+    # Every interpreter's wheel, not just the running one. A package vendoring
+    # only its own tag looks tidier and does not lock: the generated package
+    # inherits the framework's whole `requires-python`, and `uv lock` resolves
+    # the client across all of it. The wheelhouse built from the lock still
+    # holds exactly one -- pip takes the tag it can install.
     return sorted(root.glob(f"carla-{version}-*.whl"))
 
 

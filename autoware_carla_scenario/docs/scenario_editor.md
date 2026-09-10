@@ -695,9 +695,7 @@ A wheelhouse is resolved *by* an interpreter *for* a platform: the wheels are th
 ones the exporting machine's Python selected, and the CARLA client in particular
 is a compiled extension with one wheel per interpreter. Installing them under a
 different Python or on a different platform fails on the first wheel with no
-matching tag; export from an interpreter matching the target instead. The
-supported range is 3.10 - 3.12 (`requires-python = ">=3.10,<3.13"`), which is as
-far as the vendored CARLA wheels go.
+matching tag; export from an interpreter matching the target instead.
 
 It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
 160 MB. That is the cost of not needing a network at install time.

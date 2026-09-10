@@ -94,8 +94,10 @@ def resolve_names(
 
     Returns a dict with ``package_name`` (import/snake), ``distribution_name``
     (hyphen), ``scenario_name`` (snake), ``scenario_class`` /  ``config_class``
-    (Pascal), and ``description``.
+    (Pascal), ``description``, and ``requires_python``.
     """
+    from ..authoring.package_export import _requires_python  # noqa: PLC0415
+
     package_name = _validate_identifier(_to_snake(name), kind="package name")
 
     if scenario_name is None:
@@ -116,6 +118,11 @@ def resolve_names(
         "scenario_name": scenario,
         "scenario_class": scenario_class,
         "config_class": f"{pascal}Config",
+        # Read off the installed framework rather than written out here: a
+        # literal drifted the last time the supported range moved, and a
+        # scaffolded package that refuses to install on the interpreter that
+        # scaffolded it is a bad first five minutes.
+        "requires_python": _requires_python(),
         "description": description
         or f"{pascal} scenario package for autoware_carla_scenario",
     }

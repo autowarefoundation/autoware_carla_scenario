@@ -248,7 +248,7 @@ def _pin_summary(pin: Pin) -> str:
 
 
 def _vendor_carla_wheels(root: Path, extra: str, warnings: list[str]) -> Optional[str]:
-    """Copy the CARLA client wheel into the package.  Returns its directory.
+    """Copy the CARLA client wheels into the package.  Returns their directory.
 
     The client is not published to any index, so a package that merely *names*
     it cannot install anywhere.  Copying the wheel in and pointing uv at it with

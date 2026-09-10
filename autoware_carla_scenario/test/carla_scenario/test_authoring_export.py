@@ -391,6 +391,39 @@ class TestVendoredCarlaClient:
         # wheelhouse anybody can install.
         assert len({wheel.name.split("-")[1] for wheel in wheels}) == 1
 
+    def test_the_vendored_wheels_cover_the_declared_python_range(self) -> None:
+        """`requires-python` claims to stop where the client stops. Check it.
+
+        The ceiling is a hand-written number in one file and the wheels it
+        describes are files in another, and nothing but this makes them move
+        together. Widen the range without vendoring a wheel and the failure
+        lands on whoever installs the export, not on whoever widened it.
+        """
+        import re
+
+        from autoware_carla_scenario.authoring.framework_pin import (
+            framework_source_root,
+        )
+
+        wheels = carla_wheels()
+        pyproject = framework_source_root() / "pyproject.toml"
+        if not wheels or not pyproject.is_file():
+            pytest.skip("not a source checkout with vendored CARLA wheels")
+
+        declared = tomllib.loads(pyproject.read_text())["project"]["requires-python"]
+        floor = re.search(r">=\s*3\.(\d+)", declared)
+        ceiling = re.search(r"<\s*3\.(\d+)", declared)
+        assert floor and ceiling, declared
+
+        supported = {
+            f"cp3{minor}" for minor in range(int(floor.group(1)), int(ceiling.group(1)))
+        }
+        vendored = {wheel.name.split("-")[2] for wheel in wheels}
+        assert vendored == supported, (
+            f"{declared} says {sorted(supported)}, carla_wheels/ has "
+            f"{sorted(vendored)} -- vendor the wheel or narrow the range"
+        )
+
     def test_an_export_vendors_it_and_asks_for_it(self, package: Path) -> None:
         if not carla_wheels():
             pytest.skip("no CARLA wheel is vendored in this checkout")
