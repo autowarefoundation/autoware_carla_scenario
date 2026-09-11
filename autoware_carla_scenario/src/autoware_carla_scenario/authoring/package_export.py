@@ -449,13 +449,22 @@ def _build_manifest(
 def _run_uv(root: Path, *args: str, timeout: int) -> subprocess.CompletedProcess[str]:
     """Run ``uv`` inside *root* and return the completed process.
 
+    Every failure leaves as a :class:`PackageExportError`, including a timeout.
+    A `TimeoutExpired` travelling as itself would fly past the handlers that
+    roll an export back -- and the one around the final lock check runs after
+    both directories are already in place, so what it left behind was a
+    finished-looking export that also blocked the next one.
+
     Raises:
-        PackageExportError: If uv is not installed.
+        PackageExportError: If uv is not installed, cannot be started, or does
+            not finish in *timeout* seconds.
     """
     try:
         return run_uv(root, *args, timeout=timeout)
     except UvUnavailable as exc:
         raise PackageExportError(str(exc)) from exc
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise PackageExportError(f"`uv {args[0]}` did not finish: {exc}") from exc
 
 
 def _lock(root: Path) -> str:

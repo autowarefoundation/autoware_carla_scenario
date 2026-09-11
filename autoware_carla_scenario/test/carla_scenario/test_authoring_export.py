@@ -396,6 +396,27 @@ class TestExportRefusals:
         assert result.wheelhouse is None
         assert not stale.exists()
 
+    def test_a_uv_timeout_arrives_as_an_export_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A raw TimeoutExpired flies past every handler that rolls back.
+
+        The one around the final lock check runs after both directories are in
+        place, so what it left behind was a finished-looking export that also
+        blocked the next one.
+        """
+        import subprocess
+
+        import autoware_carla_scenario.authoring.package_export as module
+
+        def _timeout(*_args: Any, **_kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired("uv", 1)
+
+        monkeypatch.setattr(module, "run_uv", _timeout)
+        with pytest.raises(PackageExportError) as caught:
+            module._run_uv(tmp_path, "lock", "--check", timeout=1)
+        assert "did not finish" in str(caught.value)
+
     def test_a_failed_final_check_takes_the_wheelhouse_with_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
