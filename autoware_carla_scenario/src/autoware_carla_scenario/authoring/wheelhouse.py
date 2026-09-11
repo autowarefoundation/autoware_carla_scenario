@@ -380,8 +380,10 @@ def build_wheelhouse(
         The :class:`Wheelhouse` describing what was built.
 
     Raises:
-        WheelhouseError: If any step failed.  The destination is removed, so a
-            partial wheelhouse is never left behind looking installable.
+        WheelhouseError: If any step failed -- including a tool timing out or
+            failing to start.  The destination is removed, so a partial
+            wheelhouse is never left behind looking installable, and the next
+            attempt does not find a non-empty directory.
     """
     package_root = Path(package_root)
     destination = Path(destination)
@@ -424,13 +426,19 @@ def build_wheelhouse(
         log += _download_wheels(
             venv, pinned, destination, [vendored] if vendored.is_dir() else []
         )
-    except UvUnavailable as exc:
-        shutil.rmtree(destination, ignore_errors=True)
-        raise WheelhouseError(str(exc), log) from exc
     except WheelhouseError as exc:
         exc.log = f"{log}\n{exc.log}" if exc.log else log
         shutil.rmtree(destination, ignore_errors=True)
         raise
+    except (UvUnavailable, subprocess.SubprocessError, OSError) as exc:
+        # A tool that times out or cannot be spawned raises straight past the
+        # checks above, and the destination is half-filled by then. Leaving it
+        # would break the promise made below *and* refuse the next attempt,
+        # which finds a non-empty directory.
+        shutil.rmtree(destination, ignore_errors=True)
+        raise WheelhouseError(
+            f"The wheelhouse build did not finish: {exc}", log
+        ) from exc
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

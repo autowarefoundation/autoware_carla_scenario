@@ -291,6 +291,7 @@ def _write_package_tree(
     pin: Pin,
     uv_version: Optional[str],
     vendored_wheels: Optional[str],
+    carla_extra_name: str,
     warnings: list[str],
 ) -> dict[str, str]:
     """Render every file of the package under *root*.  Returns the file map."""
@@ -313,6 +314,7 @@ def _write_package_tree(
         "pin_note": _pin_note(pin),
         "uv_required_version": uv_version,
         "vendored_wheels": vendored_wheels,
+        "carla_extra": carla_extra_name,
         "uv_pin_summary": (
             f"`{uv_version}` (`tool.uv.required-version`)"
             if uv_version
@@ -714,7 +716,7 @@ def export_package(
         vendored = _vendor_carla_wheels(staging, extra, warnings)
 
         files = _write_package_tree(
-            staging, document, names, pin, uv_version, vendored, warnings
+            staging, document, names, pin, uv_version, vendored, extra, warnings
         )
 
         checks, check_log = _self_check(

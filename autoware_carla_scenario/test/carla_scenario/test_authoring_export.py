@@ -504,6 +504,12 @@ class TestVendoredCarlaClient:
         # Nothing to point a relative find-links at.
         assert "find-links" not in data.get("tool", {}).get("uv", {})
         assert any("No local wheel was vendored" in w for w in result.warnings)
+        # ...and the README must not tell the reader to install a client that
+        # the package installs for them.
+        readme = (result.root / "README.md").read_text()
+        assert f"`{carla_extra()}` extra" in readme
+        assert "comes from an index" in readme
+        assert "not** installed by this package" not in readme
 
 
 class TestShippedRequirements:
@@ -560,6 +566,39 @@ class TestWheelhouseRefusals:
                 version="0.1.0",
                 run_command="scenario scenario=nothing",
             )
+
+    def test_a_timed_out_tool_leaves_no_half_built_wheelhouse(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`TimeoutExpired` is not a WheelhouseError and used to fly straight past.
+
+        The destination has the project wheel in it by then, so what was left
+        behind both broke the "nothing partial survives" guarantee and made the
+        next attempt fail on a non-empty directory.
+        """
+        import subprocess
+
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        destination = tmp_path / "out"
+
+        def _timeout(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "half-0.1.0-py3-none-any.whl").write_text("")
+            raise subprocess.TimeoutExpired("uv", 1)
+
+        monkeypatch.setattr(module, "_export_requirements", _timeout)
+        with pytest.raises(WheelhouseError) as caught:
+            build_wheelhouse(
+                tmp_path,
+                destination,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+        assert "did not finish" in str(caught.value)
+        assert not destination.exists()
 
     def test_a_non_empty_destination_is_refused(self, tmp_path: Path) -> None:
         """A stale wheel left in the directory would be installed."""

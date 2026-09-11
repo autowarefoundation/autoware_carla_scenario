@@ -21,16 +21,15 @@ uv run scenario scenario={{ scenario_id }} map={{ map_group }}
 `--locked` is deliberate: if `uv.lock` and `pyproject.toml` ever disagree, the
 command fails instead of quietly resolving something new. That is what makes
 this directory reproducible.
+
+The CARLA client is installed by this package, through the framework's
+`{{ carla_extra }}` extra -- nothing has to be installed by hand.
 {% if vendored_wheels %}
-
-The CARLA client is not published to any index, so its wheel travels in
+That client is published to no index, so its wheel travels in
 [`{{ vendored_wheels }}/`]({{ vendored_wheels }}) and `pyproject.toml` points uv
-at it with a relative `find-links`. Nothing needs to be installed by hand.
+at it with a relative `find-links`.
 {% else %}
-
-The CARLA client is **not** installed by this package: no wheel for it was
-available when the package was exported, and it is not published to any index.
-Install it into the same environment before running against a live server.
+That client comes from an index, so nothing is vendored here.
 {% endif %}
 
 ## Test it
