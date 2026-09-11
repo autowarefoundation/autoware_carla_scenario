@@ -459,6 +459,23 @@ def build_wheelhouse(
         log += _download_wheels(
             venv, pinned, destination, [vendored] if vendored.is_dir() else []
         )
+
+        # Inside the guard: the last two files are small, but the disk they go
+        # on has just taken 160 MB of wheels, and a wheelhouse missing its
+        # requirements.txt must not be what a failed build leaves behind.
+        wheels = sorted(destination.glob("*.whl"))
+        built = Wheelhouse(
+            root=destination,
+            distribution=distribution,
+            version=version,
+            wheels=tuple(path.name for path in wheels),
+            size_bytes=sum(path.stat().st_size for path in wheels),
+            python_tag=python,
+            log=log,
+        )
+        _write_install_files(built, requirements=requirements, run_command=run_command)
+        logger.info("Built a wheelhouse of %d wheels at %s", len(wheels), destination)
+        return built
     except WheelhouseError as exc:
         exc.log = f"{log}\n{exc.log}" if exc.log else log
         shutil.rmtree(destination, ignore_errors=True)
@@ -474,20 +491,6 @@ def build_wheelhouse(
         ) from exc
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-
-    wheels = sorted(destination.glob("*.whl"))
-    built = Wheelhouse(
-        root=destination,
-        distribution=distribution,
-        version=version,
-        wheels=tuple(path.name for path in wheels),
-        size_bytes=sum(path.stat().st_size for path in wheels),
-        python_tag=python,
-        log=log,
-    )
-    _write_install_files(built, requirements=requirements, run_command=run_command)
-    logger.info("Built a wheelhouse of %d wheels at %s", len(wheels), destination)
-    return built
 
 
 def _canonical(name: str) -> str:

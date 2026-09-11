@@ -628,6 +628,48 @@ class TestWheelhouseRefusals:
         assert "did not finish" in str(caught.value)
         assert not destination.exists()
 
+    def test_a_failure_writing_the_install_files_cleans_up_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The last two files are written onto a disk that just took 160 MB.
+
+        A wheelhouse missing its `requirements.txt` must not be what a failed
+        build leaves behind -- and the next attempt would be refused for
+        finding a non-empty directory.
+        """
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        destination = tmp_path / "out"
+
+        def _wheels_but_no_files(*_args: Any, **_kwargs: Any) -> str:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "done-1.0-py3-none-any.whl").write_text("")
+            return ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", _wheels_but_no_files)
+        monkeypatch.setattr(
+            module, "_builder_environment", lambda *_a: (tmp_path / "venv", "")
+        )
+        monkeypatch.setattr(module, "_download_wheels", lambda *_a: "")
+        monkeypatch.setattr(
+            module,
+            "_write_install_files",
+            lambda *_a, **_k: (_ for _ in ()).throw(OSError("no space left")),
+        )
+
+        with pytest.raises(WheelhouseError) as caught:
+            build_wheelhouse(
+                tmp_path,
+                destination,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+        assert "did not finish" in str(caught.value)
+        assert not destination.exists()
+
     def test_a_non_empty_destination_is_refused(self, tmp_path: Path) -> None:
         """A stale wheel left in the directory would be installed."""
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
