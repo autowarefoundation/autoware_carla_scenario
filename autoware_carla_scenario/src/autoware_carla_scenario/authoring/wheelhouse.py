@@ -462,8 +462,32 @@ def _canonical(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+#: What a requirement line looks like when uv writes the source instead of a
+#: version. A git source comes through as ``name @ <url>``; a path source comes
+#: through as the bare URL, with no name on it at all.
+_DIRECT_SCHEMES = ("file:", "git+", "http:", "https:", "./", "../", "/")
+
+
+def _referenced_distribution(reference: str) -> str:
+    """Return the distribution a bare direct reference names.
+
+    There is no name in the line to read, so it comes from the location: the
+    subdirectory when the reference has one, otherwise the last path segment.
+    That is a guess, and the caller only acts on it when it matches a wheel it
+    actually built.
+    """
+    head = reference.split(";", 1)[0].strip()
+    head, _, fragment = head.partition("#")
+    subdirectory = re.search(r"subdirectory=([^&]+)", fragment)
+    if subdirectory:
+        return subdirectory.group(1).rstrip("/").split("/")[-1]
+    if head.startswith("git+"):
+        head = re.sub(r"@[^/@]+$", "", head)
+    return head.rstrip("/").split("/")[-1].removesuffix(".git")
+
+
 def _pin_direct_references(requirements: str, wheels: tuple[str, ...]) -> str:
-    """Rewrite ``name @ <url>`` requirements to the version built for them.
+    """Rewrite requirements that name a source to the version built for them.
 
     ``uv export`` keeps a git or path source as a *direct reference*, and pip
     honours a direct reference however many ``--find-links`` it was given: it
@@ -472,8 +496,9 @@ def _pin_direct_references(requirements: str, wheels: tuple[str, ...]) -> str:
     target.  The wheel is already in the directory, so naming it by version is
     what makes ``-r requirements.txt`` an offline install.
 
-    A requirement whose wheel is not in the directory is left alone rather than
-    guessed at.
+    Two shapes, because uv writes two: ``name @ <url>`` for a git source, and
+    the bare URL for a path one.  A requirement whose wheel is not in the
+    directory is left alone rather than guessed at.
     """
     versions = {}
     for wheel in wheels:
@@ -483,17 +508,27 @@ def _pin_direct_references(requirements: str, wheels: tuple[str, ...]) -> str:
     lines = []
     for line in requirements.splitlines():
         stripped = line.strip()
-        if stripped.startswith("#") or " @ " not in stripped:
+        if stripped.startswith("#") or not stripped:
             lines.append(line)
             continue
-        head, _, rest = stripped.partition(" @ ")
-        pinned = versions.get(_canonical(head.split("[")[0]))
+
+        if " @ " in stripped:
+            name, _, rest = stripped.partition(" @ ")
+        elif stripped.startswith(_DIRECT_SCHEMES):
+            # Nothing in the line is a name, so write the canonical one rather
+            # than the directory spelling the location happened to use.
+            name, rest = _canonical(_referenced_distribution(stripped)), stripped
+        else:
+            lines.append(line)
+            continue
+
+        pinned = versions.get(_canonical(name.split("[")[0]))
         if pinned is None:
             lines.append(line)
             continue
         # Markers travel with the requirement; the source does not.
         marker = f" ;{rest.split(';', 1)[1]}" if ";" in rest else ""
-        lines.append(f"{head}=={pinned}{marker}")
+        lines.append(f"{name}=={pinned}{marker}")
     return "\n".join(lines)
 
 

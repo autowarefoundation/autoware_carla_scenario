@@ -532,7 +532,8 @@ class TestShippedRequirements:
                 f"{DISTRIBUTION}[carla] @ git+https://example.com/r@abc"
                 "#subdirectory=autoware_carla_scenario",
                 "    # via cut-in-scenario",
-                f"{CONVERTER_DISTRIBUTION} @ file:///somewhere/local",
+                # uv writes a path source as a bare URL, name and all omitted.
+                "file:///somewhere/local/autoware_lanelet2_to_opendrive",
                 "colorama==0.4.6 ; sys_platform == 'win32'",
                 "unbuilt @ git+https://example.com/nope",
             ]
@@ -548,6 +549,7 @@ class TestShippedRequirements:
 
         assert f"{DISTRIBUTION}[carla]==0.1.0" in rewritten
         assert f"{CONVERTER_DISTRIBUTION}==2.62.0" in rewritten
+        assert not any(line.startswith("file:") for line in rewritten)
         # Markers travel; comments and unbuilt requirements are left alone.
         assert "colorama==0.4.6 ; sys_platform == 'win32'" in rewritten
         assert "    # via cut-in-scenario" in rewritten
@@ -680,6 +682,12 @@ class TestExportSelfCheck:
         shipped = (wheelhouse.root / "requirements.txt").read_text()
         assert " @ git+" not in shipped
         assert " @ file://" not in shipped
+        # uv writes a path source as the bare URL, with no ` @ ` in it at all.
+        assert not [
+            line
+            for line in shipped.splitlines()
+            if line.startswith(("file:", "git+", "http:", "https:", "/", "./", "../"))
+        ], shipped
 
     def test_the_wheelhouse_installs_with_pip_and_nothing_else(
         self, exported: ExportResult, tmp_path: Path
