@@ -770,6 +770,10 @@ class TestExportSelfCheck:
             assert "carla-" in names
         assert (wheelhouse.root / "requirements.txt").is_file()
         assert (wheelhouse.root / "README.md").is_file()
+        # The wheelhouse is what leaves the machine, so it carries its own
+        # provenance rather than leaving it in the tree the editor deletes.
+        travelling = yaml.safe_load((wheelhouse.root / "manifest.yaml").read_text())
+        assert travelling == result.manifest
 
         # The manifest is read after the export, so it has to name the
         # directory that is there -- not the temporary one it was built in.

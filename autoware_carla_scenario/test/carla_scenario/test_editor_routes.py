@@ -1307,6 +1307,8 @@ class TestValidateSaveExport:
         assert {n.split("/")[0] for n in names} == {"cut_in_scenario_wheelhouse"}
         assert any(n.endswith(".whl") for n in names)
         assert "cut_in_scenario_wheelhouse/requirements.txt" in names
+        # Provenance travels in the download; the tree holding it is deleted.
+        assert "cut_in_scenario_wheelhouse/manifest.yaml" in names
 
     def test_the_uv_project_is_not_left_on_the_host(
         self, client: TestClient, offline_export: None, tmp_path: Path, draft_id: str

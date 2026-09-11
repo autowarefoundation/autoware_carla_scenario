@@ -768,6 +768,12 @@ def export_package(
             dump_yaml(manifest),
             encoding="utf-8",
         )
+        if built is not None:
+            # The wheelhouse is the half that leaves the machine -- the editor
+            # zips it and deletes the rest -- so the provenance travels with
+            # it: which commit the framework came from, which interpreter
+            # resolved the wheels, and what the export warned about.
+            shutil.copy2(manifest_path, wheelhouse_staging / "manifest.yaml")
 
         _strip_build_output(staging)
 

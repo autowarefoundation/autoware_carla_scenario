@@ -30,6 +30,9 @@ Then run the scenario:
 | Wheels | {{ wheel_count }} |
 | Python | {{ python }} |
 
+`manifest.yaml` records what this was built from -- the framework's commit, the
+interpreter, the uv version, and any caveat the export raised.
+
 The scenario document and its Hydra config travel **inside** the scenario's own
 wheel, so the installed package is the scenario -- there is no directory that
 has to be kept next to it.
