@@ -609,6 +609,10 @@ def _write_install_files(
             python=wheelhouse.python_tag,
             wheel_count=len(wheelhouse.wheels),
             run_command=run_command,
+            # A wheelhouse installs on the platform it was built for and no
+            # other, so the layout of the venv it tells the reader to make is
+            # this platform's -- `Scripts` on Windows, `bin` everywhere else.
+            venv_bin="Scripts" if os.name == "nt" else "bin",
         ),
         encoding="utf-8",
     )

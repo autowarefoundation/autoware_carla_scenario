@@ -6,20 +6,20 @@ network, and no resolution:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install --no-index --find-links . {{ distribution }}
+.venv/{{ venv_bin }}/pip install --no-index --find-links . {{ distribution }}
 ```
 
 To install exactly the versions that were resolved, rather than letting pip
 pick the best match in the directory:
 
 ```bash
-.venv/bin/pip install --no-index --find-links . -r requirements.txt
+.venv/{{ venv_bin }}/pip install --no-index --find-links . -r requirements.txt
 ```
 
 Then run the scenario:
 
 ```bash
-.venv/bin/{{ run_command }}
+.venv/{{ venv_bin }}/{{ run_command }}
 ```
 
 ## What is in here

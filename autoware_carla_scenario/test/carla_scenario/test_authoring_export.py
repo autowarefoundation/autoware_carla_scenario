@@ -8,6 +8,7 @@ generated files themselves runs unconditionally.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -790,7 +791,11 @@ class TestExportSelfCheck:
         if carla_wheels():
             assert "carla-" in names
         assert (wheelhouse.root / "requirements.txt").is_file()
-        assert (wheelhouse.root / "README.md").is_file()
+        readme = (wheelhouse.root / "README.md").read_text()
+        # The venv layout is the exporting platform's, because that is the only
+        # platform these wheels install on.
+        expected_bin = "Scripts" if os.name == "nt" else "bin"
+        assert f".venv/{expected_bin}/pip install --no-index" in readme
         # The wheelhouse is what leaves the machine, so it carries its own
         # provenance rather than leaving it in the tree the editor deletes.
         travelling = yaml.safe_load((wheelhouse.root / "manifest.yaml").read_text())
