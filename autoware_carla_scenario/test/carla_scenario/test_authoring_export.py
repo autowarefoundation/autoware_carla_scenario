@@ -1,22 +1,27 @@
 """Scenario Package export -- the reproducibility guarantees, in tests.
 
 The expensive end-to-end check (``uv lock`` + ``uv sync --locked`` + the
-generated package's own tests) needs the network and about a minute, so it is
-marked ``slow``. Everything that can be asserted from the generated files
-themselves runs unconditionally.
+generated package's own tests + the wheelhouse) needs the network and some
+minutes, so it is marked ``slow``. Everything that can be asserted from the
+generated files themselves runs unconditionally.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from typing import Any
 
+import jinja2
 import pytest
 import yaml
 
-# tomllib landed in 3.11; the workspace is capped at 3.10 by the CARLA wheel.
-try:
+# tomllib landed in 3.11, and 3.10 is still the floor of the supported range.
+# Branching on sys.version_info rather than catching ImportError keeps mypy from
+# reading the fallback as a redefinition when it checks against 3.11+.
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - 3.11+ has it in the stdlib
+else:  # pragma: no cover - only taken on 3.10
     import tomli as tomllib
 
 from autoware_carla_scenario.authoring.framework_pin import (
@@ -34,25 +39,34 @@ from autoware_carla_scenario.authoring.hydra_config import (
     swept_entity,
 )
 from autoware_carla_scenario.authoring.package_export import (
+    ExportResult,
     PackageExportError,
     export_package,
     package_names,
 )
 from autoware_carla_scenario.authoring.starter import new_document
+from autoware_carla_scenario.authoring.wheelhouse import (
+    WheelhouseError,
+    build_wheelhouse,
+    carla_extra,
+    carla_wheels,
+)
+
+
+#: Options that keep an export offline: no lock, so no sync, no tests and no
+#: wheelhouse -- everything those steps would need the network for.
+OFFLINE = {
+    "dev_mode": True,
+    "lock": False,
+    "verify": False,
+    "run_tests": False,
+}
 
 
 @pytest.fixture
 def package(tmp_path: Path) -> Path:
     """Export the starter scenario without locking (fast, offline)."""
-    result = export_package(
-        new_document(),
-        tmp_path,
-        dev_mode=True,
-        lock=False,
-        verify=False,
-        run_tests=False,
-    )
-    return result.root
+    return export_package(new_document(), tmp_path, **OFFLINE).root
 
 
 def _document_with_goal(lanelet_id: int | None, s: float = 0.0):
@@ -228,14 +242,27 @@ class TestGeneratedPackage:
             "pyproject.toml",
             "README.md",
             ".python-version",
-            "scenario/document.yaml",
             "scenario/manifest.yaml",
-            "conf/scenario/cut_in.yaml",
             "src/cut_in_scenario/__init__.py",
             "src/cut_in_scenario/scenario.py",
             "tests/test_scenario.py",
         ):
             assert (package / relative).is_file(), relative
+
+    def test_the_document_and_config_live_inside_the_module(
+        self, package: Path
+    ) -> None:
+        """Anything beside the module is dropped when the wheel is built.
+
+        A wheel holding a scenario package with no scenario in it installs
+        perfectly and fails at run time, so where these two files sit is the
+        difference between a shippable package and a broken one.
+        """
+        module = package / "src" / "cut_in_scenario"
+        assert (module / "document.yaml").is_file()
+        assert (module / "conf" / "scenario" / "cut_in.yaml").is_file()
+        assert not (package / "scenario" / "document.yaml").exists()
+        assert not (package / "conf").exists()
 
     def test_python_version_is_an_exact_patch_version(self, package: Path) -> None:
         import platform
@@ -254,10 +281,10 @@ class TestGeneratedPackage:
         only the framework could not import it.
         """
         data = tomllib.loads((package / "pyproject.toml").read_text())
-        assert set(data["project"]["dependencies"]) == {
-            DISTRIBUTION,
-            CONVERTER_DISTRIBUTION,
+        declared = {
+            requirement.split("[")[0] for requirement in data["project"]["dependencies"]
         }
+        assert declared == {DISTRIBUTION, CONVERTER_DISTRIBUTION}
         assert data["project"]["requires-python"]
 
     def test_both_projects_are_pinned_the_same_way(self, package: Path) -> None:
@@ -274,6 +301,17 @@ class TestGeneratedPackage:
         else:
             assert framework["path"] != converter["path"]
 
+    def test_the_package_is_its_own_pytest_rootdir(self, package: Path) -> None:
+        """pytest searches upwards, so an unpacked package would inherit config.
+
+        The workspace this repository is one of sets ``addopts = "-n auto
+        --testmon"``; a package unpacked anywhere under such a project would
+        pick that up and fail before collecting a test, on plugins it has no
+        reason to install.
+        """
+        data = tomllib.loads((package / "pyproject.toml").read_text())
+        assert data["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
+
     def test_pyproject_pins_uv_when_its_version_is_known(self, package: Path) -> None:
         import shutil
 
@@ -286,16 +324,17 @@ class TestGeneratedPackage:
     def test_the_document_round_trips_into_the_package(self, package: Path) -> None:
         from autoware_carla_scenario.authoring.persistence import load_document
 
-        assert load_document(package / "scenario/document.yaml").id == "cut_in"
+        document = package / "src/cut_in_scenario/document.yaml"
+        assert load_document(document).id == "cut_in"
 
     def test_the_hydra_config_is_package_global(self, package: Path) -> None:
-        text = (package / "conf/scenario/cut_in.yaml").read_text()
+        text = (package / "src/cut_in_scenario/conf/scenario/cut_in.yaml").read_text()
         assert text.splitlines()[0] == "# @package _global_"
         assert yaml.safe_load(text)["scenario"]["name"] == "cut_in"
 
     def test_manifest_records_only_observed_values(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
-        assert manifest["format_version"] == 1
+        assert manifest["format_version"] == 2
         assert manifest["scenario"]["id"] == "cut_in"
         assert manifest["runtime"]["python"]
         assert "uv" in manifest["runtime"]
@@ -304,7 +343,7 @@ class TestGeneratedPackage:
             "version",
             "path",
         )
-        assert manifest["files"]["document"] == "scenario/document.yaml"
+        assert manifest["files"]["document"] == "src/cut_in_scenario/document.yaml"
 
     def test_skipping_the_lock_is_recorded_as_a_caveat(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
@@ -316,16 +355,15 @@ class TestExportRefusals:
         document = new_document()
         document.assertions.pass_conditions = []
         with pytest.raises(PackageExportError):
-            export_package(document, tmp_path, dev_mode=True, lock=False)
+            export_package(document, tmp_path, **OFFLINE)
 
     def test_an_occupied_destination_is_refused_without_force(
         self, tmp_path: Path
     ) -> None:
-        options = {"dev_mode": True, "lock": False, "verify": False, "run_tests": False}
-        export_package(new_document(), tmp_path, **options)
+        export_package(new_document(), tmp_path, **OFFLINE)
         with pytest.raises(PackageExportError):
-            export_package(new_document(), tmp_path, **options)
-        export_package(new_document(), tmp_path, force=True, **options)
+            export_package(new_document(), tmp_path, **OFFLINE)
+        export_package(new_document(), tmp_path, force=True, **OFFLINE)
 
     def test_a_failed_lock_leaves_nothing_behind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -341,18 +379,397 @@ class TestExportRefusals:
             export_package(new_document(), tmp_path, dev_mode=True)
         assert list(tmp_path.iterdir()) == []
 
+    def test_a_forced_unlocked_export_clears_a_previous_wheelhouse(
+        self, tmp_path: Path
+    ) -> None:
+        """`force` replaces both directories, including the one not rebuilt.
+
+        An unlocked export has no wheelhouse to put there, so a previous
+        export's would otherwise stay -- stale wheels beside a fresh manifest
+        that says the package has none.
+        """
+        stale = tmp_path / "cut_in_scenario_wheelhouse"
+        stale.mkdir()
+        (stale / "old-0.0.1-py3-none-any.whl").write_text("", encoding="utf-8")
+
+        result = export_package(new_document(), tmp_path, force=True, **OFFLINE)
+        assert result.wheelhouse is None
+        assert not stale.exists()
+
+    def test_a_uv_timeout_arrives_as_an_export_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A raw TimeoutExpired flies past every handler that rolls back.
+
+        The one around the final lock check runs after both directories are in
+        place, so what it left behind was a finished-looking export that also
+        blocked the next one.
+        """
+        import subprocess
+
+        import autoware_carla_scenario.authoring.package_export as module
+
+        def _timeout(*_args: Any, **_kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired("uv", 1)
+
+        monkeypatch.setattr(module, "run_uv", _timeout)
+        with pytest.raises(PackageExportError) as caught:
+            module._run_uv(tmp_path, "lock", "--check", timeout=1)
+        assert "did not finish" in str(caught.value)
+
+    def test_a_failed_final_check_takes_the_wheelhouse_with_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`uv lock --check` runs after both directories are in place.
+
+        A wheelhouse left behind by a failed export looks finished, and blocks
+        the next export unless it is forced.
+        """
+        import autoware_carla_scenario.authoring.package_export as module
+
+        def _lock(root: Path) -> str:
+            (root / "uv.lock").write_text("# stub\n", encoding="utf-8")
+            return ""
+
+        def _wheelhouse(_root: Path, destination: Path, **_: Any) -> Any:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "stub-0.1.0-py3-none-any.whl").write_text("")
+            return module.Wheelhouse(
+                root=destination, distribution="stub", version="0.1.0"
+            )
+
+        def _refuse(_root: Path) -> str:
+            raise PackageExportError("lock no longer matches")
+
+        monkeypatch.setattr(module, "_lock", _lock)
+        monkeypatch.setattr(module, "_verify_sync", lambda _root: "")
+        monkeypatch.setattr(module, "_run_tests", lambda _root: (True, ""))
+        monkeypatch.setattr(module, "build_wheelhouse", _wheelhouse)
+        monkeypatch.setattr(module, "_check_lock", _refuse)
+
+        with pytest.raises(PackageExportError):
+            export_package(new_document(), tmp_path, dev_mode=True)
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestVendoredCarlaClient:
+    """The client is on no index, so a package that does not carry it cannot run."""
+
+    def test_the_repositorys_wheel_is_found_and_matches_the_extra(self) -> None:
+        wheels = carla_wheels()
+        if not wheels:
+            pytest.skip("no CARLA wheel is vendored in this checkout")
+        assert all(wheel.suffix == ".whl" for wheel in wheels)
+        # Exactly one client: the repository also vendors the legacy 0.9.16
+        # wheel, and two mutually exclusive clients in one wheelhouse is not a
+        # wheelhouse anybody can install.
+        assert len({wheel.name.split("-")[1] for wheel in wheels}) == 1
+
+    def test_the_vendored_wheels_cover_the_declared_python_range(self) -> None:
+        """`requires-python` claims to stop where the client stops. Check it.
+
+        The ceiling is a hand-written number in one file and the wheels it
+        describes are files in another, and nothing but this makes them move
+        together. Widen the range without vendoring a wheel and the failure
+        lands on whoever installs the export, not on whoever widened it.
+        """
+        import re
+
+        from autoware_carla_scenario.authoring.framework_pin import (
+            framework_source_root,
+        )
+
+        wheels = carla_wheels()
+        pyproject = framework_source_root() / "pyproject.toml"
+        if not wheels or not pyproject.is_file():
+            pytest.skip("not a source checkout with vendored CARLA wheels")
+
+        declared = tomllib.loads(pyproject.read_text())["project"]["requires-python"]
+        floor = re.search(r">=\s*3\.(\d+)", declared)
+        ceiling = re.search(r"<\s*3\.(\d+)", declared)
+        assert floor and ceiling, declared
+
+        supported = {
+            f"cp3{minor}" for minor in range(int(floor.group(1)), int(ceiling.group(1)))
+        }
+        vendored = {wheel.name.split("-")[2] for wheel in wheels}
+        assert vendored == supported, (
+            f"{declared} says {sorted(supported)}, carla_wheels/ has "
+            f"{sorted(vendored)} -- vendor the wheel or narrow the range"
+        )
+
+    def test_an_export_vendors_it_and_asks_for_it(self, package: Path) -> None:
+        if not carla_wheels():
+            pytest.skip("no CARLA wheel is vendored in this checkout")
+        data = tomllib.loads((package / "pyproject.toml").read_text())
+        assert f"{DISTRIBUTION}[{carla_extra()}]" in data["project"]["dependencies"]
+        # Relative, so the package resolves wherever it is copied.
+        assert data["tool"]["uv"]["find-links"] == ["carla_wheels"]
+        assert list((package / "carla_wheels").glob("carla-*.whl"))
+
+    def test_a_client_no_extra_pins_is_said_out_loud(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defaulting is fine; defaulting silently is not.
+
+        A client an extra names exactly, and no client at all, both have a
+        right answer. Anything else -- 0.9.15, say -- means the export is
+        about to request a different client from the one the scenario was
+        authored against.
+        """
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        monkeypatch.setattr(module, "_installed_carla", lambda: "0.9.15")
+        result = export_package(new_document(), tmp_path, **OFFLINE)
+        assert any("CARLA 0.9.15 is installed" in w for w in result.warnings)
+
+    def test_a_locally_built_client_is_the_client_it_was_built_from(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`0.10.0+custom` is 0.10.0, compiled elsewhere -- not a mismatch."""
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        monkeypatch.setattr(module, "_installed_carla", lambda: "0.10.0+custom")
+        assert module.carla_extra() == "carla"
+        assert module.unpinned_carla_client() is None
+
+    def test_the_extra_is_asked_for_even_with_no_wheel_to_vendor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Vendoring answers *where from*, not *whether*.
+
+        The legacy client is published to PyPI, so nothing has to be vendored
+        for it -- and an export that dropped the extra because it found no
+        local wheel would build a wheelhouse with no `carla` in it and report
+        success. A scenario that cannot import carla cannot run.
+        """
+        import autoware_carla_scenario.authoring.package_export as module
+
+        monkeypatch.setattr(module, "carla_wheels", lambda _extra: [])
+        result = export_package(new_document(), tmp_path, **OFFLINE)
+        data = tomllib.loads((result.root / "pyproject.toml").read_text())
+        assert f"{DISTRIBUTION}[{carla_extra()}]" in data["project"]["dependencies"]
+        # Nothing to point a relative find-links at.
+        assert "find-links" not in data.get("tool", {}).get("uv", {})
+        assert any("No local wheel was vendored" in w for w in result.warnings)
+        # ...and the README must not tell the reader to install a client that
+        # the package installs for them.
+        readme = (result.root / "README.md").read_text()
+        assert f"`{carla_extra()}` extra" in readme
+        assert "comes from an index" in readme
+        assert "not** installed by this package" not in readme
+
+
+class TestShippedRequirements:
+    """`-r requirements.txt` has to install with `--no-index` like the rest."""
+
+    def test_direct_references_become_the_version_that_was_built(self) -> None:
+        """A git or path source sends pip to the network whatever --find-links says.
+
+        `uv export` keeps those sources as direct references, so copying its
+        output verbatim would ship a file that clones the repository -- on a
+        machine chosen for having no network.
+        """
+        from autoware_carla_scenario.authoring.wheelhouse import (
+            _pin_direct_references,
+        )
+
+        exported = "\n".join(
+            [
+                "annotated-types==0.8.0",
+                f"{DISTRIBUTION}[carla] @ git+https://example.com/r@abc"
+                "#subdirectory=autoware_carla_scenario",
+                "    # via cut-in-scenario",
+                # uv writes a path source as a bare URL, name and all omitted.
+                "file:///somewhere/local/autoware_lanelet2_to_opendrive",
+                "colorama==0.4.6 ; sys_platform == 'win32'",
+                "unbuilt @ git+https://example.com/nope",
+            ]
+        )
+        rewritten = _pin_direct_references(
+            exported,
+            (
+                "annotated_types-0.8.0-py3-none-any.whl",
+                "autoware_carla_scenario-0.1.0-py3-none-any.whl",
+                "autoware_lanelet2_to_opendrive-2.62.0-py3-none-any.whl",
+            ),
+        ).splitlines()
+
+        assert f"{DISTRIBUTION}[carla]==0.1.0" in rewritten
+        assert f"{CONVERTER_DISTRIBUTION}==2.62.0" in rewritten
+        assert not any(line.startswith("file:") for line in rewritten)
+        # Markers travel; comments and unbuilt requirements are left alone.
+        assert "colorama==0.4.6 ; sys_platform == 'win32'" in rewritten
+        assert "    # via cut-in-scenario" in rewritten
+        assert "unbuilt @ git+https://example.com/nope" in rewritten
+        assert not any(" @ git+https://example.com/r" in line for line in rewritten)
+
+
+class TestWheelhouseRefusals:
+    def test_a_wheelhouse_needs_a_lock(self, tmp_path: Path) -> None:
+        """It *is* the lockfile resolved into wheels; there is nothing else to build."""
+        with pytest.raises(WheelhouseError):
+            build_wheelhouse(
+                tmp_path,
+                tmp_path / "out",
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+
+    def test_a_timed_out_tool_leaves_no_half_built_wheelhouse(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`TimeoutExpired` is not a WheelhouseError and used to fly straight past.
+
+        The destination has the project wheel in it by then, so what was left
+        behind both broke the "nothing partial survives" guarantee and made the
+        next attempt fail on a non-empty directory.
+        """
+        import subprocess
+
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        destination = tmp_path / "out"
+
+        def _timeout(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "half-0.1.0-py3-none-any.whl").write_text("")
+            raise subprocess.TimeoutExpired("uv", 1)
+
+        monkeypatch.setattr(module, "_export_requirements", _timeout)
+        with pytest.raises(WheelhouseError) as caught:
+            build_wheelhouse(
+                tmp_path,
+                destination,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+        assert "did not finish" in str(caught.value)
+        assert not destination.exists()
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            OSError("no space left"),
+            # Rendered with StrictUndefined: a variable added to the template
+            # and forgotten at the call site raises this, not an OSError.
+            jinja2.TemplateError("undefined variable"),
+        ],
+        ids=["disk", "template"],
+    )
+    def test_a_failure_writing_the_install_files_cleans_up_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """The last two files are written onto a disk that just took 160 MB.
+
+        A wheelhouse missing its `requirements.txt` must not be what a failed
+        build leaves behind -- and the next attempt would be refused for
+        finding a non-empty directory.
+        """
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        destination = tmp_path / "out"
+
+        def _wheels_but_no_files(*_args: Any, **_kwargs: Any) -> str:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "done-1.0-py3-none-any.whl").write_text("")
+            return ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", _wheels_but_no_files)
+        monkeypatch.setattr(
+            module, "_builder_environment", lambda *_a: (tmp_path / "venv", "")
+        )
+        monkeypatch.setattr(module, "_download_wheels", lambda *_a: "")
+        monkeypatch.setattr(
+            module,
+            "_write_install_files",
+            lambda *_a, **_k: (_ for _ in ()).throw(failure),
+        )
+
+        with pytest.raises(WheelhouseError) as caught:
+            build_wheelhouse(
+                tmp_path,
+                destination,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+        assert "did not finish" in str(caught.value)
+        assert not destination.exists()
+
+    def test_a_non_empty_destination_is_refused(self, tmp_path: Path) -> None:
+        """A stale wheel left in the directory would be installed."""
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        destination = tmp_path / "out"
+        destination.mkdir()
+        (destination / "stale-1.0-py3-none-any.whl").write_text("", encoding="utf-8")
+        with pytest.raises(WheelhouseError):
+            build_wheelhouse(
+                tmp_path,
+                destination,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+
+    def test_a_destination_that_is_a_file_is_refused_cleanly(
+        self, tmp_path: Path
+    ) -> None:
+        """`iterdir()` on a regular file raises NotADirectoryError.
+
+        That would leave a function documented to raise WheelhouseError for an
+        unusable destination through a different door.
+        """
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        occupied = tmp_path / "out"
+        occupied.write_text("not a directory", encoding="utf-8")
+        with pytest.raises(WheelhouseError) as caught:
+            build_wheelhouse(
+                tmp_path,
+                occupied,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+        assert "not a directory" in str(caught.value)
+
+    def test_skipping_the_lock_records_why_there_is_no_wheelhouse(
+        self, tmp_path: Path
+    ) -> None:
+        """There is a wheelhouse exactly when there is a lock to resolve."""
+        result = export_package(new_document(), tmp_path, **OFFLINE)
+        assert result.wheelhouse is None
+        assert any("No wheelhouse was built" in w for w in result.warnings)
+
+
+@pytest.fixture(scope="module")
+def exported(tmp_path_factory: pytest.TempPathFactory) -> ExportResult:
+    """One real export, shared by the checks below.
+
+    It locks, syncs, runs the generated package's own tests and builds some
+    seventy wheels -- a minute of network that neither check should pay twice.
+    """
+    import shutil
+
+    if shutil.which("uv") is None:
+        pytest.skip("uv is required to lock the exported package")
+    destination = tmp_path_factory.mktemp("export")
+    return export_package(new_document(), destination, dev_mode=True)
+
 
 @pytest.mark.slow
 class TestExportSelfCheck:
-    """The full guarantee: the exported directory really does sync and test."""
+    """The full guarantee: the export really does sync, test and install."""
 
-    def test_uv_sync_locked_and_package_tests_succeed(self, tmp_path: Path) -> None:
-        import shutil
-
-        if shutil.which("uv") is None:
-            pytest.skip("uv is required to lock the exported package")
-
-        result = export_package(new_document(), tmp_path, dev_mode=True)
+    def test_uv_sync_locked_and_package_tests_succeed(
+        self, exported: ExportResult
+    ) -> None:
+        result = exported
         assert result.locked, result.log
         assert result.verified, result.log
         assert result.tested, result.log
@@ -360,6 +777,117 @@ class TestExportSelfCheck:
         # Build output must not travel with the package.
         assert not (result.root / ".venv").exists()
         assert not (result.root / ".pytest_cache").exists()
+
+        wheelhouse = result.wheelhouse
+        assert wheelhouse is not None, result.log
+        assert wheelhouse.root.is_dir()
+        # The scenario's own wheel, the framework, the converter and the client
+        # -- the four that are not on any index between them.
+        names = " ".join(wheelhouse.wheels)
+        assert "cut_in_scenario-" in names
+        assert "autoware_carla_scenario-" in names
+        assert "autoware_lanelet2_to_opendrive-" in names
+        if carla_wheels():
+            assert "carla-" in names
+        assert (wheelhouse.root / "requirements.txt").is_file()
+        assert (wheelhouse.root / "README.md").is_file()
+        # The wheelhouse is what leaves the machine, so it carries its own
+        # provenance rather than leaving it in the tree the editor deletes.
+        travelling = yaml.safe_load((wheelhouse.root / "manifest.yaml").read_text())
+        assert (
+            travelling["autoware_carla_scenario"]
+            == (result.manifest["autoware_carla_scenario"])
+        )
+        # ...and its file map names things that are actually here, not paths
+        # into the package the editor is about to delete.
+        for key in ("manifest", "requirements", "readme", "scenario_wheel"):
+            named = travelling["files"][key]
+            assert (wheelhouse.root / named).is_file(), f"{key}: {named}"
+
+        # The manifest is read after the export, so it has to name the
+        # directory that is there -- not the temporary one it was built in.
+        recorded = result.manifest["wheelhouse"]
+        assert recorded["directory"] == wheelhouse.root.name
+        assert (result.root.parent / recorded["directory"]).is_dir()
+
+        # `-r requirements.txt` is documented as an offline install, so nothing
+        # in it may send pip to a network.
+        shipped = (wheelhouse.root / "requirements.txt").read_text()
+        assert " @ git+" not in shipped
+        assert " @ file://" not in shipped
+        # uv writes a path source as the bare URL, with no ` @ ` in it at all.
+        assert not [
+            line
+            for line in shipped.splitlines()
+            if line.startswith(("file:", "git+", "http:", "https:", "/", "./", "../"))
+        ], shipped
+
+    def test_the_wheelhouse_installs_with_pip_and_nothing_else(
+        self, exported: ExportResult, tmp_path: Path
+    ) -> None:
+        """The whole point: no uv, no git, no index, no resolution.
+
+        ``--no-index`` is what makes this a real check rather than a slow way of
+        installing from PyPI: if a single wheel were missing, pip has nowhere
+        else to look and the install fails.
+        """
+        import subprocess
+
+        from autoware_carla_scenario.authoring.uv_tool import run_uv
+        from autoware_carla_scenario.authoring.wheelhouse import venv_python
+
+        result = exported
+        assert result.wheelhouse is not None, result.log
+
+        # `uv venv --seed` rather than the stdlib `venv`: the consumer's venv
+        # needs pip in it, and uv is already required by this test.
+        target = tmp_path / "venv"
+        created = run_uv(
+            tmp_path,
+            "venv",
+            str(target),
+            "--python",
+            result.wheelhouse.python_tag,
+            "--seed",
+            timeout=300,
+        )
+        assert created.returncode == 0, created.stdout + created.stderr
+        python = venv_python(target)
+        installed = subprocess.run(  # noqa: S603
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                str(result.wheelhouse.root),
+                result.wheelhouse.distribution,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=900,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+
+        # The document and the Hydra config have to be *in* the wheel: an
+        # installed scenario has no project directory to read them out of.
+        probe = subprocess.run(  # noqa: S603
+            [
+                str(python),
+                "-c",
+                "import cut_in_scenario as p;"
+                "assert p.DOCUMENT_PATH.is_file(), p.DOCUMENT_PATH;"
+                "assert p.CONF_DIR.is_dir(), p.CONF_DIR",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        )
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+        assert (venv_python(target).parent / "scenario").exists()
 
 
 class TestFreeFormTextReachesTheManifest:
@@ -376,12 +904,8 @@ class TestFreeFormTextReachesTheManifest:
     def test_a_description_survives_into_a_parsable_pyproject(
         self, tmp_path: Path, description: str
     ) -> None:
-        import tomli
-
         document = new_document()
         document.description = description
-        result = export_package(
-            document, tmp_path, dev_mode=True, lock=False, verify=False, run_tests=False
-        )
-        parsed = tomli.loads((result.root / "pyproject.toml").read_text())
+        result = export_package(document, tmp_path, **OFFLINE)
+        parsed = tomllib.loads((result.root / "pyproject.toml").read_text())
         assert parsed["project"]["description"] == description

@@ -21,14 +21,30 @@ dependencies = [
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
 
+[tool.pytest.ini_options]
+# Declared, and minimal on purpose. pytest walks *up* from the test directory
+# looking for a config file, so a package unpacked inside another project
+# inherits that project's `addopts` -- plugins this package does not install
+# among them, which fails the run before a test is collected. Owning the
+# section makes this package its own rootdir wherever it is put.
+testpaths = ["tests"]
+
 [tool.uv.build-backend]
+# The document and the Hydra config sit inside the module rather than beside
+# it, so the backend ships them in the wheel along with the Python files. An
+# installed scenario that left them behind would have no scenario in it.
 module-name = ["{{ package_name }}"]
-{% if uv_required_version %}
 
 [tool.uv]
+{% if uv_required_version %}
 # The uv that produced uv.lock. Resolving with a different uv can produce a
 # different lock, so the version that generated this package is required.
 required-version = "=={{ uv_required_version }}"
+{% endif %}
+{% if vendored_wheels %}
+# The CARLA client is not published to any index, so the wheel travels with the
+# package. The path is relative: the package resolves wherever it is copied.
+find-links = ["{{ vendored_wheels }}"]
 {% endif %}
 {% if sources %}
 

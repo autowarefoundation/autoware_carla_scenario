@@ -19,7 +19,7 @@ This package is a workspace member of [`autoware_lanelet2_to_opendrive`](../READ
 
 ## Installation
 
-Python 3.10 is required (`>=3.10,<3.11`, locked by CARLA's bindings). Install via the workspace root:
+Python 3.10 to 3.12 (`>=3.10,<3.13`; the ceiling is CARLA's bindings, which ship no wheel above cp312). Install via the workspace root:
 
 ```bash
 # From the repository root — installs the workspace without the optional CARLA bindings

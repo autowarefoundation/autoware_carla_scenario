@@ -189,7 +189,8 @@ compiled and exported anywhere.
 | `compile_document` -> `CompiledScenario` | Resolve entity ids to CARLA roles and type-check parameters, without importing CARLA. |
 | `authoring.builders` | Factories that turn a compiled plan into the framework's own `BaseAction` / `BaseCondition`. Imports CARLA lazily. |
 | `build_scenario_config`, `dump_scenario_config` | Render a document as the framework's Hydra scenario config, including a `sweep` section the existing sweeper understands. |
-| `export_package` -> `ExportResult` | Write a reproducible Scenario Package; raises `PackageExportError` (leaving nothing behind) when locking or verification fails. |
+| `export_package` -> `ExportResult` | Write a reproducible Scenario Package and the wheelhouse built from it; raises `PackageExportError` (leaving nothing behind) when locking, verification or the wheelhouse fails. |
+| `build_wheelhouse` -> `Wheelhouse` | Resolve a locked package's whole dependency graph into wheels that `pip install --no-index --find-links` can install with no uv, git or network; raises `WheelhouseError`. |
 | `DraftStore`, `Draft`, `load_document`, `save_document` | YAML persistence for editor drafts and exported documents. |
 | `new_document`, `blank_document` | Starter documents. |
 

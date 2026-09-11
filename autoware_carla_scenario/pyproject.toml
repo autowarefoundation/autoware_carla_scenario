@@ -5,10 +5,12 @@ description = "CARLA scenario testing framework for Autoware"
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
 ]
-# Capped at 3.10 by the CARLA client alone: 0.10.0 is not published to PyPI and
-# the wheel vendored in carla_wheels/ is cp310-only. Nothing else in this package
-# — and nothing in autoware-lanelet2-to-opendrive — is limited to 3.10 any more.
-requires-python = ">=3.10,<3.11"
+# Capped by the CARLA client, which is the only dependency here with a ceiling
+# at all: 0.10.0 is not published to PyPI, and the wheels it ships -- vendored
+# in carla_wheels/, taken from the Linux shipping package -- stop at cp312.
+# 0.9.16 stops there too. Raise this when a client for a newer interpreter
+# exists, and vendor its wheel in the same commit.
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "pyxodr>=0.1.0",
     # Headless: the only OpenCV calls in this package are imencode and
@@ -35,9 +37,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "ffmpeg-python>=0.2.0",
     # Speaks the alpasim `egodriver` gRPC contract to an external driver policy.
-    # The protobuf definitions are vendored (see proto/README.md) rather than pulled
-    # from `alpasim-grpc`, which requires Python >= 3.11 and so cannot coexist with the
-    # CPython-3.10-only CARLA 0.10.0 wheel.
+    # The protobuf definitions are vendored rather than pulled from
+    # `alpasim-grpc`; proto/README.md says why.
     "grpcio>=1.60",
     "protobuf>=4.25.0,<5.0.0",
 ]

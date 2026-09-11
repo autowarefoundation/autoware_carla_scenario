@@ -87,7 +87,8 @@ class TestCreateScenarioPackage:
             compile(py.read_text(encoding="utf-8"), str(py), "exec")
 
         # pyproject carries the right distribution name + entry point.
-        # (Assert on text rather than parse: tomllib is 3.11+ only, CI is 3.10.)
+        # (Assert on text rather than parse: 3.10 is still the floor of the
+        # supported range and has no stdlib tomllib.)
         pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
         assert 'name = "reach-goal-pkg"' in pyproject
         assert 'reach_goal_pkg = "reach_goal_pkg:register"' in pyproject

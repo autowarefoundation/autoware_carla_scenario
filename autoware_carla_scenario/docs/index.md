@@ -41,7 +41,7 @@ This package provides a framework for creating and running automated scenario te
 - **Repository**: [tier4/autoware_lanelet2_to_opendrive](https://github.com/tier4/autoware_lanelet2_to_opendrive)
 - **Release Notes**: [View all releases on GitHub](https://github.com/tier4/autoware_lanelet2_to_opendrive/releases)
 - **License**: Check the repository for license information
-- **Python Version**: 3.10 required (`>=3.10,<3.11`, locked by CARLA's bindings)
+- **Python Version**: 3.10 - 3.12 (`>=3.10,<3.13`; the ceiling is CARLA's bindings, which publish no wheel above cp312)
 
 ## Getting Help
 

@@ -14,10 +14,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-# tomllib landed in 3.11; the workspace is capped at 3.10 by the CARLA wheel.
-try:
+# tomllib landed in 3.11, and 3.10 is still the floor of the supported range.
+# Branching on sys.version_info rather than catching ImportError keeps mypy from
+# reading the fallback as a redefinition when it checks against 3.11+.
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - 3.11+ has it in the stdlib
+else:  # pragma: no cover - only taken on 3.10
     import tomli as tomllib
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]

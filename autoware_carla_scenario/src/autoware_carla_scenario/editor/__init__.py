@@ -26,7 +26,7 @@ def main() -> None:
 
     * ``SCENARIO_EDITOR_DRAFTS`` -- where drafts are stored
       (default ``./scenario_drafts``).
-    * ``SCENARIO_EDITOR_EXPORT_DIR`` -- where an exported package's ``.zip``
+    * ``SCENARIO_EDITOR_EXPORT_DIR`` -- where an exported wheelhouse's ``.zip``
       is staged until the browser fetches it (default ``./scenario_packages``).
       Exports are handed back as downloads, so this is a holding area rather
       than a destination anyone browses.

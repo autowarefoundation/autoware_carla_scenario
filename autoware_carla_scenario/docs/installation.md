@@ -11,8 +11,9 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### Python Version
 
-- **Python 3.10** — `pyproject.toml` pins `requires-python = ">=3.10,<3.11"`
-  because the `carla` wheels are built for CPython 3.10 only. Check your
+- **Python 3.10 – 3.12** — `pyproject.toml` declares
+  `requires-python = ">=3.10,<3.13"`. The ceiling is the `carla` wheels, which
+  are built for CPython 3.12 and below; nothing else here has one. Check your
   version with `python --version`.
 
 ### CARLA Simulator
@@ -131,7 +132,7 @@ Plus one of the `carla` / `carla-0-9-16` extras.
 
 Ensure that:
 
-1. You're using Python 3.10 (`>=3.10,<3.11`).
+1. You're using a supported Python (see [Python Version](#python-version)).
 2. The package was installed in your active environment (`uv sync` from
    the workspace root, or a fresh `uv venv` followed by `uv sync`).
 3. If you see `ImportError: ... lanelet2 ...`, a `lanelet2` distribution

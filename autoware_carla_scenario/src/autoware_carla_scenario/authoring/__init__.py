@@ -14,7 +14,8 @@ The pipeline this package implements::
     DeclarativeScenario   a BaseScenario like any other
 
 and, sideways from the document, :func:`export_package`, which writes a
-reproducible Scenario Package.
+reproducible Scenario Package and the :func:`build_wheelhouse` that turns it
+into something pip alone can install.
 
 Importing this package pulls in neither CARLA nor lanelet2, so the Scenario
 Editor -- which never talks to a simulator -- can use all of it.
@@ -64,6 +65,7 @@ from .registry import (
 )
 from .starter import blank_document, new_document
 from .validator import Issue, ValidationReport, validate_document
+from .wheelhouse import Wheelhouse, WheelhouseError, build_wheelhouse
 
 __all__ = [
     "ActionNode",
@@ -94,10 +96,13 @@ __all__ = [
     "SpawnSpec",
     "UiLayout",
     "ValidationReport",
+    "Wheelhouse",
+    "WheelhouseError",
     "action_specs",
     "binding_specs",
     "blank_document",
     "build_scenario_config",
+    "build_wheelhouse",
     "compile_document",
     "condition_specs",
     "constraint_specs",

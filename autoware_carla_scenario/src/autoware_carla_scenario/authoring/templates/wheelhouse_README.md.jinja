@@ -1,0 +1,47 @@
+# `{{ distribution }}` wheelhouse
+
+Every wheel this scenario needs, resolved once when the package was exported.
+Installing from it needs **pip and nothing else** -- no `uv`, no `git`, no
+network, and no resolution:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install --no-index --find-links . {{ distribution }}
+```
+
+To install exactly the versions that were resolved, rather than letting pip
+pick the best match in the directory:
+
+```bash
+.venv/bin/pip install --no-index --find-links . -r requirements.txt
+```
+
+Then run the scenario:
+
+```bash
+.venv/bin/{{ run_command }}
+```
+
+## What is in here
+
+| | |
+| --- | --- |
+| Distribution | `{{ distribution }}=={{ version }}` |
+| Wheels | {{ wheel_count }} |
+| Python | {{ python }} |
+
+`manifest.yaml` records what this was built from -- the framework's commit, the
+interpreter, the uv version, and any caveat the export raised.
+
+The scenario document and its Hydra config travel **inside** the scenario's own
+wheel, so the installed package is the scenario -- there is no directory that
+has to be kept next to it.
+
+## What it is not
+
+A wheelhouse is resolved for one interpreter on one platform: these wheels were
+selected by Python {{ python }} on the machine that exported the package, and
+the CARLA client in particular is a compiled extension with one wheel per
+interpreter. Installing them under a different Python or on a different platform
+will fail on the first wheel that has no matching tag -- re-export on a matching
+machine instead.

@@ -39,7 +39,11 @@ inputs:
     required: false
     default: "carla_wheels"
   python-version:
-    description: "Python version of the image (the CARLA client caps this at 3.10)"
+    description: >
+      Python version of the image. Defaults to the floor of the supported
+      range rather than to the repository's own .python-version: an image is a
+      deployment artifact and Autoware's environment is 3.10. The CARLA client
+      caps the other end at 3.12.
     required: false
     default: "3.10"
   with-ffmpeg:

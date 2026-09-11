@@ -1,4 +1,4 @@
-"""Bind ``scenario/document.yaml`` to the framework's declarative runtime.
+"""Bind ``document.yaml`` to the framework's declarative runtime.
 
 The scenario's behaviour lives entirely in the document.  This module only
 loads it and hands it to
@@ -37,15 +37,15 @@ def document_path() -> Path:
     """Return the document this package runs.
 
     Raises:
-        FileNotFoundError: If the document is missing, which means the package
-            directory was not copied whole.
+        FileNotFoundError: If the document is missing, which can only mean
+            the installed package is incomplete -- the document ships inside it.
     """
     override = os.environ.get(DOCUMENT_PATH_ENV)
     path = Path(override).expanduser() if override else DOCUMENT_PATH
     if not path.is_file():
         raise FileNotFoundError(
-            f"Scenario document not found at {path}. Run this package from a "
-            f"complete checkout of its directory, or set {DOCUMENT_PATH_ENV}."
+            f"Scenario document not found at {path}. Reinstall the package, or "
+            f"set {DOCUMENT_PATH_ENV} to a document to run instead."
         )
     return path
 

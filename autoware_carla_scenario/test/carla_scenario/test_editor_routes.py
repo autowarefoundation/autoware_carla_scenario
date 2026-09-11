@@ -77,6 +77,48 @@ def client(tmp_path: Path) -> TestClient:
 
 
 @pytest.fixture
+def offline_export(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make an export cheap, because the wheels are not what these tests decide.
+
+    A real export locks, syncs, runs the generated package's own tests and
+    builds some seventy wheels -- minutes of network, all of it covered by the
+    slow tests in ``test_authoring_export.py``. Replacing the steps that talk to
+    the outside world leaves exactly the part these tests exist for under test:
+    that the wheelhouse is zipped, staged where the browser can fetch it, and
+    served.
+    """
+    import autoware_carla_scenario.authoring.package_export as module
+
+    def _lock(root: Path) -> str:
+        (root / "uv.lock").write_text("# stub\n", encoding="utf-8")
+        return "$ uv lock\n"
+
+    def _wheelhouse(
+        package_root: Path, destination: Path, *, distribution: str, **_: Any
+    ) -> Any:
+        destination.mkdir(parents=True, exist_ok=True)
+        wheel = f"{distribution.replace('-', '_')}-0.1.0-py3-none-any.whl"
+        (destination / wheel).write_text("", encoding="utf-8")
+        (destination / "requirements.txt").write_text(
+            f"{distribution}==0.1.0\n", encoding="utf-8"
+        )
+        return module.Wheelhouse(
+            root=destination,
+            distribution=distribution,
+            version="0.1.0",
+            wheels=(wheel,),
+            size_bytes=0,
+            python_tag="3.10",
+        )
+
+    monkeypatch.setattr(module, "_lock", _lock)
+    monkeypatch.setattr(module, "_check_lock", lambda root: "$ uv lock --check\n")
+    monkeypatch.setattr(module, "_verify_sync", lambda root: "$ uv sync --locked\n")
+    monkeypatch.setattr(module, "_run_tests", lambda root: (True, "$ pytest -q\n"))
+    monkeypatch.setattr(module, "build_wheelhouse", _wheelhouse)
+
+
+@pytest.fixture
 def draft_id(client: TestClient) -> str:
     response = client.post(
         "/new", data={"kind": "cut_in", "title": "Cut in"}, follow_redirects=False
@@ -1233,56 +1275,69 @@ class TestValidateSaveExport:
         assert response.status_code == 303
         assert store.get(draft_id) is None
 
-    def test_export_produces_a_downloadable_package(
-        self, client: TestClient, tmp_path: Path, draft_id: str
+    def test_export_produces_a_downloadable_wheelhouse(
+        self, client: TestClient, offline_export: None, draft_id: str
     ) -> None:
-        """The report comes back with a link, and the link serves the archive.
+        """The report comes back with a link, and the link serves the wheelhouse.
 
         The editor is used from other machines on the LAN, so an export that
-        only wrote a directory on the host would put the package somewhere the
+        only wrote a directory on the host would put the wheels somewhere the
         person exporting cannot reach.
         """
         response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         assert response.status_code == 200
-        assert "Package exported" in response.text
-        assert f"/draft/{draft_id}/package.zip" in response.text
+        assert "Wheelhouse exported" in response.text
+        assert f"/draft/{draft_id}/wheelhouse.zip" in response.text
+        # The report says how to install it, because that is the whole point.
+        assert "pip install --no-index --find-links" in response.text
 
-        download = client.get(f"/draft/{draft_id}/package.zip")
+        download = client.get(f"/draft/{draft_id}/wheelhouse.zip")
         assert download.status_code == 200
         assert download.headers["content-type"] == "application/zip"
-        assert 'filename="cut_in.zip"' in download.headers["content-disposition"]
+        assert (
+            'filename="cut_in-wheelhouse.zip"'
+            in download.headers["content-disposition"]
+        )
 
         with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
             names = archive.namelist()
-        # One top-level directory, so unpacking does not spray the CWD.
-        assert {n.split("/")[0] for n in names} == {"cut_in_scenario"}
-        assert "cut_in_scenario/pyproject.toml" in names
+        # One top-level directory, so unpacking does not spray wheels into the
+        # CWD -- and one named after the scenario, so two of them can be
+        # unpacked side by side.
+        assert {n.split("/")[0] for n in names} == {"cut_in_scenario_wheelhouse"}
+        assert any(n.endswith(".whl") for n in names)
+        assert "cut_in_scenario_wheelhouse/requirements.txt" in names
+        # Provenance travels in the download; the tree holding it is deleted.
+        assert "cut_in_scenario_wheelhouse/manifest.yaml" in names
 
-    def test_the_package_tree_is_not_left_on_the_host(
-        self, client: TestClient, tmp_path: Path, draft_id: str
+    def test_the_uv_project_is_not_left_on_the_host(
+        self, client: TestClient, offline_export: None, tmp_path: Path, draft_id: str
     ) -> None:
-        """Only the archive outlives the request; the build tree is temporary."""
+        """Only the wheelhouse outlives the request; the project it was built
+        from is a build input and goes with the temporary directory."""
         client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         staged = sorted(p.name for p in (tmp_path / "packages").iterdir())
-        assert staged == ["cut_in.zip"]
+        assert staged == ["cut_in-wheelhouse.zip"]
 
     def test_downloading_before_an_export_is_an_error_not_a_traceback(
         self, client: TestClient, draft_id: str
     ) -> None:
         """A stale or guessed link is a normal thing to click."""
         assert (
-            "No exported package" in client.get(f"/draft/{draft_id}/package.zip").text
+            "No exported wheelhouse"
+            in client.get(f"/draft/{draft_id}/wheelhouse.zip").text
         )
 
     def test_a_failed_export_is_reported_as_a_failure(
         self, client: TestClient, store: DraftStore, tmp_path: Path, draft_id: str
     ) -> None:
+        """No stubbing needed: validation refuses this before any tool runs."""
         draft = _draft(store, draft_id)
         draft.document.assertions.pass_conditions = []
         store.save(draft)
         response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         assert "Export failed" in response.text
-        assert not (tmp_path / "packages" / "cut_in.zip").exists()
+        assert not (tmp_path / "packages" / "cut_in-wheelhouse.zip").exists()
 
 
 class TestServiceGuards:
