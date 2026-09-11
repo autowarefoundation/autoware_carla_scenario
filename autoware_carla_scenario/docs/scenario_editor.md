@@ -790,9 +790,10 @@ uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
     hydra/sweeper=lanelet_constraint
 ```
 
-The CARLA client is an optional extra and is **not** locked, because the client
-wheel is not published to PyPI; install it into the same environment before
-running against a live server.
+The CARLA client needs no separate step: the export requests it through the
+framework's client extra, so it is in the lock and in the wheelhouse alongside
+everything else. Installing one by hand would replace the client the scenario
+was exported against.
 
 ## Offline
 
