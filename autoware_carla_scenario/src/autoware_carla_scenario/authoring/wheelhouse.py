@@ -427,8 +427,14 @@ def build_wheelhouse(
             "A wheelhouse is the lockfile resolved into wheels, so it cannot "
             "be built for a package that was never locked."
         )
-    if destination.exists() and any(destination.iterdir()):
-        raise WheelhouseError(f"{destination} is not empty.")
+    if destination.exists():
+        # Checked before iterating: `iterdir()` on a regular file raises
+        # NotADirectoryError, which would leave this function through a path
+        # that promises WheelhouseError for an unusable destination.
+        if not destination.is_dir():
+            raise WheelhouseError(f"{destination} exists and is not a directory.")
+        if any(destination.iterdir()):
+            raise WheelhouseError(f"{destination} is not empty.")
 
     if not python:
         recorded = package_root / ".python-version"

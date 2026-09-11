@@ -717,6 +717,27 @@ class TestWheelhouseRefusals:
                 run_command="scenario scenario=nothing",
             )
 
+    def test_a_destination_that_is_a_file_is_refused_cleanly(
+        self, tmp_path: Path
+    ) -> None:
+        """`iterdir()` on a regular file raises NotADirectoryError.
+
+        That would leave a function documented to raise WheelhouseError for an
+        unusable destination through a different door.
+        """
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        occupied = tmp_path / "out"
+        occupied.write_text("not a directory", encoding="utf-8")
+        with pytest.raises(WheelhouseError) as caught:
+            build_wheelhouse(
+                tmp_path,
+                occupied,
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+            )
+        assert "not a directory" in str(caught.value)
+
     def test_skipping_the_lock_records_why_there_is_no_wheelhouse(
         self, tmp_path: Path
     ) -> None:
