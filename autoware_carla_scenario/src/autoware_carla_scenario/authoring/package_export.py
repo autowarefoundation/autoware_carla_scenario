@@ -601,6 +601,33 @@ def _self_check(
     return (True, True, passed), log
 
 
+def _wheelhouse_manifest(
+    manifest: dict[str, Any], wheelhouse: Wheelhouse
+) -> dict[str, Any]:
+    """Return *manifest* with its file map rewritten for the wheelhouse.
+
+    The map in the package's own manifest is relative to the package, and the
+    package is a build input the editor deletes.  Whoever reads the copy that
+    travels is standing in the wheelhouse, where none of those paths resolve --
+    the manifest is at the root, and the document and Hydra config are inside
+    the scenario's own wheel rather than files of their own.
+    """
+    prefix = wheelhouse.distribution.replace("-", "_")
+    wheel = next(
+        (name for name in wheelhouse.wheels if name.startswith(f"{prefix}-")), None
+    )
+    travelling = dict(manifest)
+    travelling["files"] = {
+        "manifest": "manifest.yaml",
+        "requirements": "requirements.txt",
+        "readme": "README.md",
+        # Holds the document and the Hydra config, which is what makes an
+        # installed scenario self-contained.
+        "scenario_wheel": wheel,
+    }
+    return travelling
+
+
 def _build_wheelhouse(
     staging: Path,
     destination: Path,
@@ -772,8 +799,11 @@ def export_package(
             # The wheelhouse is the half that leaves the machine -- the editor
             # zips it and deletes the rest -- so the provenance travels with
             # it: which commit the framework came from, which interpreter
-            # resolved the wheels, and what the export warned about.
-            shutil.copy2(manifest_path, wheelhouse_staging / "manifest.yaml")
+            # resolved the wheels, and what the export warned about. Its file
+            # map is rewritten for where it is read from.
+            (wheelhouse_staging / "manifest.yaml").write_text(
+                dump_yaml(_wheelhouse_manifest(manifest, built)), encoding="utf-8"
+            )
 
         _strip_build_output(staging)
 

@@ -794,7 +794,15 @@ class TestExportSelfCheck:
         # The wheelhouse is what leaves the machine, so it carries its own
         # provenance rather than leaving it in the tree the editor deletes.
         travelling = yaml.safe_load((wheelhouse.root / "manifest.yaml").read_text())
-        assert travelling == result.manifest
+        assert (
+            travelling["autoware_carla_scenario"]
+            == (result.manifest["autoware_carla_scenario"])
+        )
+        # ...and its file map names things that are actually here, not paths
+        # into the package the editor is about to delete.
+        for key in ("manifest", "requirements", "readme", "scenario_wheel"):
+            named = travelling["files"][key]
+            assert (wheelhouse.root / named).is_file(), f"{key}: {named}"
 
         # The manifest is read after the export, so it has to name the
         # directory that is there -- not the temporary one it was built in.
