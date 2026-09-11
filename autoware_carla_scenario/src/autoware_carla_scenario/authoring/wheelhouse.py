@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from jinja2 import TemplateError
+
 from ..templating import code_environment
 from .framework_pin import DISTRIBUTION, framework_source_root
 from .uv_tool import UvUnavailable, run_uv
@@ -480,11 +482,16 @@ def build_wheelhouse(
         exc.log = f"{log}\n{exc.log}" if exc.log else log
         shutil.rmtree(destination, ignore_errors=True)
         raise
-    except (UvUnavailable, subprocess.SubprocessError, OSError) as exc:
+    except (UvUnavailable, subprocess.SubprocessError, OSError, TemplateError) as exc:
         # A tool that times out or cannot be spawned raises straight past the
         # checks above, and the destination is half-filled by then. Leaving it
         # would break the promise made below *and* refuse the next attempt,
         # which finds a non-empty directory.
+        #
+        # TemplateError belongs here for the same reason: the README is
+        # rendered with StrictUndefined, so adding a variable to the template
+        # and forgetting it at the call site raises past every other clause and
+        # strands a wheelhouse holding every wheel and no README.
         shutil.rmtree(destination, ignore_errors=True)
         raise WheelhouseError(
             f"The wheelhouse build did not finish: {exc}", log

@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import jinja2
 import pytest
 import yaml
 
@@ -628,8 +629,18 @@ class TestWheelhouseRefusals:
         assert "did not finish" in str(caught.value)
         assert not destination.exists()
 
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            OSError("no space left"),
+            # Rendered with StrictUndefined: a variable added to the template
+            # and forgotten at the call site raises this, not an OSError.
+            jinja2.TemplateError("undefined variable"),
+        ],
+        ids=["disk", "template"],
+    )
     def test_a_failure_writing_the_install_files_cleans_up_too(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
     ) -> None:
         """The last two files are written onto a disk that just took 160 MB.
 
@@ -656,7 +667,7 @@ class TestWheelhouseRefusals:
         monkeypatch.setattr(
             module,
             "_write_install_files",
-            lambda *_a, **_k: (_ for _ in ()).throw(OSError("no space left")),
+            lambda *_a, **_k: (_ for _ in ()).throw(failure),
         )
 
         with pytest.raises(WheelhouseError) as caught:
