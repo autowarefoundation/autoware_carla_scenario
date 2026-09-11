@@ -55,6 +55,7 @@ __all__ = [
     "build_wheelhouse",
     "carla_extra",
     "carla_wheels",
+    "unpinned_carla_client",
     "venv_python",
 ]
 
@@ -145,6 +146,25 @@ def _carla_pins() -> dict[str, str]:
     return pins
 
 
+def _installed_carla() -> Optional[str]:
+    """Return the CARLA client version installed here, or ``None``."""
+    from importlib import metadata  # noqa: PLC0415
+
+    try:
+        return metadata.version("carla")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _release(version: str) -> str:
+    """Return *version* without its local segment, e.g. ``0.10.0+build`` -> ``0.10.0``.
+
+    A locally built client is the same client: ``0.10.0+custom`` is the release
+    the ``carla`` extra pins, compiled somewhere else.
+    """
+    return version.split("+", 1)[0]
+
+
 def carla_extra() -> str:
     """Return the framework extra that installs the client this export needs.
 
@@ -155,18 +175,31 @@ def carla_extra() -> str:
     cleanly and cannot run, with nothing saying why.
 
     Falls back to :data:`DEFAULT_CARLA_EXTRA` when no client is installed to
-    read the answer off.
+    read the answer off, and when one is installed that no extra pins -- see
+    :func:`unpinned_carla_client`, which is how the caller says so out loud.
     """
-    from importlib import metadata  # noqa: PLC0415
-
-    try:
-        installed = metadata.version("carla")
-    except metadata.PackageNotFoundError:
+    installed = _installed_carla()
+    if installed is None:
         return DEFAULT_CARLA_EXTRA
     for extra, pinned in _carla_pins().items():
-        if pinned == installed:
+        if pinned == _release(installed):
             return extra
     return DEFAULT_CARLA_EXTRA
+
+
+def unpinned_carla_client() -> Optional[str]:
+    """Return the installed client's version when no extra pins it.
+
+    ``None`` covers both the cases there is nothing to say about: no client
+    installed, or one that an extra names exactly.  Anything else -- 0.9.15,
+    say -- means the export is about to request a *different* client from the
+    one the scenario was authored and validated against, which is worth saying
+    rather than defaulting quietly.
+    """
+    installed = _installed_carla()
+    if installed is None or _release(installed) in set(_carla_pins().values()):
+        return None
+    return installed
 
 
 def _wheel_search_root() -> Optional[Path]:

@@ -53,6 +53,7 @@ from .wheelhouse import (
     build_wheelhouse,
     carla_extra,
     carla_wheels,
+    unpinned_carla_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -712,6 +713,14 @@ def export_package(
         # a copy has to travel with the package -- 0.10.0 is on no index, so
         # it does; 0.9.16 is on PyPI, so it does not.
         extra = carla_extra()
+        unpinned = unpinned_carla_client()
+        if unpinned is not None:
+            warnings.append(
+                f"CARLA {unpinned} is installed here and no client extra pins "
+                f"it, so this export requests '{extra}' instead. The scenario "
+                "will run against a different client from the one it was "
+                "authored against."
+            )
         pin = replace(pin, extras=(extra,))
         vendored = _vendor_carla_wheels(staging, extra, warnings)
 

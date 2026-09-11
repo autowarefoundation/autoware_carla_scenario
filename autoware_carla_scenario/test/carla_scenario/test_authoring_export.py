@@ -485,6 +485,32 @@ class TestVendoredCarlaClient:
         assert data["tool"]["uv"]["find-links"] == ["carla_wheels"]
         assert list((package / "carla_wheels").glob("carla-*.whl"))
 
+    def test_a_client_no_extra_pins_is_said_out_loud(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defaulting is fine; defaulting silently is not.
+
+        A client an extra names exactly, and no client at all, both have a
+        right answer. Anything else -- 0.9.15, say -- means the export is
+        about to request a different client from the one the scenario was
+        authored against.
+        """
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        monkeypatch.setattr(module, "_installed_carla", lambda: "0.9.15")
+        result = export_package(new_document(), tmp_path, **OFFLINE)
+        assert any("CARLA 0.9.15 is installed" in w for w in result.warnings)
+
+    def test_a_locally_built_client_is_the_client_it_was_built_from(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`0.10.0+custom` is 0.10.0, compiled elsewhere -- not a mismatch."""
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        monkeypatch.setattr(module, "_installed_carla", lambda: "0.10.0+custom")
+        assert module.carla_extra() == "carla"
+        assert module.unpinned_carla_client() is None
+
     def test_the_extra_is_asked_for_even_with_no_wheel_to_vendor(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
