@@ -668,15 +668,20 @@ config, the package's own tests -- and still runs `uv sync --locked` and those
 tests against it. That project is now a **build input**: the wheels are resolved
 from its lockfile and the project itself does not leave the server.
 
-The CARLA client is vendored into it (`carla_wheels/`, reached by a relative
-`[tool.uv] find-links`) and requested through one of the framework's client
-extras, because a scenario that cannot `import carla` cannot run and neither
-client is on any index. *Which* extra is read off the client installed in the
-editor's own environment -- `carla` for 0.10.0, `carla-0-9-16` for the legacy
-one -- so a scenario is exported against the client it was authored against
-rather than a fixed one. When no client wheel can be found -- a framework
-installed from a wheel rather than run out of its repository -- the export says
-so in its warnings and leaves the client out.
+The CARLA client is always requested, through one of the framework's client
+extras, because a scenario that cannot `import carla` cannot run. *Which* extra
+is read off the client installed in the editor's own environment -- `carla` for
+0.10.0, `carla-0-9-16` for the legacy one -- so a scenario is exported against
+the client it was authored against rather than a fixed one.
+
+Where that client comes from is a separate question. 0.10.0 is published to no
+index, so its wheel is vendored into the package (`carla_wheels/`, reached by a
+relative `[tool.uv] find-links`); 0.9.16 is on PyPI, so nothing is vendored and
+the resolver finds it. When neither is true -- a framework installed from a
+wheel rather than run out of its repository, with an unpublished client --
+locking fails and says so, rather than producing a wheelhouse with no client in
+it. `SCENARIO_EXPORT_CARLA_WHEELS` points the export at a directory of client
+wheels when the repository's own are not the ones wanted.
 
 There is no destination field. The editor is routinely used from another machine
 on the LAN, where a path typed into it would name a directory on the host running
