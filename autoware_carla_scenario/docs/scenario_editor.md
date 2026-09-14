@@ -711,7 +711,7 @@ It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA |
 | `autoware-lanelet2-to-opendrive` | the same way as the framework |
-| `carla` | the wheel vendored in the repository, at the version the client extra in use pins |
+| `carla` | the client extra in use: vendored from the repository when that client is on no index (0.10.0), resolved from PyPI when it is (0.9.16) |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |
