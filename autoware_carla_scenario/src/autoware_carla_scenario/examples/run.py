@@ -260,9 +260,10 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     existed means.
 
     ``traffic_manager.port`` -- where the port lived before there was a traffic
-    group, and what exported scenario packages still set -- is read when the
-    backend's own options do not name one, so those configs keep working
-    unchanged.
+    group, and what exported scenario packages still set -- keeps deciding the
+    TrafficManager's port: ``conf/traffic/traffic_manager.yaml`` interpolates it,
+    so the bridge is one line of config where the rest of the defaults live
+    rather than a backend's name spelled out in this builder.
 
     Raises:
         ValueError: If ``traffic.backend`` names no registered backend.
@@ -279,13 +280,9 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
 
     # A key left at null is a key the config did not set, not an override of
     # the backend's own default -- the group declares its keys so that plain
-    # `traffic.options.x=y` overrides work under Hydra's struct mode.
+    # `traffic.options.x=y` overrides work under Hydra's struct mode, and an
+    # interpolation that resolved to nothing leaves the backend's default alone.
     options = {key: value for key, value in config.options.items() if value is not None}
-    if config.backend == "traffic_manager" and "port" not in options:
-        legacy = cfg.get("traffic_manager")
-        legacy_port = None if legacy is None else legacy.get("port")
-        if legacy_port is not None:
-            options["port"] = int(legacy_port)
 
     backend = build_backend(config.backend, options)
     logger.info(

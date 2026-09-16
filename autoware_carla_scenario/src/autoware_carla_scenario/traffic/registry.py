@@ -44,6 +44,9 @@ TrafficBackendFactory = Callable[[Mapping[str, Any]], TrafficBackend]
 
 _BACKENDS: dict[str, TrafficBackendFactory] = {}
 
+#: Whether the entry-point walk has already run in this process.
+_plugins_loaded = False
+
 
 def register_backend(name: str, factory: TrafficBackendFactory) -> None:
     """Make *factory* selectable as ``traffic.backend=<name>``.
@@ -110,20 +113,16 @@ def build_backend(
 def load_traffic_backend_plugins() -> None:
     """Import every package advertising a backend entry point.
 
-    Each entry point resolves to a zero-argument callable that registers the
-    package's backends.  A plugin that fails to import is logged and skipped:
-    one broken third-party package must not stop a run that does not use it.
+    Loading is idempotent: subsequent calls are no-ops within a single process,
+    which matters because a Hydra ``--multirun`` sweep builds a backend once per
+    job in one process, and re-running a third-party package's registration code
+    once per job is unbounded work this package does not control.
     """
-    from importlib.metadata import entry_points  # noqa: PLC0415
+    global _plugins_loaded
+    if _plugins_loaded:
+        return
+    _plugins_loaded = True
 
-    for entry_point in entry_points(group=TRAFFIC_BACKEND_ENTRY_POINT_GROUP):
-        try:
-            entry_point.load()()
-        except Exception:
-            logger.warning(
-                "Traffic backend plugin %r failed to load; it is skipped",
-                entry_point.name,
-                exc_info=True,
-            )
-        else:
-            logger.info("Loaded traffic backend plugin: %s", entry_point.name)
+    from ..registry import load_entry_point_plugins  # noqa: PLC0415
+
+    load_entry_point_plugins(TRAFFIC_BACKEND_ENTRY_POINT_GROUP, "traffic backend")

@@ -206,6 +206,13 @@ class TrafficBackend:
     there would end a scenario that is otherwise perfectly valid.  :meth:`prepare`
     is the opposite -- it is the place to refuse loudly, before the run has cost
     anything.
+
+    **One backend serves a whole queue.**  :class:`~autoware_carla_scenario.ScenarioQueue`
+    builds one runner, so the real sequence over a batch is ``prepare ... close,
+    prepare ... close``, with a different scenario -- and possibly a different
+    map -- each time.  :meth:`close` is therefore the end of a *run*, not the end
+    of the object: it must forget every vehicle the backend created and every
+    entity it adopted, and leave the backend able to :meth:`prepare` again.
     """
 
     #: The name this backend is selected by, and how it names itself in logs and
@@ -345,11 +352,39 @@ def _entity_name(entity: Any) -> str:
 class NullTrafficBackend(TrafficBackend):
     """A run with no traffic model at all.
 
-    Nothing is autopiloted and no ambient vehicle is created: the only vehicles
-    that move are the ego and whatever the scenario drives itself.  It is the
-    honest option for a test about one vehicle on an empty road, and it is the
-    smallest possible proof that the seam is really a seam -- selecting it
-    changes the run without changing a line of the runner.
+    Nothing is driven and no ambient vehicle is created: the only vehicles that
+    move are the ones something else drives -- an Autoware ego, an ego under a
+    driver policy, a vehicle a scenario steers itself.  It is the honest option
+    for a test about one vehicle on an empty road, and the smallest possible
+    proof that the seam is really a seam: selecting it changes the run without
+    changing a line of the runner.
+
+    An ego that expects to be *driven for* (``ego.entity=autopilot``, the
+    default) will not move under this backend, so :meth:`start` says as much
+    rather than leaving the run to die on its timeout with nothing in the log.
     """
 
     name: ClassVar[str] = "none"
+
+    def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
+        """Drive nothing, and name what is being left undriven.
+
+        A vehicle nobody drives is the point of this backend for an NPC and a
+        trap for an ego that opted into being driven, and the two are
+        indistinguishable from here -- so the honest thing is to report the
+        count and let the log say why nothing moved.
+        """
+        skip = set(skip_actor_ids)
+        undriven = [
+            actor
+            for actor in world.get_actors().filter("vehicle.*")
+            if actor.id not in skip
+        ]
+        if undriven:
+            logger.warning(
+                "traffic backend %r drives nothing: %d vehicle(s) are left "
+                "standing. An ego with ego.entity=autopilot is driven by the "
+                "traffic backend and will not move under this one.",
+                self.name,
+                len(undriven),
+            )

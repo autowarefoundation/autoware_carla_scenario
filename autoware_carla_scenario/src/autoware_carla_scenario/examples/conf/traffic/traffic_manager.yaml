@@ -4,7 +4,8 @@ traffic:
   # before traffic backends existed is driven by.
   backend: traffic_manager
   options:
-    # Left unset so that `traffic_manager.port` -- where the port lived before
-    # this group existed, and what exported scenario packages still set --
-    # keeps deciding it.  Setting this wins over that key.
-    port: null
+    # `traffic_manager.port` is where the port lived before this group existed,
+    # and what exported scenario packages still set, so it keeps deciding --
+    # `oc.select` so that a config composing this group without that one still
+    # resolves, leaving the backend's own default in play.
+    port: ${oc.select:traffic_manager.port,null}

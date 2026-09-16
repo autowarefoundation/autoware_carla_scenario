@@ -8,10 +8,13 @@ the right port.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
 from omegaconf import OmegaConf
+
+from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 
 from autoware_carla_scenario.traffic import (
     NullTrafficBackend,
@@ -20,6 +23,7 @@ from autoware_carla_scenario.traffic import (
     build_backend,
     get_backend_factory,
     register_backend,
+    register_builtin_backends,
     unregister_backend,
 )
 from autoware_carla_scenario.traffic.config import TrafficConfig
@@ -69,10 +73,28 @@ class TestTheRegistry:
         try:
             assert isinstance(build_backend("traffic_manager", {}), _Fake)
         finally:
-            from autoware_carla_scenario.traffic import _build_traffic_manager
-
-            register_backend("traffic_manager", _build_traffic_manager)
+            register_builtin_backends()
         assert isinstance(build_backend("traffic_manager", {}), TrafficManagerBackend)
+
+    def test_the_entry_point_walk_runs_once(self, monkeypatch) -> None:
+        """A --multirun sweep builds a backend per job, in one process.
+
+        Re-walking every installed distribution each time would also re-run
+        every third-party registration callable, which is unbounded work this
+        package does not control.
+        """
+        from autoware_carla_scenario.traffic import registry as traffic_registry
+
+        walks = []
+        monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
+        monkeypatch.setattr(
+            "autoware_carla_scenario.registry.load_entry_point_plugins",
+            lambda group, what: walks.append(group),
+        )
+
+        traffic_registry.load_traffic_backend_plugins()
+        traffic_registry.load_traffic_backend_plugins()
+        assert walks == [traffic_registry.TRAFFIC_BACKEND_ENTRY_POINT_GROUP]
 
 
 class TestTheConfig:
@@ -101,27 +123,6 @@ class TestBuildingFromAHydraConfig:
         assert isinstance(backend, TrafficManagerBackend)
         assert backend.port == 8100
 
-    def test_the_legacy_port_still_decides(self) -> None:
-        """``traffic_manager.port`` is where the port lived, and CI still sets it."""
-        backend = self._build(
-            {
-                "traffic_manager": {"port": 9000},
-                "traffic": {"backend": "traffic_manager", "options": {"port": None}},
-            }
-        )
-        assert isinstance(backend, TrafficManagerBackend)
-        assert backend.port == 9000
-
-    def test_an_explicit_option_wins_over_the_legacy_port(self) -> None:
-        backend = self._build(
-            {
-                "traffic_manager": {"port": 9000},
-                "traffic": {"backend": "traffic_manager", "options": {"port": 8123}},
-            }
-        )
-        assert isinstance(backend, TrafficManagerBackend)
-        assert backend.port == 8123
-
     def test_a_named_backend_is_built(self) -> None:
         backend = self._build({"traffic": {"backend": "none", "options": {}}})
         assert isinstance(backend, NullTrafficBackend)
@@ -129,3 +130,47 @@ class TestBuildingFromAHydraConfig:
     def test_an_unknown_backend_fails_before_anything_is_spawned(self) -> None:
         with pytest.raises(ValueError, match="Unknown traffic backend"):
             self._build({"traffic": {"backend": "__nonexistent__", "options": {}}})
+
+
+class TestSelectingFromTheRealConfig:
+    """The four selection paths, composed the way ``scenario`` composes them.
+
+    The legacy-port bridge is an interpolation in
+    ``conf/traffic/traffic_manager.yaml``, so a test that hand-builds a config
+    dict would pin the Python that no longer does the work.  These compose the
+    shipped config group instead.
+    """
+
+    @staticmethod
+    def _build(overrides: list[str]) -> TrafficBackend:
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.examples import conf as conf_package
+        from autoware_carla_scenario.examples.run import build_traffic_backend
+
+        conf_dir = str(Path(conf_package.__file__).parent.resolve())
+        with initialize_config_dir(config_dir=conf_dir, version_base=None):
+            return build_traffic_backend(
+                compose(config_name="config", overrides=overrides)
+            )
+
+    def test_the_default_is_the_traffic_manager_on_the_framework_port(self) -> None:
+        backend = self._build([])
+        assert isinstance(backend, TrafficManagerBackend)
+        assert backend.port == DEFAULT_TM_PORT
+
+    def test_the_legacy_port_still_decides(self) -> None:
+        """``traffic_manager.port`` is where the port lived, and CI still sets it."""
+        backend = self._build(["traffic_manager.port=9000"])
+        assert isinstance(backend, TrafficManagerBackend)
+        assert backend.port == 9000
+
+    def test_an_explicit_option_wins_over_the_legacy_port(self) -> None:
+        backend = self._build(
+            ["traffic_manager.port=9000", "traffic.options.port=8123"]
+        )
+        assert isinstance(backend, TrafficManagerBackend)
+        assert backend.port == 8123
+
+    def test_a_group_selects_the_backend(self) -> None:
+        assert isinstance(self._build(["traffic=none"]), NullTrafficBackend)

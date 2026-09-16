@@ -285,6 +285,9 @@ class ScenarioQueue:
         # Pass the CARLA world so that spawn-point-based z_offset averaging
         # is used instead of single-point sampling.
         xodr_path = self._xodr_path or self._capture_opendrive()
+        # The runner passes it on to the traffic backend, which is how a backend
+        # with a road-network format of its own derives one from the map in play.
+        self._runner.xodr_path = xodr_path
         if xodr_path is not None and self._lanelet2_path is not None:
             MapManager.reset()
             MapManager.get_instance().initialize(

@@ -57,6 +57,7 @@ __all__ = [
     "unregister_conf_dir",
     "get_conf_dirs",
     "load_scenario_plugins",
+    "load_entry_point_plugins",
     "SCENARIO_ENTRY_POINT_GROUP",
 ]
 
@@ -228,23 +229,40 @@ def load_scenario_plugins() -> None:
         return
     _plugins_loaded = True
 
+    load_entry_point_plugins(SCENARIO_ENTRY_POINT_GROUP, "scenario")
+
+
+def load_entry_point_plugins(group: str, what: str) -> None:
+    """Import every distribution advertising *group* and call what it names.
+
+    Each entry point resolves to a zero-argument callable that registers the
+    package's contribution.  A plugin that fails to import is logged and
+    skipped: one broken third-party package must not stop a run that does not
+    use it.
+
+    Shared with :func:`autoware_carla_scenario.traffic.registry.load_traffic_backend_plugins`,
+    which discovers traffic backends the same way -- the walk is the same, only
+    the group and the word in the log line differ.  Callers own their own
+    idempotence latch, because "loaded already" is a fact about a group.
+
+    Args:
+        group: The entry-point group to walk.
+        what: What the plugins are, for the log lines (e.g. ``"scenario"``).
+    """
     import importlib.metadata as importlib_metadata  # noqa: PLC0415
 
     # The selectable ``group=`` API exists on all supported interpreters
     # (requires-python >= 3.10).
-    entry_points = importlib_metadata.entry_points(group=SCENARIO_ENTRY_POINT_GROUP)
-
-    for entry_point in entry_points:
+    for entry_point in importlib_metadata.entry_points(group=group):
         try:
-            register_fn = entry_point.load()
-            register_fn()
+            entry_point.load()()
             logger.info(
-                "Loaded scenario plugin %r from %s",
+                "Loaded %s plugin %r from %s",
+                what,
                 entry_point.name,
                 getattr(entry_point, "value", entry_point),
             )
         except Exception:  # noqa: BLE001 -- one bad plugin must not kill the CLI
             logger.exception(
-                "Failed to load scenario plugin %r; skipping.",
-                entry_point.name,
+                "Failed to load %s plugin %r; skipping.", what, entry_point.name
             )

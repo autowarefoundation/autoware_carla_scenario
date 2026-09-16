@@ -124,13 +124,7 @@ class TrafficManagerBackend(TrafficBackend):
         tm.set_random_device_seed(context.random_seed)
 
     def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
-        """Hand every vehicle that is not driven elsewhere to the TrafficManager.
-
-        Called after the init phase and the brakes coming off, which is late on
-        purpose: the world has been ticking through the ego's readiness wait,
-        and a car under TrafficManager would have spent that time driving away
-        from the scenario it was placed for.
-        """
+        """Hand every vehicle that is not driven elsewhere to the TrafficManager."""
         skip = set(skip_actor_ids)
         enabled = 0
         for actor in world.get_actors().filter("vehicle.*"):
@@ -222,9 +216,9 @@ class TrafficManagerBackend(TrafficBackend):
         diagonal across two lanes, and calling that finished would let a
         reaction fire mid-manoeuvre.
 
-        A manoeuvre the TrafficManager never makes simply never finishes, which
-        is OpenSCENARIO's behaviour: ending the run on a timer is the scenario
-        timeout's job.
+        A manoeuvre the TrafficManager never makes simply never finishes; see
+        :meth:`TrafficBackend.lane_change_finished` for why that is the honest
+        answer rather than a timeout of its own.
         """
         del world
         target = getattr(entity, "_lane_change_target", None)

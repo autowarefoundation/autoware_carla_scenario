@@ -38,6 +38,7 @@ from .base import (
     TurningAtJunctions,
 )
 from .config import TrafficConfig, TrafficManagerBackendConfig
+from .traffic_manager import TrafficManagerBackend
 from .registry import (
     TRAFFIC_BACKEND_ENTRY_POINT_GROUP,
     TrafficBackendFactory,
@@ -62,6 +63,9 @@ __all__ = [
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
     "TurnDirection",
+    "build_traffic_manager",
+    "build_none",
+    "register_builtin_backends",
     "TurningAtJunctions",
     "TRAFFIC_BACKEND_ENTRY_POINT_GROUP",
     "available_backends",
@@ -73,14 +77,12 @@ __all__ = [
 ]
 
 
-def _build_traffic_manager(options: Mapping[str, Any]) -> TrafficBackend:
-    """Build the TrafficManager backend, importing it only when one is asked for."""
-    from .traffic_manager import TrafficManagerBackend  # noqa: PLC0415
-
+def build_traffic_manager(options: Mapping[str, Any]) -> TrafficBackend:
+    """Build the TrafficManager backend from its options mapping."""
     return TrafficManagerBackend(TrafficManagerBackendConfig.from_mapping(options))
 
 
-def _build_none(options: Mapping[str, Any]) -> TrafficBackend:
+def build_none(options: Mapping[str, Any]) -> TrafficBackend:
     """Build the no-traffic backend, which takes no options."""
     if options:
         raise ValueError(
@@ -89,20 +91,15 @@ def _build_none(options: Mapping[str, Any]) -> TrafficBackend:
     return NullTrafficBackend()
 
 
-register_backend("traffic_manager", _build_traffic_manager)
-register_backend("none", _build_none)
+def register_builtin_backends() -> None:
+    """Register the backends this package ships.
 
-
-def __getattr__(name: str) -> Any:
-    """Expose ``TrafficManagerBackend`` without importing it at package import.
-
-    Keeps ``from autoware_carla_scenario.traffic import TrafficConfig`` as cheap
-    as the config layer needs it to be, while
-    ``traffic.TrafficManagerBackend`` still resolves for the code that wants the
-    class itself.
+    Called at import.  Public because a test that overrides a built-in needs a
+    way to put it back, and reaching into the module for a private factory is a
+    worse way to say that.
     """
-    if name == "TrafficManagerBackend":
-        from .traffic_manager import TrafficManagerBackend  # noqa: PLC0415
+    register_backend("traffic_manager", build_traffic_manager)
+    register_backend("none", build_none)
 
-        return TrafficManagerBackend
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+register_builtin_backends()

@@ -12,6 +12,7 @@ live server would only make the test slower.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, List, Optional, Tuple
 
 import pytest
@@ -232,10 +233,26 @@ class TestTrafficManagerClose:
 
 class TestNullBackend:
     def test_nothing_is_autopiloted(self) -> None:
-        """The point of it: only the ego and the scenario's own cars move."""
+        """The point of it: only what something else drives moves."""
         actors = [_Actor(1), _Actor(2)]
         NullTrafficBackend().start(_World(actors))
         assert [a.autopilot for a in actors] == [[], []]
+
+    def test_it_says_what_it_is_leaving_standing(self, caplog) -> None:
+        """An ego with the default `ego.entity=autopilot` is driven by the
+        traffic backend, so under this one it never moves.  Without this the run
+        dies on its timeout with nothing in the log saying why.
+        """
+        with caplog.at_level(logging.WARNING):
+            NullTrafficBackend().start(_World([_Actor(1), _Actor(2)]))
+        assert "2 vehicle(s) are left standing" in caplog.text
+
+    def test_a_vehicle_driven_elsewhere_is_not_counted(self, caplog) -> None:
+        """An Autoware ego is not standing; something else drives it."""
+        ego = _Actor(1)
+        with caplog.at_level(logging.WARNING):
+            NullTrafficBackend().start(_World([ego]), skip_actor_ids={ego.id})
+        assert "left standing" not in caplog.text
 
     def test_it_takes_no_options(self) -> None:
         """A typo in an options block is a refusal, not a silently ignored key."""
@@ -305,13 +322,25 @@ class TestEntityDelegation:
     def test_a_client_alone_still_means_the_traffic_manager(self) -> None:
         """The path an entity built outside a run takes, unchanged."""
         vehicle = _Vehicle()
-        client = _Client()
-        vehicle.set_client(client, tm_port=8123)
-        backend = vehicle._resolve_backend("test")
+        vehicle.set_client(_Client(), tm_port=8123)
+        backend = vehicle._resolve_backend()
         assert isinstance(backend, TrafficManagerBackend)
         assert backend.port == 8123
 
+    def test_the_backend_is_built_once_per_client_not_once_per_manoeuvre(
+        self,
+    ) -> None:
+        """The client arrives exactly once, so the backend it stands for does too."""
+        vehicle = _Vehicle()
+        vehicle.set_client(_Client(), tm_port=8123)
+        assert vehicle._resolve_backend() is vehicle._resolve_backend()
+
     def test_neither_is_not_a_crash(self) -> None:
+        """An entity with no client still answers what needs no CARLA call.
+
+        Whether a lane change has settled is arithmetic on the entity's own
+        state, and that is what such an entity did before the seam existed.
+        """
         vehicle = _Vehicle()
         vehicle.change_lane(_World(), LaneChangeDirection.LEFT)
         assert vehicle.lane_change_finished(_World()) is False

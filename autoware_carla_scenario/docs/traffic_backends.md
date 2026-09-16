@@ -66,7 +66,16 @@ uv run scenario scenario=intersection_passing/left_turn traffic=none
 | Backend | Behaviour |
 | --- | --- |
 | `traffic_manager` (default) | CARLA's TrafficManager drives every vehicle that is not under external control. |
-| `none` | Nothing is autopiloted and no ambient vehicle is created. |
+| `none` | Nothing is driven and no ambient vehicle is created. |
+
+!!! warning "`traffic=none` and the default ego"
+
+    `ego.entity=autopilot` (the default) means *the traffic backend drives the
+    ego*, so under `traffic=none` the ego does not move and the run ends on its
+    timeout. Pair `traffic=none` with an ego that drives itself —
+    `ego.entity=autoware` or `ego.entity=carla_driver` — or with a scenario that
+    steers its vehicles itself. The backend logs how many vehicles it is leaving
+    standing, so the log says why nothing moved.
 
 A backend's own settings live under `traffic.options` and are passed to it
 verbatim, so a backend from another package needs no change to this package's
@@ -99,6 +108,12 @@ own hooks:
 | `start(world, skip_actor_ids=…)` | After warm-up and the init phase, immediately before the scenario clock starts. |
 | `tick(world, elapsed)` | Once per `world.tick()`. A backend driving a second simulator steps it exactly once here. |
 | `close()` | During teardown, while the world is still alive. Called even when the run failed. |
+
+One backend serves a whole queue: `ScenarioQueue` builds one runner, so over a
+batch the real sequence is `prepare … close, prepare … close`, with a different
+scenario — and possibly a different map — each time. `close()` is the end of a
+*run*, not the end of the object: forget every vehicle created and every entity
+adopted, and be ready to `prepare()` again.
 
 `TrafficContext`, handed to `prepare()`, carries the CARLA client and world, the
 map name, the OpenDRIVE the run installed, the simulation step, the scenario's

@@ -19,38 +19,16 @@ the config layer can import it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ..constants import DEFAULT_TM_PORT
+from ..utils.config import checked_options
 
 __all__ = [
     "TrafficConfig",
     "TrafficManagerBackendConfig",
-    "checked_options",
 ]
-
-
-def checked_options(config_cls: type, mapping: Mapping[str, Any]) -> dict:
-    """Return *mapping* as a dict, rejecting keys *config_cls* does not define.
-
-    A silently dropped key is the failure mode this guards against: a typo in a
-    YAML override would otherwise leave the default in place with no indication
-    that the override did nothing.  The same guard
-    :func:`autoware_carla_scenario.driver.base._checked` gives the driver
-    config, kept here so this module stays free of that one's heavy imports.
-
-    Raises:
-        ValueError: If *mapping* holds a key the config does not define.
-    """
-    known = {f.name for f in fields(config_cls)}
-    unknown = sorted(set(mapping) - known)
-    if unknown:
-        raise ValueError(
-            f"Unknown {config_cls.__name__} key(s): {unknown}. "
-            f"Known keys: {sorted(known)}"
-        )
-    return dict(mapping)
 
 
 @dataclass

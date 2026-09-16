@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["BackendDriven"]
 
+#: The TrafficManager an entity with no client at all is driven by: it can
+#: answer the questions that need no CARLA call and reports the missing client
+#: for the rest.  Shared because it holds no per-vehicle state -- a manoeuvre's
+#: bookkeeping lives on the entity -- and built once, on first use, so importing
+#: this module stays free.
+_CLIENTLESS_BACKEND: Optional[TrafficBackend] = None
+
+
+def _clientless() -> TrafficBackend:
+    """Return the shared client-less TrafficManager backend."""
+    global _CLIENTLESS_BACKEND
+    if _CLIENTLESS_BACKEND is None:
+        from ..traffic.traffic_manager import TrafficManagerBackend  # noqa: PLC0415
+
+        _CLIENTLESS_BACKEND = TrafficManagerBackend()
+    return _CLIENTLESS_BACKEND
+
 
 class BackendDriven:
     """Manoeuvres for a vehicle a traffic backend steers.
@@ -56,9 +73,13 @@ class BackendDriven:
 
     #: Set by :meth:`set_traffic_backend`; ``None`` until then.
     _traffic_backend: Optional[TrafficBackend] = None
-    #: Set by :meth:`set_client`; ``None`` until then.
+    #: Set by :meth:`set_client`; ``None`` until then.  Kept because external
+    #: scenario packages and the tests read them.
     _tm_client: Optional["carla.Client"] = None
     _tm_port: int = DEFAULT_TM_PORT
+    #: The TrafficManager backend :meth:`set_client` stands for, built there
+    #: because that call is the only thing that ever supplies its ingredient.
+    _fallback_backend: Optional[TrafficBackend] = None
 
     #: The lane a backend aimed this vehicle at, and the map it was read from.
     #: Written by whichever backend performs the lane change and read by
@@ -84,10 +105,18 @@ class BackendDriven:
 
         Kept because it is what external scenario packages call, and because it
         is still the whole truth for an entity built outside a run: no backend
-        was selected, so the TrafficManager is what drives.
+        was selected, so the TrafficManager is what drives.  The backend that
+        says so is built here rather than per manoeuvre, because this call is
+        the only thing that ever supplies its ingredient.
         """
+        from ..traffic.config import TrafficManagerBackendConfig  # noqa: PLC0415
+        from ..traffic.traffic_manager import TrafficManagerBackend  # noqa: PLC0415
+
         self._tm_client = client
         self._tm_port = tm_port
+        self._fallback_backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=tm_port), client=client
+        )
 
     # ------------------------------------------------------------------
     # Manoeuvres -- delegated, every one of them
@@ -95,51 +124,32 @@ class BackendDriven:
 
     def change_lane(self, world: "carla.World", direction: LaneChangeDirection) -> None:
         """Move one lane in *direction*."""
-        backend = self._resolve_backend("change_lane")
-        if backend is None:
-            return
-        backend.change_lane(self, world, direction)
+        self._resolve_backend().change_lane(self, world, direction)
 
     def lane_change_finished(self, world: "carla.World") -> bool:
         """Whether the manoeuvre has settled."""
-        backend = self._resolve_backend("lane_change_finished")
-        if backend is None:
-            return False
-        return backend.lane_change_finished(self, world)
+        return self._resolve_backend().lane_change_finished(self, world)
 
     def turn_at_junction(
         self, world: "carla.World", direction: TurnDirection, **kwargs: Any
     ) -> None:
         """Go *direction* at the next junction ahead."""
-        backend = self._resolve_backend("turn_at_junction")
-        if backend is None:
-            return
-        backend.turn_at_junction(self, world, direction, **kwargs)
+        self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _resolve_backend(self, what: str) -> Optional[TrafficBackend]:
-        """Return the backend driving this entity, or ``None`` with a warning.
+    def _resolve_backend(self) -> TrafficBackend:
+        """Return the backend this entity's manoeuvres go to.
 
-        The fallback is built fresh rather than cached because a client can
-        arrive after the first manoeuvre was attempted, and a cached backend
-        holding the ``None`` from before would keep refusing afterwards.  It
-        costs one small object per manoeuvre, which is a handful per run.
+        An injected backend wins whichever order it and :meth:`set_client`
+        arrive in.  Next is the TrafficManager that call stands for.  An entity
+        given neither still resolves -- to a TrafficManager with no client,
+        shared and stateless, which answers what needs no CARLA call (whether a
+        lane change has settled is arithmetic on this entity's own state) and
+        reports the missing client for what does.  That is what such an entity
+        did before the backend seam existed, and there is nothing else it could
+        honestly mean.
         """
-        if self._traffic_backend is not None:
-            return self._traffic_backend
-
-        from ..traffic.config import TrafficManagerBackendConfig  # noqa: PLC0415
-        from ..traffic.traffic_manager import TrafficManagerBackend  # noqa: PLC0415
-
-        if self._tm_client is None:
-            logger.debug(
-                "%s: %s falls back to a TrafficManager with no client injected",
-                type(self).__name__,
-                what,
-            )
-        return TrafficManagerBackend(
-            TrafficManagerBackendConfig(port=self._tm_port), client=self._tm_client
-        )
+        return self._traffic_backend or self._fallback_backend or _clientless()

@@ -482,7 +482,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficBackendUnavailable": (".traffic", "TrafficBackendUnavailable"),
     "TrafficConfig": (".traffic", "TrafficConfig"),
     "TrafficContext": (".traffic", "TrafficContext"),
-    "TrafficManagerBackend": (".traffic", "TrafficManagerBackend"),
+    "TrafficManagerBackend": (".traffic.traffic_manager", "TrafficManagerBackend"),
     "TrafficManagerBackendConfig": (".traffic", "TrafficManagerBackendConfig"),
     "register_backend": (".traffic", "register_backend"),
     # autoware bridge

@@ -542,8 +542,6 @@ class BaseScenario(ABC):
         # scenario that no runner has handed a backend to.
         if self._traffic_backend is not None:
             entity.set_traffic_backend(self._traffic_backend)
-            # The vehicle stays the scenario's; a backend simulating traffic
-            # elsewhere still has to know it is there to react to it.
             self._traffic_backend.adopt(entity)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
