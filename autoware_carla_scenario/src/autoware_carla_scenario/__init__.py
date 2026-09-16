@@ -210,6 +210,17 @@ if TYPE_CHECKING:
         CarlaCameraSensorConfig as CarlaCameraSensorConfig,
     )
     from .server import CarlaServerManager as CarlaServerManager
+    from .traffic import (
+        NullTrafficBackend as NullTrafficBackend,
+        TrafficBackend as TrafficBackend,
+        TrafficBackendError as TrafficBackendError,
+        TrafficBackendUnavailable as TrafficBackendUnavailable,
+        TrafficConfig as TrafficConfig,
+        TrafficContext as TrafficContext,
+        TrafficManagerBackend as TrafficManagerBackend,
+        TrafficManagerBackendConfig as TrafficManagerBackendConfig,
+        register_backend as register_backend,
+    )
 
 
 __all__ = [
@@ -237,6 +248,16 @@ __all__ = [
     "EgoVehicleConfig",
     "NpcVehicleConfig",
     "SweepConfig",
+    # Traffic backends
+    "NullTrafficBackend",
+    "TrafficBackend",
+    "TrafficBackendError",
+    "TrafficBackendUnavailable",
+    "TrafficConfig",
+    "TrafficContext",
+    "TrafficManagerBackend",
+    "TrafficManagerBackendConfig",
+    "register_backend",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
     "AlwaysTrueCondition",
@@ -454,6 +475,16 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "DriverConfig": (".scenario_config", "DriverConfig"),
     "DriverCameraSpec": (".scenario_config", "DriverCameraSpec"),
     "DriverControlSpec": (".scenario_config", "DriverControlSpec"),
+    # traffic backends
+    "NullTrafficBackend": (".traffic", "NullTrafficBackend"),
+    "TrafficBackend": (".traffic", "TrafficBackend"),
+    "TrafficBackendError": (".traffic", "TrafficBackendError"),
+    "TrafficBackendUnavailable": (".traffic", "TrafficBackendUnavailable"),
+    "TrafficConfig": (".traffic", "TrafficConfig"),
+    "TrafficContext": (".traffic", "TrafficContext"),
+    "TrafficManagerBackend": (".traffic", "TrafficManagerBackend"),
+    "TrafficManagerBackendConfig": (".traffic", "TrafficManagerBackendConfig"),
+    "register_backend": (".traffic", "register_backend"),
     # autoware bridge
     "AutowareBridge": (".autoware_bridge", "AutowareBridge"),
     "AutowareBridgeConfig": (".autoware_bridge", "AutowareBridgeConfig"),

@@ -11,6 +11,7 @@ This package is a workspace member of [`autoware_lanelet2_to_opendrive`](../READ
 - Glob-pattern batch execution of multiple scenarios in a single CARLA session.
 - Condition system: timing, collisions, traffic signals, speed/standstill, lane/area position, waypoint crossing, plus logical (`And`/`Or`/`Not`), latching (`Sticky`), and persistent combinators.
 - Action system: turns, lane changes, traffic-light state, on-demand camera attachment.
+- Pluggable traffic backends: CARLA's TrafficManager by default, `traffic=none` for an empty road, or a traffic simulator of your own through an entry point.
 - Coordinate transforms between Lanelet2, OpenDRIVE, and CARLA world frames.
 - Hydra `lanelet_constraint` sweeper plugin for parametric map-driven sweeps (resolvable without CARLA).
 - FastAPI + Uvicorn web viewer for browsing results, replaying videos, and triggering runs.

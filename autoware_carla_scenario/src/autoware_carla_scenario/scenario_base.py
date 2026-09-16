@@ -26,6 +26,7 @@ from .coordinate import (
 from .entity._spawn import SpawnLocation, SpawnTransform
 from .entity.registry import register_entity as _register_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .traffic.base import TrafficBackend
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,7 @@ class BaseScenario(ABC):
         self.random_seed = random_seed
         self._client: Optional["carla.Client"] = None
         self._tm_port: int = DEFAULT_TM_PORT
+        self._traffic_backend: Optional[TrafficBackend] = None
         self._entities: List[VehicleEntity] = []
         self._init_callbacks: List[Callable[["carla.World"], None]] = []
         self._init_actions: List[BaseAction] = []
@@ -208,6 +210,23 @@ class BaseScenario(ABC):
         """
         self._client = client
         self._tm_port = tm_port
+
+    def set_traffic_backend(self, backend: TrafficBackend) -> None:
+        """Inject what drives this run's traffic.
+
+        Called by :class:`ScenarioRunner` before :meth:`setup`, because
+        :meth:`setup` is where a scenario spawns its NPCs and
+        :meth:`register_entity` passes the backend on to each of them.
+
+        Args:
+            backend: The run's traffic backend.
+        """
+        self._traffic_backend = backend
+
+    @property
+    def traffic_backend(self) -> Optional[TrafficBackend]:
+        """Return the injected traffic backend, or ``None`` outside a run."""
+        return self._traffic_backend
 
     @property
     def client(self) -> "carla.Client":
@@ -518,6 +537,14 @@ class BaseScenario(ABC):
         # scenario already holds.
         if self._client is not None:
             entity.set_client(self._client, self._tm_port)
+        # And the backend, which is what actually drives it -- the client above
+        # is only the fallback's ingredient, for an entity registered on a
+        # scenario that no runner has handed a backend to.
+        if self._traffic_backend is not None:
+            entity.set_traffic_backend(self._traffic_backend)
+            # The vehicle stays the scenario's; a backend simulating traffic
+            # elsewhere still has to know it is there to react to it.
+            self._traffic_backend.adopt(entity)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.

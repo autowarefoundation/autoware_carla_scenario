@@ -31,6 +31,8 @@ from typing import Any
 
 from omegaconf import MISSING
 
+from .traffic.config import TrafficConfig, TrafficManagerBackendConfig
+
 __all__ = [
     "ServerConfig",
     "MapConfig",
@@ -41,6 +43,10 @@ __all__ = [
     "DriverControlSpec",
     "DriverConfig",
     "SweepConfig",
+    # Re-exported from `traffic.config` so that a scenario package importing
+    # its configuration from one place keeps doing so.
+    "TrafficConfig",
+    "TrafficManagerBackendConfig",
 ]
 
 

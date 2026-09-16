@@ -18,6 +18,7 @@ from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
+from .traffic.base import TrafficBackend
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class ScenarioQueue:
         cooldown_max_retries: int = 0,
         max_tick_rate_hz: Optional[float] = None,
         projector_type: Optional[str] = None,
+        traffic_backend: Optional[TrafficBackend] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -111,6 +113,10 @@ class ScenarioQueue:
                 fails (e.g. due to CARLA communication errors).  After each
                 failed attempt a cooldown wait is inserted before the next
                 retry.  0 means no retries.
+            traffic_backend: What drives the vehicles the scenarios did not
+                author.  *None* selects CARLA's TrafficManager on *tm_port*.
+                One backend serves every scenario in the queue, the same way
+                one CARLA server does.
         """
         if server is not None:
             self._server = server
@@ -136,6 +142,7 @@ class ScenarioQueue:
         self._cooldown_max_retries = cooldown_max_retries
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
+        self._traffic_backend = traffic_backend
 
         self._scenarios: List[BaseScenario] = []
         self._results: List[ScenarioResult] = []
@@ -261,6 +268,7 @@ class ScenarioQueue:
             timeout_seconds=self._timeout_seconds,
             output_dir=self._output_dir,
             max_tick_rate_hz=self._max_tick_rate_hz,
+            traffic_backend=self._traffic_backend,
         )
         if self._xodr_path is not None and self._map_name is None:
             raise ValueError(

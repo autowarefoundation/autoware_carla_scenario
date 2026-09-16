@@ -102,6 +102,21 @@ Connects the ego to a driving policy served over alpasim's
 | `EgoObservation`, `DriveOutcome` | The state sent to the policy and the plan it returns. |
 | `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, speed limit) into the `renderer_data` extension payload. |
 
+## Traffic backends (`autoware_carla_scenario.traffic`)
+
+Owns the vehicles a scenario did not author, and answers the manoeuvre intents
+asked of the ones it did. See [Traffic Backends](traffic_backends.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `TrafficBackend` | The interface: `prepare` / `adopt` / `start` / `tick` / `close`, plus the manoeuvre intents. |
+| `TrafficContext` | The run a backend joins: client, world, map name, OpenDRIVE, step, seed, output directory. |
+| `TrafficManagerBackend` | CARLA's TrafficManager — the default backend. |
+| `NullTrafficBackend` | No traffic model at all (`traffic=none`). |
+| `TrafficConfig`, `TrafficManagerBackendConfig` | Which backend drives a run, and the TrafficManager's own options. |
+| `register_backend`, `build_backend`, `available_backends` | The registry a third-party backend joins through the `autoware_carla_scenario.traffic_backends` entry point. |
+| `TrafficBackendError`, `TrafficBackendUnavailable` | A backend that cannot do what the run needs; the second names a simulator that is not installed. |
+
 ## Coordinate transforms (`autoware_carla_scenario.coordinate`)
 
 | Symbol | Description |

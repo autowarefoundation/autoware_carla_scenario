@@ -1,0 +1,10 @@
+# @package _global_
+traffic:
+  # CARLA's own TrafficManager: the default, and what every scenario written
+  # before traffic backends existed is driven by.
+  backend: traffic_manager
+  options:
+    # Left unset so that `traffic_manager.port` -- where the port lived before
+    # this group existed, and what exported scenario packages still set --
+    # keeps deciding it.  Setting this wins over that key.
+    port: null

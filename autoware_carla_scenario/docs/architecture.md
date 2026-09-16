@@ -86,6 +86,10 @@ graph TB
         TS["TemporaryStopScenario"]
     end
 
+    subgraph Traffic["Traffic Backend"]
+        tb["TrafficBackend<br/>(traffic_manager | none | third-party)"]
+    end
+
     subgraph CARLA["CARLA Simulator"]
         world["carla.World"]
         tm["TrafficManager"]
@@ -99,7 +103,8 @@ graph TB
     SR --> BS
     BS --> IP & LC & TLC & TS
     SR --> world
-    SR --> tm
+    SR --> tb
+    tb --> tm
     SR --> rec
 ```
 
@@ -111,6 +116,7 @@ graph TB
 | **`ScenarioQueue`** | `scenario_queue.py` | Batch execution of multiple scenarios. Owns server and runner lifecycle. Context manager. |
 | **`ScenarioRunner`** | `scenario_runner.py` | Single-scenario execution: sync mode, tick loop, condition evaluation, recording, cleanup. |
 | **`BaseScenario`** | `scenario_base.py` | Abstract base. Subclasses implement `setup()` and `is_done()`. Registers conditions, actions, entities. |
+| **`TrafficBackend`** | `traffic/` | Owns the vehicles the scenario did not author and answers their manoeuvre intents. `traffic_manager` by default; see [Traffic Backends](traffic_backends.md). |
 
 ### Execution Lifecycle
 
@@ -124,6 +130,7 @@ sequenceDiagram
     participant SR as ScenarioRunner
     participant BS as BaseScenario
     participant W as carla.World
+    participant TB as TrafficBackend
     participant TM as TrafficManager
 
     CLI->>SQ: add(scenario)
@@ -141,9 +148,11 @@ sequenceDiagram
         rect rgb(240, 248, 255)
             Note over SR: Phase 1: Setup
             SR->>W: apply_settings(sync=True, dt=0.05)
-            SR->>TM: set_synchronous_mode(True)
-            SR->>TM: set_random_device_seed(seed)
+            SR->>TB: prepare(TrafficContext)
+            TB->>TM: set_synchronous_mode(True)
+            TB->>TM: set_random_device_seed(seed)
             SR->>BS: set_client(client, tm_port)
+            SR->>BS: set_traffic_backend(backend)
             SR->>BS: setup()
             Note over BS: Spawn NPCs, register<br/>conditions & actions
             SR->>W: Spawn ego vehicle
@@ -155,7 +164,8 @@ sequenceDiagram
             loop 5 times
                 SR->>W: tick()
             end
-            SR->>W: set_autopilot(True) on all vehicles
+            SR->>TB: start(world, skip_actor_ids)
+            TB->>W: set_autopilot(True) on the vehicles it owns
             SR->>BS: set_initial_speed(ego)
         end
 
@@ -182,7 +192,8 @@ sequenceDiagram
             Note over SR: Phase 4: Cleanup
             SR->>W: Destroy ego
             SR->>W: stop_recorder()
-            SR->>TM: shut_down()
+            SR->>TB: close()
+            TB->>TM: shut_down()
             SR->>SR: Render video from recording
             SR->>W: reload_world()
         end
@@ -199,19 +210,21 @@ sequenceDiagram
 The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode. Each tick follows a strict evaluation order:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Single Tick Cycle                     │
-├─────────────────────────────────────────────────────────┤
-│  1. Pre-tick actions   → action.tick(world, elapsed)    │
-│  2. Pre-tick callbacks → callback(world)                │
-│  3. world.tick()       → advance simulation by 0.05 s   │
-│  4. Post-tick actions  → action.tick(world, elapsed)    │
-│  5. Post-tick callbacks→ callback(world)                │
-│  6. Periodic logging   → ego OpenDRIVE position (1/s)   │
-│  7. Pass conditions    → first satisfied → PASS & exit  │
-│  8. Fail conditions    → first triggered → FAIL & exit  │
-│  9. is_done() check    → True → PASS & exit             │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                     Single Tick Cycle                     │
+├───────────────────────────────────────────────────────────┤
+│  1. Pre-tick actions      → action.tick(world, elapsed)   │
+│  2. Pre-tick callbacks    → callback(world)               │
+│  3. world.tick()          → advance simulation by 0.05 s  │
+│  4. Ego entity            → ego.on_tick(world, elapsed)   │
+│  5. Traffic backend       → backend.tick(world, elapsed)  │
+│  6. Post-tick actions     → action.tick(world, elapsed)   │
+│  7. Post-tick callbacks   → callback(world)               │
+│  8. Periodic logging      → ego OpenDRIVE position (1/s)  │
+│  9. Pass conditions       → first satisfied → PASS & exit │
+│  10. Fail conditions      → first triggered → FAIL & exit │
+│  11. is_done() check      → True → PASS & exit            │
+└───────────────────────────────────────────────────────────┘
 ```
 
 **Evaluation semantics:**
@@ -744,8 +757,15 @@ They are no-ops on `EgoVehicle`, so a TrafficManager-driven ego costs nothing. A
 that drives itself overrides them — see
 [External Driver Interface](driver_interface.md).
 
-**Who drives the ego**: `use_autopilot` decides whether `ScenarioRunner` calls
-`set_autopilot(True)` on the ego actor. `EgoVehicle` opts in (TrafficManager drives);
+**Who drives the traffic**: everything the scenario did not author belongs to a
+[traffic backend](traffic_backends.md) — `traffic_manager` by default, `none` for
+an empty road, or one from another package. `ScenarioRunner` calls
+`prepare` / `start` / `tick` / `close` on it and never names a traffic simulator
+itself, and an entity's manoeuvre intents (`change_lane`, `turn_at_junction`) are
+delegated to whichever backend drives it.
+
+**Who drives the ego**: `use_autopilot` decides whether the backend is given the
+ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
 `AutowareEntity` opts out and nothing drives the actor; `CarlaDriverEntity` opts out and
 drives it itself from an external policy's plan.
 
