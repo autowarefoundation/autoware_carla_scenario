@@ -11,7 +11,7 @@ from ..conditions import BaseCondition
 from ..entity.registry import find_entity_by_role_name
 from ..entity.tm_driving import LaneChangeDirection, LaneChanging
 from ..entity_role import EntityRole
-from .base import BaseAction, TickTiming, warn_ignored_arguments
+from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import carla
@@ -38,12 +38,6 @@ class LaneChangeAction(BaseAction):
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.
         direction: :class:`LaneChangeDirection` — ``LEFT`` or ``RIGHT``.
-        client: Accepted and ignored.  It named the ``carla.Client`` this action
-            used to reach the TrafficManager through, before the manoeuvre moved
-            onto the entity, which is given a client of its own.  Passing it
-            warns; new code omits it.
-        tm_port: Accepted and ignored, for the same reason as *client*: the
-            entity reaches the TrafficManager on the port the runner gave it.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
@@ -53,18 +47,15 @@ class LaneChangeAction(BaseAction):
         self,
         entity_name: Union[EntityRole, str],
         direction: LaneChangeDirection,
-        client: _Optional["carla.Client"] = None,
         condition: _Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "lane_change",
         once: bool = True,
-        tm_port: _Optional[int] = None,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = entity_name
         self._direction = direction
-        warn_ignored_arguments(type(self).__name__, client=client, tm_port=tm_port)
         #: The entity resolved in :meth:`execute`, asked each tick whether the
         #: manoeuvre has settled.  Looked up once rather than per tick: the
         #: registry is cheap, but the answer cannot change mid-manoeuvre.

@@ -11,7 +11,7 @@ from ..conditions import BaseCondition
 from ..entity.registry import find_entity_by_role_name
 from ..entity.tm_driving import TurnDirection
 from ..entity_role import EntityRole
-from .base import BaseAction, TickTiming, warn_ignored_arguments
+from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import carla
@@ -36,12 +36,6 @@ class TurnAction(BaseAction):
         entity_name: ``role_name`` of the vehicle actor to control.
         direction: :class:`TurnDirection` — ``LEFT`` or ``RIGHT``.
         condition: Trigger condition (see :class:`BaseCondition`).
-        client: Accepted and ignored.  It named the ``carla.Client`` this action
-            used to reach the TrafficManager through, before the manoeuvre moved
-            onto the entity, which is given a client of its own.  Passing it
-            warns; new code omits it.
-        tm_port: Accepted and ignored, for the same reason as *client*: the
-            entity reaches the TrafficManager on the port the runner gave it.
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
         search_distance: Maximum distance (m) to look ahead for a junction.
@@ -57,7 +51,6 @@ class TurnAction(BaseAction):
         self,
         entity_name: Union[EntityRole, str],
         direction: TurnDirection,
-        client: _Optional["carla.Client"] = None,
         condition: _Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
@@ -66,7 +59,6 @@ class TurnAction(BaseAction):
         search_distance: float = 200.0,
         waypoint_step: float = 2.0,
         post_junction_distance: float = 20.0,
-        tm_port: _Optional[int] = None,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = entity_name
@@ -74,7 +66,6 @@ class TurnAction(BaseAction):
         self._search_distance = search_distance
         self._waypoint_step = waypoint_step
         self._post_junction_distance = post_junction_distance
-        warn_ignored_arguments(type(self).__name__, client=client, tm_port=tm_port)
 
     # ------------------------------------------------------------------
     # BaseAction interface
