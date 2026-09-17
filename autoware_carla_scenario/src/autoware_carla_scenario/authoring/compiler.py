@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from ..constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
+from ..constants import EGO_ROLE_NAME
 from ..entity_role import EntityRole
 from .models import ActionNode, ConditionNode, Entity, ScenarioDocument
 from .registry import (
@@ -272,15 +272,9 @@ def compile_document(document: ScenarioDocument) -> CompiledScenario:
 
 @dataclass
 class BuildContext:
-    """Everything a builder needs from the live scenario.
-
-    ``client`` and ``world`` are typed ``Any`` on purpose: this module is
-    imported without CARLA installed, so it must not name ``carla.Client``.
-    """
+    """Everything a builder needs from the live scenario."""
 
     scenario: Any
-    client: Any = None
-    tm_port: int = DEFAULT_TM_PORT
     #: Action id -> live action, filled in as each one is instantiated.  An
     #: ``action_completed`` condition keeps this mapping rather than an action,
     #: so a trigger may name an action that is built after it.

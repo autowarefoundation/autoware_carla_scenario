@@ -284,9 +284,7 @@ class TestTheActionDelegates:
         clear_entities()
         register_entity("npc1", _Recording())
         try:
-            action = LaneChangeAction(
-                "npc1", LaneChangeDirection.LEFT, client=None, label="lc"
-            )
+            action = LaneChangeAction("npc1", LaneChangeDirection.LEFT, label="lc")
             world = _World(_Map(None))
             action.execute(world)
             assert asked == [LaneChangeDirection.LEFT]
@@ -299,9 +297,7 @@ class TestTheActionDelegates:
         from autoware_carla_scenario.entity.registry import clear_entities
 
         clear_entities()
-        action = LaneChangeAction(
-            "ghost", LaneChangeDirection.LEFT, client=None, label="lc"
-        )
+        action = LaneChangeAction("ghost", LaneChangeDirection.LEFT, label="lc")
         world = _World(_Map(None))
         with caplog.at_level("WARNING"):
             action.execute(world)
@@ -461,7 +457,6 @@ class TestTheTurnActionDelegates:
             TurnAction(
                 "npc1",
                 TurnDirection.RIGHT,
-                client=None,
                 label="t",
                 search_distance=42.0,
             ).execute(_World(_Map(None)))
@@ -478,7 +473,49 @@ class TestTheTurnActionDelegates:
 
         clear_entities()
         with caplog.at_level("WARNING"):
-            TurnAction("ghost", TurnDirection.LEFT, client=None, label="t").execute(
+            TurnAction("ghost", TurnDirection.LEFT, label="t").execute(
                 _World(_Map(None))
             )
         assert "not found" in caplog.text
+
+
+class TestTheArgumentsTheActionsNoLongerUse:
+    """`client` and `tm_port` are accepted so old call sites keep working.
+
+    They decided nothing even before this change -- the manoeuvre moved onto the
+    entity, which reaches the TrafficManager itself -- so the only thing left to
+    get right is that a caller who passes one is told, rather than left with an
+    argument that reads as though it still matters.
+    """
+
+    def test_passing_the_client_warns(self) -> None:
+        from autoware_carla_scenario.actions import LaneChangeAction
+
+        with pytest.deprecated_call(match="client"):
+            LaneChangeAction("npc1", LaneChangeDirection.LEFT, client=object())
+
+    def test_passing_the_port_warns(self) -> None:
+        from autoware_carla_scenario.actions import TurnAction
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        with pytest.deprecated_call(match="tm_port"):
+            TurnAction("npc1", TurnDirection.RIGHT, tm_port=8100)
+
+    def test_omitting_them_is_silent(self, recwarn) -> None:
+        from autoware_carla_scenario.actions import LaneChangeAction, TurnAction
+        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+
+        LaneChangeAction("npc1", LaneChangeDirection.LEFT)
+        TurnAction("npc1", TurnDirection.RIGHT)
+        assert [w for w in recwarn if issubclass(w.category, DeprecationWarning)] == []
+
+    def test_the_action_keeps_no_trace_of_them(self) -> None:
+        """Nothing read them, so nothing stores them."""
+        from autoware_carla_scenario.actions import LaneChangeAction
+
+        with pytest.deprecated_call():
+            action = LaneChangeAction(
+                "npc1", LaneChangeDirection.LEFT, client=object(), tm_port=8100
+            )
+        assert not hasattr(action, "_client")
+        assert not hasattr(action, "_tm_port")

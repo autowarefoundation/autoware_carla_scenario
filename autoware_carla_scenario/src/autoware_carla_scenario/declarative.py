@@ -226,7 +226,7 @@ class DeclarativeScenario(BaseScenario):
 
         self._spawn_npcs()
 
-        ctx = BuildContext(scenario=self, client=self._client, tm_port=self.tm_port)
+        ctx = BuildContext(scenario=self)
 
         for compiled_action in self._compiled.actions:
             action = instantiate_action(compiled_action, ctx)

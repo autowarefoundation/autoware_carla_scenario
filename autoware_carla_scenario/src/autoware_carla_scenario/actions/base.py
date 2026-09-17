@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
@@ -18,7 +19,31 @@ logger = logging.getLogger(__name__)
 
 #: Re-exported so ``from .base import ActionState`` keeps working for callers
 #: that already have the action in hand.
-__all__ = ["ActionState", "BaseAction", "TickTiming"]
+__all__ = ["ActionState", "BaseAction", "TickTiming", "warn_ignored_arguments"]
+
+
+def warn_ignored_arguments(owner: str, **given: object) -> None:
+    """Warn about arguments *owner* accepts only so old call sites keep working.
+
+    An argument that is silently ignored is worse than one that was removed: it
+    reads as though it still decides something.  This says so once, at the
+    construction that passed it, and names what to do instead.
+
+    Args:
+        owner: The class the arguments were passed to, for the message.
+        **given: The deprecated arguments, by name.  ``None`` means "not
+            passed", so only what a caller actually supplied is reported.
+    """
+    passed = sorted(name for name, value in given.items() if value is not None)
+    if not passed:
+        return
+    warnings.warn(
+        f"{owner}: {', '.join(passed)} is accepted but ignored, and will be "
+        "removed. The entity performs the manoeuvre and reaches the "
+        "TrafficManager itself; drop the argument.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 class TickTiming(enum.Enum):

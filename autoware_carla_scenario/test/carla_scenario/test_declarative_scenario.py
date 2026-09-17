@@ -185,7 +185,7 @@ def _scenario_from(config: DeclarativeScenarioConfig) -> DeclarativeScenario:
 class TestBuildersProduceFrameworkObjects:
     def test_a_trigger_becomes_the_framework_condition_tree(self) -> None:
         compiled = compile_document(new_document())
-        ctx = BuildContext(scenario=None, client=None, tm_port=8000)
+        ctx = BuildContext(scenario=None)
         trigger = compiled.actions[0].trigger
         assert trigger is not None
 
@@ -199,7 +199,7 @@ class TestBuildersProduceFrameworkObjects:
 
     def test_an_action_becomes_the_framework_action(self) -> None:
         compiled = compile_document(new_document())
-        ctx = BuildContext(scenario=None, client=None, tm_port=8123)
+        ctx = BuildContext(scenario=None)
         action = instantiate_action(compiled.actions[0], ctx)
         assert isinstance(action, LaneChangeAction)
         assert action.timing is TickTiming.PRE_TICK
@@ -219,7 +219,7 @@ class TestBuildersProduceFrameworkObjects:
             )
         ]
         compiled = compile_document(document)
-        ctx = BuildContext(scenario=None, client=None)
+        ctx = BuildContext(scenario=None)
 
         passes = [instantiate_condition(c, ctx) for c in compiled.pass_conditions]
         fails = [instantiate_condition(c, ctx) for c in compiled.fail_conditions]
@@ -230,7 +230,7 @@ class TestBuildersProduceFrameworkObjects:
     def test_every_condition_gets_a_non_empty_label(self) -> None:
         """BaseCondition rejects an empty label, so the compiler must supply one."""
         compiled = compile_document(new_document())
-        ctx = BuildContext(scenario=None, client=None)
+        ctx = BuildContext(scenario=None)
         trigger = compiled.actions[0].trigger
         assert trigger is not None
         assert instantiate_condition(trigger, ctx).label
