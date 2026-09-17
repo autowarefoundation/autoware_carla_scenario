@@ -59,16 +59,19 @@ class BackendDriven:
     two entities the run's traffic model drives.  Both already own an ``actor``;
     this adds the backend the manoeuvres are delegated to.
 
-    The backend is injected rather than passed to each call:
-    :class:`~autoware_carla_scenario.ScenarioRunner` hands it to the ego and
+    :meth:`set_traffic_backend` is the whole of the live injection:
+    :class:`~autoware_carla_scenario.ScenarioRunner` calls it on the ego and
     :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_entity`
-    to each NPC -- the same two places that already inject the CARLA client.
+    on each NPC, and nothing inside a run names a traffic model here.
 
-    An entity built outside a run has neither, and :meth:`set_client` is the
-    path left for it: it names a TrafficManager, which is what such an entity
-    always meant, and the manoeuvres resolve to a TrafficManager backend built
-    on the spot.  An entity with neither a backend nor a client says so rather
-    than failing inside CARLA.
+    :meth:`set_client` is the compatibility entry point beside it, and the one
+    thing on this class that names a particular traffic model.  It is kept
+    because external scenario packages call it and because it is still the whole
+    truth for an entity built outside a run -- "a TrafficManager on this client
+    drives me" is what such a call always meant.  No code in this package calls
+    it on the live path any more; a scenario that has no backend is the only
+    caller left (see
+    :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_entity`).
     """
 
     #: Set by :meth:`set_traffic_backend`; ``None`` until then.
@@ -101,13 +104,24 @@ class BackendDriven:
     def set_client(
         self, client: "carla.Client", tm_port: int = DEFAULT_TM_PORT
     ) -> None:
-        """Inject the CARLA client a TrafficManager would be reached through.
+        """Say that a TrafficManager on *client* drives this entity.
 
-        Kept because it is what external scenario packages call, and because it
-        is still the whole truth for an entity built outside a run: no backend
-        was selected, so the TrafficManager is what drives.  The backend that
-        says so is built here rather than per manoeuvre, because this call is
-        the only thing that ever supplies its ingredient.
+        Deprecated sugar, kept for the callers that predate the traffic seam.
+        It is exactly::
+
+            entity.set_traffic_backend(
+                TrafficManagerBackend(
+                    TrafficManagerBackendConfig(port=tm_port), client=client
+                )
+            )
+
+        except that it fills the *fallback* slot rather than the injected one,
+        so a backend the run selected is never displaced by a late call to this
+        -- which would put a vehicle back under the TrafficManager without
+        saying so.  New code names the backend it means.
+
+        The backend is built here rather than per manoeuvre, because this call
+        is the only thing that ever supplies its ingredient.
         """
         from ..traffic.config import TrafficManagerBackendConfig  # noqa: PLC0415
         from ..traffic.traffic_manager import TrafficManagerBackend  # noqa: PLC0415

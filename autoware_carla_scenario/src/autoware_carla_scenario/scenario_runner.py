@@ -301,11 +301,14 @@ class ScenarioRunner:
         """Return the TrafficManager port in play, as the backend sees it.
 
         The port belongs to the backend, and the ``tm_port`` this runner was
-        constructed with only builds the default one.  Reading it back keeps the
-        compatibility calls to ``set_client()`` -- which an entity or a scenario
-        built outside a run still needs -- naming the same TrafficManager the
-        run's traffic is actually on, rather than a second value nothing
-        reconciles.
+        constructed with only builds the default one.  Reading it back keeps
+        :meth:`BaseScenario.set_client` -- which hands a scenario the client it
+        spawns actors with, and the port its own compatibility surface exposes
+        as ``scenario.tm_port`` -- naming the same TrafficManager the run's
+        traffic is actually on, rather than a second value nothing reconciles.
+
+        Entities are not given a port at all: the runner injects the backend
+        into them, and the backend knows its own port.
         """
         return int(getattr(self._traffic_backend, "port", self._tm_port))
 
@@ -623,7 +626,6 @@ class ScenarioRunner:
         ego = scenario.create_ego()
         register_entity(EGO_ROLE_NAME, ego)
         backend = self._traffic_backend
-        ego.set_client(self._client, self._backend_tm_port)
         ego.set_traffic_backend(backend)
 
         # Destroy any leftover actors from a previous scenario that may

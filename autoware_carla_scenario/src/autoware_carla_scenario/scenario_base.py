@@ -532,17 +532,14 @@ class BaseScenario(ABC):
         # list above is walked to apply initial speeds; the registry answers
         # "who is 'npc1'?", which is what a scenario document asks.
         _register_entity(entity.role_name, entity)
-        # And the client, so a manoeuvre asked of this entity reaches the
-        # TrafficManager that drives it.  Same place, same two facts the
-        # scenario already holds.
-        if self._client is not None:
-            entity.set_client(self._client, self._tm_port)
-        # And the backend, which is what actually drives it -- the client above
-        # is only the fallback's ingredient, for an entity registered on a
-        # scenario that no runner has handed a backend to.
+        # And whatever drives it.  One of the two, never both: the backend is
+        # what a run selected, and the client is what a scenario driven outside
+        # a run -- no runner, so no backend -- has always meant instead.
         if self._traffic_backend is not None:
             entity.set_traffic_backend(self._traffic_backend)
             self._traffic_backend.adopt(entity)
+        elif self._client is not None:
+            entity.set_client(self._client, self._tm_port)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.

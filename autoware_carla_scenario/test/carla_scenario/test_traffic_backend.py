@@ -287,8 +287,10 @@ class _Recording(TrafficBackend):
 
 
 class _Vehicle(BackendDriven):
-    def __init__(self) -> None:
+    def __init__(self, role_name: str = "npc1") -> None:
         self.actor = _Actor(1)
+        #: What `register_entity` files this vehicle under.
+        self.role_name = role_name
 
 
 class _EmptyIsFalsey(TrafficBackend):
@@ -327,6 +329,61 @@ class TestAnExplicitBackendIsNeverReplaced:
         vehicle.set_traffic_backend(backend)
         vehicle.set_client(_Client(), tm_port=8123)
         assert vehicle._resolve_backend() is backend
+
+
+class TestWhatAScenarioInjects:
+    """`register_entity` hands over one thing, and it is the backend.
+
+    `set_client` names a particular traffic model, which is the one thing on
+    `BackendDriven` that does.  Nothing on the live path calls it any more, and
+    these tests are what keeps that true: a run that selected a backend must not
+    also be quietly handing its NPCs a TrafficManager's ingredients.
+    """
+
+    @staticmethod
+    def _scenario():
+        import carla  # noqa: PLC0415
+
+        from autoware_carla_scenario import BaseScenario, EgoConfig  # noqa: PLC0415
+        from autoware_carla_scenario.entity import SpawnTransform  # noqa: PLC0415
+
+        class _Scenario(BaseScenario):
+            def setup(self) -> None: ...
+
+            def is_done(self) -> bool:
+                return True
+
+        return _Scenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
+                ),
+                vehicle_type="vehicle.mini.cooper",
+            )
+        )
+
+    def test_a_backend_is_what_an_npc_is_given(self) -> None:
+        scenario, backend, npc = self._scenario(), _Recording(), _Vehicle()
+        scenario.set_client(_Client())
+        scenario.set_traffic_backend(backend)
+
+        scenario.register_entity(npc)
+
+        assert npc._resolve_backend() is backend
+        # And no TrafficManager ingredients on the side.
+        assert npc._tm_client is None
+        assert npc._fallback_backend is None
+
+    def test_a_scenario_with_no_backend_still_drives_its_npc(self) -> None:
+        """The path a scenario driven outside a runner takes, unchanged."""
+        scenario, npc = self._scenario(), _Vehicle()
+        scenario.set_client(_Client(), tm_port=8123)
+
+        scenario.register_entity(npc)
+
+        backend = npc._resolve_backend()
+        assert isinstance(backend, TrafficManagerBackend)
+        assert backend.port == 8123
 
 
 class TestEntityDelegation:
