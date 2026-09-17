@@ -250,6 +250,17 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     raise ValueError(msg)
 
 
+def _legacy_traffic_manager_options(cfg: DictConfig) -> dict[str, int]:
+    """Return the TrafficManager options a config predating the group states.
+
+    Only ``traffic_manager.port`` was ever settable that way, and a config that
+    does not set it means the framework default.
+    """
+    legacy = cfg.get("traffic_manager")
+    port = None if legacy is None else legacy.get("port")
+    return {} if port is None else {"port": int(port)}
+
+
 def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     """Build the traffic backend selected by ``cfg.traffic``.
 
@@ -261,9 +272,13 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
 
     ``traffic_manager.port`` -- where the port lived before there was a traffic
     group, and what exported scenario packages still set -- keeps deciding the
-    TrafficManager's port: ``conf/traffic/traffic_manager.yaml`` interpolates it,
-    so the bridge is one line of config where the rest of the defaults live
-    rather than a backend's name spelled out in this builder.
+    TrafficManager's port, by either of two routes.  A config that composes the
+    ``traffic`` group gets it through the interpolation in
+    ``conf/traffic/traffic_manager.yaml``, which is where the rest of the
+    defaults live.  A config that predates the group and never composes it is
+    read here instead: an interpolation in a file that config does not include
+    cannot speak for it, and dropping the port would silently move such a run
+    onto a different TrafficManager.
 
     Raises:
         ValueError: If ``traffic.backend`` names no registered backend.
@@ -275,7 +290,7 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     config = (
         TrafficConfig.from_mapping(_to_dict(traffic_cfg))
         if traffic_cfg is not None
-        else TrafficConfig()
+        else TrafficConfig(options=_legacy_traffic_manager_options(cfg))
     )
 
     # A key left at null is a key the config did not set, not an override of

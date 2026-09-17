@@ -291,6 +291,44 @@ class _Vehicle(BackendDriven):
         self.actor = _Actor(1)
 
 
+class _EmptyIsFalsey(TrafficBackend):
+    """A backend that reports how many vehicles it is running -- none, yet.
+
+    Not a contrived case: a backend wrapping a traffic simulator has an obvious
+    ``__len__``, and it is empty exactly when a run starts.
+    """
+
+    name = "falsey"
+
+    def __len__(self) -> int:
+        return 0
+
+
+class TestAnExplicitBackendIsNeverReplaced:
+    """Selection tests for ``None``, not for truthiness.
+
+    A backend is a third party's object.  One that was explicitly chosen has to
+    drive the run whatever it reports about itself, or its lifecycle is never
+    invoked and the TrafficManager silently takes over.
+    """
+
+    def test_the_runner_keeps_it(self) -> None:
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
+        from autoware_carla_scenario import ScenarioRunner  # noqa: PLC0415
+
+        backend = _EmptyIsFalsey()
+        assert ScenarioRunner(MagicMock(), traffic_backend=backend).traffic_backend is (
+            backend
+        )
+
+    def test_an_entity_keeps_it(self) -> None:
+        vehicle, backend = _Vehicle(), _EmptyIsFalsey()
+        vehicle.set_traffic_backend(backend)
+        vehicle.set_client(_Client(), tm_port=8123)
+        assert vehicle._resolve_backend() is backend
+
+
 class TestEntityDelegation:
     def test_every_intent_reaches_the_backend(self) -> None:
         vehicle, backend = _Vehicle(), _Recording()

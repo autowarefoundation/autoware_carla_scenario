@@ -118,10 +118,21 @@ class TestBuildingFromAHydraConfig:
         return build_traffic_backend(OmegaConf.create(cfg))
 
     def test_no_traffic_group_at_all_is_the_traffic_manager(self) -> None:
-        """An exported scenario package composed before the group existed."""
-        backend = self._build({"traffic_manager": {"port": 8100}})
+        """An exported scenario package composed before the group existed.
+
+        The port is deliberately not the framework default: a config that never
+        composes ``conf/traffic/traffic_manager.yaml`` cannot be served by the
+        interpolation in it, so dropping the legacy key here would silently move
+        such a run onto a different TrafficManager while still looking right.
+        """
+        backend = self._build({"traffic_manager": {"port": 9000}})
         assert isinstance(backend, TrafficManagerBackend)
-        assert backend.port == 8100
+        assert backend.port == 9000
+
+    def test_a_config_that_names_no_port_at_all_gets_the_default(self) -> None:
+        backend = self._build({})
+        assert isinstance(backend, TrafficManagerBackend)
+        assert backend.port == DEFAULT_TM_PORT
 
     def test_a_named_backend_is_built(self) -> None:
         backend = self._build({"traffic": {"backend": "none", "options": {}}})

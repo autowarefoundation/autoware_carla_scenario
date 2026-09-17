@@ -151,5 +151,13 @@ class BackendDriven:
         reports the missing client for what does.  That is what such an entity
         did before the backend seam existed, and there is nothing else it could
         honestly mean.
+
+        Each step tests for ``None`` rather than truthiness: a backend is a
+        third party's object and may define ``__bool__`` or ``__len__``, and one
+        that was injected must receive the intent whatever it reports.
         """
-        return self._traffic_backend or self._fallback_backend or _clientless()
+        if self._traffic_backend is not None:
+            return self._traffic_backend
+        if self._fallback_backend is not None:
+            return self._fallback_backend
+        return _clientless()

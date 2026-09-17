@@ -275,8 +275,13 @@ class ScenarioRunner:
             else 0.0
         )
         self._next_tick_at = 0.0
-        self._traffic_backend = traffic_backend or TrafficManagerBackend(
-            TrafficManagerBackendConfig(port=tm_port)
+        # `is not None` rather than truthiness: a backend is a third party's
+        # object and may define __bool__ or __len__ (no vehicles yet, say), and
+        # one that was explicitly passed must drive the run whatever it reports.
+        self._traffic_backend = (
+            traffic_backend
+            if traffic_backend is not None
+            else TrafficManagerBackend(TrafficManagerBackendConfig(port=tm_port))
         )
         self._xodr_path: Optional[Path] = None
 
