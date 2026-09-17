@@ -149,6 +149,8 @@ class MySimulatorBackend(TrafficBackend):
     def prepare(self, context: TrafficContext) -> None:
         # Match the simulation step so the two clocks cannot drift, and derive
         # the road network from the OpenDRIVE the CARLA world is running.
+        # The map of the run: `xodr_path` is the OpenDRIVE CARLA is running, and Phase B
+        # adds `lanelet2_path` for a backend whose own network is built from Lanelet2.
         self._connect(context.fixed_delta_seconds, context.xodr_path, context.random_seed)
 
     def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
@@ -217,5 +219,8 @@ it possible without a second scenario framework: the same map, the same scenario
 document, the same conditions and the same result format, with the traffic model
 swapped.
 
-The SUMO backend and its OpenDRIVE → `.net.xml` pipeline are designed in
-`.spec-workflow/specs/traffic-simulation-backends/` in this repository.
+The SUMO backend is designed in `.spec-workflow/specs/traffic-simulation-backends/` in
+this repository. Its network comes from the scenario's own Lanelet2 map through
+[`lanelet2_to_sumo`](https://github.com/autowarefoundation/lanelet2_to_sumo) — the same
+map Autoware plans on — or from a `.net.xml` the run names directly when you already have
+one. No SUMO code is in the package yet.
