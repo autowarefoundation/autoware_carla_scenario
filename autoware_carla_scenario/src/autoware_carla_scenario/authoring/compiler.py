@@ -278,4 +278,9 @@ class BuildContext:
     #: Action id -> live action, filled in as each one is instantiated.  An
     #: ``action_completed`` condition keeps this mapping rather than an action,
     #: so a trigger may name an action that is built after it.
-    actions: dict[str, Any] = field(default_factory=dict)
+    #:
+    #: Keyword-only, because two fields were removed from between it and
+    #: ``scenario``: a stale positional ``BuildContext(scenario, client)`` would
+    #: otherwise bind that client here and fail much later, when a builder
+    #: looked up an action in it.  This way it is a ``TypeError`` at the call.
+    actions: dict[str, Any] = field(default_factory=dict, kw_only=True)

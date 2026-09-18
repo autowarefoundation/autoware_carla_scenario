@@ -11,6 +11,8 @@ integration suite; everything here runs against constructors only.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 import carla
 import pytest
@@ -180,6 +182,25 @@ def _scenario_from(config: DeclarativeScenarioConfig) -> DeclarativeScenario:
     return DeclarativeScenario(
         _ego_config(), spawn_pose=Lanelet2Pose(lanelet_id=183, s=0.0), config=config
     )
+
+
+class TestTheBuildContextRefusesAStalePositionalCall:
+    """`client` and `tm_port` used to sit between `scenario` and `actions`.
+
+    Removing them would otherwise let an old ``BuildContext(scenario, client)``
+    bind the client to ``actions``, which fails much later and somewhere else --
+    when a builder looks an action up in what it thinks is a mapping.
+    """
+
+    def test_a_second_positional_argument_is_refused(self) -> None:
+        # Through a variable, because mypy refuses the call outright -- which is
+        # itself the point, and is not what this test is checking.
+        build_context: Any = BuildContext
+        with pytest.raises(TypeError):
+            build_context(None, object())
+
+    def test_the_scenario_is_still_positional(self) -> None:
+        assert BuildContext(None).actions == {}
 
 
 class TestBuildersProduceFrameworkObjects:
