@@ -89,7 +89,9 @@ traffic:
 ```
 
 ```bash
-uv run scenario traffic.options.port=8222
+# 8101 rather than the default 8100: a second TrafficManager, so two runs
+# can share one machine without steering each other's traffic.
+uv run scenario traffic.options.port=8101
 ```
 
 `traffic_manager.port` — where the port lived before this group existed, and what
