@@ -9,7 +9,7 @@ from typing import Optional as _Optional
 
 from ..conditions import BaseCondition
 from ..entity.registry import find_entity_by_role_name
-from ..entity.tm_driving import TurnDirection
+from ..traffic import TurnDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 

@@ -17,7 +17,7 @@ from typing import Any, List, Optional, Tuple
 
 import pytest
 
-from autoware_carla_scenario.entity.backend_driven import BackendDriven
+from autoware_carla_scenario.traffic.driven import BackendDriven
 from autoware_carla_scenario.traffic import (
     NullTrafficBackend,
     TrafficBackend,

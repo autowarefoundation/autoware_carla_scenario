@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from ..coordinate.snap import GroundProjectionConfig
 
 from ..entity_role import EntityRole
-from .backend_driven import BackendDriven
+from ..traffic.driven import BackendDriven
 from ._spawn import SpawnLocation, spawn_vehicle_actor
 
 #: Module-level flag set by :class:`~autoware_carla_scenario.scenario_runner.ScenarioRunner`

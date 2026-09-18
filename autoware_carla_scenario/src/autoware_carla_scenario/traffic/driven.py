@@ -1,4 +1,4 @@
-"""Driving a vehicle through whatever backend owns the run's traffic.
+"""The vehicle side of the traffic seam.
 
 A manoeuvre asked of a vehicle is an *intent*: "change lane", "turn at the next
 junction".  What the intent becomes depends entirely on what is driving --
@@ -10,6 +10,13 @@ So the intent stops here.  The entity carries it to the
 the backend is the only place that knows a simulator API.  An action that reached
 for the TrafficManager itself would work for exactly one kind of vehicle while
 looking as though it worked for all of them.
+
+This module lives beside :mod:`~autoware_carla_scenario.traffic.base` rather than
+in :mod:`~autoware_carla_scenario.entity` because a seam has two halves and they
+are one design: ``TrafficBackend`` is what a traffic model must provide,
+:class:`BackendDriven` is what a vehicle must offer for one to drive it, and the
+two are only meaningful together.  It is mixed into entities, but it is not an
+entity -- it holds no actor, spawns nothing, and names no CARLA type.
 
 Entities that are *not* backend-driven
 (:class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`,
@@ -24,7 +31,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 from ..constants import DEFAULT_TM_PORT
-from ..traffic.base import LaneChangeDirection, TrafficBackend, TurnDirection
+from .base import LaneChangeDirection, TrafficBackend, TurnDirection
 
 if TYPE_CHECKING:
     import carla
@@ -45,7 +52,7 @@ def _clientless() -> TrafficBackend:
     """Return the shared client-less TrafficManager backend."""
     global _CLIENTLESS_BACKEND
     if _CLIENTLESS_BACKEND is None:
-        from ..traffic.traffic_manager import TrafficManagerBackend  # noqa: PLC0415
+        from .traffic_manager import TrafficManagerBackend  # noqa: PLC0415
 
         _CLIENTLESS_BACKEND = TrafficManagerBackend()
     return _CLIENTLESS_BACKEND
@@ -123,8 +130,8 @@ class BackendDriven:
         The backend is built here rather than per manoeuvre, because this call
         is the only thing that ever supplies its ingredient.
         """
-        from ..traffic.config import TrafficManagerBackendConfig  # noqa: PLC0415
-        from ..traffic.traffic_manager import TrafficManagerBackend  # noqa: PLC0415
+        from .config import TrafficManagerBackendConfig  # noqa: PLC0415
+        from .traffic_manager import TrafficManagerBackend  # noqa: PLC0415
 
         self._tm_client = client
         self._tm_port = tm_port

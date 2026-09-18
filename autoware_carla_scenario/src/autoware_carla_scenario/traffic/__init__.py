@@ -7,7 +7,12 @@ Selecting one is a name::
 
     uv run scenario traffic.backend=none
 
-and implementing one is a subclass of
+The seam has two halves: :class:`~autoware_carla_scenario.traffic.base.TrafficBackend`
+is what a traffic model must provide, and
+:class:`~autoware_carla_scenario.traffic.driven.BackendDriven` is what a vehicle
+must offer for one to drive it -- the entities mix the latter in.
+
+Implementing a backend is a subclass of
 :class:`~autoware_carla_scenario.traffic.base.TrafficBackend` registered under a
 name of its own -- from this package, or from any package that advertises the
 ``autoware_carla_scenario.traffic_backends`` entry point.
@@ -38,6 +43,7 @@ from .base import (
     TurningAtJunctions,
 )
 from .config import TrafficConfig, TrafficManagerBackendConfig
+from .driven import BackendDriven
 from .traffic_manager import TrafficManagerBackend
 from .registry import (
     TRAFFIC_BACKEND_ENTRY_POINT_GROUP,
@@ -51,6 +57,7 @@ from .registry import (
 )
 
 __all__ = [
+    "BackendDriven",
     "LaneChangeDirection",
     "LaneChanging",
     "NullTrafficBackend",

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from ..constants import EGO_ROLE_NAME
 from ._spawn import spawn_vehicle_actor
-from .backend_driven import BackendDriven
+from ..traffic.driven import BackendDriven
 
 
 class EgoVehicle(BackendDriven):
