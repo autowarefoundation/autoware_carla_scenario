@@ -59,8 +59,6 @@ TEMPLATE_NAME = "builders.py.jinja"
 #: rather than from a field.  A runtime class that grows one of these needs no
 #: spec change: the generator sees it in the signature and wires it up.
 CTX_PARAMS: dict[str, str] = {
-    "client": "ctx.client",
-    "tm_port": "ctx.tm_port",
     # The live mapping, not a copy: an ``action_completed`` condition may name
     # an action that is instantiated after it.
     "actions": "ctx.actions",

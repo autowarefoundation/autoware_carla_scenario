@@ -11,6 +11,8 @@ integration suite; everything here runs against constructors only.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 import carla
 import pytest
@@ -182,10 +184,29 @@ def _scenario_from(config: DeclarativeScenarioConfig) -> DeclarativeScenario:
     )
 
 
+class TestTheBuildContextRefusesAStalePositionalCall:
+    """`client` and `tm_port` used to sit between `scenario` and `actions`.
+
+    Removing them would otherwise let an old ``BuildContext(scenario, client)``
+    bind the client to ``actions``, which fails much later and somewhere else --
+    when a builder looks an action up in what it thinks is a mapping.
+    """
+
+    def test_a_second_positional_argument_is_refused(self) -> None:
+        # Through a variable, because mypy refuses the call outright -- which is
+        # itself the point, and is not what this test is checking.
+        build_context: Any = BuildContext
+        with pytest.raises(TypeError):
+            build_context(None, object())
+
+    def test_the_scenario_is_still_positional(self) -> None:
+        assert BuildContext(None).actions == {}
+
+
 class TestBuildersProduceFrameworkObjects:
     def test_a_trigger_becomes_the_framework_condition_tree(self) -> None:
         compiled = compile_document(new_document())
-        ctx = BuildContext(scenario=None, client=None, tm_port=8000)
+        ctx = BuildContext(scenario=None)
         trigger = compiled.actions[0].trigger
         assert trigger is not None
 
@@ -199,7 +220,7 @@ class TestBuildersProduceFrameworkObjects:
 
     def test_an_action_becomes_the_framework_action(self) -> None:
         compiled = compile_document(new_document())
-        ctx = BuildContext(scenario=None, client=None, tm_port=8123)
+        ctx = BuildContext(scenario=None)
         action = instantiate_action(compiled.actions[0], ctx)
         assert isinstance(action, LaneChangeAction)
         assert action.timing is TickTiming.PRE_TICK
@@ -219,7 +240,7 @@ class TestBuildersProduceFrameworkObjects:
             )
         ]
         compiled = compile_document(document)
-        ctx = BuildContext(scenario=None, client=None)
+        ctx = BuildContext(scenario=None)
 
         passes = [instantiate_condition(c, ctx) for c in compiled.pass_conditions]
         fails = [instantiate_condition(c, ctx) for c in compiled.fail_conditions]
@@ -230,7 +251,7 @@ class TestBuildersProduceFrameworkObjects:
     def test_every_condition_gets_a_non_empty_label(self) -> None:
         """BaseCondition rejects an empty label, so the compiler must supply one."""
         compiled = compile_document(new_document())
-        ctx = BuildContext(scenario=None, client=None)
+        ctx = BuildContext(scenario=None)
         trigger = compiled.actions[0].trigger
         assert trigger is not None
         assert instantiate_condition(trigger, ctx).label
