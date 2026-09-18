@@ -1,6 +1,6 @@
 """What a traffic backend is, and what the default one does.
 
-The manoeuvres themselves are pinned by ``test_tm_driving``, which drives them
+The manoeuvres themselves are pinned by ``test_driven``, which drives them
 through an entity exactly as an action does.  These tests are about the other
 half: the lifecycle the runner calls, the one-authority-per-vehicle rule, and
 the promise every backend makes -- that an intent it cannot carry out is a

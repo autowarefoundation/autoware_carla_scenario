@@ -84,8 +84,8 @@ class LaneChangeDirection(enum.Enum):
 
     Defined with the traffic seam rather than in the action that asks for one:
     the action names an intent, and a backend is what knows what the intent
-    means to whatever is driving.  ``entity.tm_driving`` and ``actions.lane_change``
-    re-export it, which is where scenario authors and the editor reach it.
+    means to whatever is driving.  The ``traffic`` package re-exports it, which is
+    where the actions, scenario authors and the editor reach it.
     """
 
     LEFT = "left"

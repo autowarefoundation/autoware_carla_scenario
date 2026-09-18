@@ -1,7 +1,8 @@
-"""Manoeuvres for a TrafficManager-driven vehicle, and who performs them.
+"""Manoeuvres for a backend-driven vehicle, and who performs them.
 
 The action names an intent and the entity carries it out, so these are the
-entity's tests: what reaches the TrafficManager, and what counts as finished.
+mixin's tests: what reaches the backend that drives the vehicle -- the
+TrafficManager here -- and what counts as finished.
 None of it had a test while it lived in the action, which is why the behaviour
 is pinned here rather than assumed.
 
@@ -16,10 +17,8 @@ from typing import Optional
 
 import pytest
 
-from autoware_carla_scenario.entity.tm_driving import (
-    LaneChangeDirection,
-    TrafficManagerDriven,
-)
+from autoware_carla_scenario.traffic import LaneChangeDirection
+from autoware_carla_scenario.traffic.driven import BackendDriven
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ class _Actor:
         return self._transform
 
 
-class _Vehicle(TrafficManagerDriven):
+class _Vehicle(BackendDriven):
     """The smallest thing the mixin needs: something with an ``actor``."""
 
     def __init__(self, actor: Optional[_Actor] = None) -> None:
@@ -240,7 +239,7 @@ class TestLaneChangeFinished:
         assert _Vehicle().lane_change_finished(_World(_Map(None))) is False
 
 
-class TestEntitiesThatAreNotTrafficManagerDriven:
+class TestEntitiesThatAreNotBackendDriven:
     """They refuse rather than sending a command that would do nothing."""
 
     def test_an_autoware_ego_refuses_a_forced_lane_change(self, caplog) -> None:
@@ -390,7 +389,7 @@ class TestTurnAtJunction:
         A picker that always returned the first branch would satisfy a test
         that only asked for a left turn.
         """
-        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+        from autoware_carla_scenario.traffic import TurnDirection
 
         for direction, expected_y in (
             (TurnDirection.LEFT, -5.0),
@@ -406,7 +405,7 @@ class TestTurnAtJunction:
 
     def test_a_route_that_cannot_be_found_sends_nothing(self) -> None:
         """A junction that is not there is reported, not faked."""
-        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+        from autoware_carla_scenario.traffic import TurnDirection
 
         actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
         vehicle = _Vehicle(actor)
@@ -418,7 +417,7 @@ class TestTurnAtJunction:
         assert tm.paths == []
 
     def test_without_a_client_nothing_is_sent(self) -> None:
-        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+        from autoware_carla_scenario.traffic import TurnDirection
 
         vehicle = _Vehicle(_Actor(_Transform(_Location())))
         vehicle.turn_at_junction(
@@ -428,7 +427,7 @@ class TestTurnAtJunction:
     def test_an_autoware_ego_refuses_a_turn_route(self, caplog) -> None:
         from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
         from autoware_carla_scenario.entity import AutowareEgoEntity
-        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+        from autoware_carla_scenario.traffic import TurnDirection
 
         entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
         with caplog.at_level("WARNING"):
@@ -443,7 +442,7 @@ class TestTheTurnActionDelegates:
             clear_entities,
             register_entity,
         )
-        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+        from autoware_carla_scenario.traffic import TurnDirection
 
         seen: list[tuple] = []
 
@@ -469,7 +468,7 @@ class TestTheTurnActionDelegates:
     def test_an_unknown_entity_is_reported(self, caplog) -> None:
         from autoware_carla_scenario.actions import TurnAction
         from autoware_carla_scenario.entity.registry import clear_entities
-        from autoware_carla_scenario.entity.tm_driving import TurnDirection
+        from autoware_carla_scenario.traffic import TurnDirection
 
         clear_entities()
         with caplog.at_level("WARNING"):

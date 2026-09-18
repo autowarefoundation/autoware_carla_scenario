@@ -67,7 +67,7 @@ class TrafficManagerBackend(TrafficBackend):
     two places that already hold one: :meth:`prepare`, when
     :class:`~autoware_carla_scenario.ScenarioRunner` builds the run's context,
     or the constructor, for an entity that was only ever given a client (see
-    :class:`~autoware_carla_scenario.entity.tm_driving.TrafficManagerDriven`).
+    :meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.set_client`).
     A backend that was never given one says so rather than failing inside CARLA.
     """
 
