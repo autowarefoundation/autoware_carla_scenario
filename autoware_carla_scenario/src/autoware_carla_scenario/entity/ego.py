@@ -12,10 +12,10 @@ if TYPE_CHECKING:
 
 from ..constants import EGO_ROLE_NAME
 from ._spawn import spawn_vehicle_actor
-from .tm_driving import TrafficManagerDriven
+from ..traffic.driven import BackendDriven
 
 
-class EgoVehicle(TrafficManagerDriven):
+class EgoVehicle(BackendDriven):
     """Manages the ego vehicle actor.
 
     Beyond spawning and destroying the actor, this class defines the lifecycle hooks

@@ -19,19 +19,35 @@ from .camera_recorder import CameraRecorder
 from .entity.registry import clear_entities, register_entity
 from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
-from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
+from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
+from .traffic.base import TrafficBackend, TrafficContext
+from .traffic.config import TrafficManagerBackendConfig
+from .traffic.traffic_manager import TrafficManagerBackend
 
 logger = logging.getLogger(__name__)
 
 
 #: Log ego OpenDRIVE position every N ticks (~1 s at 20 Hz).
 _CONDITION_LOG_INTERVAL: int = 20
+
+
+def _map_name_of(world: "carla.World") -> str:
+    """Return the loaded map's name, or an empty string if CARLA will not say.
+
+    Only ever used to tell a traffic backend which map it joined, so a server
+    that refuses the question is worth a blank rather than a failed run.
+    """
+    try:
+        return str(world.get_map().name)
+    except Exception:  # pragma: no cover - defensive; CARLA-side failure
+        logger.warning("Could not read the loaded map name", exc_info=True)
+        return ""
 
 
 def _log_ego_opendrive_position(
@@ -229,6 +245,7 @@ class ScenarioRunner:
         timeout_seconds: float = 60.0,
         output_dir: Path = Path("scenario_outputs"),
         max_tick_rate_hz: Optional[float] = None,
+        traffic_backend: Optional[TrafficBackend] = None,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -244,6 +261,10 @@ class ScenarioRunner:
                 that down to the rate of the slowest client reading the
                 simulation: a client that cannot service every tick sees the
                 world jump, not step.
+            traffic_backend: What drives the vehicles the scenario did not
+                author.  *None* selects CARLA's TrafficManager on *tm_port*,
+                which is what every scenario written before the backend seam
+                existed expects.
         """
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -254,12 +275,63 @@ class ScenarioRunner:
             else 0.0
         )
         self._next_tick_at = 0.0
+        # `is not None` rather than truthiness: a backend is a third party's
+        # object and may define __bool__ or __len__ (no vehicles yet, say), and
+        # one that was explicitly passed must drive the run whatever it reports.
+        self._traffic_backend = (
+            traffic_backend
+            if traffic_backend is not None
+            else TrafficManagerBackend(TrafficManagerBackendConfig(port=tm_port))
+        )
+        self._xodr_path: Optional[Path] = None
 
         self._client = carla.Client(host, port)
         # Loading a town on CARLA 0.10 (UE5) takes ~25 s, so a 10 s client
         # timeout fails the load with a bare 'std::exception'.
         self._client.set_timeout(60.0)
         self._world: Optional["carla.World"] = None
+
+    @property
+    def traffic_backend(self) -> TrafficBackend:
+        """Return what drives this runner's traffic."""
+        return self._traffic_backend
+
+    @property
+    def _backend_tm_port(self) -> int:
+        """Return the TrafficManager port in play, as the backend sees it.
+
+        The port belongs to the backend, and the ``tm_port`` this runner was
+        constructed with only builds the default one.  Reading it back keeps
+        :meth:`BaseScenario.set_client` -- which hands a scenario the client it
+        spawns actors with, and the port its own compatibility surface exposes
+        as ``scenario.tm_port`` -- naming the same TrafficManager the run's
+        traffic is actually on, rather than a second value nothing reconciles.
+
+        Entities are not given a port at all: the runner injects the backend
+        into them, and the backend knows its own port.
+        """
+        return int(getattr(self._traffic_backend, "port", self._tm_port))
+
+    @property
+    def xodr_path(self) -> Optional[Path]:
+        """Return the OpenDRIVE of the world in play, when one is known.
+
+        A backend that derives its own road network from the map -- a traffic
+        simulator with its own network format -- reads it from
+        :class:`~autoware_carla_scenario.traffic.base.TrafficContext`.
+        """
+        return self._xodr_path
+
+    @xodr_path.setter
+    def xodr_path(self, path: Optional[Path]) -> None:
+        """Tell the runner which OpenDRIVE the loaded world is running.
+
+        Set by :meth:`load_map_by_overwriting_xodr` for a map this runner
+        installs, and by :class:`~autoware_carla_scenario.ScenarioQueue` for one
+        whose roads CARLA already ships -- the queue is where that file is
+        resolved (or captured from the server) for the MapManager anyway.
+        """
+        self._xodr_path = path
 
     # ------------------------------------------------------------------
     # Tick pacing
@@ -386,6 +458,7 @@ class ScenarioRunner:
             )
         dest = Path(dest_str)
         shutil.copy2(xodr_path, dest)
+        self._xodr_path = xodr_path
         self.load_map_by_name(map_name)
 
     def load_map_by_name(self, map_name: str) -> None:
@@ -452,7 +525,7 @@ class ScenarioRunner:
         # Enable synchronous mode for controlled replay
         settings = world.get_settings()
         settings.synchronous_mode = True
-        settings.fixed_delta_seconds = 0.05  # 20 Hz – same as scenario execution
+        settings.fixed_delta_seconds = FIXED_DELTA_SECONDS  # same as execution
         world.apply_settings(settings)
 
         camera_recorder: Optional[CameraRecorder] = None
@@ -518,15 +591,16 @@ class ScenarioRunner:
         """Execute a single scenario from setup to teardown.
 
         Steps:
-        1. Enable synchronous mode on World and TrafficManager
-        2. Seed the TrafficManager with ``scenario.random_seed``
+        1. Enable synchronous mode on the world
+        2. Prepare the traffic backend (synchronous mode, seed, whatever it
+           needs to start), before anything is spawned
         3. Call ``scenario.setup(world)``
         4. Spawn the ego vehicle
         5. Start the CARLA native recorder
         6. Register the default timeout fail condition
         7. Run the tick loop
         8. Stop the recorder and destroy the ego vehicle
-        9. Restore original World / TrafficManager settings
+        9. Close the traffic backend and restore the world
 
         Args:
             scenario: The scenario to run.
@@ -551,7 +625,8 @@ class ScenarioRunner:
         # before that actor would be destroyed.
         ego = scenario.create_ego()
         register_entity(EGO_ROLE_NAME, ego)
-        ego.set_client(self._client, self._tm_port)
+        backend = self._traffic_backend
+        ego.set_traffic_backend(backend)
 
         # Destroy any leftover actors from a previous scenario that may
         # have survived a failed reload_world().  On a clean world this
@@ -571,23 +646,41 @@ class ScenarioRunner:
         # end of this method resets everything to defaults.
         settings = world.get_settings()
         settings.synchronous_mode = True
-        settings.fixed_delta_seconds = 0.05  # 20 Hz
+        settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
         world.apply_settings(settings)
-
-        # Configure TrafficManager for deterministic behaviour.
-        # Must be synchronous with the world and seeded before any
-        # set_autopilot() call so NPC decisions are reproducible.
-        tm = self._client.get_trafficmanager(self._tm_port)
-        tm.set_synchronous_mode(True)
-        tm.set_random_device_seed(scenario.random_seed)
 
         recording_started = False
         tick_count = 0
         result: Optional[ScenarioResult] = None
 
         try:
+            # Let the traffic backend get ready before anything is spawned: this
+            # is where the TrafficManager is put in step with the world and
+            # seeded (a seed only decides anything if it is set before the first
+            # autopilot call), and where a backend that cannot run at all -- a
+            # simulator that is not installed -- refuses.  Inside the try, so a
+            # refusal still gets the cleanup every other failure gets.
+            backend.prepare(
+                TrafficContext(
+                    client=self._client,
+                    world=world,
+                    map_name=_map_name_of(world),
+                    xodr_path=self._xodr_path,
+                    # The step the world actually got, not a constant that
+                    # happens to match it: a backend stepping a second simulator
+                    # against the wrong number drifts silently.
+                    fixed_delta_seconds=settings.fixed_delta_seconds,
+                    random_seed=scenario.random_seed,
+                    output_dir=self.output_dir,
+                )
+            )
+            logger.info("[%s] Traffic: %s", scenario_name, backend.describe())
+
             logger.info("[%s] === Setup start ===", scenario_name)
-            scenario.set_client(self._client, tm_port=self._tm_port)
+            scenario.set_client(self._client, tm_port=self._backend_tm_port)
+            # Before setup(), because setup() is where a scenario spawns and
+            # registers its NPCs, and register_entity() passes the backend on.
+            scenario.set_traffic_backend(backend)
             scenario.setup()
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once
@@ -602,6 +695,7 @@ class ScenarioRunner:
                 ego_actor.id,
                 ego_actor.type_id,
             )
+            backend.adopt(ego)
 
             # Register ego existence fail condition so the scenario fails
             # immediately if the ego is destroyed (e.g. falls through map).
@@ -637,29 +731,18 @@ class ScenarioRunner:
             # anything is handed to TrafficManager or given a speed.
             self._release_vehicles(world)
 
-            # Autopilot last, and only now: the world has been ticking through
-            # the wait above, and a car under TrafficManager would have spent
-            # that time driving -- away from the scenario it was placed for,
-            # before its own pre-tick actions had said how it should drive.
-            # When the ego opts out (e.g. AutowareEntity), its actor is
-            # excluded so external control can drive it instead.
+            # Traffic last, and only now: the world has been ticking through
+            # the wait above, and a car the backend was already driving would
+            # have spent that time going -- away from the scenario it was placed
+            # for, before its own pre-tick actions had said how it should drive.
+            # When the ego opts out (e.g. AutowareEntity), its actor is named
+            # here so external control can drive it instead: one authority per
+            # vehicle, passed as data rather than assumed by the backend.
             skip_ids: set[int] = set()
             if not ego.use_autopilot and ego_actor is not None:
                 skip_ids.add(ego_actor.id)
 
-            n_autopilot = 0
-            for actor in world.get_actors().filter("vehicle.*"):
-                if actor.id in skip_ids:
-                    continue
-                actor.set_autopilot(True, self._tm_port)
-                n_autopilot += 1
-            if n_autopilot:
-                logger.info("Autopilot enabled on %d vehicle(s)", n_autopilot)
-            if skip_ids:
-                logger.info(
-                    "Autopilot skipped for ego (id=%s) — external control expected",
-                    ", ".join(str(i) for i in skip_ids),
-                )
+            backend.start(world, skip_actor_ids=skip_ids)
 
             # Initial speeds last of all, so they are the speeds the scenario
             # starts at rather than ones a long wait has bled off.
@@ -714,6 +797,10 @@ class ScenarioRunner:
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
                 ego.on_tick(world, elapsed)
+
+                # Then the traffic, which reacts to where the ego now is.
+                # See TrafficBackend.tick for what a backend does with this.
+                backend.tick(world, elapsed)
 
                 # Post-tick actions (receive elapsed)
                 for action in scenario._post_tick_actions:
@@ -847,10 +934,18 @@ class ScenarioRunner:
                 self._client.stop_recorder()
                 logger.info("[%s] Recorder stopped", scenario_name)
 
-            # Shut down the TrafficManager so the next run starts with a
-            # fresh instance (resets InMemoryMap cache and internal state).
-            tm.shut_down()
-            logger.info("[%s] TrafficManager shut down", scenario_name)
+            # Close the backend so the next run starts with a fresh one --
+            # for the TrafficManager that resets its InMemoryMap cache and
+            # internal state, for a backend with a process of its own it is
+            # that process going away.
+            try:
+                backend.close()
+            except Exception:
+                logger.warning(
+                    "[%s] Traffic backend teardown failed",
+                    scenario_name,
+                    exc_info=True,
+                )
             logger.info("[%s] === Cleanup done ===", scenario_name)
 
         if result is not None:

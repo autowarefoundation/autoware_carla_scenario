@@ -19,6 +19,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from ..constants import FIXED_DELTA_SECONDS
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
@@ -40,9 +41,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Simulation step used to convert ticks to simulation time.  Matches the
-#: ``fixed_delta_seconds`` :class:`ScenarioRunner` applies to the world.
-_FIXED_DELTA_S: float = 0.05
+#: Simulation step used to convert ticks to simulation time -- the same one
+#: :class:`ScenarioRunner` applies to the world, read from where it is named.
+_FIXED_DELTA_S: float = FIXED_DELTA_SECONDS
 
 #: Microseconds per second, for the contract's ``fixed64`` timestamps.
 _US_PER_S: int = 1_000_000

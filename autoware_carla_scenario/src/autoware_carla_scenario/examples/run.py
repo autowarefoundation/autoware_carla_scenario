@@ -53,6 +53,13 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.traffic import (
+    TrafficBackend,
+    TrafficConfig,
+    available_backends,
+    build_backend,
+    load_traffic_backend_plugins,
+)
 from autoware_carla_scenario.registry import (
     BuildScenarioFn,
     get_conf_dirs,
@@ -243,6 +250,62 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     raise ValueError(msg)
 
 
+def _legacy_traffic_manager_options(cfg: DictConfig) -> dict[str, int]:
+    """Return the TrafficManager options a config predating the group states.
+
+    Only ``traffic_manager.port`` was ever settable that way, and a config that
+    does not set it means the framework default.
+    """
+    legacy = cfg.get("traffic_manager")
+    port = None if legacy is None else legacy.get("port")
+    return {} if port is None else {"port": int(port)}
+
+
+def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
+    """Build the traffic backend selected by ``cfg.traffic``.
+
+    The traffic counterpart of :func:`build_ego_entity`: the config names a
+    backend, the registry turns the name into one, and the runner never learns
+    which it got.  A config with no ``traffic`` group at all selects CARLA's
+    TrafficManager, which is what every scenario written before the group
+    existed means.
+
+    ``traffic_manager.port`` -- where the port lived before there was a traffic
+    group, and what exported scenario packages still set -- keeps deciding the
+    TrafficManager's port, by either of two routes.  A config that composes the
+    ``traffic`` group gets it through the interpolation in
+    ``conf/traffic/traffic_manager.yaml``, which is where the rest of the
+    defaults live.  A config that predates the group and never composes it is
+    read here instead: an interpolation in a file that config does not include
+    cannot speak for it, and dropping the port would silently move such a run
+    onto a different TrafficManager.
+
+    Raises:
+        ValueError: If ``traffic.backend`` names no registered backend.
+    """
+    # Third-party backends first, so a name from another package resolves.
+    load_traffic_backend_plugins()
+
+    traffic_cfg = cfg.get("traffic")
+    config = (
+        TrafficConfig.from_mapping(_to_dict(traffic_cfg))
+        if traffic_cfg is not None
+        else TrafficConfig(options=_legacy_traffic_manager_options(cfg))
+    )
+
+    # A key left at null is a key the config did not set, not an override of
+    # the backend's own default -- the group declares its keys so that plain
+    # `traffic.options.x=y` overrides work under Hydra's struct mode, and an
+    # interpolation that resolved to nothing leaves the backend's default alone.
+    options = {key: value for key, value in config.options.items() if value is not None}
+
+    backend = build_backend(config.backend, options)
+    logger.info(
+        "Traffic backend: %s (registered: %s)", config.backend, available_backends()
+    )
+    return backend
+
+
 def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
     """Give a scenario the registry did not build the ego the config selects.
 
@@ -285,6 +348,7 @@ def run_scenario_with_queue(
     timeout_seconds: float = 60.0,
     max_tick_rate_hz: float | None = None,
     projector_type: str | None = None,
+    traffic_backend: TrafficBackend | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -312,6 +376,7 @@ def run_scenario_with_queue(
         timeout_seconds=timeout_seconds,
         max_tick_rate_hz=max_tick_rate_hz,
         projector_type=projector_type,
+        traffic_backend=traffic_backend,
     )
     queue.add(scenario)
     with queue:
@@ -579,6 +644,7 @@ def run_batch(
         timeout_seconds=float(first_cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
+        traffic_backend=build_traffic_backend(first_cfg),
     )
 
     for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
@@ -688,6 +754,7 @@ def run_scenario(
         timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
+        traffic_backend=build_traffic_backend(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

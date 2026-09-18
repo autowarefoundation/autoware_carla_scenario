@@ -1,0 +1,11 @@
+# @package _global_
+traffic:
+  # CARLA's own TrafficManager: the default, and what every scenario written
+  # before traffic backends existed is driven by.
+  backend: traffic_manager
+  options:
+    # `traffic_manager.port` is where the port lived before this group existed,
+    # and what exported scenario packages still set, so it keeps deciding --
+    # `oc.select` so that a config composing this group without that one still
+    # resolves, leaving the backend's own default in play.
+    port: ${oc.select:traffic_manager.port,null}

@@ -11,6 +11,14 @@ EGO_ROLE_NAME: EntityRole = EntityRole.ego()
 # This value is used as a fallback when no Hydra config is available.
 DEFAULT_TM_PORT: int = 8100
 
+# The simulation step the runner drives the world at (20 Hz).
+#
+# Named here because three places have to agree on it: the runner applies it to
+# the world, an entity that converts ticks to simulation time reads it, and a
+# traffic backend stepping a second simulator matches its step length to it.
+# Three private copies that must agree is exactly the coupling this avoids.
+FIXED_DELTA_SECONDS: float = 0.05
+
 # When a forced lane change counts as completed.
 #
 # ``force_lane_change`` returns as soon as the command is queued, so the action

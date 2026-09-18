@@ -1,0 +1,8 @@
+# @package _global_
+traffic:
+  # No traffic model at all: nothing is autopiloted and no ambient vehicle is
+  # created, so the only vehicles that move are the ego and whatever the
+  # scenario drives itself.  The honest choice for a test about one vehicle on
+  # an empty road.
+  backend: none
+  options: {}

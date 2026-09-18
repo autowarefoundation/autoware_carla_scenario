@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from ..coordinate.snap import GroundProjectionConfig
 
 from ..entity_role import EntityRole
-from .tm_driving import TrafficManagerDriven
+from ..traffic.driven import BackendDriven
 from ._spawn import SpawnLocation, spawn_vehicle_actor
 
 #: Module-level flag set by :class:`~autoware_carla_scenario.scenario_runner.ScenarioRunner`
@@ -40,7 +40,7 @@ class VehicleEntityConfig:
     ground_projection: Optional["GroundProjectionConfig"] = None
 
 
-class VehicleEntity(TrafficManagerDriven):
+class VehicleEntity(BackendDriven):
     """Manages the lifecycle of an NPC vehicle actor in CARLA.
 
     This class handles spawning, destroying, and providing access to an NPC

@@ -14,13 +14,14 @@ abstracts the simulator behind the camera.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ..sensor.carla_camera import CarlaCameraSensorConfig
+from ..utils.config import checked_options as _checked
 from .geometry import Pose, Trajectory
 
 
@@ -35,28 +36,6 @@ __all__ = [
 #: Logical camera id used by alpasim's reference rig for the forward-facing camera.
 #: Policies look their inputs up by this string, so it must match what the policy expects.
 DEFAULT_CAMERA_LOGICAL_ID: str = "camera_front_wide_120fov"
-
-
-def _checked(
-    config_cls: type, mapping: Mapping[str, Any], ignore: Optional[set] = None
-) -> dict:
-    """Return *mapping* as a dict, rejecting keys *config_cls* does not define.
-
-    A silently dropped key is the failure mode this guards against: a typo in a YAML
-    override would otherwise leave the default in place with no indication.
-
-    Raises:
-        ValueError: If *mapping* holds an unknown key.
-    """
-    known = {field.name for field in fields(config_cls)}
-    skip = ignore or set()
-    unknown = sorted(set(mapping) - known - skip)
-    if unknown:
-        raise ValueError(
-            f"Unknown {config_cls.__name__} key(s): {unknown}. "
-            f"Known keys: {sorted(known)}"
-        )
-    return {key: value for key, value in mapping.items() if key not in skip}
 
 
 @dataclass(frozen=True)

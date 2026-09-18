@@ -1,42 +1,45 @@
-"""Driving a vehicle through the CARLA TrafficManager.
+"""CARLA's TrafficManager as a traffic backend.
 
-This is the default mechanism: a vehicle the scenario spawns and leaves to
-CARLA is steered by the TrafficManager, and a manoeuvre asked of it becomes a
-TrafficManager call.
+This is what drove every run before the backend seam existed, moved rather than
+rewritten: the synchronous-mode and seeding block, the autopilot loop, and the
+manoeuvres that used to live on the entity mixin are all here, doing exactly
+what they did.
 
-It lives on the entity rather than in the actions that ask for manoeuvres,
-because "change lane" and "turn at the next junction" are *intents*, and how an
-intent becomes motion depends entirely on what is driving.  ``tm.set_path`` is
-TrafficManager vocabulary: an Autoware ego would not take a list of waypoints
-for "turn left", it would take a different goal, and a policy-driven ego would
-take neither.  An action that reached for the TrafficManager itself would work
-for exactly one kind of vehicle while looking as though it worked for all of
-them.
-
-Entities that are *not* TrafficManager-driven
-(:class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`,
-:class:`~autoware_carla_scenario.entity.carla_driver_entity.CarlaDriverEntity`)
-override these and say so rather than inheriting a call that would be sent to a
-TrafficManager which is not driving them.
+What *did* change is where the knowledge sits.  ``tm.set_path`` is TrafficManager
+vocabulary -- an Autoware ego would not take a list of waypoints for "turn left",
+it would take a goal, and a SUMO-driven vehicle would take neither -- so the
+translation from intent to mechanism belongs to the thing that drives, not to the
+action that asks or to the entity that is asked.
 """
 
 from __future__ import annotations
 
-import enum
 import logging
-from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, ClassVar, Collection, List, Optional, Tuple
 
-from ..kinematics.angle import normalize_angle_deg
 from ..constants import (
-    DEFAULT_TM_PORT,
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
-
-if TYPE_CHECKING:
-    import carla
+from ..kinematics.angle import normalize_angle_deg
+from .base import (
+    LaneChangeDirection,
+    TrafficBackend,
+    TrafficContext,
+    TurnDirection,
+    _entity_name,
+)
+from .config import TrafficManagerBackendConfig
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "TrafficManagerBackend",
+    "compute_turn_route",
+    "TURN_SEARCH_DISTANCE_M",
+    "TURN_WAYPOINT_STEP_M",
+    "TURN_POST_JUNCTION_DISTANCE_M",
+]
 
 #: How far ahead to look for the next junction, in metres.
 TURN_SEARCH_DISTANCE_M: float = 200.0
@@ -53,104 +56,135 @@ _LEFT_TARGET_DEG: float = -90.0
 _RIGHT_TARGET_DEG: float = 90.0
 
 
-class LaneChangeDirection(enum.Enum):
-    """Direction of a lane change.
+class TrafficManagerBackend(TrafficBackend):
+    """Traffic driven by CARLA's own TrafficManager.
 
-    Defined here, with the mechanism, rather than in the action that asks for
-    one: the action names an intent, and this is the side that knows what the
-    intent means to a driver.  ``actions.lane_change`` re-exports it, which is
-    where scenario authors and the editor reach it.
+    The default backend, and the one every existing scenario gets: vehicles the
+    scenario spawned are handed to the TrafficManager after warm-up, and the
+    manoeuvres a scenario asks for become TrafficManager calls.
+
+    The client is injected rather than passed to each call, from either of the
+    two places that already hold one: :meth:`prepare`, when
+    :class:`~autoware_carla_scenario.ScenarioRunner` builds the run's context,
+    or the constructor, for an entity that was only ever given a client (see
+    :meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.set_client`).
+    A backend that was never given one says so rather than failing inside CARLA.
     """
 
-    LEFT = "left"
-    RIGHT = "right"
+    name: ClassVar[str] = "traffic_manager"
 
-    def to_carla_bool(self) -> bool:
-        """Convert to the boolean expected by ``TrafficManager.force_lane_change``.
+    def __init__(
+        self,
+        config: Optional[TrafficManagerBackendConfig] = None,
+        *,
+        client: Any = None,
+    ) -> None:
+        """Create the backend.
 
-        CARLA convention: ``True`` -> right, ``False`` -> left.
+        Args:
+            config: Backend options; defaults are used when omitted.
+            client: The CARLA client the TrafficManager is reached through, for
+                a caller that already holds one.  :meth:`prepare` supplies it
+                otherwise.
         """
-        return self is LaneChangeDirection.RIGHT
+        self._config = config or TrafficManagerBackendConfig()
+        self._client = client
+        self._random_seed: Optional[int] = None
+        self._closed = False
 
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
-class TurnDirection(enum.Enum):
-    """Direction of a turn at a junction."""
+    @property
+    def port(self) -> int:
+        """Port the TrafficManager is reached on."""
+        return self._config.port
 
-    LEFT = "left"
-    RIGHT = "right"
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
+    def prepare(self, context: TrafficContext) -> None:
+        """Put the TrafficManager in step with the world and seed it.
 
-@runtime_checkable
-class LaneChanging(Protocol):
-    """What :class:`~autoware_carla_scenario.actions.lane_change.LaneChangeAction`
-    needs of an entity.
+        Synchronous mode and the seed are set here, before anything is spawned,
+        because the seed only decides anything if it is set before the first
+        ``set_autopilot`` call -- which is what makes a run reproducible.
+        """
+        self._closed = False
+        if context.client is not None:
+            self._client = context.client
+        self._random_seed = context.random_seed
 
-    Stated as a protocol rather than a base class because the action does not
-    care what performs the manoeuvre -- only that something can be asked for one
-    and asked whether it is done.
-    """
+        tm = self._require_tm("prepare")
+        if tm is None:
+            return
+        tm.set_synchronous_mode(True)
+        tm.set_random_device_seed(context.random_seed)
 
-    def change_lane(
-        self, world: "carla.World", direction: "LaneChangeDirection"
-    ) -> None:
-        """Move one lane in *direction*."""
-        ...
+    def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
+        """Hand every vehicle that is not driven elsewhere to the TrafficManager."""
+        skip = set(skip_actor_ids)
+        enabled = 0
+        for actor in world.get_actors().filter("vehicle.*"):
+            if actor.id in skip:
+                continue
+            actor.set_autopilot(True, self.port)
+            enabled += 1
+        if enabled:
+            logger.info("Autopilot enabled on %d vehicle(s)", enabled)
+        if skip:
+            logger.info(
+                "Autopilot skipped for %s — external control expected",
+                ", ".join(str(actor_id) for actor_id in sorted(skip)),
+            )
 
-    def lane_change_finished(self, world: "carla.World") -> bool:
-        """Whether the manoeuvre has settled."""
-        ...
+    def close(self) -> None:
+        """Shut the TrafficManager down so the next run gets a fresh one.
 
+        Resets its ``InMemoryMap`` cache and internal state.  Safe to call twice
+        and safe to call after a failed :meth:`prepare`, because teardown runs
+        whatever happened during the run.
+        """
+        if self._closed or self._client is None:
+            return
+        self._closed = True
+        try:
+            self._client.get_trafficmanager(self.port).shut_down()
+        except Exception:
+            logger.warning("TrafficManager shut down failed", exc_info=True)
+        else:
+            logger.info("TrafficManager shut down")
 
-@runtime_checkable
-class TurningAtJunctions(Protocol):
-    """What :class:`~autoware_carla_scenario.actions.turn.TurnAction` needs."""
-
-    def turn_at_junction(
-        self, world: "carla.World", direction: "TurnDirection", **kwargs: object
-    ) -> None:
-        """Go *direction* at the next junction ahead."""
-        ...
-
-
-class TrafficManagerDriven:
-    """Manoeuvres for a vehicle the TrafficManager steers.
-
-    Mixed into :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` and
-    :class:`~autoware_carla_scenario.entity.vehicle_entity.VehicleEntity`, the
-    two entities CARLA drives.  Both already own an ``actor``; this adds the
-    client the TrafficManager is reached through and the manoeuvres themselves.
-
-    The client is injected rather than passed to each call:
-    :class:`~autoware_carla_scenario.ScenarioRunner` hands it to the ego and
-    :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_entity`
-    to each NPC, the same two places that already know it.  An entity that was
-    never given one says so rather than failing inside CARLA.
-    """
-
-    #: Set by :meth:`set_client`; ``None`` until then.
-    _tm_client: Optional["carla.Client"] = None
-    _tm_port: int = DEFAULT_TM_PORT
-
-    def set_client(
-        self, client: "carla.Client", tm_port: int = DEFAULT_TM_PORT
-    ) -> None:
-        """Inject the CARLA client the TrafficManager is reached through."""
-        self._tm_client = client
-        self._tm_port = tm_port
+    def describe(self) -> dict[str, Any]:
+        """Return the backend name, its port and the seed it was given."""
+        return {
+            "backend": self.name,
+            "port": self.port,
+            "random_seed": self._random_seed,
+        }
 
     # ------------------------------------------------------------------
     # Manoeuvres
     # ------------------------------------------------------------------
 
-    def change_lane(self, world: "carla.World", direction: LaneChangeDirection) -> None:
-        """Move one lane in *direction*.
+    def change_lane(
+        self, entity: Any, world: Any, direction: LaneChangeDirection
+    ) -> None:
+        """Move *entity* one lane in *direction*.
 
-        Records the lane aimed at so :meth:`lane_change_finished` can tell a
-        completed manoeuvre from a vehicle that merely drove onto the next
-        road: lane ids are scoped to a road, so ``(road_id, lane_id)`` changes
-        without the vehicle having moved sideways at all.
+        Records the lane aimed at on the entity so :meth:`lane_change_finished`
+        can tell a completed manoeuvre from a vehicle that merely drove onto the
+        next road: lane ids are scoped to a road, so ``(road_id, lane_id)``
+        changes without the vehicle having moved sideways at all.
+
+        The bookkeeping lives on the entity rather than here because it is the
+        state of *that vehicle's* manoeuvre: a backend is shared by every
+        vehicle in the run, and the entity is the one thing there is exactly one
+        of per manoeuvre.
         """
-        actor = self._require_actor("change_lane")
+        actor = _require_actor(entity, "change_lane")
         if actor is None:
             return
         tm = self._require_tm("change_lane")
@@ -158,34 +192,38 @@ class TrafficManagerDriven:
             return
 
         carla_map = world.get_map()
-        self._lane_change_target = _adjacent_lane(
+        entity._lane_change_target = _adjacent_lane(
             carla_map, actor.get_location(), direction
         )
-        self._lane_change_map = carla_map
-        if self._lane_change_target is None:
+        entity._lane_change_map = carla_map
+        if entity._lane_change_target is None:
             logger.warning(
-                "%s: no lane %s to change into", type(self).__name__, direction.value
+                "%s: no lane %s to change into",
+                _entity_name(entity),
+                direction.value,
             )
 
         tm.force_lane_change(actor, direction.to_carla_bool())
-        logger.info("%s: forced a %s lane change", type(self).__name__, direction.value)
+        logger.info(
+            "%s: forced a %s lane change", _entity_name(entity), direction.value
+        )
 
-    def lane_change_finished(self, world: "carla.World") -> bool:
-        """Whether the vehicle has settled onto the lane it was sent to.
+    def lane_change_finished(self, entity: Any, world: Any) -> bool:
+        """Whether *entity* has settled onto the lane it was sent to.
 
         Three things have to be true, and a lane id change on its own is not
         enough: a vehicle whose centre has just crossed the boundary is still
         diagonal across two lanes, and calling that finished would let a
         reaction fire mid-manoeuvre.
 
-        A manoeuvre the TrafficManager never makes simply never finishes, which
-        is OpenSCENARIO's behaviour: ending the run on a timer is the scenario
-        timeout's job.
+        A manoeuvre the TrafficManager never makes simply never finishes; see
+        :meth:`TrafficBackend.lane_change_finished` for why that is the honest
+        answer rather than a timeout of its own.
         """
         del world
-        target = getattr(self, "_lane_change_target", None)
-        carla_map = getattr(self, "_lane_change_map", None)
-        actor = getattr(self, "actor", None)
+        target = getattr(entity, "_lane_change_target", None)
+        carla_map = getattr(entity, "_lane_change_map", None)
+        actor = getattr(entity, "actor", None)
         if target is None or carla_map is None or actor is None:
             return False
 
@@ -211,23 +249,25 @@ class TrafficManagerDriven:
 
     def turn_at_junction(
         self,
-        world: "carla.World",
+        entity: Any,
+        world: Any,
         direction: TurnDirection,
         *,
         search_distance: float = TURN_SEARCH_DISTANCE_M,
         waypoint_step: float = TURN_WAYPOINT_STEP_M,
         post_junction_distance: float = TURN_POST_JUNCTION_DISTANCE_M,
+        **kwargs: Any,
     ) -> None:
-        """Go *direction* at the next junction ahead.
+        """Send *entity* *direction* at the next junction ahead.
 
         The route through the junction is worked out from the map and handed to
         the TrafficManager, which is what steering this vehicle means.  Another
-        entity would answer the same intent differently -- an Autoware ego by
-        being sent to a goal beyond the junction, not by being given a list of
-        waypoints -- which is why the intent stops at the entity boundary and
-        the mechanism does not leak back into the action.
+        backend answers the same intent differently -- by giving a SUMO vehicle
+        a new route, or an Autoware ego a goal beyond the junction -- which is
+        why the intent stops at this boundary.
         """
-        actor = self._require_actor("turn_at_junction")
+        del kwargs
+        actor = _require_actor(entity, "turn_at_junction")
         if actor is None:
             return
         tm = self._require_tm("turn_at_junction")
@@ -244,14 +284,14 @@ class TrafficManagerDriven:
         )
         if not path:
             logger.warning(
-                "%s: no %s turn route found", type(self).__name__, direction.value
+                "%s: no %s turn route found", _entity_name(entity), direction.value
             )
             return
 
         tm.set_path(actor, path)
         logger.info(
             "%s: set a %s turn route (%d points)",
-            type(self).__name__,
+            _entity_name(entity),
             direction.value,
             len(path),
         )
@@ -260,27 +300,28 @@ class TrafficManagerDriven:
     # Internals
     # ------------------------------------------------------------------
 
-    def _require_actor(self, what: str) -> Optional["carla.Actor"]:
-        actor = getattr(self, "actor", None)
-        if actor is None:
-            logger.warning(
-                "%s: %s asked for before the actor exists",
-                type(self).__name__,
-                what,
-            )
-        return actor
-
-    def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
-        if self._tm_client is None:
+    def _require_tm(self, what: str) -> Any:
+        """Return the TrafficManager handle, or ``None`` with a warning."""
+        if self._client is None:
             logger.warning(
                 "%s: %s needs a CARLA client; none was injected. "
-                "ScenarioRunner gives one to the ego and register_entity() to "
-                "each NPC.",
+                "ScenarioRunner gives one to the backend it builds, and "
+                "set_client() to an entity built outside a run.",
                 type(self).__name__,
                 what,
             )
             return None
-        return self._tm_client.get_trafficmanager(self._tm_port)
+        return self._client.get_trafficmanager(self.port)
+
+
+def _require_actor(entity: Any, what: str) -> Any:
+    """Return *entity*'s actor, or ``None`` with a warning."""
+    actor = getattr(entity, "actor", None)
+    if actor is None:
+        logger.warning(
+            "%s: %s asked for before the actor exists", _entity_name(entity), what
+        )
+    return actor
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +330,8 @@ class TrafficManagerDriven:
 
 
 def _adjacent_lane(
-    carla_map: "carla.Map",
-    location: "carla.Location",
+    carla_map: Any,
+    location: Any,
     direction: LaneChangeDirection,
 ) -> Optional[Tuple[int, int]]:
     """Return the ``(road_id, lane_id)`` beside *location* in *direction*.
@@ -309,7 +350,7 @@ def _adjacent_lane(
     return None if neighbour is None else _lane_key_of(neighbour)
 
 
-def _lane_key_of(waypoint: "carla.Waypoint") -> Tuple[int, int]:
+def _lane_key_of(waypoint: Any) -> Tuple[int, int]:
     """Return the ``(road_id, lane_id)`` a waypoint sits on."""
     return (waypoint.road_id, waypoint.lane_id)
 
@@ -325,13 +366,13 @@ def _heading_error_deg(yaw: float, reference_yaw: float) -> float:
 
 
 def compute_turn_route(
-    current_wp: "carla.Waypoint",
+    current_wp: Any,
     direction: TurnDirection,
     *,
     search_distance: float = TURN_SEARCH_DISTANCE_M,
     waypoint_step: float = TURN_WAYPOINT_STEP_M,
     post_junction_distance: float = TURN_POST_JUNCTION_DISTANCE_M,
-) -> List["carla.Location"]:
+) -> List[Any]:
     """Build a waypoint path through the next junction in the desired direction."""
     pre_junction_wp, junction_entries = _walk_to_junction(
         current_wp, search_distance, waypoint_step
@@ -339,7 +380,7 @@ def compute_turn_route(
     if pre_junction_wp is None or not junction_entries:
         return []
 
-    branches: List[List["carla.Waypoint"]] = []
+    branches: List[List[Any]] = []
     for entry_wp in junction_entries:
         branch = _trace_through_junction(
             entry_wp, waypoint_step, post_junction_distance
@@ -358,8 +399,8 @@ def compute_turn_route(
 
 
 def _walk_to_junction(
-    start_wp: "carla.Waypoint", search_distance: float, waypoint_step: float
-) -> tuple[Optional["carla.Waypoint"], List["carla.Waypoint"]]:
+    start_wp: Any, search_distance: float, waypoint_step: float
+) -> tuple[Optional[Any], List[Any]]:
     """Walk forward from *start_wp* until the next OpenDRIVE junction.
 
     If *start_wp* is already inside a junction it is first skipped so that
@@ -399,14 +440,14 @@ def _walk_to_junction(
 
 
 def _trace_through_junction(
-    entry_wp: "carla.Waypoint", waypoint_step: float, post_junction_distance: float
-) -> List["carla.Waypoint"]:
+    entry_wp: Any, waypoint_step: float, post_junction_distance: float
+) -> List[Any]:
     """Follow waypoints from *entry_wp* through the junction and a bit beyond.
 
     The extra post-junction distance provides a stable exit heading for
     direction comparison.
     """
-    path: List["carla.Waypoint"] = [entry_wp]
+    path: List[Any] = [entry_wp]
     wp = entry_wp
 
     # Walk through junction connecting road
@@ -433,10 +474,10 @@ def _trace_through_junction(
 
 
 def _pick_branch(
-    pre_junction_wp: "carla.Waypoint",
-    branches: List[List["carla.Waypoint"]],
+    pre_junction_wp: Any,
+    branches: List[List[Any]],
     direction: TurnDirection,
-) -> Optional[List["carla.Waypoint"]]:
+) -> Optional[List[Any]]:
     """Select the branch whose exit heading change is closest to the target.
 
     CARLA yaw convention (left-hand, clockwise-positive when viewed from
@@ -448,7 +489,7 @@ def _pick_branch(
     entry_yaw = pre_junction_wp.transform.rotation.yaw
     target = _LEFT_TARGET_DEG if direction is TurnDirection.LEFT else _RIGHT_TARGET_DEG
 
-    best: Optional[List["carla.Waypoint"]] = None
+    best: Optional[List[Any]] = None
     best_score = float("inf")
 
     for branch in branches:
