@@ -10,9 +10,6 @@ from typing import Optional as _Optional
 from ..conditions import BaseCondition
 from ..entity.registry import find_entity_by_role_name
 from ..entity.tm_driving import LaneChangeDirection, LaneChanging
-from ..constants import (
-    DEFAULT_TM_PORT,
-)
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 
@@ -41,7 +38,6 @@ class LaneChangeAction(BaseAction):
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.
         direction: :class:`LaneChangeDirection` — ``LEFT`` or ``RIGHT``.
-        client: A ``carla.Client`` used to obtain the TrafficManager.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
@@ -51,22 +47,15 @@ class LaneChangeAction(BaseAction):
         self,
         entity_name: Union[EntityRole, str],
         direction: LaneChangeDirection,
-        client: "carla.Client",
         condition: _Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "lane_change",
         once: bool = True,
-        tm_port: int = DEFAULT_TM_PORT,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = entity_name
         self._direction = direction
-        # Kept for backwards compatibility: the TrafficManager is now reached
-        # by the entity, which the runner gives a client of its own.  Passing
-        # them here is harmless and keeps every existing call site working.
-        self._client = client
-        self._tm_port = tm_port
         #: The entity resolved in :meth:`execute`, asked each tick whether the
         #: manoeuvre has settled.  Looked up once rather than per tick: the
         #: registry is cheap, but the answer cannot change mid-manoeuvre.

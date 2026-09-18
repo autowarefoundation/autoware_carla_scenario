@@ -182,9 +182,7 @@ class IntersectionPassingScenario(BaseScenario):
             turn_action = TurnAction(
                 entity_name=EGO_ROLE_NAME,
                 direction=direction,
-                client=self.client,
                 timing=TickTiming.PRE_TICK,
-                tm_port=self.tm_port,
             )
             self.register_pre_tick(turn_action)
             logger.info("Registered TurnAction: %s", cfg.turn_direction)

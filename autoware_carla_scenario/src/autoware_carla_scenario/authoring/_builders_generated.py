@@ -516,12 +516,10 @@ def build_lane_change_action(
     return LaneChangeAction(
         entity_name=compiled.actor_role,
         direction=LaneChangeDirection[str(params["direction"]).upper()],
-        client=ctx.client,
         condition=condition,
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
-        tm_port=ctx.tm_port,
     )
 
 
@@ -566,11 +564,9 @@ def build_turn_action(
     return TurnAction(
         entity_name=compiled.actor_role,
         direction=TurnDirection[str(params["direction"]).upper()],
-        client=ctx.client,
         condition=condition,
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
         search_distance=params["search_distance"],
-        tm_port=ctx.tm_port,
     )

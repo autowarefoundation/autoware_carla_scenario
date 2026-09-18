@@ -10,7 +10,6 @@ from typing import Optional as _Optional
 from ..conditions import BaseCondition
 from ..entity.registry import find_entity_by_role_name
 from ..entity.tm_driving import TurnDirection
-from ..constants import DEFAULT_TM_PORT
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 
@@ -37,7 +36,6 @@ class TurnAction(BaseAction):
         entity_name: ``role_name`` of the vehicle actor to control.
         direction: :class:`TurnDirection` — ``LEFT`` or ``RIGHT``.
         condition: Trigger condition (see :class:`BaseCondition`).
-        client: A ``carla.Client`` used to obtain the TrafficManager.
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
         search_distance: Maximum distance (m) to look ahead for a junction.
@@ -53,7 +51,6 @@ class TurnAction(BaseAction):
         self,
         entity_name: Union[EntityRole, str],
         direction: TurnDirection,
-        client: "carla.Client",
         condition: _Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
@@ -62,16 +59,13 @@ class TurnAction(BaseAction):
         search_distance: float = 200.0,
         waypoint_step: float = 2.0,
         post_junction_distance: float = 20.0,
-        tm_port: int = DEFAULT_TM_PORT,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = entity_name
         self._direction = direction
-        self._client = client
         self._search_distance = search_distance
         self._waypoint_step = waypoint_step
         self._post_junction_distance = post_junction_distance
-        self._tm_port = tm_port
 
     # ------------------------------------------------------------------
     # BaseAction interface

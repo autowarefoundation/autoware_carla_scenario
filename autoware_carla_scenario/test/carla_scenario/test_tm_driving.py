@@ -284,9 +284,7 @@ class TestTheActionDelegates:
         clear_entities()
         register_entity("npc1", _Recording())
         try:
-            action = LaneChangeAction(
-                "npc1", LaneChangeDirection.LEFT, client=None, label="lc"
-            )
+            action = LaneChangeAction("npc1", LaneChangeDirection.LEFT, label="lc")
             world = _World(_Map(None))
             action.execute(world)
             assert asked == [LaneChangeDirection.LEFT]
@@ -299,9 +297,7 @@ class TestTheActionDelegates:
         from autoware_carla_scenario.entity.registry import clear_entities
 
         clear_entities()
-        action = LaneChangeAction(
-            "ghost", LaneChangeDirection.LEFT, client=None, label="lc"
-        )
+        action = LaneChangeAction("ghost", LaneChangeDirection.LEFT, label="lc")
         world = _World(_Map(None))
         with caplog.at_level("WARNING"):
             action.execute(world)
@@ -461,7 +457,6 @@ class TestTheTurnActionDelegates:
             TurnAction(
                 "npc1",
                 TurnDirection.RIGHT,
-                client=None,
                 label="t",
                 search_distance=42.0,
             ).execute(_World(_Map(None)))
@@ -478,7 +473,7 @@ class TestTheTurnActionDelegates:
 
         clear_entities()
         with caplog.at_level("WARNING"):
-            TurnAction("ghost", TurnDirection.LEFT, client=None, label="t").execute(
+            TurnAction("ghost", TurnDirection.LEFT, label="t").execute(
                 _World(_Map(None))
             )
         assert "not found" in caplog.text

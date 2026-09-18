@@ -115,9 +115,7 @@ class LaneChangeScenario(BaseScenario):
         lane_change_action = LaneChangeAction(
             entity_name=EGO_ROLE_NAME,
             direction=direction,
-            client=self.client,
             timing=TickTiming.PRE_TICK,
-            tm_port=self.tm_port,
         )
         self.register_pre_tick(lane_change_action)
         logger.info("Registered LaneChangeAction: %s", cfg.direction)
