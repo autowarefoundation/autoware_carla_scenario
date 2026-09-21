@@ -323,6 +323,7 @@ classDiagram
     class EntityDistanceCondition
     class TimeToCollisionCondition
     class TimeHeadwayCondition
+    class RelativeSpeedCondition
     class SpeedCondition
     class AccelerationCondition
     class StandstillCondition
@@ -345,6 +346,7 @@ classDiagram
     BaseCondition <|-- EntityDistanceCondition
     BaseCondition <|-- TimeToCollisionCondition
     BaseCondition <|-- TimeHeadwayCondition
+    BaseCondition <|-- RelativeSpeedCondition
     BaseCondition <|-- SpeedCondition
     BaseCondition <|-- AccelerationCondition
     BaseCondition <|-- StandstillCondition
@@ -368,7 +370,7 @@ classDiagram
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
-| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition` | Gap, time to collision and following headway between two entities |
+| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap, time to collision and following headway between two entities |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
