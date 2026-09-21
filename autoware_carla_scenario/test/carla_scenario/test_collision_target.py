@@ -128,6 +128,59 @@ class TestConstruction:
         )
 
 
+class TestAuthoring:
+    """The mistake has to be catchable before a live server sees it."""
+
+    @staticmethod
+    def _document(params: dict[str, object]):
+        from autoware_carla_scenario.authoring.models import (
+            Assertions,
+            ConditionNode,
+            Entity,
+            ScenarioDocument,
+        )
+
+        return ScenarioDocument(
+            id="s",
+            entities=[Entity(id="ego", kind="ego"), Entity(id="npc1")],
+            assertions=Assertions(
+                fail=[ConditionNode(id="c1", type="collision", params=params)]
+            ),
+        )
+
+    def _both_named(self, params: dict[str, object]) -> bool:
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        return any(
+            "not both" in issue.message
+            for issue in validate_document(self._document(params)).errors
+        )
+
+    def test_naming_both_is_a_document_error(self) -> None:
+        """Otherwise it saves, compiles, exports and fails on the simulator."""
+        assert self._both_named({"target": "npc1", "target_type": "PEDESTRIAN"})
+
+    @pytest.mark.parametrize(
+        "params",
+        [{}, {"target": "npc1"}, {"target_type": "PEDESTRIAN"}],
+        ids=["neither", "entity", "type"],
+    )
+    def test_one_or_neither_is_accepted(self, params: dict[str, object]) -> None:
+        assert not self._both_named(params)
+
+    def test_the_card_shows_which_entity_was_named(self) -> None:
+        """Two differently-targeted cards must not render identically.
+
+        The canvas renders only the fields the visual names, so a target left
+        out of it is a target the author cannot see or check.
+        """
+        from autoware_carla_scenario.authoring import registry
+
+        spec = registry.get_condition_spec("collision")
+        assert spec is not None
+        assert spec.visual.target == "target"
+
+
 class TestDetails:
     def test_details_report_what_was_named(self) -> None:
         by_entity = CollisionCondition(target="npc1", label="a")

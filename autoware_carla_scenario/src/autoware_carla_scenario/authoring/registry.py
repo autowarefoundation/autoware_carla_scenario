@@ -1369,7 +1369,10 @@ register_condition_spec(
         builder="build_collision_condition",
         target="..conditions:CollisionCondition",
         visual=ConditionVisual(
-            metric="Collision", value_label="occurred", details=("target_type",)
+            metric="Collision",
+            target="target",
+            value_label="occurred",
+            details=("target_type",),
         ),
         fields=(
             FieldSpec(
