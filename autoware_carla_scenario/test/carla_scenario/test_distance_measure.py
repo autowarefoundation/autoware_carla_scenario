@@ -27,6 +27,7 @@ def _actor(
     position: tuple[float, float, float],
     heading: tuple[float, float] = (1.0, 0.0),
     extent: tuple[float, float, float] | None = (2.5, 1.0, 0.75),
+    box_offset: tuple[float, float, float] | None = None,
 ) -> MagicMock:
     """A fake actor; *extent* is the bounding box half-size, or None for no box."""
     actor = MagicMock()
@@ -40,6 +41,7 @@ def _actor(
     else:
         box = MagicMock()
         box.extent = carla.Vector3D(*extent)
+        box.location = carla.Location(*(box_offset or (0.0, 0.0, 0.0)))
         actor.bounding_box = box
     return actor
 
@@ -152,6 +154,50 @@ class TestFreespace:
             _actor("npc1", (3, 0, 0), extent=(2.5, 1.0, 0.75)),
         )
         assert _measured(_condition(freespace=True), world) == 0.0
+
+    def test_a_diagonal_gap_is_the_real_box_to_box_distance(self) -> None:
+        """Not the centre distance minus each box's reach along that line.
+
+        Boxes of half-extent (2.5, 1.0) whose centres are (6, 6) apart are
+        4.12 m apart: 1 m of clearance along x and 4 m along y.  Subtracting
+        each box's radial reach gives 3.54 m, so a 4 m threshold would fire
+        for a pair that is not that close.
+        """
+        world = _world(
+            _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
+            _actor("npc1", (6, 6, 0), extent=(2.5, 1.0, 0.75)),
+        )
+        gap = _measured(_condition(freespace=True), world)
+        assert math.isclose(gap, math.hypot(1.0, 4.0), abs_tol=0.01)
+
+    def test_height_counts_when_vertical_is_asked_for(self) -> None:
+        """The box has a roof, so a vertical freespace gap has to use it."""
+        world = _world(
+            _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
+            _actor("npc1", (0, 0, 10), extent=(2.5, 1.0, 0.75)),
+        )
+        gap = _measured(_condition(freespace=True, vertical=True), world)
+        assert math.isclose(gap, 10.0 - 1.5, abs_tol=0.01)
+
+    def test_the_box_offset_from_the_actor_origin_is_used(self) -> None:
+        """A CARLA box sits near the actor's origin, not on it."""
+        plain = _world(
+            _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
+            _actor("npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75)),
+        )
+        # The same pair, but the target's box is a metre further forward.
+        offset = _world(
+            _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
+            _actor(
+                "npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75), box_offset=(1.0, 0.0, 0.0)
+            ),
+        )
+        assert math.isclose(
+            _measured(_condition(freespace=True), offset)
+            - _measured(_condition(freespace=True), plain),
+            1.0,
+            abs_tol=0.01,
+        )
 
     def test_an_actor_without_a_bounding_box_contributes_nothing(self) -> None:
         """Degrade to the centre for that actor rather than refuse to measure."""
