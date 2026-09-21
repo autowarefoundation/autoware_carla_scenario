@@ -9,6 +9,7 @@ from .distance_measure import (
 )
 from .entity_distance import EntityDistanceCondition
 from .entity_lane_position import EntityLanePositionCondition
+from .relative_speed import RelativeSpeedCondition
 from .speed import SpeedCondition, SpeedCoordinateSystem, SpeedDirection
 from .standstill import StandstillCondition
 from .temporary_stop import TemporaryStopCondition
@@ -22,6 +23,7 @@ __all__ = [
     "EntityDistanceCondition",
     "RelativeDistanceType",
     "EntityLanePositionCondition",
+    "RelativeSpeedCondition",
     "SpeedCondition",
     "SpeedCoordinateSystem",
     "SpeedDirection",
