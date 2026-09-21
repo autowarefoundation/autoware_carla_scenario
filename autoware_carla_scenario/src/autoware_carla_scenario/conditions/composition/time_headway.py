@@ -38,6 +38,26 @@ class TimeHeadwayCondition(CompositionCondition):
     so the direction of travel is always defined, and it is the direction the
     gap is actually closing along.
 
+    .. warning::
+        The measurement is in the **entity** coordinate system: a straight-line
+        offset projected onto the direction of travel.  OpenSCENARIO's
+        ``coordinateSystem: lane`` -- the distance *along the road*, which is
+        what `scenario_simulator_v2` measures -- is not implemented; see
+        the issue linked from ``docs/architecture.md``.
+
+        On a straight road the two agree.  On a curve the projection is short,
+        and the error grows with the curvature: for a leader 20 m ahead along
+        the lane it reads 19.5 m on a 50 m radius, 17.9 m on 25 m, and 14.6 m
+        on 15 m.
+
+        Past a quarter turn it does worse than under-read: the projection goes
+        negative, the target is taken to be *not ahead*, and the condition
+        stops firing altogether.  On a roundabout or a tight corner a leader
+        directly in front in-lane is invisible to it, silently, for the whole
+        manoeuvre.  Use this condition where the road is straight enough for
+        the difference not to matter, and read a negative result as "cannot
+        tell" rather than as "nothing in front".
+
     That is the difference from :class:`TimeToCollisionCondition`, and it is
     not a detail.  TTC divides by the *closing* speed, so it is undefined
     whenever the pair is not closing -- two cars holding a steady gap have no
@@ -121,6 +141,11 @@ class TimeHeadwayCondition(CompositionCondition):
         ahead = offset.dot(travel / speed)
         if ahead <= _SPEED_EPSILON:
             # Behind, or exactly abeam: there is no gap in front to close.
+            #
+            # On a curve sharper than a quarter turn this is also reached by a
+            # leader that *is* ahead along the lane, because the straight-line
+            # projection has gone negative by then.  That is the cost of
+            # measuring in the entity frame; see the class docstring.
             return None
 
         return ahead / speed

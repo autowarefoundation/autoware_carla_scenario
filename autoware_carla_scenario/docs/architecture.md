@@ -376,6 +376,17 @@ classDiagram
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
 
+> **Distances are measured in a straight line, not along the lane.**
+> `EntityDistanceCondition`, `TimeHeadwayCondition` and the TTC conditions all
+> work in the entity coordinate system — a world-frame offset projected onto
+> the subject's heading or direction of travel. OpenSCENARIO's
+> `coordinateSystem: lane`, which `scenario_simulator_v2` measures by default,
+> is not implemented: it needs the lanelet routing graph at run time, and the
+> runtime holds none. On a curve the projection under-reads, and for
+> `TimeHeadwayCondition` past a quarter turn it inverts and the condition stops
+> firing. Tracked in
+> [#62](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive/issues/62).
+
 **`check()` contract:**
 
 - Returns `ScenarioResult` when the condition is triggered (satisfied or violated).

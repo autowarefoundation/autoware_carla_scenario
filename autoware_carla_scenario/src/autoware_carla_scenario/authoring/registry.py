@@ -990,7 +990,9 @@ register_condition_spec(
             "ahead is now, at its own current speed.  Unlike TTC this is "
             "defined even when the gap is steady, which is what makes it the "
             "following-distance measure; it is undefined, and never fires, "
-            "while the follower is stopped."
+            "while the follower is stopped.  Measured in a straight line "
+            "along the direction of travel, not along the lane: on a curve it "
+            "under-reads, and past a quarter turn it stops firing entirely."
         ),
     )
 )
