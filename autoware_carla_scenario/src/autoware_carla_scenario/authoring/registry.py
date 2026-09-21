@@ -940,9 +940,7 @@ register_condition_spec(
             BuiltArgument(
                 kwarg="position",
                 target="..coordinate:Lanelet2Pose",
-                parts=(
-                    BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),
-                ),
+                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
             ),
         ),
         visual=ConditionVisual(
