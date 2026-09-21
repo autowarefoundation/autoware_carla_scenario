@@ -108,6 +108,7 @@ if TYPE_CHECKING:
         StandstillCondition as StandstillCondition,
         StickyCondition as StickyCondition,
         TemporaryStopCondition as TemporaryStopCondition,
+        TimeHeadwayCondition as TimeHeadwayCondition,
         TimeToCollisionCondition as TimeToCollisionCondition,
         TimeoutCondition as TimeoutCondition,
         TrafficSignalCondition as TrafficSignalCondition,
