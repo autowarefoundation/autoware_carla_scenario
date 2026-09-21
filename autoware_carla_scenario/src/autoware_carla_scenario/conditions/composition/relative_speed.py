@@ -28,6 +28,20 @@ class RelativeSpeedCondition(CompositionCondition):
     frame, which is what OpenSCENARIO's ``RelativeSpeedCondition`` means: the
     question is about the subject as seen from the reference.
 
+    :attr:`SpeedDirection.MAGNITUDE` means something different here than it
+    does on :class:`SpeedCondition`, and the difference is not cosmetic.  There
+    it is the length of one velocity vector.  Here it is the **difference of
+    the two scalar speeds**, ``|v_subject| - |v_reference|``, which is what
+    OpenSCENARIO's relative speed is when no direction is named.  The obvious
+    alternative -- the length of the velocity *difference* -- answers a
+    different question: two cars each doing 10 m/s towards each other have a
+    speed difference of 0 and a closing speed of 20, and a condition called
+    "relative speed" that reported 20 would fire for a pair that are going
+    exactly as fast as each other.
+
+    Being a difference, it is signed: negative means the subject is the slower
+    of the two, the same reading the directional components have.
+
     Args:
         entity_name: ``role_name`` of the subject entity.
         reference_entity_name: ``role_name`` of the entity the speed is
@@ -35,8 +49,9 @@ class RelativeSpeedCondition(CompositionCondition):
         value: Threshold relative speed (m/s).
         rule: Comparison operator.
         direction: Which component to evaluate.  Defaults to
-            :attr:`SpeedDirection.MAGNITUDE`, which is never negative -- use
-            :attr:`SpeedDirection.LONGITUDINAL` for a signed comparison.
+            :attr:`SpeedDirection.MAGNITUDE`, the difference of the two scalar
+            speeds; the other two are components of the velocity difference in
+            the reference's frame.  All three are signed.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         label: Identifier reported with the result.
     """
@@ -82,13 +97,16 @@ class RelativeSpeedCondition(CompositionCondition):
         if entity is None or reference is None:
             return None
 
-        relative = RelativeVelocity.between(
-            AbsoluteVelocity.from_carla_vector3d(entity.get_velocity()),
-            AbsoluteVelocity.from_carla_vector3d(reference.get_velocity()),
+        subject_velocity = AbsoluteVelocity.from_carla_vector3d(entity.get_velocity())
+        reference_velocity = AbsoluteVelocity.from_carla_vector3d(
+            reference.get_velocity()
         )
 
         if self._direction == SpeedDirection.MAGNITUDE:
-            return relative.speed()
+            # The difference of the speeds, not the speed of the difference.
+            return subject_velocity.speed() - reference_velocity.speed()
+
+        relative = RelativeVelocity.between(subject_velocity, reference_velocity)
 
         axes = entity_axes(reference)
         if axes is None:

@@ -115,12 +115,13 @@ class TestOtherComponents:
         assert result is not None
         assert "3.00 m/s" in result.message
 
-    def test_magnitude_is_never_negative(self) -> None:
+    def test_magnitude_is_the_difference_of_the_two_speeds(self) -> None:
+        """Signed, and a difference -- the subject here is 5 m/s slower."""
         condition = RelativeSpeedCondition(
             entity_name="npc1",
             reference_entity_name="Ego",
-            value=4.0,
-            rule=ComparisonRule.GREATER_THAN,
+            value=-4.0,
+            rule=ComparisonRule.LESS_THAN,
             direction=SpeedDirection.MAGNITUDE,
             label="magnitude",
         )
@@ -130,7 +131,30 @@ class TestOtherComponents:
         )
         result = condition.check(world, 0.0)
         assert result is not None
-        assert "5.00 m/s" in result.message
+        assert "-5.00 m/s" in result.message
+
+    def test_magnitude_is_not_the_speed_of_the_difference(self) -> None:
+        """Two cars closing head-on at 10 m/s each are going equally fast.
+
+        The length of the velocity *difference* would be 20 here, and a
+        condition called "relative speed" reporting 20 for a pair travelling at
+        identical speeds is the mistake this test exists to prevent.
+        """
+        condition = RelativeSpeedCondition(
+            entity_name="npc1",
+            reference_entity_name="Ego",
+            value=1.0,
+            rule=ComparisonRule.LESS_THAN,
+            direction=SpeedDirection.MAGNITUDE,
+            label="magnitude",
+        )
+        world = _world(
+            _actor("npc1", (10.0, 0.0, 0.0)),
+            _actor("Ego", (-10.0, 0.0, 0.0)),
+        )
+        result = condition.check(world, 0.0)
+        assert result is not None
+        assert "0.00 m/s" in result.message
 
 
 class TestGuards:

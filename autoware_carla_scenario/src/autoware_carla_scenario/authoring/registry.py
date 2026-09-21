@@ -1092,11 +1092,11 @@ register_condition_spec(
                 ),
                 required=False,
                 help=(
-                    "Longitudinal and lateral are taken in the reference "
-                    "entity's frame, and are signed: negative longitudinal "
-                    "means the subject is the slower of the two.  Magnitude "
-                    "is never negative, so a negative threshold on it can "
-                    "never fire."
+                    "All three are signed, and negative means the subject is "
+                    "the slower of the two.  Magnitude is the difference of "
+                    "the two speeds; longitudinal and lateral are components "
+                    "of the velocity difference in the reference entity's "
+                    "frame."
                 ),
             ),
         ),
