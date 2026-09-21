@@ -320,7 +320,11 @@ classDiagram
     class TrafficSignalCondition
 
     class EntityLanePositionCondition
+    class EntityDistanceCondition
+    class TimeToCollisionCondition
+    class RelativeSpeedCondition
     class SpeedCondition
+    class AccelerationCondition
     class StandstillCondition
     class TemporaryStopCondition
     class WaypointCondition
@@ -338,7 +342,11 @@ classDiagram
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- EntityLanePositionCondition
+    BaseCondition <|-- EntityDistanceCondition
+    BaseCondition <|-- TimeToCollisionCondition
+    BaseCondition <|-- RelativeSpeedCondition
     BaseCondition <|-- SpeedCondition
+    BaseCondition <|-- AccelerationCondition
     BaseCondition <|-- StandstillCondition
     BaseCondition <|-- TemporaryStopCondition
     BaseCondition <|-- WaypointCondition
@@ -359,7 +367,8 @@ classDiagram
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
-| **Velocity** | `SpeedCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed thresholds, standstill detection, stop-and-go |
+| **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
+| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `RelativeSpeedCondition` | Gap, time to collision and speed difference between two entities |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
