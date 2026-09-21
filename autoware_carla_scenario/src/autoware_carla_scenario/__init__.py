@@ -102,6 +102,7 @@ if TYPE_CHECKING:
         NotCondition as NotCondition,
         OrCondition as OrCondition,
         PersistentCondition as PersistentCondition,
+        RelativeSpeedCondition as RelativeSpeedCondition,
         ScalarComparisonRule as ScalarComparisonRule,
         ScenarioResult as ScenarioResult,
         SpeedCondition as SpeedCondition,
