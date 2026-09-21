@@ -20,10 +20,23 @@ _SPEED_EPSILON = 1e-6
 class TimeHeadwayCondition(CompositionCondition):
     """Pass condition on the time headway from a *source* to a *target* entity.
 
-    Headway is the range divided by the **source's own** speed::
+    Headway is the distance *ahead* divided by the source's own speed::
 
-        range   = |p_target - p_source|
-        headway = range / |v_source|
+        ahead   = (p_target - p_source) . unit(v_source)
+        headway = ahead / |v_source|
+
+    The distance is the component along the direction the follower is
+    travelling, not the straight-line range, and the difference is the whole
+    correctness of the measure: an unsigned range gives a car 10 m *behind* a
+    follower doing 10 m/s a headway of 1 s, so a "less than 2 s" tailgating
+    rule fires the moment the follower passes the vehicle it was following.
+    A target that is not ahead has no headway at all, and the condition says
+    so by returning nothing.
+
+    Projecting onto the velocity rather than onto the heading is deliberate:
+    the follower is known to be moving -- a standstill has no headway either --
+    so the direction of travel is always defined, and it is the direction the
+    gap is actually closing along.
 
     That is the difference from :class:`TimeToCollisionCondition`, and it is
     not a detail.  TTC divides by the *closing* speed, so it is undefined
@@ -81,10 +94,14 @@ class TimeHeadwayCondition(CompositionCondition):
     def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
         """Return the headway in seconds, or ``None`` when it is undefined.
 
-        A stationary follower has no headway.  Reporting an infinite value
-        instead would make a ``less than`` rule quietly false, which reads in a
-        report as "the ego is keeping its distance" when the truth is that the
-        question does not apply.
+        Two cases have no answer rather than a large one.  A stationary
+        follower has no headway: reporting an unbounded value would make a
+        ``less than`` rule quietly false, which reads in a report as "the ego
+        is keeping its distance" when the question does not apply.  A target
+        that is not ahead has none either, and there the failure is the
+        opposite way round -- an unsigned range would report a small number
+        and fire a tailgating rule for a vehicle the follower has already
+        overtaken.
         """
         assert self._entity_name is not None  # noqa: S101
         source, target = find_actor_pair(actors, self._entity_name, self._target)
@@ -96,11 +113,17 @@ class TimeHeadwayCondition(CompositionCondition):
         offset = Vector3(tgt_loc.x - src_loc.x, tgt_loc.y - src_loc.y, 0.0)
 
         velocity = Vector3.from_carla_vector3d(source.get_velocity())
-        speed = Vector3(velocity.x, velocity.y, 0.0).magnitude()
+        travel = Vector3(velocity.x, velocity.y, 0.0)
+        speed = travel.magnitude()
         if speed < _SPEED_EPSILON:
             return None
 
-        return offset.magnitude() / speed
+        ahead = offset.dot(travel / speed)
+        if ahead <= _SPEED_EPSILON:
+            # Behind, or exactly abeam: there is no gap in front to close.
+            return None
+
+        return ahead / speed
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the headway satisfies the comparison rule."""

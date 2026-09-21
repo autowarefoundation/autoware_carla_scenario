@@ -80,6 +80,78 @@ class TestMeasurement:
         assert "1.00 s" in result.message
 
 
+class TestAheadOnly:
+    def test_a_target_behind_the_follower_has_no_headway(self) -> None:
+        """Otherwise a tailgating rule fires the moment the follower overtakes.
+
+        An unsigned range gives a car 10 m behind a follower doing 10 m/s a
+        headway of 1 s, which reads as tailgating a vehicle that is no longer
+        in front of it.
+        """
+        condition = TimeHeadwayCondition(
+            source="Ego",
+            target="npc1",
+            value=2.0,
+            rule=ComparisonRule.LESS_THAN,
+            label="tailgating",
+        )
+        world = _world(
+            _actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0)),
+            _actor("npc1", (-10, 0, 0)),
+        )
+        assert condition.check(world, 1.0) is None
+
+    def test_a_target_abeam_has_no_headway(self) -> None:
+        condition = TimeHeadwayCondition(
+            source="Ego",
+            target="npc1",
+            value=2.0,
+            rule=ComparisonRule.LESS_THAN,
+            label="tailgating",
+        )
+        world = _world(
+            _actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0)),
+            _actor("npc1", (0, 5, 0)),
+        )
+        assert condition.check(world, 1.0) is None
+
+    def test_only_the_distance_along_the_travel_direction_counts(self) -> None:
+        """A target off to one side is nearer in front than it is away."""
+        condition = TimeHeadwayCondition(
+            source="Ego",
+            target="npc1",
+            value=1.1,
+            rule=ComparisonRule.LESS_THAN,
+            label="headway",
+        )
+        # 10 m ahead and 10 m to the side: the straight-line range is 14.1 m,
+        # which at 10 m/s would be 1.41 s and would not fire.
+        world = _world(
+            _actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0)),
+            _actor("npc1", (10, 10, 0)),
+        )
+        result = condition.check(world, 1.0)
+        assert result is not None
+        assert "1.00 s" in result.message
+
+    def test_the_direction_is_the_travel_direction_not_the_world_axis(self) -> None:
+        condition = TimeHeadwayCondition(
+            source="Ego",
+            target="npc1",
+            value=2.1,
+            rule=ComparisonRule.LESS_THAN,
+            label="headway",
+        )
+        # Driving south; the target is south of the follower.
+        world = _world(
+            _actor("Ego", (0, 0, 0), velocity=(0.0, 10.0, 0.0)),
+            _actor("npc1", (0, 20, 0)),
+        )
+        result = condition.check(world, 1.0)
+        assert result is not None
+        assert "2.00 s" in result.message
+
+
 class TestDifferenceFromTimeToCollision:
     def test_a_steady_gap_has_a_headway_but_no_time_to_collision(self) -> None:
         """The case headway exists for: both moving, the gap not closing."""
