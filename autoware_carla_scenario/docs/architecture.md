@@ -320,6 +320,9 @@ classDiagram
     class TrafficSignalCondition
 
     class EntityLanePositionCondition
+    class EntityDistanceCondition
+    class EntityPositionDistanceCondition
+    class TimeToCollisionCondition
     class SpeedCondition
     class StandstillCondition
     class TemporaryStopCondition
@@ -338,6 +341,9 @@ classDiagram
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- EntityLanePositionCondition
+    BaseCondition <|-- EntityDistanceCondition
+    BaseCondition <|-- EntityPositionDistanceCondition
+    BaseCondition <|-- TimeToCollisionCondition
     BaseCondition <|-- SpeedCondition
     BaseCondition <|-- StandstillCondition
     BaseCondition <|-- TemporaryStopCondition
@@ -360,6 +366,7 @@ classDiagram
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Velocity** | `SpeedCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed thresholds, standstill detection, stop-and-go |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition` | Gap to another entity or to a place on the map, and time to collision |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |

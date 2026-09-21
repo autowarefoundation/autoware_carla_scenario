@@ -269,6 +269,7 @@ __all__ = [
     "ComparisonRule",
     "ElapsedTimeCondition",
     "EntityLanePositionCondition",
+    "EntityPositionDistanceCondition",
     "NotCondition",
     "OrCondition",
     "PersistentCondition",
@@ -390,6 +391,10 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ComparisonRule": (".conditions", "ComparisonRule"),
     "ElapsedTimeCondition": (".conditions", "ElapsedTimeCondition"),
     "EntityLanePositionCondition": (".conditions", "EntityLanePositionCondition"),
+    "EntityPositionDistanceCondition": (
+        ".conditions",
+        "EntityPositionDistanceCondition",
+    ),
     "NotCondition": (".conditions", "NotCondition"),
     "OrCondition": (".conditions", "OrCondition"),
     "PersistentCondition": (".conditions", "PersistentCondition"),
