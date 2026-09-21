@@ -345,9 +345,40 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
+    _check_init_is_not_asked_to_wait(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
+
+
+def _check_init_is_not_asked_to_wait(
+    out: _Collector, path: str, node: ActionNode
+) -> None:
+    """Reject an action that needs the tick loop but was put in ``init``.
+
+    ``init`` is a phase and not a tick: ``run_init`` performs each action once,
+    and nothing ticks again before the loop starts.  An action whose work plays
+    out over time is therefore never advanced there -- it would command
+    nothing, and sit in ``startTransition`` for the whole run while an
+    ``action_state`` condition waited for a completion that could not arrive.
+
+    Only one action can be written that way today, so the rule names it rather
+    than inventing a spec flag for a single case.  It is stated as a *value* of
+    that action and not as its type, because the same action with a step
+    transition is perfectly good in ``init`` -- setting a speed once, before
+    anything moves, is exactly what ``init`` is for.
+    """
+    if node.type != "set_speed" or node.phase != "init":
+        return
+    if str(node.params.get("transition", "step")) != "linear":
+        return
+    out.error(
+        f"{path}.phase",
+        "A linear speed ramp cannot run in the init phase: init performs each "
+        "action once, so the ramp would never advance. Move it to a tick "
+        "phase, or use a step transition.",
+        node.id,
+    )
 
 
 def _check_entity(out: _Collector, path: str, entity: Entity) -> None:

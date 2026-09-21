@@ -133,6 +133,21 @@ class CarlaDriverEntity(EgoVehicle):
             type(self).__name__,
         )
 
+    def set_speed(self, world: "carla.World", speed_kmh: float) -> None:
+        """Refuse a TrafficManager speed: nothing here is driven by it.
+
+        The driver policy holds the throttle; a desired speed set on the
+        TrafficManager would be overwritten by the next control it applies,
+        while the action reported progress and completion.
+        """
+        del world, speed_kmh
+        logger.warning(
+            "%s: a speed was set, but this entity is not driven by the "
+            "TrafficManager, so the command would go to an actor it does not "
+            "control. The policy decides its own speed.",
+            type(self).__name__,
+        )
+
     def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
         """Refuse a TrafficManager route: nothing here is driven by it."""
         del world, direction, kwargs

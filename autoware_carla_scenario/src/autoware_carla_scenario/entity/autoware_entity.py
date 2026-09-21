@@ -276,6 +276,23 @@ class AutowareEgoEntity(EgoVehicle):
             type(self).__name__,
         )
 
+    def set_speed(self, world: "carla.World", speed_kmh: float) -> None:
+        """Refuse a TrafficManager speed: nothing here is driven by it.
+
+        Autoware decides its own speed from its planner and the map's limits.
+        A desired speed set on the TrafficManager would be ignored -- the
+        runner passes this ego in ``skip_actor_ids`` precisely so the
+        TrafficManager does not touch it -- while the action reported progress
+        and completion, which is worse than refusing.
+        """
+        del world, speed_kmh
+        logger.warning(
+            "%s: a speed was set, but this entity is not driven by the "
+            "TrafficManager, so the command would go to an actor it does not "
+            "control. Autoware chooses its own speed.",
+            type(self).__name__,
+        )
+
     def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
         """Refuse a TrafficManager route: nothing here is driven by it."""
         del world, direction, kwargs

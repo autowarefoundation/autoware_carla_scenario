@@ -149,6 +149,99 @@ class TestMissingEntity:
         assert action.state is ActionState.COMPLETE
 
 
+class TestSelfDrivenEgos:
+    """An ego the TrafficManager does not drive must refuse, not pretend."""
+
+    @pytest.mark.parametrize("class_name", ["AutowareEgoEntity", "CarlaDriverEntity"])
+    def test_the_class_overrides_set_speed(self, class_name: str) -> None:
+        """Inherited, it would send the command to the TrafficManager.
+
+        The runner puts these egos in `skip_actor_ids`, so the command would
+        reach an actor the TrafficManager does not control -- while the action
+        reported progress and completion, which is worse than refusing.
+
+        Asserted on the class's own namespace rather than by calling it,
+        because inheriting the method is exactly the defect: a call would
+        succeed either way and only the TrafficManager would know.
+        """
+        import autoware_carla_scenario as acs
+
+        entity_class = getattr(acs, class_name)
+        assert "set_speed" in vars(entity_class), (
+            f"{class_name} inherits set_speed from BackendDriven, so a speed "
+            f"command would go to the TrafficManager"
+        )
+
+    def test_a_refusal_is_logged_rather_than_silent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario import CarlaDriverEntity
+
+        with caplog.at_level("WARNING"):
+            CarlaDriverEntity.set_speed(MagicMock(), MagicMock(), 30.0)
+        assert "not driven by the TrafficManager" in caplog.text
+
+
+class TestInitPhase:
+    def test_a_linear_ramp_in_init_is_a_document_error(self) -> None:
+        """`init` performs each action once, so a ramp would never advance."""
+        from autoware_carla_scenario.authoring.models import (
+            ActionNode,
+            Entity,
+            ScenarioDocument,
+        )
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        document = ScenarioDocument(
+            id="s",
+            entities=[Entity(id="ego", kind="ego")],
+            actions=[
+                ActionNode(
+                    id="a1",
+                    type="set_speed",
+                    actor="ego",
+                    phase="init",
+                    params={
+                        "target_speed_kmh": 10.0,
+                        "transition": "linear",
+                        "duration": 2.0,
+                    },
+                )
+            ],
+        )
+        assert any(
+            "never advance" in issue.message
+            for issue in validate_document(document).errors
+        )
+
+    def test_a_step_in_init_is_fine(self) -> None:
+        """Setting a speed once, before anything moves, is what init is for."""
+        from autoware_carla_scenario.authoring.models import (
+            ActionNode,
+            Entity,
+            ScenarioDocument,
+        )
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        document = ScenarioDocument(
+            id="s",
+            entities=[Entity(id="ego", kind="ego")],
+            actions=[
+                ActionNode(
+                    id="a1",
+                    type="set_speed",
+                    actor="ego",
+                    phase="init",
+                    params={"target_speed_kmh": 10.0, "transition": "step"},
+                )
+            ],
+        )
+        assert not any(
+            "never advance" in issue.message
+            for issue in validate_document(document).errors
+        )
+
+
 class TestConstruction:
     def test_a_negative_target_is_refused(self) -> None:
         with pytest.raises(ValueError, match="must not be negative"):
