@@ -377,16 +377,26 @@ class Entity(_Node):
 
     @model_validator(mode="after")
     def _default_model_to_the_kind(self) -> "Entity":
-        """Move the blueprint to this kind's default when it is still another's.
+        """Give an unset blueprint this kind's default.
 
-        Only when it is untouched: a blueprint the author chose is never
-        overwritten.  Without this, switching a card to Pedestrian would leave
-        it carrying a car's blueprint, and the document would be one the editor
-        accepted and the runtime could not spawn.
+        Without it, switching a card to Pedestrian would leave it carrying a
+        car's blueprint, and the document would be one the editor accepted and
+        the runtime could not spawn.
+
+        It fires only when the field was never supplied.  Comparing the value
+        against the other kinds' defaults is not enough to tell "omitted" from
+        "chosen": a document that says ``kind: pedestrian`` with
+        ``vehicle_type: vehicle.mini.cooper`` has made a choice -- a wrong one,
+        which `validate_document` reports -- and rewriting it would both hide
+        the mistake and change an authored value on a load-and-save round trip.
+        ``model_fields_set`` is what distinguishes the two.
         """
+        if "vehicle_type" in self.model_fields_set:
+            return self
         wanted = DEFAULT_MODELS[self.kind]
-        if self.vehicle_type != wanted and self.vehicle_type in DEFAULT_MODELS.values():
-            # `object.__setattr__` because assignment re-runs this validator.
+        if self.vehicle_type != wanted:
+            # `object.__setattr__` because assignment re-runs this validator,
+            # and would also mark the field as set.
             object.__setattr__(self, "vehicle_type", wanted)
         return self
 

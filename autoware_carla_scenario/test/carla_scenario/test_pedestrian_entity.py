@@ -65,6 +65,20 @@ class TestKindAndBlueprint:
         )
         assert entity.vehicle_type == "walker.pedestrian.0042"
 
+    def test_an_explicit_wrong_blueprint_is_kept_and_reported(self) -> None:
+        """Supplied is supplied, even when it is another kind's default.
+
+        Rewriting it would hide the mistake from the validator and change an
+        authored value on a load-and-save round trip.
+        """
+        entity = Entity(id="w", kind="pedestrian", vehicle_type="vehicle.mini.cooper")
+        assert entity.vehicle_type == "vehicle.mini.cooper"
+
+        document = ScenarioDocument(
+            id="crossing", entities=[Entity(id="ego", kind="ego"), entity]
+        )
+        assert any("blueprint" in message for message in _errors(document))
+
     def test_the_wrong_family_is_a_document_error(self) -> None:
         document = ScenarioDocument(
             id="crossing",
@@ -136,6 +150,27 @@ class TestSpawning:
         )
         with pytest.raises(RuntimeError, match="could not spawn"):
             entity.spawn(world)
+
+    def test_a_blueprint_that_cannot_carry_a_role_name_is_refused(self) -> None:
+        """A walker with no role_name is live in the world and invisible to it.
+
+        Every entity-based condition finds its actor by role name, so such a
+        pedestrian would be read as absent by all of them and never evaluated.
+        """
+        world = MagicMock()
+        blueprint = MagicMock()
+        blueprint.has_attribute.return_value = False
+        world.get_blueprint_library.return_value.find.return_value = blueprint
+
+        entity = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1",
+                spawn_location=SpawnTransform(carla.Transform()),
+            )
+        )
+        with pytest.raises(ValueError, match="role_name"):
+            entity.spawn(world)
+        world.try_spawn_actor.assert_not_called()
 
     def test_an_unavailable_blueprint_raises(self) -> None:
         world = MagicMock()

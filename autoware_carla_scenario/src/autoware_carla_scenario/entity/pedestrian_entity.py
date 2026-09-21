@@ -99,8 +99,20 @@ class PedestrianEntity:
                 f"available in this CARLA build"
             ) from exc
 
-        if blueprint.has_attribute("role_name"):
-            blueprint.set_attribute("role_name", str(self._config.role_name))
+        # Not guarded on the attribute existing.  Every entity-based condition
+        # -- existence, speed, distance, TTC, waypoint -- finds its actor by
+        # `role_name`, so a walker spawned without one is live in the world and
+        # invisible to the scenario: each of those conditions would read it as
+        # absent and never evaluate.  A blueprint that cannot carry the name is
+        # therefore unusable here, and saying so beats spawning a pedestrian
+        # nothing can assert about.
+        if not blueprint.has_attribute("role_name"):
+            raise ValueError(
+                f"pedestrian blueprint {self._config.walker_type!r} has no "
+                f"role_name attribute, so no condition could find it; pick a "
+                f"walker blueprint that has one"
+            )
+        blueprint.set_attribute("role_name", str(self._config.role_name))
         # A walker that another actor can push is a walker the scenario no
         # longer controls; every pedestrian here is scripted.
         if blueprint.has_attribute("is_invincible"):
