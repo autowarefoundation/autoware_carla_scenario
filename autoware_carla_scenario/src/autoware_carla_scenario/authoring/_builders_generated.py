@@ -44,6 +44,7 @@ __all__ = [
     "build_temporary_stop_condition",
     "build_entity_distance_condition",
     "build_ttc_condition",
+    "build_ttc_to_position_condition",
     "build_action_state_condition",
     "build_always_true_condition",
     "build_collision_condition",
@@ -397,6 +398,32 @@ def build_ttc_condition(
         target=str(params["target"]),
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        freespace=params["freespace"],
+        label=compiled.label,
+    )
+
+
+def build_ttc_to_position_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TimeToCollisionCondition`."""
+    from ..conditions import TimeToCollisionCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+    )
+    return TimeToCollisionCondition(
+        source=str(params["entity"]),
+        value=params["seconds"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        position=position,
+        freespace=params["freespace"],
         label=compiled.label,
     )
 

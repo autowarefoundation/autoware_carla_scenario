@@ -488,6 +488,27 @@ def _rule_field(default: str = "less_than") -> FieldSpec:
     )
 
 
+def _freespace_field() -> FieldSpec:
+    """Return the bounding-box-versus-centres switch.
+
+    Shared because the choice means the same thing wherever a distance is
+    measured, and a second copy would be a second place for its help text to
+    drift from what the measurement does.
+    """
+    return FieldSpec(
+        name="freespace",
+        label="Between bounding boxes",
+        kind="bool",
+        default=False,
+        required=False,
+        help=(
+            "Measure bumper to bumper rather than centre to centre.  The "
+            "difference is about a vehicle length, which matters most where "
+            "the answer is a handful of seconds."
+        ),
+    )
+
+
 def _entity_field(name: str, label: str) -> FieldSpec:
     """Return an entity-reference field; options come from the document."""
     return FieldSpec(name=name, label=label, kind="entity", default=None)
@@ -940,18 +961,7 @@ register_condition_spec(
                     "cut-in scenarios mean the second."
                 ),
             ),
-            FieldSpec(
-                name="freespace",
-                label="Between bounding boxes",
-                kind="bool",
-                default=False,
-                required=False,
-                help=(
-                    "Measure bumper to bumper rather than centre to centre.  "
-                    "The difference is about a vehicle length, which at a "
-                    "close-quarters threshold is most of the threshold."
-                ),
-            ),
+            _freespace_field(),
         ),
         description=(
             "Distance from the subject to the target.  Say which component "
@@ -984,8 +994,70 @@ register_condition_spec(
             FieldSpec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
+            _freespace_field(),
         ),
         description="Time to collision from the subject to the target.",
+    )
+)
+
+
+# A separate condition rather than a target that may be either, for the reason
+# the two position conditions are separate: a field accepting an entity name or
+# a lanelet id is how a bare id comes to mean two things.
+register_condition_spec(
+    ConditionSpec(
+        type_id="ttc_to_position",
+        title="TTC to a place",
+        category="Relative",
+        builder="build_ttc_to_position_condition",
+        target="..conditions:TimeToCollisionCondition",
+        argmap=(("entity", "source"), ("seconds", "value")),
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="TTC",
+            subject="entity",
+            target="lanelet_id",
+            target_prefix="Lanelet",
+            rule="rule",
+            value="seconds",
+            unit="s",
+            details=("s",),
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lanelet holding the place the subject is closing on.",
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            _rule_field(),
+            FieldSpec(
+                name="seconds", label="TTC", kind="number", default=4.0, unit="s"
+            ),
+            _freespace_field(),
+        ),
+        description=(
+            "Time until the subject reaches a place on the map -- a stop "
+            "line, a conflict point.  A place does not move, so this is the "
+            "subject's own speed along the line of sight."
+        ),
     )
 )
 

@@ -25,7 +25,7 @@ from .base import entity_axes
 if TYPE_CHECKING:
     import carla
 
-__all__ = ["RelativeDistanceType", "separation"]
+__all__ = ["RelativeDistanceType", "half_extent_along", "separation"]
 
 
 class RelativeDistanceType(enum.Enum):
@@ -54,7 +54,7 @@ class RelativeDistanceType(enum.Enum):
     LATERAL = "lateral"
 
 
-def _half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
+def half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
     """Return how far *actor*'s bounding box reaches along *direction*.
 
     The support function of an oriented box: the box's half-extents projected
@@ -121,8 +121,8 @@ def separation(
         return max(
             0.0,
             distance
-            - _half_extent_along(source, direction)
-            - _half_extent_along(target, direction),
+            - half_extent_along(source, direction)
+            - half_extent_along(target, direction),
         )
 
     axes = entity_axes(source)
@@ -136,5 +136,5 @@ def separation(
         return distance
     return max(
         0.0,
-        distance - _half_extent_along(source, axis) - _half_extent_along(target, axis),
+        distance - half_extent_along(source, axis) - half_extent_along(target, axis),
     )
