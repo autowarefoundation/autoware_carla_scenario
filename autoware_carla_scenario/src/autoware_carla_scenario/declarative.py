@@ -27,6 +27,7 @@ from .authoring.persistence import load_document
 from .actions.base import TickTiming
 from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
 from .entity._spawn import SpawnTransform
+from .entity.pedestrian_entity import PedestrianEntity, PedestrianEntityConfig
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
 from .scenario_base import BaseScenario, EgoConfig
 
@@ -278,16 +279,50 @@ class DeclarativeScenario(BaseScenario):
         """Spawn every non-ego entity at its document spawn position."""
         world = self.world
         for entity in self._compiled.npcs:
-            npc_entity = self._build_npc(entity, world)
-            npc_entity.spawn(world)
-            self.register_entity(npc_entity)
+            if entity.kind == "pedestrian":
+                walker = self._build_pedestrian(entity, world)
+                walker.spawn(world)
+                self.register_pedestrian(walker)
+            else:
+                npc_entity = self._build_npc(entity, world)
+                npc_entity.spawn(world)
+                self.register_entity(npc_entity)
             logger.info(
-                "Spawned %s (%s) on lanelet %d at s=%.1f",
+                "Spawned %s %s (%s) on lanelet %d at s=%.1f",
+                entity.kind,
                 entity.id,
                 self._compiled.role_of(entity.id),
                 entity.spawn.lanelet_id,
                 entity.spawn.s.value,
             )
+
+    def _build_pedestrian(self, entity: Entity, world: "object") -> PedestrianEntity:
+        """Return the :class:`PedestrianEntity` for *entity*.
+
+        Deliberately **not** snapped to the road.  ``snap_to_carla_road`` puts a
+        pose on the nearest driving surface, which for a pedestrian is the one
+        place it must not start: the lanelet an author picks for a walker is a
+        crossing or a footway, and snapping would move it into the carriageway
+        and call that a spawn.
+
+        The cost is that a pedestrian's z comes from the Lanelet2 map rather
+        than from CARLA's mesh, so a map whose footway heights are wrong puts
+        the walker slightly above or below the pavement.  That is visible and
+        fixable; a pedestrian standing in the road is neither.
+        """
+        from .coordinate.transform import to_carla_world  # noqa: PLC0415
+
+        del world
+        pose = Lanelet2Pose(lanelet_id=entity.spawn.lanelet_id, s=entity.spawn.s.value)
+        return PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name=self._compiled.role_of(entity.id),
+                spawn_location=SpawnTransform(
+                    to_carla_world(pose).to_carla_transform()
+                ),
+                walker_type=entity.vehicle_type,
+            )
+        )
 
     def _build_npc(self, entity: Entity, world: "object") -> VehicleEntity:
         """Return the :class:`VehicleEntity` for *entity*, snapped to the road."""

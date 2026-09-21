@@ -90,22 +90,40 @@ class _FakeActor:
 
 
 class _FakeActorList:
-    """``world.get_actors()``: a list that filters by type wildcard."""
+    """``world.get_actors()``: a list that filters by type wildcard.
 
-    def __init__(self, vehicles: list, sensors: list) -> None:
-        self._by_kind = {"vehicle.*": vehicles, "sensor.*": sensors}
+    An unknown pattern is empty rather than an error, because the real
+    ``ActorList`` answers every wildcard: a test that has no walkers should
+    read as a world with no walkers, not as one that has never heard of them.
+    """
+
+    def __init__(
+        self,
+        vehicles: list,
+        sensors: list,
+        walkers: list | None = None,
+        controllers: list | None = None,
+    ) -> None:
+        self._by_kind = {
+            "vehicle.*": vehicles,
+            "sensor.*": sensors,
+            "walker.*": walkers or [],
+            "controller.*": controllers or [],
+        }
 
     def filter(self, pattern: str) -> list:
-        return list(self._by_kind[pattern])
+        return list(self._by_kind.get(pattern, []))
 
 
 class TestCleanupExemption:
     """A run may start beside an ego the scenario does not own."""
 
     @staticmethod
-    def _world(vehicles: list, sensors: list) -> MagicMock:
+    def _world(vehicles: list, sensors: list, walkers: list | None = None) -> MagicMock:
         world = MagicMock()
-        world.get_actors.return_value = _FakeActorList(vehicles, sensors)
+        world.get_actors.return_value = _FakeActorList(
+            vehicles, sensors, walkers=walkers
+        )
         return world
 
     def test_leftovers_are_destroyed(self):
@@ -114,6 +132,17 @@ class TestCleanupExemption:
         _destroy_all_dynamic_actors(self._world([leftover], [sensor]), "S")
         assert leftover.destroyed
         assert sensor.destroyed
+
+    def test_a_leftover_walker_is_destroyed_too(self):
+        """A queue runs several scenarios against one world.
+
+        A pedestrian left standing from the last one is a pedestrian the next
+        one did not put there, and nothing in the next scenario would explain
+        why the ego stopped for it.
+        """
+        walker = _FakeActor(1, "walker1")
+        _destroy_all_dynamic_actors(self._world([], [], walkers=[walker]), "S")
+        assert walker.destroyed
 
     def test_a_kept_ego_survives_with_its_sensors(self):
         # The interface node spawns this ego and drives it; destroying it would

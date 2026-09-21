@@ -191,12 +191,18 @@ def _destroy_all_dynamic_actors(
     scenario_name: str,
     keep_role_names: "frozenset[str]" = frozenset(),
 ) -> None:
-    """Destroy the vehicles and sensors in the world for a clean state.
+    """Destroy the vehicles, walkers and sensors in the world for a clean state.
 
     *keep_role_names* spares actors this scenario does not own -- an ego spawned
     by an ``autoware_carla_interface`` node, say, which the scenario only
     attaches to. Their sensors are spared with them: destroying those would
     leave the owner driving blind.
+
+    Walkers are swept with the vehicles rather than left alone.  A queue runs
+    several scenarios against one world, and a pedestrian left standing from
+    the last one is a pedestrian the next one did not put there.  The
+    ``keep`` set is matched on vehicles only, because everything spared is an
+    externally owned ego.
     """
     actors = world.get_actors()
     kept_ids = {
@@ -205,7 +211,12 @@ def _destroy_all_dynamic_actors(
         if actor.attributes.get("role_name") in keep_role_names
     }
     destroyed = 0
-    for actor in [*actors.filter("vehicle.*"), *actors.filter("sensor.*")]:
+    for actor in [
+        *actors.filter("vehicle.*"),
+        *actors.filter("walker.*"),
+        *actors.filter("controller.*"),
+        *actors.filter("sensor.*"),
+    ]:
         if actor.id in kept_ids:
             continue
         parent = getattr(actor, "parent", None)

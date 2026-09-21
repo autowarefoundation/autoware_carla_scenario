@@ -50,6 +50,7 @@ __all__ = [
     "build_timeout_condition",
     "build_traffic_signal_condition",
     "build_traffic_signal_action",
+    "build_walk_straight_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_turn_action",
@@ -498,6 +499,27 @@ def build_traffic_signal_action(
         label=compiled.label,
         once=compiled.node.once,
         freeze=params["freeze"],
+    )
+
+
+def build_walk_straight_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`WalkStraightAction`."""
+    from ..actions import WalkStraightAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return WalkStraightAction(
+        entity_name=compiled.actor_role,
+        speed_ms=params["speed_ms"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
     )
 
 

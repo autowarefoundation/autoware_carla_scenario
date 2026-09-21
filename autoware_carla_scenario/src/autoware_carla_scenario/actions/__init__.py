@@ -5,6 +5,7 @@ from .lane_change import LaneChangeAction, LaneChangeDirection
 from .routing import RoutingAction
 from .traffic_signal import TrafficLightTarget, TrafficSignalAction
 from .turn import TurnAction, TurnDirection
+from .walk_straight import WalkStraightAction
 
 __all__ = [
     "BaseAction",
@@ -16,4 +17,5 @@ __all__ = [
     "TrafficSignalAction",
     "TurnAction",
     "TurnDirection",
+    "WalkStraightAction",
 ]

@@ -392,10 +392,12 @@ classDiagram
 
     class TrafficSignalAction
     class TurnAction
+    class WalkStraightAction
     class LaneChangeAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TurnAction
+    BaseAction <|-- WalkStraightAction
     BaseAction <|-- LaneChangeAction
     BaseAction --> BaseCondition : trigger condition
 ```

@@ -27,7 +27,14 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, cast, get_args
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from .registry import LaneletPlace, get_action_spec
 
@@ -39,6 +46,7 @@ __all__ = [
     "ConstraintNode",
     "EgoDriver",
     "Entity",
+    "DEFAULT_MODELS",
     "EntityKind",
     "GoalSpec",
     "LaneletChoice",
@@ -62,7 +70,16 @@ __all__ = [
 #: Bumped whenever the on-disk shape of a document changes incompatibly.
 DOCUMENT_FORMAT_VERSION = 1
 
-EntityKind = Literal["ego", "vehicle"]
+EntityKind = Literal["ego", "vehicle", "pedestrian"]
+#: The CARLA blueprint an entity of each kind gets when nothing says otherwise.
+#: A pedestrian is not a vehicle with a different model -- it spawns from a
+#: different blueprint family, is driven by nothing, and has no goal -- so the
+#: default has to follow the kind rather than sit on the field.
+DEFAULT_MODELS: dict[str, str] = {
+    "ego": "vehicle.mini.cooper",
+    "vehicle": "vehicle.mini.cooper",
+    "pedestrian": "walker.pedestrian.0001",
+}
 #: Which stack drives the ego, rendered as the framework's ``ego.entity`` key.
 #:
 #: ``autopilot`` is CARLA's TrafficManager, which is driven for the ego and
@@ -327,6 +344,12 @@ class Entity(_Node):
     :attr:`goal` and :attr:`driven_by` are the ego's alone; both are ignored on
     any other entity, and a goal stored on one is a validation error rather than
     something quietly dropped at export.
+
+    A ``pedestrian`` is not a vehicle with a different model.  It spawns from
+    the ``walker`` blueprint family, no traffic model drives it, and the only
+    thing it can be asked to do is walk -- so :attr:`vehicle_type` follows the
+    kind's default (see :data:`DEFAULT_MODELS`) and the actions it may perform
+    are the ones whose spec names its kind.
     """
 
     id: str
@@ -351,6 +374,21 @@ class Entity(_Node):
                 f"Entity id {value!r} must be lower_snake_case starting with a letter."
             )
         return value
+
+    @model_validator(mode="after")
+    def _default_model_to_the_kind(self) -> "Entity":
+        """Move the blueprint to this kind's default when it is still another's.
+
+        Only when it is untouched: a blueprint the author chose is never
+        overwritten.  Without this, switching a card to Pedestrian would leave
+        it carrying a car's blueprint, and the document would be one the editor
+        accepted and the runtime could not spawn.
+        """
+        wanted = DEFAULT_MODELS[self.kind]
+        if self.vehicle_type != wanted and self.vehicle_type in DEFAULT_MODELS.values():
+            # `object.__setattr__` because assignment re-runs this validator.
+            object.__setattr__(self, "vehicle_type", wanted)
+        return self
 
     @property
     def display_name(self) -> str:
