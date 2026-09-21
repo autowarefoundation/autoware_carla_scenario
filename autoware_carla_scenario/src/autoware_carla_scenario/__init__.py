@@ -83,6 +83,7 @@ if TYPE_CHECKING:
         TrafficLightTarget as TrafficLightTarget,
         RoutingAction as RoutingAction,
         TrafficSignalAction as TrafficSignalAction,
+        TrafficSignalControllerAction as TrafficSignalControllerAction,
         TurnAction as TurnAction,
         TurnDirection as TurnDirection,
     )
@@ -111,6 +112,7 @@ if TYPE_CHECKING:
         TimeToCollisionCondition as TimeToCollisionCondition,
         TimeoutCondition as TimeoutCondition,
         TrafficSignalCondition as TrafficSignalCondition,
+        TrafficSignalControllerCondition as TrafficSignalControllerCondition,
         WaypointCheckType as WaypointCheckType,
         WaypointCondition as WaypointCondition,
         find_actor_by_role_name as find_actor_by_role_name,
@@ -342,7 +344,9 @@ __all__ = [
     "TrafficLightTarget",
     "RoutingAction",
     "TrafficSignalAction",
+    "TrafficSignalControllerAction",
     "TrafficSignalCondition",
+    "TrafficSignalControllerCondition",
     "WaypointCheckType",
     "WaypointCondition",
     "TurnAction",
@@ -368,6 +372,10 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),
+    "TrafficSignalControllerAction": (
+        ".actions",
+        "TrafficSignalControllerAction",
+    ),
     "TurnAction": (".actions", "TurnAction"),
     "TurnDirection": (".actions", "TurnDirection"),
     # camera / sensor
@@ -404,6 +412,10 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TimeToCollisionCondition": (".conditions", "TimeToCollisionCondition"),
     "TimeoutCondition": (".conditions", "TimeoutCondition"),
     "TrafficSignalCondition": (".conditions", "TrafficSignalCondition"),
+    "TrafficSignalControllerCondition": (
+        ".conditions",
+        "TrafficSignalControllerCondition",
+    ),
     "WaypointCheckType": (".conditions", "WaypointCheckType"),
     "WaypointCondition": (".conditions", "WaypointCondition"),
     "find_actor_by_role_name": (".conditions", "find_actor_by_role_name"),

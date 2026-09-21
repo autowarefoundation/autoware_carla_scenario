@@ -47,8 +47,10 @@ __all__ = [
     "build_always_true_condition",
     "build_collision_condition",
     "build_elapsed_time_condition",
+    "build_traffic_signal_controller_condition",
     "build_timeout_condition",
     "build_traffic_signal_condition",
+    "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_lane_change_action",
     "build_routing_action",
@@ -439,6 +441,21 @@ def build_elapsed_time_condition(
     )
 
 
+def build_traffic_signal_controller_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TrafficSignalControllerCondition`."""
+    from ..conditions import TrafficSignalControllerCondition  # noqa: PLC0415
+
+    params = compiled.params
+    return TrafficSignalControllerCondition(
+        green_lanelet2_id=params["green_lanelet2_id"],
+        label=compiled.label,
+    )
+
+
 def build_timeout_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",
@@ -468,6 +485,26 @@ def build_traffic_signal_condition(
         lanelet2_regulatory_element_id=params["lanelet2_regulatory_element_id"],
         expected_state=getattr(carla.TrafficLightState, str(params["state"])),
         label=compiled.label,
+    )
+
+
+def build_traffic_signal_controller_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`TrafficSignalControllerAction`."""
+    from ..actions import TrafficSignalControllerAction  # noqa: PLC0415
+
+    params = compiled.params
+    return TrafficSignalControllerAction(
+        green_lanelet2_id=params["green_lanelet2_id"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        freeze=params["freeze"],
     )
 
 

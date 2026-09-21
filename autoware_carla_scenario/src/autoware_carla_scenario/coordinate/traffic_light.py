@@ -13,7 +13,7 @@ The rest supply the road network a run happens to have loaded, because
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Sequence, Tuple, Union
 
 from ..utils.traffic_light import (
     get_signal_ids_for_controller as _signal_ids_of,
@@ -82,3 +82,54 @@ def get_signal_ids_for_controller(controller_id: int) -> list[str]:
     Reads the road network :class:`MapManager` has loaded.
     """
     return _signal_ids_of(MapManager.get_instance().road_network, controller_id)
+
+
+def find_traffic_lights_for_lanelet2_id(
+    world: "carla.World", lanelet2_tl_id: int
+) -> "list[carla.Actor]":
+    """Return the CARLA traffic lights a Lanelet2 regulatory element names.
+
+    The Lanelet2 id resolves to an OpenDRIVE controller and thence to the
+    signal ids the controller drives, which is the same two-step hop
+    :class:`~autoware_carla_scenario.conditions.TrafficSignalCondition` and
+    :class:`~autoware_carla_scenario.actions.TrafficSignalAction` already make.
+    It is here rather than in either of them so that a third caller does not
+    make it a third time and get it subtly different.
+
+    Args:
+        world: The CARLA world.
+        lanelet2_tl_id: Lanelet2 regulatory element id.
+
+    Returns:
+        The matching light actors, empty when the id resolves to nothing.
+    """
+    controller_id = lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id)
+    if controller_id is None:
+        return []
+    signal_ids = set(get_signal_ids_for_controller(controller_id))
+    if not signal_ids:
+        return []
+    return [
+        actor
+        for actor in world.get_actors().filter("traffic.traffic_light*")
+        if actor.get_opendrive_id() in signal_ids
+    ]
+
+
+def junction_group_of(lights: "Sequence[carla.Actor]") -> "list[carla.Actor]":
+    """Return every light controlled together with *lights*, deduplicated.
+
+    CARLA groups the lights of one junction, and the group is what makes a
+    *phase* expressible: the alternative -- setting lights one at a time -- can
+    leave two conflicting approaches green, which is a world state no real
+    junction reaches, so a scenario built that way tests the ego against a road
+    that cannot exist.
+
+    Deduplicated by actor id because every member of a group reports the whole
+    group, so asking two of them returns the group twice.
+    """
+    seen: dict[int, "carla.Actor"] = {}
+    for light in lights:
+        for member in light.get_group_traffic_lights():
+            seen.setdefault(member.id, member)
+    return list(seen.values())

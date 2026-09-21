@@ -318,6 +318,7 @@ classDiagram
     class CollisionCondition
     class EntityExistenceCondition
     class TrafficSignalCondition
+    class TrafficSignalControllerCondition
 
     class EntityLanePositionCondition
     class SpeedCondition
@@ -337,6 +338,7 @@ classDiagram
     BaseCondition <|-- CollisionCondition
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- TrafficSignalCondition
+    BaseCondition <|-- TrafficSignalControllerCondition
     BaseCondition <|-- EntityLanePositionCondition
     BaseCondition <|-- SpeedCondition
     BaseCondition <|-- StandstillCondition
@@ -360,7 +362,7 @@ classDiagram
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Velocity** | `SpeedCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed thresholds, standstill detection, stop-and-go |
-| **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
+| **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
@@ -391,10 +393,12 @@ classDiagram
     }
 
     class TrafficSignalAction
+    class TrafficSignalControllerAction
     class TurnAction
     class LaneChangeAction
 
     BaseAction <|-- TrafficSignalAction
+    BaseAction <|-- TrafficSignalControllerAction
     BaseAction <|-- TurnAction
     BaseAction <|-- LaneChangeAction
     BaseAction --> BaseCondition : trigger condition

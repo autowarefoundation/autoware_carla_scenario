@@ -811,6 +811,49 @@ register_action_spec(
 # Built-in conditions -- compositions
 # ---------------------------------------------------------------------------
 
+register_action_spec(
+    ActionSpec(
+        type_id="traffic_signal_controller",
+        title="Set Junction Phase",
+        category="Environment",
+        builder="build_traffic_signal_controller_action",
+        target="..actions:TrafficSignalControllerAction",
+        scope="environment",
+        visual_kind="instant",
+        default_phase="init",
+        fields=(
+            FieldSpec(
+                name="green_lanelet2_id",
+                label="Approach given green",
+                kind="int",
+                default=0,
+                help=(
+                    "Every other light of the same junction goes red.  That "
+                    "is what makes this a phase rather than a light: setting "
+                    "lights one at a time can leave two conflicting "
+                    "approaches green, which no real junction does."
+                ),
+            ),
+            FieldSpec(
+                name="freeze",
+                label="Freeze the junction",
+                kind="bool",
+                default=True,
+                required=False,
+                help=(
+                    "Stop the simulator resuming its own cycle.  A phase the "
+                    "scenario set and the simulator then moved on from is not "
+                    "a phase the scenario can assert about."
+                ),
+            ),
+        ),
+        description=(
+            "Put a junction into the phase that gives one approach green and "
+            "the rest red."
+        ),
+    )
+)
+
 register_condition_spec(
     ConditionSpec(
         type_id="all",
@@ -1410,6 +1453,37 @@ register_condition_spec(
             ),
         ),
         description="A traffic light is in the expected state.",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="traffic_signal_controller",
+        title="Junction phase",
+        category="World",
+        builder="build_traffic_signal_controller_condition",
+        target="..conditions:TrafficSignalControllerCondition",
+        visual=ConditionVisual(
+            metric="Junction phase",
+            target="green_lanelet2_id",
+            target_prefix="Lanelet",
+            value_label="holds",
+        ),
+        fields=(
+            FieldSpec(
+                name="green_lanelet2_id",
+                label="Approach given green",
+                kind="int",
+                default=0,
+                help=(
+                    "Passes while that approach is green and the rest of its "
+                    "junction is red.  A single-signal check cannot tell "
+                    '"green for us" from "green for us and for the crossing '
+                    'traffic too".'
+                ),
+            ),
+        ),
+        description=("The junction is in the phase that gives one approach green."),
     )
 )
 

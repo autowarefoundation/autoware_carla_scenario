@@ -32,6 +32,7 @@ from .persistent import PersistentCondition
 from .sticky import StickyCondition
 from .timeout import TimeoutCondition
 from .traffic_signal import TrafficSignalCondition
+from .traffic_signal_controller import TrafficSignalControllerCondition
 
 __all__ = [
     "ActionStateCondition",
@@ -62,6 +63,7 @@ __all__ = [
     "WaypointCheckType",
     "WaypointCondition",
     "TrafficSignalCondition",
+    "TrafficSignalControllerCondition",
     "find_actor_by_role_name",
     "find_actor_in_list",
 ]
