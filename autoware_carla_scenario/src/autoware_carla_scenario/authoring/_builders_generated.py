@@ -414,10 +414,13 @@ def build_collision_condition(
 ) -> "BaseCondition":
     """Build a :class:`CollisionCondition`."""
     from ..conditions import CollisionCondition  # noqa: PLC0415
+    from ..conditions import CollisionTargetType  # noqa: PLC0415
 
     params = compiled.params
     return CollisionCondition(
         min_impulse=params["min_impulse"],
+        target=(str(params["target"]) if params["target"] is not None else None),
+        target_type=CollisionTargetType[str(params["target_type"])],
         label=compiled.label,
     )
 

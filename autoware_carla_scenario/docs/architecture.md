@@ -357,7 +357,7 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection — with anything, or with a named entity or class of object — and actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Velocity** | `SpeedCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
