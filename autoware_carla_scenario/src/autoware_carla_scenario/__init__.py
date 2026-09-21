@@ -88,6 +88,8 @@ if TYPE_CHECKING:
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
     from .conditions import (
+        AccelerationCondition as AccelerationCondition,
+        AccelerationDirection as AccelerationDirection,
         AlwaysTrueCondition as AlwaysTrueCondition,
         AndCondition as AndCondition,
         BaseCondition as BaseCondition,
@@ -259,6 +261,8 @@ __all__ = [
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
     "register_backend",
+    "AccelerationCondition",
+    "AccelerationDirection",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
     "AlwaysTrueCondition",
@@ -383,6 +387,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ScenarioQueue": (".scenario_queue", "ScenarioQueue"),
     "CarlaServerManager": (".server", "CarlaServerManager"),
     # conditions
+    "AccelerationCondition": (".conditions", "AccelerationCondition"),
+    "AccelerationDirection": (".conditions", "AccelerationDirection"),
     "EntityDistanceCondition": (".conditions", "EntityDistanceCondition"),
     "EntityExistenceCondition": (".conditions", "EntityExistenceCondition"),
     "AlwaysTrueCondition": (".conditions", "AlwaysTrueCondition"),

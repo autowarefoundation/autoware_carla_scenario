@@ -1,6 +1,7 @@
 """Composition conditions built from multiple base conditions."""
 
-from .base import CompositionCondition
+from .acceleration import AccelerationCondition, AccelerationDirection
+from .base import CompositionCondition, entity_axes
 from .entity_distance import EntityDistanceCondition
 from .entity_lane_position import EntityLanePositionCondition
 from .speed import SpeedCondition, SpeedCoordinateSystem, SpeedDirection
@@ -11,6 +12,8 @@ from .time_to_collision import TimeToCollisionCondition
 from .waypoint import WaypointCheckType, WaypointCondition
 
 __all__ = [
+    "AccelerationCondition",
+    "AccelerationDirection",
     "CompositionCondition",
     "EntityDistanceCondition",
     "EntityLanePositionCondition",
@@ -23,4 +26,5 @@ __all__ = [
     "TimeToCollisionCondition",
     "WaypointCheckType",
     "WaypointCondition",
+    "entity_axes",
 ]

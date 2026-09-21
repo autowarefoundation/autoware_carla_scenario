@@ -1035,6 +1035,57 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="acceleration",
+        title="Acceleration",
+        category="Entity",
+        builder="build_acceleration_condition",
+        target="..conditions:AccelerationCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(
+            metric="Acceleration",
+            subject="entity",
+            rule="rule",
+            value="value",
+            unit="m/s²",
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            _rule_field(),
+            FieldSpec(
+                name="value",
+                label="Acceleration",
+                kind="number",
+                default=-3.0,
+                unit="m/s²",
+            ),
+            FieldSpec(
+                name="direction",
+                label="Component",
+                kind="select",
+                default="LONGITUDINAL",
+                options=(
+                    SelectOption("MAGNITUDE", "Magnitude"),
+                    SelectOption("LONGITUDINAL", "Longitudinal"),
+                    SelectOption("LATERAL", "Lateral"),
+                ),
+                required=False,
+                help=(
+                    "Longitudinal is signed in the entity's own frame: "
+                    "negative is braking, which is what a harsh-braking "
+                    "threshold is about.  Magnitude is never negative, so a "
+                    '"less than -3" rule on it can never fire.'
+                ),
+            ),
+        ),
+        description=(
+            "Acceleration of a single entity.  Read from CARLA directly, not "
+            "differentiated from speed."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="standstill",
         title="Standstill",
         category="Entity",
