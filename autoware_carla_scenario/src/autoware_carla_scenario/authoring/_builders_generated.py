@@ -43,6 +43,7 @@ __all__ = [
     "build_temporary_stop_condition",
     "build_entity_distance_condition",
     "build_ttc_condition",
+    "build_time_headway_condition",
     "build_action_state_condition",
     "build_always_true_condition",
     "build_collision_condition",
@@ -370,6 +371,25 @@ def build_ttc_condition(
     params = compiled.params
     return TimeToCollisionCondition(
         source=str(params["source"]),
+        target=str(params["target"]),
+        value=params["seconds"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        label=compiled.label,
+    )
+
+
+def build_time_headway_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TimeHeadwayCondition`."""
+    from ..conditions import TimeHeadwayCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    return TimeHeadwayCondition(
+        source=str(params["entity"]),
         target=str(params["target"]),
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],

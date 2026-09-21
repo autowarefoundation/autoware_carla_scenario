@@ -963,6 +963,40 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="time_headway",
+        title="Time headway",
+        category="Relative",
+        builder="build_time_headway_condition",
+        target="..conditions:TimeHeadwayCondition",
+        argmap=(("entity", "source"), ("seconds", "value")),
+        visual=ConditionVisual(
+            metric="Headway",
+            subject="entity",
+            target="target",
+            rule="rule",
+            value="seconds",
+            unit="s",
+        ),
+        fields=(
+            _entity_field("entity", "Follower"),
+            _entity_field("target", "Vehicle ahead"),
+            _rule_field(),
+            FieldSpec(
+                name="seconds", label="Headway", kind="number", default=2.0, unit="s"
+            ),
+        ),
+        description=(
+            "How long the follower would take to reach where the vehicle "
+            "ahead is now, at its own current speed.  Unlike TTC this is "
+            "defined even when the gap is steady, which is what makes it the "
+            "following-distance measure; it is undefined, and never fires, "
+            "while the follower is stopped."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="speed",
         title="Speed",
         category="Entity",
