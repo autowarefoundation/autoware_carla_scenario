@@ -112,9 +112,7 @@ class AccelerationCondition(CompositionCondition):
             return acceleration.vector.dot(forward_unit)
         return acceleration.vector.dot(left_unit)
 
-    def _check(
-        self, world: "carla.World", elapsed: float
-    ) -> Optional[ScenarioResult]:
+    def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result once the acceleration satisfies the rule."""
         assert self._entity_name is not None
         entity = find_actor_in_list(world.get_actors(), self._entity_name)
