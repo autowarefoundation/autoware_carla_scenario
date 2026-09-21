@@ -34,6 +34,7 @@ __all__ = [
     "build_not_condition",
     "build_persistent_condition",
     "build_sticky_condition",
+    "build_acceleration_condition",
     "build_entity_existence_condition",
     "build_waypoint_condition",
     "build_entity_lane_position_condition",
@@ -42,6 +43,7 @@ __all__ = [
     "build_standstill_condition",
     "build_temporary_stop_condition",
     "build_entity_distance_condition",
+    "build_relative_speed_condition",
     "build_ttc_condition",
     "build_action_state_condition",
     "build_always_true_condition",
@@ -124,6 +126,26 @@ def build_sticky_condition(
 
     return StickyCondition(
         condition=children[0],
+        label=compiled.label,
+    )
+
+
+def build_acceleration_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`AccelerationCondition`."""
+    from ..conditions import AccelerationCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import AccelerationDirection  # noqa: PLC0415
+
+    params = compiled.params
+    return AccelerationCondition(
+        entity_name=str(params["entity"]),
+        value=params["value"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        direction=AccelerationDirection[str(params["direction"])],
         label=compiled.label,
     )
 
@@ -354,6 +376,27 @@ def build_entity_distance_condition(
         target=str(params["target"]),
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        label=compiled.label,
+    )
+
+
+def build_relative_speed_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`RelativeSpeedCondition`."""
+    from ..conditions import RelativeSpeedCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import SpeedDirection  # noqa: PLC0415
+
+    params = compiled.params
+    return RelativeSpeedCondition(
+        entity_name=str(params["entity"]),
+        reference_entity_name=str(params["reference"]),
+        value=params["value"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        direction=SpeedDirection[str(params["direction"])],
         label=compiled.label,
     )
 
