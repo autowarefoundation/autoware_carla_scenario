@@ -34,6 +34,7 @@ __all__ = [
     "build_not_condition",
     "build_persistent_condition",
     "build_sticky_condition",
+    "build_acceleration_condition",
     "build_entity_existence_condition",
     "build_waypoint_condition",
     "build_entity_lane_position_condition",
@@ -124,6 +125,26 @@ def build_sticky_condition(
 
     return StickyCondition(
         condition=children[0],
+        label=compiled.label,
+    )
+
+
+def build_acceleration_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`AccelerationCondition`."""
+    from ..conditions import AccelerationCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import AccelerationDirection  # noqa: PLC0415
+
+    params = compiled.params
+    return AccelerationCondition(
+        entity_name=str(params["entity"]),
+        value=params["value"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        direction=AccelerationDirection[str(params["direction"])],
         label=compiled.label,
     )
 
