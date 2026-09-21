@@ -89,6 +89,8 @@ if TYPE_CHECKING:
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
     from .conditions import (
+        AccelerationCondition as AccelerationCondition,
+        AccelerationDirection as AccelerationDirection,
         AlwaysTrueCondition as AlwaysTrueCondition,
         AndCondition as AndCondition,
         BaseCondition as BaseCondition,
@@ -101,6 +103,7 @@ if TYPE_CHECKING:
         NotCondition as NotCondition,
         OrCondition as OrCondition,
         PersistentCondition as PersistentCondition,
+        RelativeSpeedCondition as RelativeSpeedCondition,
         ScalarComparisonRule as ScalarComparisonRule,
         ScenarioResult as ScenarioResult,
         SpeedCondition as SpeedCondition,
@@ -259,8 +262,11 @@ __all__ = [
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
     "register_backend",
+    "AccelerationCondition",
+    "AccelerationDirection",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
+    "RelativeSpeedCondition",
     "AlwaysTrueCondition",
     "AndCondition",
     "BaseCondition",
@@ -384,6 +390,9 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ScenarioQueue": (".scenario_queue", "ScenarioQueue"),
     "CarlaServerManager": (".server", "CarlaServerManager"),
     # conditions
+    "AccelerationCondition": (".conditions", "AccelerationCondition"),
+    "AccelerationDirection": (".conditions", "AccelerationDirection"),
+    "RelativeSpeedCondition": (".conditions", "RelativeSpeedCondition"),
     "EntityDistanceCondition": (".conditions", "EntityDistanceCondition"),
     "EntityExistenceCondition": (".conditions", "EntityExistenceCondition"),
     "AlwaysTrueCondition": (".conditions", "AlwaysTrueCondition"),
