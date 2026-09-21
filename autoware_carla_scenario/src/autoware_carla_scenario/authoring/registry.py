@@ -930,6 +930,70 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="distance",
+        title="Distance to a place",
+        category="Relative",
+        builder="build_distance_condition",
+        target="..conditions:EntityPositionDistanceCondition",
+        argmap=(("entity", "entity_name"), ("distance", "value")),
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Distance",
+            subject="entity",
+            target="lanelet_id",
+            target_prefix="Lanelet",
+            rule="rule",
+            value="distance",
+            unit="m",
+            details=("s",),
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help=(
+                    "The lanelet holding the place to measure to.  Unlike "
+                    "Position (Lanelet2), which asks whether the entity is on "
+                    "a lane, this measures to a point: say where along the "
+                    "lanelet with s."
+                ),
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            _rule_field(),
+            FieldSpec(
+                name="distance",
+                label="Distance",
+                kind="number",
+                default=20.0,
+                unit="m",
+            ),
+        ),
+        description=(
+            "Distance from an entity to a place on the map -- a stop line, a "
+            "conflict point.  Use Distance for the gap between two vehicles."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="ttc",
         title="TTC",
         category="Relative",
