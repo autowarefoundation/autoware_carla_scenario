@@ -34,6 +34,7 @@ from typing import Any, Mapping
 from .base import (
     LaneChangeDirection,
     LaneChanging,
+    SettingSpeed,
     NullTrafficBackend,
     TrafficBackend,
     TrafficBackendError,
@@ -60,6 +61,7 @@ __all__ = [
     "BackendDriven",
     "LaneChangeDirection",
     "LaneChanging",
+    "SettingSpeed",
     "NullTrafficBackend",
     "TrafficBackend",
     "TrafficBackendError",

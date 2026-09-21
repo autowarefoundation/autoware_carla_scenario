@@ -393,10 +393,14 @@ classDiagram
     class TrafficSignalAction
     class TurnAction
     class LaneChangeAction
+    class RoutingAction
+    class SetSpeedAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TurnAction
     BaseAction <|-- LaneChangeAction
+    BaseAction <|-- RoutingAction
+    BaseAction <|-- SetSpeedAction
     BaseAction --> BaseCondition : trigger condition
 ```
 
@@ -405,7 +409,13 @@ classDiagram
 1. Each tick, the runner calls `action.tick(world, elapsed)`.
 2. `tick()` checks the internal `BaseCondition` via `condition.check(world, elapsed)`.
 3. If the condition returns a non-`None` result, `execute(world)` is called.
-4. If `once=True` (default), the action is marked as `done` and never re-evaluated.
+4. While the action is `RUNNING`, each tick calls `on_running(world, running_for)`
+   and then `is_finished(world, running_for)`. An action whose work plays out over
+   time — a `SetSpeedAction` ramp — advances itself in the first and reports
+   completion from the second; one whose work is carried out by something else
+   overrides neither.
+5. If `once=True` (default), the action reaches `COMPLETE` and is never
+   re-evaluated.
 
 **Tick timing:**
 

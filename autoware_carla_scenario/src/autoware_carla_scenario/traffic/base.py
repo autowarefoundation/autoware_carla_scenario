@@ -126,6 +126,23 @@ class LaneChanging(Protocol):
 
 
 @runtime_checkable
+class SettingSpeed(Protocol):
+    """What :class:`~autoware_carla_scenario.actions.set_speed.SetSpeedAction`
+    needs of an entity.
+
+    One call, and no "finished" question beside it: unlike a lane change, a
+    commanded speed has no manoeuvre to settle into.  What takes time is the
+    *ramp*, and a ramp is storyboard vocabulary -- it is the action that
+    interpolates and the backend that is told a target, so a traffic model
+    which is not the TrafficManager needs to understand only the target.
+    """
+
+    def set_speed(self, world: Any, speed_kmh: float) -> None:
+        """Drive at *speed_kmh* from now on."""
+        ...
+
+
+@runtime_checkable
 class TurningAtJunctions(Protocol):
     """What :class:`~autoware_carla_scenario.actions.turn.TurnAction` needs."""
 
@@ -320,6 +337,21 @@ class TrafficBackend:
         """
         del entity, world
         return False
+
+    def set_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+        """Drive *entity* at *speed_kmh* from now on.
+
+        The target only; any ramp towards it has already been interpolated by
+        the caller, so a backend implements one call rather than a transition
+        model of its own.
+
+        Args:
+            entity: The entity asking for the new speed.
+            world: The CARLA world.
+            speed_kmh: The speed to hold, in km/h.  Never negative.
+        """
+        del world, speed_kmh
+        self._unavailable("set_speed", entity)
 
     def turn_at_junction(
         self, entity: Any, world: Any, direction: TurnDirection, **kwargs: Any

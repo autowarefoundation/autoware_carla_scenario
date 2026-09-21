@@ -247,6 +247,27 @@ class TrafficManagerBackend(TrafficBackend):
             <= LANE_CHANGE_HEADING_TOLERANCE_DEG
         )
 
+    def set_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+        """Hold *entity* at *speed_kmh*.
+
+        ``set_desired_speed`` is a target, not a jump: the TrafficManager gets
+        the vehicle there under its own acceleration limits.  A ramp asked for
+        by the scenario is therefore a ramp of *targets*, applied by the action
+        once per tick, and this call is one step of it.
+        """
+        del world
+        actor = _require_actor(entity, "set_speed")
+        if actor is None:
+            return
+        tm = self._require_tm("set_speed")
+        if tm is None:
+            return
+
+        tm.set_desired_speed(actor, speed_kmh)
+        logger.debug(
+            "%s: desired speed set to %.1f km/h", _entity_name(entity), speed_kmh
+        )
+
     def turn_at_junction(
         self,
         entity: Any,

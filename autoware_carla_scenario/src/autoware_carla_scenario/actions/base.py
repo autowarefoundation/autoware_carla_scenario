@@ -99,6 +99,27 @@ class BaseAction(ABC):
         """
         return self._lifecycle
 
+    def on_running(self, world: "carla.World", running_for: float) -> None:
+        """Advance work that plays out over time, once per tick while running.
+
+        Called immediately before :meth:`is_finished`, and only while the action
+        is :attr:`~ActionState.RUNNING`.
+
+        It exists so that an action which *does* something on each tick -- a
+        speed ramp, anything interpolated -- has somewhere to do it that is not
+        a predicate.  Driving the work from :meth:`is_finished` would work, and
+        would make a question that every reader expects to be free into the
+        thing that performs the manoeuvre.
+
+        The default does nothing: an action whose work is carried out by
+        something else -- the TrafficManager, a traffic light -- has nothing to
+        advance, which is every action that existed before this hook.
+
+        Args:
+            world: The CARLA world instance.
+            running_for: Seconds since :meth:`execute` was called.
+        """
+
     def is_finished(self, world: "carla.World", running_for: float) -> bool:
         """Whether the work :meth:`execute` started has met its completion criteria.
 
@@ -153,6 +174,7 @@ class BaseAction(ABC):
 
         if self._lifecycle is ActionState.RUNNING:
             running_for = elapsed - self._running_since
+            self.on_running(world, running_for)
             if not self.is_finished(world, running_for):
                 # The trigger is deliberately not re-evaluated while running,
                 # so a repeating action cannot start a second run on top of one

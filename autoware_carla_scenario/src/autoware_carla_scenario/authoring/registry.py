@@ -687,6 +687,58 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="set_speed",
+        title="Set Speed",
+        category="Vehicle / Motion",
+        builder="build_set_speed_action",
+        target="..actions:SetSpeedAction",
+        visual_kind="continuous",
+        fields=(
+            FieldSpec(
+                name="target_speed_kmh",
+                label="Target speed",
+                kind="number",
+                default=30.0,
+                unit="km/h",
+                help=(
+                    "A target, not a jump: whatever drives the vehicle gets "
+                    "it there under its own acceleration limits."
+                ),
+            ),
+            FieldSpec(
+                name="transition",
+                label="Transition",
+                kind="select",
+                default="step",
+                options=(
+                    SelectOption("step", "Step -- apply at once"),
+                    SelectOption("linear", "Linear -- ramp over a duration"),
+                ),
+                required=False,
+            ),
+            FieldSpec(
+                name="duration",
+                label="Duration",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="s",
+                help=(
+                    "How long a linear ramp takes.  Leave at zero for a step; "
+                    "a linear transition needs a positive value."
+                ),
+            ),
+        ),
+        description=(
+            "Command a vehicle to drive at a new speed.  The card stays "
+            "running for the whole of a linear ramp, so another action can "
+            "wait for it to finish rather than for the command to go out."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="routing",
         title="Set Goal",
         category="Vehicle / Motion",
