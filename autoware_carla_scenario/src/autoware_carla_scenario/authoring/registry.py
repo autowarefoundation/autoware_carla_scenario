@@ -915,6 +915,10 @@ register_condition_spec(
             rule="rule",
             value="distance",
             unit="m",
+            # Both of these change what the threshold means, so a card that
+            # left them out drew a longitudinal freespace gap and a Euclidean
+            # centre distance identically.
+            details=("distance_type", "freespace"),
         ),
         fields=(
             _entity_field("source", "Subject"),

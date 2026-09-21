@@ -17,6 +17,7 @@ about.
 from __future__ import annotations
 
 import enum
+import math
 from typing import TYPE_CHECKING, Optional
 
 from ...kinematics import Vector3
@@ -63,6 +64,11 @@ def _half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
     around it is wrong by a metre in one axis or the other whichever radius is
     picked.
 
+    The box's own rotation is taken to be the actor's.  That holds for every
+    vehicle and walker blueprint CARLA ships -- their boxes are axis-aligned
+    with the actor -- and it is what lets the axes be read once, from the
+    transform, rather than composed per box.
+
     An actor with no bounding box contributes nothing, which makes freespace
     degrade to centre-to-centre for that actor rather than fail.
     """
@@ -74,7 +80,73 @@ def _half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
         return 0.0
     forward, left = axes
     extent = box.extent
-    return abs(direction.dot(forward)) * extent.x + abs(direction.dot(left)) * extent.y
+    return (
+        abs(direction.dot(forward)) * extent.x
+        + abs(direction.dot(left)) * extent.y
+        + abs(direction.z) * extent.z
+    )
+
+
+def _box_centre(actor: "carla.Actor") -> Vector3:
+    """Return the world-space centre of *actor*'s bounding box.
+
+    A CARLA bounding box is positioned relative to the actor's origin rather
+    than on it -- for a vehicle the box sits a little above and, on some
+    models, slightly forward of the origin -- so measuring from the actor's
+    location alone puts the box in the wrong place by that offset.
+    """
+    location = actor.get_location()
+    centre = Vector3(location.x, location.y, location.z)
+    box = getattr(actor, "bounding_box", None)
+    axes = entity_axes(actor)
+    if box is None or axes is None:
+        return centre
+    forward, left = axes
+    offset = box.location
+    # `left` is the negation of CARLA's own y, which is the axis a box offset
+    # is written in, so the y term is subtracted rather than added.
+    return Vector3(
+        centre.x + forward.x * offset.x - left.x * offset.y,
+        centre.y + forward.y * offset.x - left.y * offset.y,
+        centre.z + offset.z,
+    )
+
+
+#: World axes, for the per-axis gap of the Euclidean measurement.
+_WORLD_X = Vector3(1.0, 0.0, 0.0)
+_WORLD_Y = Vector3(0.0, 1.0, 0.0)
+_WORLD_Z = Vector3(0.0, 0.0, 1.0)
+
+
+def _euclidean_gap(
+    source: "carla.Actor",
+    target: "carla.Actor",
+    delta: Vector3,
+    vertical: bool,
+) -> float:
+    """Return the closest distance between the two boxes.
+
+    Measured per world axis and recombined, rather than by subtracting each
+    box's reach along the centre-to-centre line.  The radial subtraction is
+    wrong whenever the two are separated along more than one axis: for boxes
+    of half-extent ``(2.5, 1.0)`` whose centres are ``(6, 6)`` apart it gives
+    3.54 m where the true gap is 4.12 m, so a threshold between the two fires
+    for a pair that is not that close.
+
+    Each box is taken as its world-aligned enclosure, which is exact while the
+    two actors are axis-aligned and conservative -- never reporting more room
+    than there is -- when they are not.
+    """
+    axes = [(_WORLD_X, delta.x), (_WORLD_Y, delta.y)]
+    if vertical:
+        axes.append((_WORLD_Z, delta.z))
+
+    total = 0.0
+    for axis, offset in axes:
+        reach = _half_extent_along(source, axis) + _half_extent_along(target, axis)
+        gap = max(0.0, abs(offset) - reach)
+        total += gap * gap
+    return math.sqrt(total)
 
 
 def separation(
@@ -103,8 +175,15 @@ def separation(
         asked for and the source's heading is degenerate -- which is "cannot
         tell" and must not be reported as a zero component.
     """
-    src = source.get_location()
-    tgt = target.get_location()
+    if freespace:
+        src = _box_centre(source)
+        tgt = _box_centre(target)
+    else:
+        src_location = source.get_location()
+        tgt_location = target.get_location()
+        src = Vector3(src_location.x, src_location.y, src_location.z)
+        tgt = Vector3(tgt_location.x, tgt_location.y, tgt_location.z)
+
     delta = Vector3(
         tgt.x - src.x,
         tgt.y - src.y,
@@ -112,18 +191,9 @@ def separation(
     )
 
     if distance_type is RelativeDistanceType.EUCLIDEAN:
-        distance = delta.magnitude()
         if not freespace:
-            return distance
-        if distance == 0.0:
-            return 0.0
-        direction = delta / distance
-        return max(
-            0.0,
-            distance
-            - _half_extent_along(source, direction)
-            - _half_extent_along(target, direction),
-        )
+            return delta.magnitude()
+        return _euclidean_gap(source, target, delta, vertical)
 
     axes = entity_axes(source)
     if axes is None:
