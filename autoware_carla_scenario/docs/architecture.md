@@ -322,6 +322,7 @@ classDiagram
 
     class EntityLanePositionCondition
     class EntityDistanceCondition
+    class EntityPositionDistanceCondition
     class TimeToCollisionCondition
     class RelativeSpeedCondition
     class SpeedCondition
@@ -345,6 +346,7 @@ classDiagram
     BaseCondition <|-- TrafficSignalControllerCondition
     BaseCondition <|-- EntityLanePositionCondition
     BaseCondition <|-- EntityDistanceCondition
+    BaseCondition <|-- EntityPositionDistanceCondition
     BaseCondition <|-- TimeToCollisionCondition
     BaseCondition <|-- RelativeSpeedCondition
     BaseCondition <|-- SpeedCondition
@@ -371,7 +373,7 @@ classDiagram
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
-| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `RelativeSpeedCondition` | Gap, time to collision and speed difference between two entities |
+| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `RelativeSpeedCondition`, `EntityPositionDistanceCondition` | Gap to another entity or to a place on the map, time to collision, and speed difference |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |

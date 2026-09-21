@@ -43,6 +43,7 @@ __all__ = [
     "build_standstill_condition",
     "build_temporary_stop_condition",
     "build_entity_distance_condition",
+    "build_distance_condition",
     "build_relative_speed_condition",
     "build_ttc_condition",
     "build_action_state_condition",
@@ -376,6 +377,30 @@ def build_entity_distance_condition(
     return EntityDistanceCondition(
         source=str(params["source"]),
         target=str(params["target"]),
+        value=params["distance"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        label=compiled.label,
+    )
+
+
+def build_distance_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityPositionDistanceCondition`."""
+    from ..conditions import EntityPositionDistanceCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+    )
+    return EntityPositionDistanceCondition(
+        entity_name=str(params["entity"]),
+        position=position,
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         label=compiled.label,
