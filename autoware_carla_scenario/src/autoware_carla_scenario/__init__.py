@@ -258,6 +258,8 @@ __all__ = [
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
     "register_backend",
+    "AccelerationCondition",
+    "AccelerationDirection",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
     "AlwaysTrueCondition",
@@ -381,6 +383,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ScenarioQueue": (".scenario_queue", "ScenarioQueue"),
     "CarlaServerManager": (".server", "CarlaServerManager"),
     # conditions
+    "AccelerationCondition": (".conditions", "AccelerationCondition"),
+    "AccelerationDirection": (".conditions", "AccelerationDirection"),
     "EntityDistanceCondition": (".conditions", "EntityDistanceCondition"),
     "EntityExistenceCondition": (".conditions", "EntityExistenceCondition"),
     "AlwaysTrueCondition": (".conditions", "AlwaysTrueCondition"),
