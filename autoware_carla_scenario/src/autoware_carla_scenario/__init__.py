@@ -102,6 +102,7 @@ if TYPE_CHECKING:
         NotCondition as NotCondition,
         OrCondition as OrCondition,
         PersistentCondition as PersistentCondition,
+        RelativeSpeedCondition as RelativeSpeedCondition,
         ScalarComparisonRule as ScalarComparisonRule,
         ScenarioResult as ScenarioResult,
         SpeedCondition as SpeedCondition,
@@ -264,6 +265,7 @@ __all__ = [
     "AccelerationDirection",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
+    "RelativeSpeedCondition",
     "AlwaysTrueCondition",
     "AndCondition",
     "BaseCondition",
@@ -387,6 +389,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # conditions
     "AccelerationCondition": (".conditions", "AccelerationCondition"),
     "AccelerationDirection": (".conditions", "AccelerationDirection"),
+    "RelativeSpeedCondition": (".conditions", "RelativeSpeedCondition"),
     "EntityDistanceCondition": (".conditions", "EntityDistanceCondition"),
     "EntityExistenceCondition": (".conditions", "EntityExistenceCondition"),
     "AlwaysTrueCondition": (".conditions", "AlwaysTrueCondition"),
