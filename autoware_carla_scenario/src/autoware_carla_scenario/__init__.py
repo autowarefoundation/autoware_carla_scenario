@@ -97,6 +97,7 @@ if TYPE_CHECKING:
         EntityDistanceCondition as EntityDistanceCondition,
         EntityExistenceCondition as EntityExistenceCondition,
         EntityLanePositionCondition as EntityLanePositionCondition,
+        EntityPositionDistanceCondition as EntityPositionDistanceCondition,
         NotCondition as NotCondition,
         OrCondition as OrCondition,
         PersistentCondition as PersistentCondition,
