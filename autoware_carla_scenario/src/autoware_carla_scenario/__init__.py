@@ -88,6 +88,8 @@ if TYPE_CHECKING:
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
     from .conditions import (
+        AccelerationCondition as AccelerationCondition,
+        AccelerationDirection as AccelerationDirection,
         AlwaysTrueCondition as AlwaysTrueCondition,
         AndCondition as AndCondition,
         BaseCondition as BaseCondition,
