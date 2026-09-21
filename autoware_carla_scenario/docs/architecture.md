@@ -323,6 +323,7 @@ classDiagram
     class EntityDistanceCondition
     class EntityPositionDistanceCondition
     class TimeToCollisionCondition
+    class TimeHeadwayCondition
     class RelativeSpeedCondition
     class SpeedCondition
     class AccelerationCondition
@@ -346,6 +347,7 @@ classDiagram
     BaseCondition <|-- EntityDistanceCondition
     BaseCondition <|-- EntityPositionDistanceCondition
     BaseCondition <|-- TimeToCollisionCondition
+    BaseCondition <|-- TimeHeadwayCondition
     BaseCondition <|-- RelativeSpeedCondition
     BaseCondition <|-- SpeedCondition
     BaseCondition <|-- AccelerationCondition
@@ -369,12 +371,23 @@ classDiagram
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
-| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map, time to collision, and speed difference |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map, time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
+
+> **Distances are measured in a straight line, not along the lane.**
+> `EntityDistanceCondition`, `TimeHeadwayCondition` and the TTC conditions all
+> work in the entity coordinate system — a world-frame offset projected onto
+> the subject's heading or direction of travel. OpenSCENARIO's
+> `coordinateSystem: lane`, which `scenario_simulator_v2` measures by default,
+> is not implemented: it needs the lanelet routing graph at run time, and the
+> runtime holds none. On a curve the projection under-reads, and for
+> `TimeHeadwayCondition` past a quarter turn it inverts and the condition stops
+> firing. Tracked in
+> [#62](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive/issues/62).
 
 **`check()` contract:**
 

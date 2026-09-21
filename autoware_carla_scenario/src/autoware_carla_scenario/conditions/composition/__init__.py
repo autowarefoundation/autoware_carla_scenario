@@ -9,6 +9,7 @@ from .relative_speed import RelativeSpeedCondition
 from .speed import SpeedCondition, SpeedCoordinateSystem, SpeedDirection
 from .standstill import StandstillCondition
 from .temporary_stop import TemporaryStopCondition
+from .time_headway import TimeHeadwayCondition
 from .time_to_collision import TimeToCollisionCondition
 from .waypoint import WaypointCheckType, WaypointCondition
 
@@ -25,6 +26,7 @@ __all__ = [
     "SpeedDirection",
     "StandstillCondition",
     "TemporaryStopCondition",
+    "TimeHeadwayCondition",
     "TimeToCollisionCondition",
     "WaypointCheckType",
     "WaypointCondition",
