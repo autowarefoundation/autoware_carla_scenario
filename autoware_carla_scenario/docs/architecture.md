@@ -323,7 +323,9 @@ classDiagram
     class EntityDistanceCondition
     class EntityPositionDistanceCondition
     class TimeToCollisionCondition
+    class RelativeSpeedCondition
     class SpeedCondition
+    class AccelerationCondition
     class StandstillCondition
     class TemporaryStopCondition
     class WaypointCondition
@@ -344,7 +346,9 @@ classDiagram
     BaseCondition <|-- EntityDistanceCondition
     BaseCondition <|-- EntityPositionDistanceCondition
     BaseCondition <|-- TimeToCollisionCondition
+    BaseCondition <|-- RelativeSpeedCondition
     BaseCondition <|-- SpeedCondition
+    BaseCondition <|-- AccelerationCondition
     BaseCondition <|-- StandstillCondition
     BaseCondition <|-- TemporaryStopCondition
     BaseCondition <|-- WaypointCondition
@@ -367,6 +371,8 @@ classDiagram
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Velocity** | `SpeedCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed thresholds, standstill detection, stop-and-go |
 | **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition` | Gap to another entity or to a place on the map, and time to collision |
+| **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
+| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `RelativeSpeedCondition` | Gap, time to collision and speed difference between two entities |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |

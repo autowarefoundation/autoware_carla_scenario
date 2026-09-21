@@ -9,13 +9,10 @@ from ...entity_role import EntityRole
 from ...kinematics import Vector3
 from ..base import ScenarioResult, find_actor_in_list
 from ..comparison import ComparisonRule, ScalarComparisonRule
-from .base import CompositionCondition
+from .base import CompositionCondition, entity_axes
 
 if TYPE_CHECKING:
     import carla
-
-_NEAR_ZERO_THRESHOLD = 1e-12
-"""Magnitude below which a forward vector is considered degenerate."""
 
 
 class SpeedDirection(Enum):
@@ -153,19 +150,14 @@ class SpeedCondition(CompositionCondition):
         if ref_entity is None:
             return None
 
-        ref_fwd_carla: carla.Vector3D = ref_entity.get_transform().get_forward_vector()
-        fwd = Vector3(ref_fwd_carla.x, ref_fwd_carla.y, 0.0)
-        fwd_mag = fwd.magnitude()
-        if fwd_mag < _NEAR_ZERO_THRESHOLD:
+        axes = entity_axes(ref_entity)
+        if axes is None:
             return None
-        fwd_unit = fwd / fwd_mag
+        forward_unit, left_unit = axes
 
         if self._direction == SpeedDirection.LONGITUDINAL:
-            return vel.dot(fwd_unit)
+            return vel.dot(forward_unit)
 
-        # LATERAL: left direction in CARLA's left-handed frame.
-        # Rotating forward (fx, fy) by 90° gives left = (fy, -fx).
-        left_unit = Vector3(fwd_unit.y, -fwd_unit.x, 0.0)
         return vel.dot(left_unit)
 
     def _check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:

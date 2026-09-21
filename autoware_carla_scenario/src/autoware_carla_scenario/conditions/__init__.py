@@ -13,9 +13,12 @@ from .base import (
 from .collision import CollisionCondition
 from .comparison import ComparisonRule, ScalarComparisonRule, compare
 from .composition import (
+    AccelerationCondition,
+    AccelerationDirection,
     EntityDistanceCondition,
     EntityLanePositionCondition,
     EntityPositionDistanceCondition,
+    RelativeSpeedCondition,
     SpeedCondition,
     SpeedCoordinateSystem,
     SpeedDirection,
@@ -35,6 +38,8 @@ from .timeout import TimeoutCondition
 from .traffic_signal import TrafficSignalCondition
 
 __all__ = [
+    "AccelerationCondition",
+    "AccelerationDirection",
     "ActionStateCondition",
     "AlwaysTrueCondition",
     "AndCondition",
@@ -51,6 +56,7 @@ __all__ = [
     "NotCondition",
     "OrCondition",
     "PersistentCondition",
+    "RelativeSpeedCondition",
     "ScalarComparisonRule",
     "ScenarioResult",
     "SpeedCondition",
