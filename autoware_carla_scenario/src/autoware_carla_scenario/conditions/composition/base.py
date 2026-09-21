@@ -6,11 +6,41 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
+from ...kinematics import Vector3
 from ..base import BaseCondition, ScenarioResult
 from ..entity_existence import EntityExistenceCondition
 
 if TYPE_CHECKING:
     import carla
+
+_NEAR_ZERO_THRESHOLD = 1e-12
+"""Magnitude below which a forward vector is considered degenerate."""
+
+
+def entity_axes(actor: "carla.Actor") -> Optional[tuple[Vector3, Vector3]]:
+    """Return *actor*'s ``(forward, left)`` unit vectors in the ground plane.
+
+    Both are flattened to z = 0: a condition that decomposes a velocity or an
+    acceleration into longitudinal and lateral parts is asking about the road,
+    and a pitched vehicle on a slope should not leak that pitch into either
+    component.
+
+    Left is derived from forward rather than read off the transform, so the two
+    axes cannot disagree.  CARLA's world frame is left-handed, so rotating
+    ``(fx, fy)`` by 90 degrees gives ``(fy, -fx)``.
+
+    Returns:
+        The pair, or ``None`` when the forward vector is degenerate -- which a
+        caller must report as "cannot evaluate" rather than as a zero
+        component, because the two mean different things to an assertion.
+    """
+    carla_forward: carla.Vector3D = actor.get_transform().get_forward_vector()
+    forward = Vector3(carla_forward.x, carla_forward.y, 0.0)
+    magnitude = forward.magnitude()
+    if magnitude < _NEAR_ZERO_THRESHOLD:
+        return None
+    forward_unit = forward / magnitude
+    return forward_unit, Vector3(forward_unit.y, -forward_unit.x, 0.0)
 
 
 class CompositionCondition(BaseCondition):
