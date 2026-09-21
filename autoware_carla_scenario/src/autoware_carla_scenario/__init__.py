@@ -77,6 +77,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
+        EnvironmentAction as EnvironmentAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
         TickTiming as TickTiming,
@@ -336,6 +337,7 @@ __all__ = [
     "FrenetAcceleration",
     # Actions
     "BaseAction",
+    "EnvironmentAction",
     "LaneChangeAction",
     "LaneChangeDirection",
     "TickTiming",
@@ -362,6 +364,7 @@ __all__ = [
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
     "BaseAction": (".actions", "BaseAction"),
+    "EnvironmentAction": (".actions", "EnvironmentAction"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "LaneChangeDirection": (".actions", "LaneChangeDirection"),
     "TickTiming": (".actions", "TickTiming"),

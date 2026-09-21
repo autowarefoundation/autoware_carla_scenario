@@ -636,6 +636,110 @@ def searchable_lanelet_fields(
 
 register_action_spec(
     ActionSpec(
+        type_id="environment",
+        title="Set Weather",
+        category="Environment",
+        builder="build_environment_action",
+        target="..actions:EnvironmentAction",
+        scope="environment",
+        visual_kind="instant",
+        # Most scenarios set the weather once, before anything moves.  A card
+        # on the tick loop is what makes it change during a run.
+        default_phase="init",
+        fields=(
+            FieldSpec(
+                name="cloudiness",
+                label="Cloudiness",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Leave empty to keep what the world already has.",
+            ),
+            FieldSpec(
+                name="precipitation",
+                label="Rain",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Rain intensity.",
+            ),
+            FieldSpec(
+                name="precipitation_deposits",
+                label="Standing water",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Water left on the road surface.",
+            ),
+            FieldSpec(
+                name="wetness",
+                label="Wetness",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="How wet surfaces look.",
+            ),
+            FieldSpec(
+                name="wind_intensity",
+                label="Wind",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Wind strength.",
+            ),
+            FieldSpec(
+                name="fog_density",
+                label="Fog density",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Thickness of the fog.",
+            ),
+            FieldSpec(
+                name="fog_distance",
+                label="Fog distance",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help="How far away the fog starts.",
+            ),
+            FieldSpec(
+                name="sun_altitude_angle",
+                label="Sun altitude",
+                kind="number",
+                default=None,
+                required=False,
+                unit="deg",
+                help="Degrees above the horizon; negative is night.",
+            ),
+            FieldSpec(
+                name="sun_azimuth_angle",
+                label="Sun azimuth",
+                kind="number",
+                default=None,
+                required=False,
+                unit="deg",
+                help="Compass direction of the sun.",
+            ),
+        ),
+        description=(
+            "Set the weather and the position of the sun.  Every field left "
+            "empty keeps what the world already has, so a scenario that wants "
+            "rain does not have to restate the time of day and reset it by "
+            "accident.  Time of day is the sun's angle: CARLA has no clock."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="lane_change",
         title="Lane Change",
         category="Vehicle / Motion",

@@ -50,6 +50,7 @@ __all__ = [
     "build_timeout_condition",
     "build_traffic_signal_condition",
     "build_traffic_signal_action",
+    "build_environment_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_turn_action",
@@ -498,6 +499,33 @@ def build_traffic_signal_action(
         label=compiled.label,
         once=compiled.node.once,
         freeze=params["freeze"],
+    )
+
+
+def build_environment_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`EnvironmentAction`."""
+    from ..actions import EnvironmentAction  # noqa: PLC0415
+
+    params = compiled.params
+    return EnvironmentAction(
+        cloudiness=params["cloudiness"],
+        precipitation=params["precipitation"],
+        precipitation_deposits=params["precipitation_deposits"],
+        wetness=params["wetness"],
+        wind_intensity=params["wind_intensity"],
+        fog_density=params["fog_density"],
+        fog_distance=params["fog_distance"],
+        sun_altitude_angle=params["sun_altitude_angle"],
+        sun_azimuth_angle=params["sun_azimuth_angle"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
     )
 
 

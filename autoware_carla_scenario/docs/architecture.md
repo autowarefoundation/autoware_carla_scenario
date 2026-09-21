@@ -391,10 +391,12 @@ classDiagram
     }
 
     class TrafficSignalAction
+    class EnvironmentAction
     class TurnAction
     class LaneChangeAction
 
     BaseAction <|-- TrafficSignalAction
+    BaseAction <|-- EnvironmentAction
     BaseAction <|-- TurnAction
     BaseAction <|-- LaneChangeAction
     BaseAction --> BaseCondition : trigger condition
