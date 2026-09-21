@@ -262,6 +262,7 @@ __all__ = [
     "AccelerationDirection",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
+    "RelativeSpeedCondition",
     "AlwaysTrueCondition",
     "AndCondition",
     "BaseCondition",
@@ -385,6 +386,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # conditions
     "AccelerationCondition": (".conditions", "AccelerationCondition"),
     "AccelerationDirection": (".conditions", "AccelerationDirection"),
+    "RelativeSpeedCondition": (".conditions", "RelativeSpeedCondition"),
     "EntityDistanceCondition": (".conditions", "EntityDistanceCondition"),
     "EntityExistenceCondition": (".conditions", "EntityExistenceCondition"),
     "AlwaysTrueCondition": (".conditions", "AlwaysTrueCondition"),

@@ -1052,6 +1052,63 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="relative_speed",
+        title="Relative speed",
+        category="Relative",
+        builder="build_relative_speed_condition",
+        target="..conditions:RelativeSpeedCondition",
+        argmap=(
+            ("entity", "entity_name"),
+            ("reference", "reference_entity_name"),
+        ),
+        visual=ConditionVisual(
+            metric="Relative speed",
+            subject="entity",
+            target="reference",
+            rule="rule",
+            value="value",
+            unit="m/s",
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            _entity_field("reference", "Relative to"),
+            _rule_field(),
+            FieldSpec(
+                name="value",
+                label="Relative speed",
+                kind="number",
+                default=-5.0,
+                unit="m/s",
+            ),
+            FieldSpec(
+                name="direction",
+                label="Component",
+                kind="select",
+                default="LONGITUDINAL",
+                options=(
+                    SelectOption("MAGNITUDE", "Magnitude"),
+                    SelectOption("LONGITUDINAL", "Longitudinal"),
+                    SelectOption("LATERAL", "Lateral"),
+                ),
+                required=False,
+                help=(
+                    "Longitudinal and lateral are taken in the reference "
+                    "entity's frame, and are signed: negative longitudinal "
+                    "means the subject is the slower of the two.  Magnitude "
+                    "is never negative, so a negative threshold on it can "
+                    "never fire."
+                ),
+            ),
+        ),
+        description=(
+            "Speed of one entity relative to another: the subject's velocity "
+            "minus the reference's."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="standstill",
         title="Standstill",
         category="Entity",
