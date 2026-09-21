@@ -55,6 +55,54 @@ class RelativeDistanceType(enum.Enum):
     LATERAL = "lateral"
 
 
+def _box_yaw_degrees(box: object) -> float:
+    """Return *box*'s own yaw relative to its actor, in degrees.
+
+    Zero for a box that reports no rotation.  Every vehicle and walker
+    blueprint CARLA ships has an axis-aligned box, so this is nearly always
+    zero -- which is exactly why it has to be read rather than assumed: the
+    cases where it is not are the ones nobody would think to check.
+    """
+    rotation = getattr(box, "rotation", None)
+    if rotation is None:
+        return 0.0
+    try:
+        return float(rotation.yaw)
+    except (AttributeError, TypeError):
+        return 0.0
+
+
+def _box_axes(actor: "carla.Actor") -> "Optional[tuple[Vector3, Vector3]]":
+    """Return the world ``(forward, left)`` axes of *actor*'s bounding box.
+
+    The actor's own axes turned by the box's yaw.  ``left`` is re-derived from
+    the turned forward rather than turned separately, so the two axes are
+    produced by the same rule here as in :func:`entity_axes` and cannot come to
+    disagree about which way left is.
+
+    The box's yaw is in the same sense as the actor's, so adding the two is
+    adding two angles of one convention -- there is no handedness conversion
+    to get backwards.
+    """
+    box = getattr(actor, "bounding_box", None)
+    axes = entity_axes(actor)
+    if box is None or axes is None:
+        return axes
+    yaw = _box_yaw_degrees(box)
+    if yaw == 0.0:
+        return axes
+
+    forward, _ = axes
+    angle = math.radians(yaw)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    turned = Vector3(
+        forward.x * cos_a - forward.y * sin_a,
+        forward.x * sin_a + forward.y * cos_a,
+        0.0,
+    )
+    return turned, Vector3(turned.y, -turned.x, 0.0)
+
+
 def _half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
     """Return how far *actor*'s bounding box reaches along *direction*.
 
@@ -64,10 +112,7 @@ def _half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
     around it is wrong by a metre in one axis or the other whichever radius is
     picked.
 
-    The box's own rotation is taken to be the actor's.  That holds for every
-    vehicle and walker blueprint CARLA ships -- their boxes are axis-aligned
-    with the actor -- and it is what lets the axes be read once, from the
-    transform, rather than composed per box.
+    The box's own axes are used, not the actor's; see :func:`_box_axes`.
 
     An actor with no bounding box contributes nothing, which makes freespace
     degrade to centre-to-centre for that actor rather than fail.
@@ -75,7 +120,7 @@ def _half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
     box = getattr(actor, "bounding_box", None)
     if box is None:
         return 0.0
-    axes = entity_axes(actor)
+    axes = _box_axes(actor)
     if axes is None:
         return 0.0
     forward, left = axes

@@ -28,6 +28,7 @@ def _actor(
     heading: tuple[float, float] = (1.0, 0.0),
     extent: tuple[float, float, float] | None = (2.5, 1.0, 0.75),
     box_offset: tuple[float, float, float] | None = None,
+    box_yaw: float = 0.0,
 ) -> MagicMock:
     """A fake actor; *extent* is the bounding box half-size, or None for no box."""
     actor = MagicMock()
@@ -42,6 +43,7 @@ def _actor(
         box = MagicMock()
         box.extent = carla.Vector3D(*extent)
         box.location = carla.Location(*(box_offset or (0.0, 0.0, 0.0)))
+        box.rotation = carla.Rotation(yaw=box_yaw)
         actor.bounding_box = box
     return actor
 
@@ -197,6 +199,39 @@ class TestFreespace:
             - _measured(_condition(freespace=True), plain),
             1.0,
             abs_tol=0.01,
+        )
+
+    def test_the_box_turns_with_its_own_rotation(self) -> None:
+        """A box yawed 90 degrees is as wide as the actor is long.
+
+        Nearly every CARLA blueprint has an axis-aligned box, which is exactly
+        why the rotation has to be read rather than assumed: the cases where it
+        is not are the ones nobody would think to check.
+        """
+        aligned = _world(
+            _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
+            _actor("npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75)),
+        )
+        # Turned across the direction of measurement: its 2.5 m half-length now
+        # lies sideways and only its 1.0 m half-width faces the subject.
+        turned = _world(
+            _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
+            _actor("npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75), box_yaw=90.0),
+        )
+        assert math.isclose(
+            _measured(_condition(freespace=True), aligned), 5.0, abs_tol=0.01
+        )
+        assert math.isclose(
+            _measured(_condition(freespace=True), turned), 6.5, abs_tol=0.01
+        )
+
+    def test_a_box_with_no_rotation_reported_uses_the_actor_axes(self) -> None:
+        """An actor whose box does not report a rotation still measures."""
+        actor = _actor("npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75))
+        del actor.bounding_box.rotation
+        world = _world(_actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)), actor)
+        assert math.isclose(
+            _measured(_condition(freespace=True), world), 5.0, abs_tol=0.01
         )
 
     def test_an_actor_without_a_bounding_box_contributes_nothing(self) -> None:
