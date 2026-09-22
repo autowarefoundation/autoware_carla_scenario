@@ -824,12 +824,20 @@ class ScenarioRunner:
 
             # Tick loop
             while not scenario.is_done():
-                elapsed = clock.simulated
+                # Read once before the world advances and once after, because
+                # on the simulated clock those are a whole `fixed_delta_seconds`
+                # apart rather than the sliver of real time a tick takes.  Each
+                # half of the loop is told the time of the world it is looking
+                # at: a pre-tick action acts on the world as it stands, and
+                # everything below `world.tick()` observes the world it has
+                # become.  Handing the earlier reading to both would date every
+                # post-tick observation one step early.
+                pre_tick_elapsed = clock.simulated
                 tick_count += 1
 
-                # Pre-tick actions (receive elapsed)
+                # Pre-tick actions (receive the time they act at)
                 for action in scenario._pre_tick_actions:
-                    action.tick(world, elapsed)
+                    action.tick(world, pre_tick_elapsed)
 
                 # Pre-tick callbacks
                 for cb in scenario._pre_tick_callbacks:
@@ -837,6 +845,10 @@ class ScenarioRunner:
 
                 self._pace_tick()
                 world.tick()
+
+                # The world has advanced; everything from here reads the time
+                # it advanced to.
+                elapsed = clock.simulated
 
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
