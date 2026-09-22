@@ -11,7 +11,17 @@ if TYPE_CHECKING:
 
 
 class TimeoutCondition(BaseCondition):
-    """Fail condition that triggers when elapsed time exceeds the timeout."""
+    """Fail condition that triggers when elapsed time exceeds the timeout.
+
+    Measured on the simulated clock, like every other condition: *timeout* here
+    is part of what the scenario says -- "this manoeuvre should be over within
+    N seconds" -- and so has to mean the same thing on every host.
+
+    It is therefore not the runner's watchdog.  Stopping a run that is making
+    no useful progress is a question about the machine rather than about the
+    scenario, and ``ScenarioRunner`` keeps a wall-clock guard of its own for
+    it (see ``timeout_seconds`` there).
+    """
 
     def __init__(self, timeout_seconds: float = 60.0, *, label: str) -> None:
         """Initialize the timeout condition.
@@ -31,7 +41,7 @@ class TimeoutCondition(BaseCondition):
 
         Args:
             world: The CARLA world instance (unused).
-            elapsed: Elapsed time in seconds.
+            elapsed: Simulated seconds since the run began.
 
         Returns:
             ScenarioResult with passed=False if timed out, None otherwise.

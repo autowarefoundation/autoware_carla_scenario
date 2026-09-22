@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from autoware_carla_scenario import ScenarioRunner
-from autoware_carla_scenario.scenario_runner import _destroy_all_dynamic_actors
+from autoware_carla_scenario.constants import FIXED_DELTA_SECONDS
+from autoware_carla_scenario.scenario_runner import (
+    _destroy_all_dynamic_actors,
+    _ScenarioClock,
+)
 
 
 def _make_runner(max_tick_rate_hz: float | None) -> ScenarioRunner:
@@ -29,6 +33,85 @@ class _FakeClock:
     def sleep(self, seconds: float) -> None:
         self.slept.append(seconds)
         self.now += seconds
+
+
+class _FakeWorld:
+    """A world whose simulated clock the test advances by hand."""
+
+    def __init__(self, simulated_now: float = 0.0) -> None:
+        self.simulated_now = simulated_now
+
+    def tick(self, ticks: int = 1) -> None:
+        """Advance simulated time by *ticks* of ``fixed_delta_seconds``."""
+        self.simulated_now += ticks * FIXED_DELTA_SECONDS
+
+    def get_snapshot(self) -> MagicMock:
+        snapshot = MagicMock()
+        snapshot.timestamp.elapsed_seconds = self.simulated_now
+        return snapshot
+
+
+class TestScenarioClock:
+    """A scenario is measured on the world's clock, not on the machine's.
+
+    The loop steps the world as fast as the slowest client allows, so how much
+    simulated time fits into a second of real time is a property of the host.
+    Reading a scenario's durations off the wall clock would make the same
+    scenario fire its triggers in different places on a fast machine and a slow
+    one -- exactly the determinism synchronous mode exists to provide.
+    """
+
+    def test_simulated_time_is_measured_from_the_run_and_not_the_world(self):
+        """Init ticks the world before the run, and must not count against it."""
+        world = _FakeWorld(simulated_now=1234.5)
+        clock = _ScenarioClock(world)
+
+        assert clock.simulated == 0.0
+
+        world.tick()
+        assert clock.simulated == pytest.approx(FIXED_DELTA_SECONDS)
+
+    def test_simulated_time_follows_the_ticks_and_not_the_wall(self):
+        world = _FakeWorld()
+        wall = _FakeClock()
+
+        with patch(
+            "autoware_carla_scenario.scenario_runner.time.monotonic", wall.monotonic
+        ):
+            clock = _ScenarioClock(world)
+            # A fast host: twenty ticks -- a full simulated second -- inside a
+            # tenth of a second of real time.
+            world.tick(20)
+            wall.now += 0.1
+
+            assert clock.simulated == pytest.approx(1.0)
+            assert clock.wall == pytest.approx(0.1)
+
+    def test_the_wall_clock_moves_when_the_simulation_does_not(self):
+        """The case the watchdog exists for: real time passing, no progress."""
+        world = _FakeWorld()
+        wall = _FakeClock()
+
+        with patch(
+            "autoware_carla_scenario.scenario_runner.time.monotonic", wall.monotonic
+        ):
+            clock = _ScenarioClock(world)
+            wall.now += 90.0
+
+            assert clock.simulated == 0.0
+            assert clock.wall == pytest.approx(90.0)
+
+    def test_both_clocks_start_at_zero(self):
+        world = _FakeWorld(simulated_now=7.0)
+        wall = _FakeClock()
+
+        with patch(
+            "autoware_carla_scenario.scenario_runner.time.monotonic", wall.monotonic
+        ):
+            clock = _ScenarioClock(world)
+
+            assert clock.simulated == 0.0
+            assert clock.wall == 0.0
 
 
 class TestTickPacing:

@@ -183,7 +183,10 @@ class BaseCondition(ABC):
 
         Args:
             world: The CARLA world instance.
-            elapsed: Elapsed time in seconds since the scenario started.
+            elapsed: Simulated seconds since the run began -- the world's own
+                clock, not the wall clock.  A scenario's durations have to be
+                the same on a fast host and a slow one, and only the simulated
+                clock advances at a rate the scenario controls.
 
         Returns:
             A ScenarioResult if the condition is met, None otherwise.

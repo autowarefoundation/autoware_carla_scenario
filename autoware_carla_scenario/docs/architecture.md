@@ -223,7 +223,8 @@ The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode.
 │  8. Periodic logging      → ego OpenDRIVE position (1/s)  │
 │  9. Pass conditions       → first satisfied → PASS & exit │
 │  10. Fail conditions      → first triggered → FAIL & exit │
-│  11. is_done() check      → True → PASS & exit            │
+│  11. Runner watchdog      → wall-clock limit → FAIL & exit│
+│  12. is_done() check      → True → PASS & exit            │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -232,6 +233,37 @@ The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode.
 - **Pass conditions** are checked first. The **first** condition to return a non-`None` `ScenarioResult` terminates the loop with a pass.
 - **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure.
 - If the loop exits via `is_done()` returning `True` with no condition triggered, the scenario is treated as **passed**.
+
+### Two clocks
+
+`_ScenarioClock` keeps both, and which one a duration is read from is a
+correctness question rather than a detail.
+
+| Clock | Source | Who reads it |
+|---|---|---|
+| **Simulated** | `world.get_snapshot().timestamp.elapsed_seconds` | The `elapsed` handed to every action, condition, entity and backend, and the `elapsed_seconds` on a `ScenarioResult` |
+| **Wall** | `time.monotonic()` | `ScenarioRunner.timeout_seconds`, the runner's watchdog, and nothing else |
+
+Everything the scenario *describes* — when a trigger fires, how long an entity
+has been standing still, how long a manoeuvre took — is on the **simulated**
+clock, because that is the only one the scenario controls. The world advances
+by `fixed_delta_seconds` per tick and the loop steps it as fast as the slowest
+client allows (see `max_tick_rate_hz`), so how much simulated time fits into a
+second of real time is a property of the host. A scenario whose durations came
+off the wall clock would fire its triggers in different places on a fast
+machine and a slow one — the determinism synchronous mode exists to provide.
+
+The **wall** clock is kept for the one job that really is about the machine:
+stopping a run that is making no useful progress. A simulated-time watchdog
+cannot do that, because a run crawling at a fraction of real time keeps its
+simulated clock perfectly plausible while holding the job open indefinitely.
+That watchdog is not a scenario condition and does not appear in a result's
+`condition_statuses`; a scenario that wants to fail after N seconds *of its
+own* registers a `TimeoutCondition`, which is measured on the simulated clock
+like every other condition.
+
+Both clocks start after the ego is ready, so an entity that needs an autonomy
+stack to come up does not spend the watchdog booting.
 
 ### ScenarioQueue: Batch Execution and Retry
 

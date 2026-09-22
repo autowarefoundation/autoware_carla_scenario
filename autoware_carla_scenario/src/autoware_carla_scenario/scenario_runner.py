@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 from .camera_recorder import CameraRecorder
 from .entity.registry import clear_entities, register_entity
-from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
+from .conditions import EntityExistenceCondition, ScenarioResult
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
@@ -221,6 +221,52 @@ def _destroy_all_dynamic_actors(
         logger.info("[%s] Destroyed %d leftover actor(s)", scenario_name, destroyed)
 
 
+class _ScenarioClock:
+    """The two clocks a run is measured against, and what each one is for.
+
+    Everything the scenario *describes* -- when a trigger fires, how long an
+    entity has been standing still, how long a manoeuvre took -- is measured on
+    the **simulated** clock, because that is the only one the scenario
+    controls.  The world advances by ``fixed_delta_seconds`` per tick and the
+    loop steps it as fast as the slowest client allows, so the ratio between
+    simulated and wall-clock time is a property of the machine, not of the
+    scenario.  Reading a scenario's durations off the wall clock makes the same
+    scenario fire its triggers in different places on a fast and a slow host,
+    which is the determinism that synchronous mode exists to provide.
+
+    The **wall** clock is kept for the one job that really is about the
+    machine: the runner's watchdog, which has to stop a run that is making no
+    useful progress.  A simulated-time watchdog cannot do that -- a run
+    crawling at a fraction of real time keeps its simulated clock perfectly
+    plausible while holding the job open indefinitely.
+
+    Both start when the clock is built, which is after the ego is ready: an
+    entity that needs an autonomy stack to come up would otherwise spend most
+    of the watchdog booting.
+
+    Args:
+        world: The CARLA world whose simulated time is read.
+    """
+
+    def __init__(self, world: "carla.World") -> None:
+        self._world = world
+        self._simulated_start = self._simulated_now()
+        self._wall_start = time.monotonic()
+
+    def _simulated_now(self) -> float:
+        return float(self._world.get_snapshot().timestamp.elapsed_seconds)
+
+    @property
+    def simulated(self) -> float:
+        """Simulated seconds since the run began."""
+        return self._simulated_now() - self._simulated_start
+
+    @property
+    def wall(self) -> float:
+        """Wall-clock seconds since the run began."""
+        return time.monotonic() - self._wall_start
+
+
 class ScenarioRunner:
     """Orchestrates scenario execution: map loading, tick loop, and recording.
 
@@ -254,7 +300,12 @@ class ScenarioRunner:
             host: CARLA server hostname.
             port: CARLA server RPC port.
             tm_port: CARLA TrafficManager port.
-            timeout_seconds: Default timeout applied to every scenario.
+            timeout_seconds: The runner's watchdog, in **wall-clock** seconds.
+                It stops a run that is making no useful progress, which is a
+                question about the machine and not about the scenario, so it
+                is the one duration here that is not measured on the simulated
+                clock.  A scenario that wants to fail after N seconds *of its
+                own* registers a ``TimeoutCondition`` instead.
             output_dir: Directory where CARLA recording logs are saved.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
@@ -767,20 +818,15 @@ class ScenarioRunner:
                 recording_started = True
                 logger.info("[%s] Recording to %s", scenario_name, output_path)
 
-            # Register default timeout fail condition
-            scenario.register_fail_condition(
-                TimeoutCondition(self.timeout_seconds, label="default_timeout")
-            )
-
             logger.info("[%s] === Tick loop start ===", scenario_name)
-            # The clock starts here, after the ego is ready: an entity that
+            # Both clocks start here, after the ego is ready: an entity that
             # needs a stack to come up would otherwise spend most of the
-            # scenario's timeout booting.
-            start_time = time.monotonic()
+            # scenario's watchdog booting.
+            clock = _ScenarioClock(world)
 
             # Tick loop
             while not scenario.is_done():
-                elapsed = time.monotonic() - start_time
+                elapsed = clock.simulated
                 tick_count += 1
 
                 # Pre-tick actions (receive elapsed)
@@ -873,6 +919,31 @@ class ScenarioRunner:
                 if result is not None:
                     break
 
+                # The runner's own watchdog, read off the wall clock rather
+                # than the simulated one.  It is not a scenario condition: a
+                # run that is making no useful progress has to be stopped even
+                # though its simulated clock is, by definition, still
+                # plausible.  It is checked after the scenario's own
+                # conditions so a pass or fail firing on the same tick still
+                # decides the outcome.
+                wall_elapsed = clock.wall
+                if wall_elapsed >= self.timeout_seconds:
+                    message = (
+                        f"Timeout after {wall_elapsed:.2f}s of wall-clock time"
+                        f" (limit: {self.timeout_seconds}s;"
+                        f" {elapsed:.2f}s simulated, {tick_count} ticks)"
+                    )
+                    logger.info("[%s] %s", scenario_name, message)
+                    result = ScenarioResult(
+                        passed=False,
+                        message=message,
+                        elapsed_seconds=elapsed,
+                        condition_statuses=_collect_condition_statuses(
+                            scenario, world, elapsed, scenario_name
+                        ),
+                    )
+                    break
+
                 # An ego entity can ask to stop early (e.g. the driver policy
                 # signalled termination).  Conditions are checked first so a
                 # pass or fail firing on the same tick still decides the outcome;
@@ -896,7 +967,7 @@ class ScenarioRunner:
 
             # If the loop exited via is_done() with no result, treat as passed
             if result is None:
-                elapsed = time.monotonic() - start_time
+                elapsed = clock.simulated
                 result = ScenarioResult(
                     passed=True,
                     message="Scenario completed successfully",

@@ -271,7 +271,7 @@ class TrafficBackend:
 
         Args:
             world: The CARLA world.
-            elapsed: Seconds since the scenario clock started.
+            elapsed: Simulated seconds since the run began.
         """
 
     def close(self) -> None:
