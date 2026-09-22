@@ -64,7 +64,7 @@ class ElapsedTimeCondition(BaseCondition):
 
         Args:
             world: The CARLA world instance (unused).
-            elapsed: Elapsed time in seconds since the scenario started.
+            elapsed: Simulated seconds since the run began.
 
         Returns:
             ScenarioResult with passed=True if the condition is met, None otherwise.

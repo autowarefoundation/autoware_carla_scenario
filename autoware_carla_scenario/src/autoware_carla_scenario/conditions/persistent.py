@@ -50,7 +50,7 @@ class PersistentCondition(BaseCondition):
 
         Args:
             world: The CARLA world instance.
-            elapsed: Elapsed time in seconds since the scenario started.
+            elapsed: Simulated seconds since the run began.
 
         Returns:
             :class:`ScenarioResult` with ``passed=True`` if the child has been
