@@ -135,7 +135,7 @@ class BaseAction(ABC):
 
         Args:
             world: The CARLA world instance.
-            running_for: Seconds since :meth:`execute` was called.
+            running_for: Simulated seconds since :meth:`execute` was called.
 
         Returns:
             ``True`` once the work is complete, ``False`` while it is still
@@ -172,7 +172,7 @@ class BaseAction(ABC):
 
         Args:
             world: The CARLA world instance.
-            elapsed: Seconds elapsed since the tick loop started.
+            elapsed: Simulated seconds since the run began.
         """
         # Transitions are resolved before the trigger is looked at, so a
         # repeating action is back in standby in time to fire again on this
