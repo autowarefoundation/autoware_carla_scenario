@@ -92,21 +92,25 @@ class TestWithoutUntil:
 
 
 class TestUntilRunsExecute:
-    def test_execute_runs_again_on_every_tick_of_the_run(self) -> None:
+    def test_execute_runs_once_on_every_tick_of_the_run(self) -> None:
+        """One command per tick, with no frame left empty.
+
+        The trigger's `execute` ran on the tick *before* the action reached
+        `runningState`, so the first running tick has to reissue rather than
+        count the previous one -- a rate-limited command that skipped a frame
+        would stall for it.
+        """
         action = _CountingAction(until=_AfterNChecks(4))
 
-        _tick(action, 0.0)  # triggered: execute #1
+        _tick(action, 0.0)  # triggered
         assert action.executed == 1
 
         assert _tick(action, 0.1) is ActionState.RUNNING
-        # The tick the run begins is the tick `execute` already ran on, so it
-        # is not run twice for one command.
-        assert action.executed == 1
-
-        assert _tick(action, 0.2) is ActionState.RUNNING
         assert action.executed == 2
-        assert _tick(action, 0.3) is ActionState.RUNNING
+        assert _tick(action, 0.2) is ActionState.RUNNING
         assert action.executed == 3
+        assert _tick(action, 0.3) is ActionState.RUNNING
+        assert action.executed == 4
 
     def test_the_run_ends_on_the_tick_until_fires(self) -> None:
         action = _CountingAction(until=_AfterNChecks(3))
@@ -117,13 +121,21 @@ class TestUntilRunsExecute:
         assert _tick(action, 0.3) is ActionState.END_TRANSITION  # check 3 fires
         assert _tick(action, 0.4) is ActionState.COMPLETE
 
-    def test_a_run_whose_until_is_already_satisfied_ends_at_once(self) -> None:
-        """One command goes out, and the action does not linger."""
+    def test_a_run_ends_on_its_first_running_tick_when_until_is_satisfied(
+        self,
+    ) -> None:
+        """The shortest possible run still gets a visible `endTransition`.
+
+        An action that acts over ticks is never the instantaneous case the
+        lifecycle passes straight through, so the transition is held for a tick
+        whatever `until` decides on.
+        """
         action = _CountingAction(until=_AfterNChecks(1))
 
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
-        assert _tick(action, 0.1) is ActionState.COMPLETE
-        assert action.executed == 1
+        assert _tick(action, 0.1) is ActionState.END_TRANSITION
+        assert _tick(action, 0.2) is ActionState.COMPLETE
+        assert action.executed == 2
 
     def test_a_failing_result_ends_the_run_too(self) -> None:
         """A result means the condition fired -- the same rule the trigger uses.
@@ -167,16 +179,29 @@ class TestUntilIsIndependentOfOnce:
         assert _tick(action, 0.1) is ActionState.RUNNING
         assert _tick(action, 0.2) is ActionState.END_TRANSITION
 
-        # Two commands so far: the one that started the run, and the one on
-        # the tick it ended -- an action acts first and is asked afterwards
-        # whether that was the last time.
-        assert action.executed == 2
-
-        # Back to standby, and the trigger fires it a second time.  The `until`
-        # condition is the same object and stays fired, so the second run is a
-        # short one -- which is the condition's business, not the lifecycle's.
-        assert _tick(action, 0.3) is ActionState.START_TRANSITION
+        # Three ticks, three commands: the action acts first and is asked
+        # afterwards whether that was the last time.
         assert action.executed == 3
+
+        # Back to standby, and the trigger fires it a second time -- on its own
+        # tick, not on the one that ended the first run.  The `until` condition
+        # is the same object and stays fired, so the second run is a short one,
+        # which is the condition's business and not the lifecycle's.
+        assert _tick(action, 0.3) is ActionState.START_TRANSITION
+        assert action.executed == 4
+
+    def test_a_repeating_action_never_commands_twice_in_one_tick(self) -> None:
+        """No tick both ends a run and begins the next one.
+
+        Collapsing them would put two commands in a single frame, which for a
+        rate-limited command means a step of twice the rate.
+        """
+        action = _CountingAction(until=_AfterNChecks(2), once=False)
+
+        for tick_index in range(6):
+            before = action.executed
+            _tick(action, tick_index * 0.1)
+            assert action.executed - before == 1
 
     def test_a_one_shot_action_completes_and_stays_complete(self) -> None:
         action = _CountingAction(until=_AfterNChecks(2), once=True)
@@ -188,4 +213,4 @@ class TestUntilIsIndependentOfOnce:
         assert _tick(action, 0.4) is ActionState.COMPLETE
         # Nothing runs after the run ended: the count stopped at the tick
         # `until` fired.
-        assert action.executed == 2
+        assert action.executed == 3

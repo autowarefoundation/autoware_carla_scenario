@@ -185,12 +185,12 @@ class BaseAction(ABC):
 
         if self._lifecycle is ActionState.RUNNING:
             if self._until is not None:
-                if not just_started:
-                    # Reissued rather than merely watched: an action with an
-                    # `until` condition is one that acts on every tick of its
-                    # run.  Not on the tick the run begins -- that is the tick
-                    # `execute` has just run on.
-                    self.execute(world)
+                # Reissued rather than merely watched: an action with an
+                # `until` condition acts on every tick of its run, this one
+                # included.  The trigger's `execute` ran on the *previous*
+                # tick -- entering `runningState` is what this tick did -- so
+                # standing down here would leave a frame with no command in it.
+                self.execute(world)
                 finished = self._until.check(world, elapsed) is not None
             else:
                 finished = self.is_finished(world, elapsed - self._running_since)
@@ -200,12 +200,16 @@ class BaseAction(ABC):
                 # that has not finished.
                 return
             self._lifecycle = ActionState.END_TRANSITION
-            if not just_started:
+            if not just_started or self._until is not None:
                 # A manoeuvre that genuinely took time holds `endTransition`
-                # for a tick, so a condition can watch for it.  One that
-                # finished the moment it was commanded never ran, and pausing
-                # on a transition it passed straight through would only make
-                # every instantaneous action a tick slower to repeat.
+                # for a tick, so a condition can watch for it.  An action with
+                # an `until` condition always took time -- it acted on every
+                # tick of its run -- and holding the transition is also what
+                # stops a repeating one from beginning its next run in the tick
+                # it ended this one, which would put two commands in one frame.
+                # One that finished the moment it was commanded never ran, and
+                # pausing on a transition it passed straight through would only
+                # make every instantaneous action a tick slower to repeat.
                 return
 
         if self._lifecycle is ActionState.END_TRANSITION:
