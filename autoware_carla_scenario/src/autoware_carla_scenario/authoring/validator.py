@@ -288,8 +288,36 @@ def _check_condition(
             node.id,
         )
 
+    _check_collision_names_one_target(out, path, node)
+
     for index, child in enumerate(node.children):
         _check_condition(out, f"{path}.children[{index}]", child, refs, owner)
+
+
+def _check_collision_names_one_target(
+    out: _Collector, path: str, node: ConditionNode
+) -> None:
+    """Reject a collision condition that names an entity *and* a type.
+
+    The runtime refuses the pair too, but it refuses at construction -- which
+    happens inside ``DeclarativeScenario.setup``, against a live CARLA world.
+    Everything before that point succeeds: the document saves, compiles and
+    exports, and the exported package's own tests pass.  The scenario then
+    fails on the simulator for a mistake that was visible while it was being
+    written.
+    """
+    if node.type != "collision":
+        return
+    named_entity = not _is_blank(node.params.get("target"))
+    named_type = str(node.params.get("target_type", "ANY")) != "ANY"
+    if named_entity and named_type:
+        out.error(
+            f"{path}.target",
+            "A collision condition names an entity or a class of object, not "
+            "both: they are two ways of saying what was hit, so one of them "
+            "would have to be ignored.",
+            node.id,
+        )
 
 
 def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:

@@ -488,9 +488,17 @@ def _rule_field(default: str = "less_than") -> FieldSpec:
     )
 
 
-def _entity_field(name: str, label: str) -> FieldSpec:
-    """Return an entity-reference field; options come from the document."""
-    return FieldSpec(name=name, label=label, kind="entity", default=None)
+def _entity_field(name: str, label: str, *, required: bool = True) -> FieldSpec:
+    """Return an entity-reference field; options come from the document.
+
+    *required* is taken as an argument for the same reason ``_rule_field``
+    takes its default: a condition where naming a vehicle is genuinely
+    optional -- a collision with anything -- would otherwise have to write the
+    whole field out again to say so.
+    """
+    return FieldSpec(
+        name=name, label=label, kind="entity", default=None, required=required
+    )
 
 
 def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
@@ -1568,7 +1576,12 @@ register_condition_spec(
         category="World",
         builder="build_collision_condition",
         target="..conditions:CollisionCondition",
-        visual=ConditionVisual(metric="Collision", value_label="occurred"),
+        visual=ConditionVisual(
+            metric="Collision",
+            target="target",
+            value_label="occurred",
+            details=("target_type",),
+        ),
         fields=(
             FieldSpec(
                 name="min_impulse",
@@ -1578,8 +1591,33 @@ register_condition_spec(
                 unit="N s",
                 required=False,
             ),
+            _entity_field("target", "With entity", required=False),
+            FieldSpec(
+                name="target_type",
+                label="With any",
+                kind="select",
+                default="ANY",
+                options=(
+                    SelectOption("ANY", "Anything"),
+                    SelectOption("VEHICLE", "Vehicle"),
+                    SelectOption("PEDESTRIAN", "Pedestrian"),
+                    SelectOption("STATIC", "Static object"),
+                ),
+                required=False,
+                help=(
+                    "A class of object instead of one named entity.  Set the "
+                    "entity or this, never both: they are two ways of saying "
+                    "what was hit, and a condition that said both would be "
+                    "asserting one thing twice."
+                ),
+            ),
         ),
-        description="The ego vehicle collided with any actor.",
+        description=(
+            "The ego vehicle collided.  Unrestricted it fires on hitting "
+            "anything, which in a scenario with several actors cannot tell "
+            "the collision under test from clipping a kerb -- name the entity "
+            "or the class of object the scenario is about."
+        ),
     )
 )
 

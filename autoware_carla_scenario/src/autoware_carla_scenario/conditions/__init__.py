@@ -10,7 +10,7 @@ from .base import (
     find_actor_by_role_name,
     find_actor_in_list,
 )
-from .collision import CollisionCondition
+from .collision import CollisionCondition, CollisionTargetType
 from .comparison import ComparisonRule, ScalarComparisonRule, compare
 from .composition import (
     AccelerationCondition,
@@ -46,6 +46,7 @@ __all__ = [
     "AndCondition",
     "BaseCondition",
     "CollisionCondition",
+    "CollisionTargetType",
     "ComparisonRule",
     "ConditionStatus",
     "compare",
