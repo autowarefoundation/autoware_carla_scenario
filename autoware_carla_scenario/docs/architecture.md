@@ -406,7 +406,9 @@ classDiagram
         +label: str
         +timing: TickTiming
         +once: bool
+        +state: ActionState
         +execute(world) void
+        +is_finished(world, running_for) bool
         +tick(world, elapsed) void
     }
 
@@ -426,10 +428,40 @@ classDiagram
 
 **Action lifecycle:**
 
-1. Each tick, the runner calls `action.tick(world, elapsed)`.
-2. `tick()` checks the internal `BaseCondition` via `condition.check(world, elapsed)`.
-3. If the condition returns a non-`None` result, `execute(world)` is called.
-4. If `once=True` (default), the action is marked as `done` and never re-evaluated.
+Each tick the runner calls `action.tick(world, elapsed)`, which walks the action
+through the OpenSCENARIO storyboard element states held in `ActionState`
+(`standbyState` -> `startTransition` -> `runningState` -> `endTransition` ->
+`completeState`).
+
+1. **Standby.** The trigger `BaseCondition` is evaluated via
+   `condition.check(world, elapsed)`. A non-`None` result fires the action:
+   `execute(world)` runs and the action enters `startTransition`.
+2. **Running.** The trigger is not re-evaluated, so one run cannot begin on top
+   of another. How the run ends depends on which completion mechanism the
+   action was given:
+   - **`until` (a `BaseCondition`)** — `execute(world)` is called again on every
+     tick of the run, which ends on the first tick `until` returns a non-`None`
+     result. This is for an action that keeps *acting*: a command that has to be
+     reissued every tick to mean anything.
+   - **`is_finished(world, running_for)` (a predicate)** — `execute` is not
+     re-run; the action watches for work it already handed the simulator to
+     land. `LaneChangeAction` uses this, because `force_lane_change` returns
+     long before the vehicle is in the next lane.
+   - **Neither** — the action is complete the moment it has run, which is what
+     most actions want.
+
+   `until` takes precedence: when one is given, `is_finished` is not consulted.
+3. **End.** `endTransition` is held for one tick so a condition can watch for
+   it. Then `once` decides: `True` (default) means `completeState` and no
+   further evaluation; `False` returns the action to standby to be triggered
+   again.
+
+`until` and `once` are independent — `until` says when *this* run ends, `once`
+says whether another may begin.
+
+`ActionStateCondition` observes these states, which is what lets one actor react
+to another *finishing* a manoeuvre rather than to the command having gone out
+(`done` only reports the latter).
 
 **Tick timing:**
 

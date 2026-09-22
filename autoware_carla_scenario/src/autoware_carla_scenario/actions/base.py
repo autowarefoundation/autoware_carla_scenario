@@ -45,6 +45,13 @@ class BaseAction(ABC):
         timing: Whether to run on the pre-tick or post-tick phase.
         once: If ``True`` (default), the action fires at most once.  After
             ``execute`` has been called the condition is no longer evaluated.
+        until: A :class:`BaseCondition` that ends the run.  While one is given,
+            :meth:`execute` is called again on every tick the action is
+            :attr:`~ActionState.RUNNING`, and the run ends on the first tick
+            *until* returns a non-``None`` result -- the same "a result means
+            it fired" convention the trigger uses, so a failing result ends the
+            run too.  ``None`` (default) leaves the action instantaneous unless
+            it overrides :meth:`is_finished`.
 
     Firing and finishing are two different moments.  :meth:`execute` only
     *starts* the work -- ``force_lane_change`` returns long before the vehicle
@@ -53,6 +60,24 @@ class BaseAction(ABC):
     :class:`ActionState` lifecycle.  Anything reacting to a manoeuvre having
     finished has to wait for :attr:`ActionState.COMPLETE`; :attr:`done` only
     says the command went out.
+
+    There are two ways to say when a run is over, and they answer different
+    questions.  :meth:`is_finished` suits an action that hands work to the
+    simulator and then watches for it to land.  *until* suits an action that
+    keeps *acting* until something becomes true -- a speed held to a rate
+    limit, a command that has to be reissued every tick to mean anything.
+    Only *until* re-runs :meth:`execute`, so it is the one that makes a
+    continuously acting action possible without a second hook beside
+    :meth:`execute` to carry the work.
+
+    *until* is independent of *once*: *until* says when this run ends, *once*
+    says whether another may begin.  An action can be given either, both or
+    neither.
+
+    An action with an *until* condition therefore has an :meth:`execute` that
+    runs many times, and must be written for it -- idempotent, or advancing the
+    work by one tick.  When *until* is given it decides the run on its own and
+    :meth:`is_finished` is not consulted.
     """
 
     def __init__(
@@ -62,6 +87,7 @@ class BaseAction(ABC):
         timing: TickTiming = TickTiming.POST_TICK,
         *,
         once: bool = True,
+        until: Optional[BaseCondition] = None,
     ) -> None:
         if not label:
             raise ValueError(
@@ -72,6 +98,7 @@ class BaseAction(ABC):
         self._condition = condition if condition is not None else AlwaysTrueCondition()
         self._timing = timing
         self._once = once
+        self._until = until
         self._done = False
         self._lifecycle = ActionState.STANDBY
         #: Elapsed time at which the current run started.  Only read while
@@ -114,6 +141,9 @@ class BaseAction(ABC):
             ``True`` once the work is complete, ``False`` while it is still
             under way.
 
+        Not consulted at all when the action was given an *until* condition,
+        which decides the run by itself.
+
         The default is instantaneous: an action with nothing to observe after
         :meth:`execute` -- setting a traffic light, attaching a sensor -- is
         complete the moment it has run, which is what every action did before
@@ -125,7 +155,9 @@ class BaseAction(ABC):
     def execute(self, world: "carla.World") -> None:
         """Perform the action.
 
-        Called when the condition is satisfied.
+        Called when the condition is satisfied, and then again on every tick of
+        the run when the action was given an *until* condition -- see
+        :class:`BaseAction` for what that asks of an implementation.
 
         Args:
             world: The CARLA world instance.
@@ -152,8 +184,17 @@ class BaseAction(ABC):
             just_started = True
 
         if self._lifecycle is ActionState.RUNNING:
-            running_for = elapsed - self._running_since
-            if not self.is_finished(world, running_for):
+            if self._until is not None:
+                if not just_started:
+                    # Reissued rather than merely watched: an action with an
+                    # `until` condition is one that acts on every tick of its
+                    # run.  Not on the tick the run begins -- that is the tick
+                    # `execute` has just run on.
+                    self.execute(world)
+                finished = self._until.check(world, elapsed) is not None
+            else:
+                finished = self.is_finished(world, elapsed - self._running_since)
+            if not finished:
                 # The trigger is deliberately not re-evaluated while running,
                 # so a repeating action cannot start a second run on top of one
                 # that has not finished.
