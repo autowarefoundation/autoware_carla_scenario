@@ -439,6 +439,7 @@ classDiagram
         +timing: TickTiming
         +once: bool
         +state: ActionState
+        +reissues_while_running: bool
         +execute(world) void
         +is_finished(world, running_for) bool
         +tick(world, elapsed) void
@@ -469,27 +470,39 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    `condition.check(world, elapsed)`. A non-`None` result fires the action:
    `execute(world)` runs and the action enters `startTransition`.
 2. **Running.** The trigger is not re-evaluated, so one run cannot begin on top
-   of another. How the run ends depends on which completion mechanism the
-   action was given:
-   - **`until` (a `BaseCondition`)** — `execute(world)` is called again on every
-     tick of the run, which ends on the first tick `until` returns a non-`None`
-     result. This is for an action that keeps *acting*: a command that has to be
-     reissued every tick to mean anything.
-   - **`is_finished(world, running_for)` (a predicate)** — `execute` is not
-     re-run; the action watches for work it already handed the simulator to
-     land. `LaneChangeAction` uses this, because `force_lane_change` returns
-     long before the vehicle is in the next lane.
-   - **Neither** — the action is complete the moment it has run, which is what
-     most actions want.
+   of another. Two independent questions are then asked every tick, in this
+   order:
 
-   `until` takes precedence: when one is given, `is_finished` is not consulted.
+   **Does `execute` repeat?** — `reissues_while_running`. This is a fact about
+   the *command*, not about the manoeuvre: a TrafficManager target persists
+   until it is changed, while a command that walks a target towards a goal has
+   to be re-sent on every tick to move at all. Because that depends on what
+   drives the entity, it is resolved in the order the knowledge is available:
+
+   | Source | Who knows |
+   |---|---|
+   | `reissue=` constructor argument | whoever knows the backend — the injection point |
+   | `_reissues_by_default()` override | the action, from its own configuration or by asking its entity |
+   | `REISSUES_BY_DEFAULT` class attribute | the action's class, when it has one answer |
+
+   **When does the run end?** — `until` (a `BaseCondition`) when one is given,
+   otherwise `is_finished(world, running_for)` (a predicate), otherwise the run
+   is over at once. `until` takes precedence: when one is given, `is_finished`
+   is not consulted.
+
+   Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
+   hands work to the simulator and watches for it to land — `force_lane_change`
+   returns long before the vehicle is in the next lane, and must not be re-sent
+   — so it ends on a condition without repeating. A rate-limited speed change
+   says both.
 3. **End.** `endTransition` is held for one tick so a condition can watch for
    it. Then `once` decides: `True` (default) means `completeState` and no
    further evaluation; `False` returns the action to standby to be triggered
    again.
 
-`until` and `once` are independent — `until` says when *this* run ends, `once`
-says whether another may begin.
+`until`, `reissues_while_running` and `once` are all independent — `until` says
+when *this* run ends, `reissues_while_running` says whether the command repeats
+while it does, and `once` says whether another run may begin.
 
 `ActionStateCondition` observes these states, which is what lets one actor react
 to another *finishing* a manoeuvre rather than to the command having gone out

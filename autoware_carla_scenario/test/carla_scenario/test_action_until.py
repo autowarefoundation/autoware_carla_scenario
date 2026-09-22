@@ -1,10 +1,15 @@
-"""The ``until`` condition: an action that keeps acting while it runs.
+"""``until`` and *reissue*: the two questions a run asks, kept apart.
 
-``is_finished`` answers "has the work I handed the simulator landed yet?".
-``until`` answers a different question -- "is the thing I am *still doing*
-done?" -- and is the only one of the two that runs ``execute`` again, so an
-action whose command has to be reissued every tick needs no hook beside the
-one it already implements.
+*until* says **when the run ends**, in the same vocabulary the trigger is
+written in.  *reissue* says **whether ``execute`` repeats** while it runs,
+which is a fact about the command rather than about the manoeuvre -- a
+TrafficManager target persists until it is changed, a command that walks a
+target towards a goal has to be re-sent to move at all.
+
+They are separate because the answers come from different places, and because
+both shapes have to exist: an action that hands work to the simulator and
+watches for it to land says only the first, and one that keeps acting says
+both.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ class _CountingAction(BaseAction):
         *,
         once: bool = True,
         finished: bool = True,
+        reissue: Optional[bool] = None,
     ) -> None:
         super().__init__(
             label="counting",
@@ -52,6 +58,7 @@ class _CountingAction(BaseAction):
             timing=TickTiming.PRE_TICK,
             once=once,
             until=until,
+            reissue=reissue,
         )
         self.executed = 0
         self.is_finished_calls = 0
@@ -91,7 +98,7 @@ class TestWithoutUntil:
         assert action.is_finished_calls == 2
 
 
-class TestUntilRunsExecute:
+class TestReissuing:
     def test_execute_runs_once_on_every_tick_of_the_run(self) -> None:
         """One command per tick, with no frame left empty.
 
@@ -100,7 +107,7 @@ class TestUntilRunsExecute:
         count the previous one -- a rate-limited command that skipped a frame
         would stall for it.
         """
-        action = _CountingAction(until=_AfterNChecks(4))
+        action = _CountingAction(until=_AfterNChecks(4), reissue=True)
 
         _tick(action, 0.0)  # triggered
         assert action.executed == 1
@@ -113,7 +120,7 @@ class TestUntilRunsExecute:
         assert action.executed == 4
 
     def test_the_run_ends_on_the_tick_until_fires(self) -> None:
-        action = _CountingAction(until=_AfterNChecks(3))
+        action = _CountingAction(until=_AfterNChecks(3), reissue=True)
 
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert _tick(action, 0.1) is ActionState.RUNNING  # until check 1
@@ -130,7 +137,7 @@ class TestUntilRunsExecute:
         lifecycle passes straight through, so the transition is held for a tick
         whatever `until` decides on.
         """
-        action = _CountingAction(until=_AfterNChecks(1))
+        action = _CountingAction(until=_AfterNChecks(1), reissue=True)
 
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert _tick(action, 0.1) is ActionState.END_TRANSITION
@@ -144,11 +151,110 @@ class TestUntilRunsExecute:
         being finished, and an action left running because its deadline
         *failed* would be the opposite of what the author asked for.
         """
-        action = _CountingAction(until=_AfterNChecks(2, passed=False))
+        action = _CountingAction(until=_AfterNChecks(2, passed=False), reissue=True)
 
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert _tick(action, 0.1) is ActionState.RUNNING
         assert _tick(action, 0.2) is ActionState.END_TRANSITION
+
+
+class TestTheTwoAxesAreIndependent:
+    """Four combinations, and each one is a shape something needs.
+
+    Tying them together is what would force an action that must not repeat its
+    command to keep a predicate of its own instead of naming its end as a
+    condition.
+    """
+
+    def test_until_alone_watches_without_repeating_the_command(self) -> None:
+        """The shape `LaneChangeAction` needs.
+
+        `force_lane_change` must not be re-sent every tick, but the manoeuvre
+        it starts still takes time to land -- so the run needs an end condition
+        and no repeat.
+        """
+        action = _CountingAction(until=_AfterNChecks(3))
+
+        assert _tick(action, 0.0) is ActionState.START_TRANSITION
+        assert _tick(action, 0.1) is ActionState.RUNNING
+        assert _tick(action, 0.2) is ActionState.RUNNING
+        assert _tick(action, 0.3) is ActionState.END_TRANSITION
+
+        # One command, at the trigger.  The rest of the run was watching.
+        assert action.executed == 1
+
+    def test_reissue_alone_repeats_while_is_finished_decides(self) -> None:
+        action = _CountingAction(finished=False, reissue=True)
+
+        _tick(action, 0.0)
+        assert action.executed == 1
+        assert _tick(action, 0.1) is ActionState.RUNNING
+        assert action.executed == 2
+        assert _tick(action, 0.2) is ActionState.RUNNING
+        assert action.executed == 3
+        # `is_finished` is still the one being asked.
+        assert action.is_finished_calls == 2
+
+    def test_neither_is_the_instantaneous_action_unchanged(self) -> None:
+        action = _CountingAction()
+
+        assert _tick(action, 0.0) is ActionState.START_TRANSITION
+        assert _tick(action, 0.1) is ActionState.COMPLETE
+        assert action.executed == 1
+
+    def test_both_acts_every_tick_until_the_condition_fires(self) -> None:
+        action = _CountingAction(until=_AfterNChecks(3), reissue=True)
+
+        _tick(action, 0.0)
+        _tick(action, 0.1)
+        _tick(action, 0.2)
+        assert _tick(action, 0.3) is ActionState.END_TRANSITION
+        assert action.executed == 4
+
+
+class TestWhoDecidesReissuing:
+    """The answer depends on what drives the entity, so it can be injected."""
+
+    def test_the_class_default_applies_when_nothing_is_injected(self) -> None:
+        action = _CountingAction(finished=False)
+
+        _tick(action, 0.0)
+        _tick(action, 0.1)
+        assert action.reissues_while_running is False
+        assert action.executed == 1
+
+    def test_an_action_can_decide_for_itself(self) -> None:
+        """Where a subclass reads its own configuration, or asks its backend."""
+
+        class _SelfDeciding(_CountingAction):
+            def _reissues_by_default(self) -> bool:
+                return True
+
+        action = _SelfDeciding(finished=False)
+
+        assert action.reissues_while_running is True
+        _tick(action, 0.0)
+        _tick(action, 0.1)
+        assert action.executed == 2
+
+    def test_an_injected_answer_wins_over_the_action_s_own(self) -> None:
+        """The backend is what really knows, and it is outside the action."""
+
+        class _SelfDeciding(_CountingAction):
+            def _reissues_by_default(self) -> bool:
+                return True
+
+        action = _SelfDeciding(finished=False, reissue=False)
+
+        assert action.reissues_while_running is False
+        _tick(action, 0.0)
+        _tick(action, 0.1)
+        assert action.executed == 1
+
+    def test_injecting_true_turns_repeating_on(self) -> None:
+        action = _CountingAction(finished=False, reissue=True)
+
+        assert action.reissues_while_running is True
 
 
 class TestUntilTakesPrecedence:
@@ -172,7 +278,7 @@ class TestUntilIsIndependentOfOnce:
 
     def test_a_repeating_action_runs_again_after_its_until_fired(self) -> None:
         until = _AfterNChecks(2)
-        action = _CountingAction(until=until, once=False)
+        action = _CountingAction(until=until, once=False, reissue=True)
 
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert action.executed == 1
@@ -196,7 +302,7 @@ class TestUntilIsIndependentOfOnce:
         Collapsing them would put two commands in a single frame, which for a
         rate-limited command means a step of twice the rate.
         """
-        action = _CountingAction(until=_AfterNChecks(2), once=False)
+        action = _CountingAction(until=_AfterNChecks(2), once=False, reissue=True)
 
         for tick_index in range(6):
             before = action.executed
@@ -204,7 +310,7 @@ class TestUntilIsIndependentOfOnce:
             assert action.executed - before == 1
 
     def test_a_one_shot_action_completes_and_stays_complete(self) -> None:
-        action = _CountingAction(until=_AfterNChecks(2), once=True)
+        action = _CountingAction(until=_AfterNChecks(2), once=True, reissue=True)
 
         _tick(action, 0.0)
         _tick(action, 0.1)
