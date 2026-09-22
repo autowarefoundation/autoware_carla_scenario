@@ -233,6 +233,38 @@ The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode.
 - **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure.
 - If the loop exits via `is_done()` returning `True` with no condition triggered, the scenario is treated as **passed**.
 
+### The scenario clock
+
+`_ScenarioClock` supplies the `elapsed` every action, condition, entity and
+backend receives, and the `elapsed_seconds` on a `ScenarioResult`. It reads
+`world.get_snapshot().timestamp.elapsed_seconds` — **simulated** time, and
+nothing else.
+
+The world advances by `fixed_delta_seconds` per tick and the loop steps it as
+fast as the slowest client allows (see `max_tick_rate_hz`), so how much
+simulated time fits into a second of real time is a property of the host. A
+scenario whose durations came off the wall clock would fire its triggers in
+different places on a fast machine and a slow one — the determinism that
+synchronous mode exists to provide.
+
+That holds for `ScenarioRunner.timeout_seconds` as much as for a condition an
+author wrote. It is registered as a default `TimeoutCondition` on every
+scenario, so a scenario given sixty seconds is given sixty of *its own*
+however fast the host runs.
+
+Wall-clock protection against a **stuck** simulator lives outside the scenario
+clock, where it belongs:
+
+| Guard | Where | Covers |
+|---|---|---|
+| CARLA client RPC timeout (60 s) | `ScenarioRunner.__init__` | `world.tick()` stops returning |
+| `sweep.job_timeout_seconds` (120 s) | sweeper config | a whole job overrunning |
+
+The clock starts after the ego is ready, so an entity that needs an autonomy
+stack to come up does not spend the scenario's timeout booting. Simulation
+time does advance during that wait, which is why the start is measured rather
+than assumed to be zero.
+
 ### ScenarioQueue: Batch Execution and Retry
 
 `ScenarioQueue` wraps `ScenarioRunner` to support sequential execution of multiple scenarios:
