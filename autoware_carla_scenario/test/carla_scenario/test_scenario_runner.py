@@ -61,17 +61,29 @@ class TestScenarioClock:
     one -- exactly the determinism synchronous mode exists to provide.
     """
 
-    def test_simulated_time_is_measured_from_the_run_and_not_the_world(self):
+    def test_it_starts_at_zero_however_long_the_world_has_been_up(self):
         """Init ticks the world before the run, and must not count against it."""
         world = _FakeWorld(simulated_now=1234.5)
-        clock = _ScenarioClock(world)
 
-        assert clock.simulated == 0.0
+        assert _ScenarioClock(world).simulated == 0.0
+
+    def test_it_advances_by_one_fixed_delta_per_tick(self):
+        world = _FakeWorld(simulated_now=1234.5)
+        clock = _ScenarioClock(world)
 
         world.tick()
         assert clock.simulated == pytest.approx(FIXED_DELTA_SECONDS)
 
-    def test_simulated_time_follows_the_ticks_and_not_the_wall(self):
+        world.tick(3)
+        assert clock.simulated == pytest.approx(4 * FIXED_DELTA_SECONDS)
+
+    def test_real_time_passing_does_not_move_it(self):
+        """The whole point: twenty ticks are one second on every host.
+
+        Whether those twenty ticks took a tenth of a real second on an idle
+        machine or ten real seconds with an autonomy stack attached, the
+        scenario is one second further along.
+        """
         world = _FakeWorld()
         wall = _FakeClock()
 
@@ -79,16 +91,19 @@ class TestScenarioClock:
             "autoware_carla_scenario.scenario_runner.time.monotonic", wall.monotonic
         ):
             clock = _ScenarioClock(world)
-            # A fast host: twenty ticks -- a full simulated second -- inside a
-            # tenth of a second of real time.
             world.tick(20)
-            wall.now += 0.1
+            wall.now += 10.0
 
             assert clock.simulated == pytest.approx(1.0)
-            assert clock.wall == pytest.approx(0.1)
 
-    def test_the_wall_clock_moves_when_the_simulation_does_not(self):
-        """The case the watchdog exists for: real time passing, no progress."""
+    def test_a_stalled_world_stops_the_clock(self):
+        """A consequence worth stating: no ticks, no time.
+
+        A run whose simulator has stopped is not protected by this clock at
+        all.  That is the CARLA client's RPC timeout and the sweeper's
+        ``job_timeout_seconds``, which are about the machine rather than about
+        the scenario.
+        """
         world = _FakeWorld()
         wall = _FakeClock()
 
@@ -99,19 +114,6 @@ class TestScenarioClock:
             wall.now += 90.0
 
             assert clock.simulated == 0.0
-            assert clock.wall == pytest.approx(90.0)
-
-    def test_both_clocks_start_at_zero(self):
-        world = _FakeWorld(simulated_now=7.0)
-        wall = _FakeClock()
-
-        with patch(
-            "autoware_carla_scenario.scenario_runner.time.monotonic", wall.monotonic
-        ):
-            clock = _ScenarioClock(world)
-
-            assert clock.simulated == 0.0
-            assert clock.wall == 0.0
 
 
 class TestTickPacing:
