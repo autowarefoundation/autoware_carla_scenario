@@ -27,9 +27,9 @@ class EntityDistanceCondition(CompositionCondition):
     * *distance_type* picks the axis.  A car in the next lane is 20 m away in
       a straight line and 2 m away longitudinally, and a following-distance or
       cut-in scenario means the second.
-    * *freespace* measures between bounding boxes rather than between centres.
-      The difference is about a vehicle length, which at a 5 m threshold is
-      most of the threshold.
+    * *edge_to_edge* measures between the bounding boxes rather than between
+      the centres.  The difference is about a vehicle length, which at a 5 m
+      threshold is most of the threshold.
 
     This is the relational counterpart of
     :class:`~autoware_carla_scenario.conditions.composition.speed.SpeedCondition`:
@@ -44,8 +44,9 @@ class EntityDistanceCondition(CompositionCondition):
             Only meaningful for :attr:`RelativeDistanceType.EUCLIDEAN`.
         distance_type: Which component of the separation to measure.  Defaults
             to :attr:`RelativeDistanceType.EUCLIDEAN`, the previous behaviour.
-        freespace: Measure between bounding boxes rather than centres, clamped
-            at zero once they overlap.  Off by default.
+        edge_to_edge: Measure between the bounding boxes rather than the
+            centres, clamped at zero once they overlap.  Off by default, and
+            OpenSCENARIO's ``freespace``.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         label: Human-readable identifier for this condition.
 
@@ -66,7 +67,7 @@ class EntityDistanceCondition(CompositionCondition):
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
         vertical: bool = False,
         distance_type: RelativeDistanceType = RelativeDistanceType.EUCLIDEAN,
-        freespace: bool = False,
+        edge_to_edge: bool = False,
         tolerance: float = 1e-6,
         *,
         label: str,
@@ -82,7 +83,7 @@ class EntityDistanceCondition(CompositionCondition):
         self._target = target
         self._vertical = vertical
         self._distance_type = distance_type
-        self._freespace = freespace
+        self._edge_to_edge = edge_to_edge
         self._comparison = ScalarComparisonRule(
             field="distance", rule=rule, value=value, tolerance=tolerance
         )
@@ -101,7 +102,7 @@ class EntityDistanceCondition(CompositionCondition):
                 "rule": self._comparison.rule.name,
                 "vertical": self._vertical,
                 "distance_type": self._distance_type.name,
-                "freespace": self._freespace,
+                "edge_to_edge": self._edge_to_edge,
             }
         )
         return details
@@ -121,7 +122,7 @@ class EntityDistanceCondition(CompositionCondition):
             source,
             target,
             distance_type=self._distance_type,
-            freespace=self._freespace,
+            edge_to_edge=self._edge_to_edge,
             vertical=self._vertical,
         )
 
