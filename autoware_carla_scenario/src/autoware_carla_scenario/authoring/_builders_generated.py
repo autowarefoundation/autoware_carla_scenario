@@ -58,6 +58,7 @@ __all__ = [
     "build_environment_action",
     "build_lane_change_action",
     "build_routing_action",
+    "build_set_speed_action",
     "build_turn_action",
 ]
 
@@ -677,6 +678,28 @@ def build_routing_action(
     return RoutingAction(
         entity_name=compiled.actor_role,
         goal=goal,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_set_speed_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`SetSpeedAction`."""
+    from ..actions import SetSpeedAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return SetSpeedAction(
+        entity_name=compiled.actor_role,
+        target_speed_kmh=params["target_speed_kmh"],
+        rate_kmh_s=params["rate_kmh_s"],
         condition=condition,
         timing=timing,
         label=compiled.label,

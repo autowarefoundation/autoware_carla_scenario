@@ -452,11 +452,15 @@ classDiagram
     class EnvironmentAction
     class TurnAction
     class LaneChangeAction
+    class RoutingAction
+    class SetSpeedAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- EnvironmentAction
     BaseAction <|-- TurnAction
     BaseAction <|-- LaneChangeAction
+    BaseAction <|-- RoutingAction
+    BaseAction <|-- SetSpeedAction
     BaseAction --> BaseCondition : trigger condition
 ```
 

@@ -799,6 +799,48 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="set_speed",
+        title="Set Speed",
+        category="Vehicle / Motion",
+        builder="build_set_speed_action",
+        target="..actions:SetSpeedAction",
+        visual_kind="continuous",
+        fields=(
+            FieldSpec(
+                name="target_speed_kmh",
+                label="Target speed",
+                kind="number",
+                default=30.0,
+                unit="km/h",
+                help=(
+                    "A target, not a jump: whatever drives the vehicle gets "
+                    "it there under its own acceleration limits."
+                ),
+            ),
+            FieldSpec(
+                name="rate_kmh_s",
+                label="Rate",
+                kind="number",
+                default=None,
+                required=False,
+                unit="km/h/s",
+                help=(
+                    "Most the speed may change per second.  Leave empty to "
+                    "command the new speed at once."
+                ),
+            ),
+        ),
+        description=(
+            "Command a vehicle to drive at a new speed.  Given a rate, the "
+            "card stays running until the vehicle has actually reached the "
+            "speed, so another action can wait for the manoeuvre rather than "
+            "for the command."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="routing",
         title="Set Goal",
         category="Vehicle / Motion",
