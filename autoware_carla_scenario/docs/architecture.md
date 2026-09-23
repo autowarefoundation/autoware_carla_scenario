@@ -438,6 +438,8 @@ classDiagram
         +label: str
         +timing: TickTiming
         +once: bool
+        +state: ActionState
+        +reissues_while_running: bool
         +execute(world) void
         +tick(world, elapsed) void
     }
@@ -460,10 +462,52 @@ classDiagram
 
 **Action lifecycle:**
 
-1. Each tick, the runner calls `action.tick(world, elapsed)`.
-2. `tick()` checks the internal `BaseCondition` via `condition.check(world, elapsed)`.
-3. If the condition returns a non-`None` result, `execute(world)` is called.
-4. If `once=True` (default), the action is marked as `done` and never re-evaluated.
+Each tick the runner calls `action.tick(world, elapsed)`, which walks the action
+through the OpenSCENARIO storyboard element states held in `ActionState`
+(`standbyState` -> `startTransition` -> `runningState` -> `endTransition` ->
+`completeState`).
+
+1. **Standby.** The trigger `BaseCondition` is evaluated via
+   `condition.check(world, elapsed)`. A non-`None` result fires the action:
+   `execute(world)` runs and the action enters `startTransition`.
+2. **Running.** The trigger is not re-evaluated, so one run cannot begin on top
+   of another. Two independent questions are then asked every tick, in this
+   order:
+
+   **Does `execute` repeat?** — `reissues_while_running`. This is a fact about
+   the *command*, not about the manoeuvre: a TrafficManager target persists
+   until it is changed, while a command that walks a target towards a goal has
+   to be re-sent on every tick to move at all. Because that depends on what
+   drives the entity, it is resolved in the order the knowledge is available:
+
+   | Source | Who knows |
+   |---|---|
+   | `reissue=` constructor argument | whoever knows the backend — the injection point |
+   | `_reissues_by_default()` override | the action, from its own configuration or by asking its entity |
+   | `REISSUES_BY_DEFAULT` class attribute | the action's class, when it has one answer |
+
+   **When does the run end?** — `until`, a `BaseCondition`. This is the same
+   kind of object the trigger is written in, so the two ends of a run read
+   together. No `until` means there was nothing to wait for, and the run is
+   over on the tick after the one it was commanded on.
+
+   Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
+   hands work to the simulator and watches for it to land — `force_lane_change`
+   returns long before the vehicle is in the next lane, and must not be re-sent
+   — so it supplies a `LaneChangeSettledCondition` as its `until` and does not
+   repeat. A rate-limited speed change says both.
+3. **End.** `endTransition` is held for one tick so a condition can watch for
+   it. Then `once` decides: `True` (default) means `completeState` and no
+   further evaluation; `False` returns the action to standby to be triggered
+   again.
+
+`until`, `reissues_while_running` and `once` are all independent — `until` says
+when *this* run ends, `reissues_while_running` says whether the command repeats
+while it does, and `once` says whether another run may begin.
+
+`ActionStateCondition` observes these states, which is what lets one actor react
+to another *finishing* a manoeuvre rather than to the command having gone out
+(`done` only reports the latter).
 
 **Tick timing:**
 

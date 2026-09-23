@@ -34,6 +34,7 @@ from .entity_existence import EntityExistenceCondition
 from .not_condition import NotCondition
 from .or_condition import OrCondition
 from .persistent import PersistentCondition
+from .lane_change_settled import LaneChangeSettledCondition
 from .sticky import StickyCondition
 from .timeout import TimeoutCondition
 from .traffic_signal import TrafficSignalCondition
@@ -65,6 +66,7 @@ __all__ = [
     "SpeedCoordinateSystem",
     "SpeedDirection",
     "StandstillCondition",
+    "LaneChangeSettledCondition",
     "StickyCondition",
     "TemporaryStopCondition",
     "TimeHeadwayCondition",

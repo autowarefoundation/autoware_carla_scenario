@@ -1350,6 +1350,24 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="lane_change_settled",
+        title="Lane Change Settled",
+        category="Entity",
+        builder="build_lane_change_settled_condition",
+        target="..conditions:LaneChangeSettledCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(metric="Lane change settled", subject="entity"),
+        fields=(_entity_field("entity", "Subject"),),
+        description=(
+            "The entity has settled onto the lane it was sent to.  This is how "
+            "a Lane Change card knows it is over, and an author can wait on "
+            "the same thing."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="entity_lane_position",
         title="Position (Lanelet2)",
         category="Entity",

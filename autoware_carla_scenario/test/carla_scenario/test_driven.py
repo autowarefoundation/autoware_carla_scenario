@@ -17,6 +17,7 @@ from typing import Optional
 
 import pytest
 
+from autoware_carla_scenario.conditions import LaneChangeSettledCondition
 from autoware_carla_scenario.traffic import LaneChangeDirection
 from autoware_carla_scenario.traffic.driven import BackendDriven
 
@@ -287,7 +288,9 @@ class TestTheActionDelegates:
             world = _World(_Map(None))
             action.execute(world)
             assert asked == [LaneChangeDirection.LEFT]
-            assert action.is_finished(world, 1.0) is True
+            # The run's end is a condition on the same entity, and the entity
+            # is what answers it.
+            assert LaneChangeSettledCondition("npc1").check(world, 1.0) is not None
         finally:
             clear_entities()
 
@@ -301,7 +304,8 @@ class TestTheActionDelegates:
         with caplog.at_level("WARNING"):
             action.execute(world)
         assert "not found" in caplog.text
-        assert action.is_finished(world, 1.0) is False
+        # An entity that is not there has not settled, so the run never ends.
+        assert LaneChangeSettledCondition("ghost").check(world, 1.0) is None
 
 
 @pytest.mark.parametrize(
