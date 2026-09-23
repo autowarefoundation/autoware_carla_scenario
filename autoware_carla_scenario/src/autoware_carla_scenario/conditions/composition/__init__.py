@@ -2,6 +2,7 @@
 
 from .acceleration import AccelerationCondition, AccelerationDirection
 from .base import CompositionCondition, entity_axes
+from .distance_measure import RelativeDistanceType, separation
 from .entity_distance import EntityDistanceCondition
 from .entity_lane_position import EntityLanePositionCondition
 from .entity_position_distance import EntityPositionDistanceCondition
@@ -18,6 +19,7 @@ __all__ = [
     "AccelerationDirection",
     "CompositionCondition",
     "EntityDistanceCondition",
+    "RelativeDistanceType",
     "EntityLanePositionCondition",
     "EntityPositionDistanceCondition",
     "RelativeSpeedCondition",
@@ -31,4 +33,5 @@ __all__ = [
     "WaypointCheckType",
     "WaypointCondition",
     "entity_axes",
+    "separation",
 ]

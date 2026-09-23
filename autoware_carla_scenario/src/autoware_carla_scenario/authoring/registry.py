@@ -1106,6 +1106,10 @@ register_condition_spec(
             rule="rule",
             value="distance",
             unit="m",
+            # Both of these change what the threshold means, so a card that
+            # left them out drew a longitudinal freespace gap and a Euclidean
+            # centre distance identically.
+            details=("distance_type", "freespace"),
         ),
         fields=(
             _entity_field("source", "Subject"),
@@ -1114,8 +1118,41 @@ register_condition_spec(
             FieldSpec(
                 name="distance", label="Distance", kind="number", default=20.0, unit="m"
             ),
+            FieldSpec(
+                name="distance_type",
+                label="Measured",
+                kind="select",
+                default="EUCLIDEAN",
+                options=(
+                    SelectOption("EUCLIDEAN", "Straight line"),
+                    SelectOption("LONGITUDINAL", "Along the subject"),
+                    SelectOption("LATERAL", "Across the subject"),
+                ),
+                required=False,
+                help=(
+                    "A car in the next lane is 20 m away in a straight line "
+                    "and 2 m away longitudinally.  Following-distance and "
+                    "cut-in scenarios mean the second."
+                ),
+            ),
+            FieldSpec(
+                name="freespace",
+                label="Between bounding boxes",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "Measure bumper to bumper rather than centre to centre.  "
+                    "The difference is about a vehicle length, which at a "
+                    "close-quarters threshold is most of the threshold."
+                ),
+            ),
         ),
-        description="Distance from the subject to the target.",
+        description=(
+            "Distance from the subject to the target.  Say which component "
+            "is meant and whether the vehicles' extents count; the defaults "
+            "are a straight line between centres."
+        ),
     )
 )
 
