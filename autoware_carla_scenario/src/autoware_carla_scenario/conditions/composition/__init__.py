@@ -1,7 +1,7 @@
 """Composition conditions built from multiple base conditions."""
 
 from .acceleration import AccelerationCondition, AccelerationDirection
-from .base import CompositionCondition, entity_axes
+from .base import CompositionCondition, DistanceCoordinateSystem, entity_axes
 from .entity_distance import EntityDistanceCondition
 from .entity_lane_position import EntityLanePositionCondition
 from .entity_position_distance import EntityPositionDistanceCondition
@@ -17,6 +17,7 @@ __all__ = [
     "AccelerationCondition",
     "AccelerationDirection",
     "CompositionCondition",
+    "DistanceCoordinateSystem",
     "EntityDistanceCondition",
     "EntityLanePositionCondition",
     "EntityPositionDistanceCondition",

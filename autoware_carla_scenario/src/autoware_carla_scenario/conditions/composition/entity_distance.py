@@ -6,9 +6,11 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
+from ...coordinate.lane_distance import lane_separation
+from ...coordinate.poses import CarlaWorldPose
 from ..base import ScenarioResult, find_actor_pair
 from ..comparison import ComparisonRule, ScalarComparisonRule
-from .base import CompositionCondition
+from .base import CompositionCondition, DistanceCoordinateSystem
 
 if TYPE_CHECKING:
     import carla
@@ -32,11 +34,21 @@ class EntityDistanceCondition(CompositionCondition):
         value: Threshold distance in metres.
         rule: Comparison operator applied to ``distance`` vs *value*.
         vertical: Include the ``z`` component in the distance when ``True``.
+            Meaningful only in the entity frame.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
+        coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
+            measures the straight line between the two.
+            :attr:`~DistanceCoordinateSystem.LANE` measures along the road they
+            share, which on a curve is the longer and more useful number, and
+            which has no answer at all when they are on different roads.
         label: Human-readable identifier for this condition.
 
     Raises:
-        ValueError: If *tolerance* is negative.
+        ValueError: If *tolerance* is negative, or if a lane-frame distance is
+            asked to be vertical.  A distance along the road is a length on a
+            one-dimensional line, so there is no ``z`` to include; saying both
+            is a mistake, and resolving it silently would hide which of the two
+            the author meant.
     """
 
     def __init__(
@@ -47,14 +59,22 @@ class EntityDistanceCondition(CompositionCondition):
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
         vertical: bool = False,
         tolerance: float = 1e-6,
+        coordinate_system: DistanceCoordinateSystem = (DistanceCoordinateSystem.ENTITY),
         *,
         label: str,
     ) -> None:
         if tolerance < 0:
             raise ValueError("tolerance must be non-negative")
+        if vertical and coordinate_system is DistanceCoordinateSystem.LANE:
+            raise ValueError(
+                "a lane-frame distance is measured along the road and has no "
+                "vertical component; drop vertical=True, or measure in the "
+                "entity frame"
+            )
         super().__init__(entity_name=source, label=label)
         self._target = target
         self._vertical = vertical
+        self._coordinate_system = coordinate_system
         self._comparison = ScalarComparisonRule(
             field="distance", rule=rule, value=value, tolerance=tolerance
         )
@@ -72,6 +92,7 @@ class EntityDistanceCondition(CompositionCondition):
                 "value": self._comparison.value,
                 "rule": self._comparison.rule.name,
                 "vertical": self._vertical,
+                "coordinate_system": self._coordinate_system.name,
             }
         )
         return details
@@ -89,6 +110,15 @@ class EntityDistanceCondition(CompositionCondition):
 
         src_loc = source.get_location()
         tgt_loc = target.get_location()
+
+        if self._coordinate_system is DistanceCoordinateSystem.LANE:
+            # Unsigned, so neither entity has to be moving for this to mean
+            # something -- unlike a headway, a separation has no direction.
+            return lane_separation(
+                CarlaWorldPose(x=src_loc.x, y=src_loc.y, z=src_loc.z, yaw=0.0),
+                CarlaWorldPose(x=tgt_loc.x, y=tgt_loc.y, z=tgt_loc.z, yaw=0.0),
+            )
+
         delta = Vector3(
             tgt_loc.x - src_loc.x,
             tgt_loc.y - src_loc.y,

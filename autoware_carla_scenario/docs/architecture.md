@@ -410,16 +410,29 @@ classDiagram
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
 
-> **Distances are measured in a straight line, not along the lane.**
-> `EntityDistanceCondition`, `TimeHeadwayCondition` and the TTC conditions all
-> work in the entity coordinate system — a world-frame offset projected onto
-> the subject's heading or direction of travel. OpenSCENARIO's
-> `coordinateSystem: lane`, which `scenario_simulator_v2` measures by default,
-> is not implemented: it needs the lanelet routing graph at run time, and the
-> runtime holds none. On a curve the projection under-reads, and for
-> `TimeHeadwayCondition` past a quarter turn it inverts and the condition stops
-> firing. Tracked in
+> **Distances carry a coordinate system.** `EntityDistanceCondition`,
+> `TimeHeadwayCondition` and `TimeToCollisionCondition` each take a
+> `coordinate_system`, which is OpenSCENARIO's `coordinateSystem` attribute:
+>
+> - `ENTITY` (the default, so existing documents keep their meaning) is a
+>   world-frame offset projected onto the subject's heading or direction of
+>   travel. It equals the along-lane gap on a straight road, under-reads on a
+>   curve, and past a quarter turn inverts — at which point a headway stops
+>   firing for a leader that is directly in front.
+> - `LANE` projects both entities onto the OpenDRIVE road they share and
+>   compares their `s`, which is what `scenario_simulator_v2` measures. For
+>   TTC the closing speed is resolved onto the road too, so a vehicle's
+>   cornering is not counted as approach.
+>
+> `LANE` covers the **same-road** case only. Two entities on different roads —
+> the junction case — have no lane distance, and the condition returns no
+> measurement rather than falling back to the straight line: silently swapping
+> one measure for another makes a scenario pass for the wrong reason. Reaching
+> across roads needs a lanelet routing graph in the live runtime, which nothing
+> holds yet; see
 > [#62](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive/issues/62).
+> The measurement itself lives in
+> `autoware_carla_scenario.coordinate.lane_distance`.
 
 **`check()` contract:**
 
