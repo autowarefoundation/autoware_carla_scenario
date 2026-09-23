@@ -47,6 +47,7 @@ __all__ = [
     "build_distance_condition",
     "build_relative_speed_condition",
     "build_ttc_condition",
+    "build_ttc_to_position_condition",
     "build_time_headway_condition",
     "build_action_state_condition",
     "build_always_true_condition",
@@ -391,6 +392,7 @@ def build_entity_distance_condition(
     """Build an :class:`EntityDistanceCondition`."""
     from ..conditions import EntityDistanceCondition  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import RelativeDistanceType  # noqa: PLC0415
 
     params = compiled.params
     return EntityDistanceCondition(
@@ -398,6 +400,8 @@ def build_entity_distance_condition(
         target=str(params["target"]),
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        distance_type=RelativeDistanceType[str(params["distance_type"])],
+        edge_to_edge=params["edge_to_edge"],
         label=compiled.label,
     )
 
@@ -462,6 +466,32 @@ def build_ttc_condition(
         target=str(params["target"]),
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        edge_to_edge=params["edge_to_edge"],
+        label=compiled.label,
+    )
+
+
+def build_ttc_to_position_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TimeToCollisionCondition`."""
+    from ..conditions import TimeToCollisionCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+    )
+    return TimeToCollisionCondition(
+        source=str(params["entity"]),
+        value=params["seconds"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        position=position,
+        edge_to_edge=params["edge_to_edge"],
         label=compiled.label,
     )
 
