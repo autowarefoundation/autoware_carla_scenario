@@ -28,6 +28,24 @@ class _NeverCondition(BaseCondition):
         return None
 
 
+class _AtElapsed(BaseCondition):
+    """Fires once the run has reached *seconds*.
+
+    Stands in for "the work has landed" in these tests.  Every action here is
+    triggered on the first tick, so time since the run began and time since the
+    command went out are the same number.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(label=f"at_{seconds}")
+        self._seconds = seconds
+
+    def check(self, world: object, elapsed: float) -> Optional[ScenarioResult]:
+        if elapsed < self._seconds:
+            return None
+        return ScenarioResult(passed=True, message="landed", elapsed_seconds=elapsed)
+
+
 class _SlowAction(BaseAction):
     """An action whose work takes *duration* seconds after it is commanded."""
 
@@ -43,15 +61,13 @@ class _SlowAction(BaseAction):
             condition=condition if condition is not None else AlwaysTrueCondition(),
             timing=TickTiming.PRE_TICK,
             once=once,
+            until=_AtElapsed(duration) if duration else None,
         )
         self.executed = 0
         self._duration = duration
 
     def execute(self, world: object) -> None:
         self.executed += 1
-
-    def is_finished(self, world: object, running_for: float) -> bool:
-        return running_for >= self._duration
 
 
 def _tick(action: BaseAction, elapsed: float) -> ActionState:

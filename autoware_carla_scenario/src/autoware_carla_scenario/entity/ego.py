@@ -159,7 +159,7 @@ class EgoVehicle(BackendDriven):
 
         Args:
             world: The CARLA world instance.
-            elapsed: Wall-clock seconds since the tick loop started.
+            elapsed: Simulated seconds since the run began.
         """
 
     def on_scenario_end(self, world: "carla.World") -> None:

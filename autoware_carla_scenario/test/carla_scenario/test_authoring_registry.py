@@ -65,6 +65,37 @@ class TestSpecCoverage:
         # Empty on purpose: every action the runtime has is authorable.
         self._assert_every_class_is_built(actions, BaseAction, set(), "action")
 
+    def test_reissue_never_reaches_the_authoring_surface(self) -> None:
+        """A scenario cannot know what drives an entity, so it must not say.
+
+        `once` and `reissue` both decide whether `execute` runs again, and
+        while a trigger holds they are indistinguishable -- one command per
+        tick either way.  They part company on who they answer to: `once`
+        re-asks the trigger, `reissue` ignores it, and only `reissue` is a
+        statement about the *backend* rather than about the scenario.
+
+        The same `SetSpeedAction` at a rate limit has to move a TrafficManager
+        target on every tick and needs no repeat at all against a backend whose
+        command carries the rate itself.  A document that stated the answer
+        would mean different things on different hosts -- the same class of bug
+        as measuring a scenario on the wall clock.
+
+        So `once` is compiled from the document and `reissue` is injected by
+        whoever knows the backend, and this is the test that keeps the second
+        one out of the first place.
+        """
+        offenders = {
+            spec.type_id
+            for spec in registry.action_specs()
+            if any(field.name == "reissue" for field in spec.fields)
+        }
+        assert not offenders, (
+            "`reissue` is a fact about the backend, not about the scenario, "
+            "and these specs offer it as an authorable field: "
+            f"{sorted(offenders)}.  Inject it where the backend is known "
+            "instead -- see `BaseAction.reissues_while_running`."
+        )
+
     @staticmethod
     def _assert_every_class_is_built(
         module: object, base: type, runtime_only: set[str], noun: str
