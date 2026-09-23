@@ -488,9 +488,17 @@ def _rule_field(default: str = "less_than") -> FieldSpec:
     )
 
 
-def _entity_field(name: str, label: str) -> FieldSpec:
-    """Return an entity-reference field; options come from the document."""
-    return FieldSpec(name=name, label=label, kind="entity", default=None)
+def _entity_field(name: str, label: str, *, required: bool = True) -> FieldSpec:
+    """Return an entity-reference field; options come from the document.
+
+    *required* is taken as an argument for the same reason ``_rule_field``
+    takes its default: a condition where naming a vehicle is genuinely
+    optional -- a collision with anything -- would otherwise have to write the
+    whole field out again to say so.
+    """
+    return FieldSpec(
+        name=name, label=label, kind="entity", default=None, required=required
+    )
 
 
 def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
@@ -636,6 +644,110 @@ def searchable_lanelet_fields(
 
 register_action_spec(
     ActionSpec(
+        type_id="environment",
+        title="Set Weather",
+        category="Environment",
+        builder="build_environment_action",
+        target="..actions:EnvironmentAction",
+        scope="environment",
+        visual_kind="instant",
+        # Most scenarios set the weather once, before anything moves.  A card
+        # on the tick loop is what makes it change during a run.
+        default_phase="init",
+        fields=(
+            FieldSpec(
+                name="cloudiness",
+                label="Cloudiness",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Leave empty to keep what the world already has.",
+            ),
+            FieldSpec(
+                name="precipitation",
+                label="Rain",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Rain intensity.",
+            ),
+            FieldSpec(
+                name="precipitation_deposits",
+                label="Standing water",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Water left on the road surface.",
+            ),
+            FieldSpec(
+                name="wetness",
+                label="Wetness",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="How wet surfaces look.",
+            ),
+            FieldSpec(
+                name="wind_intensity",
+                label="Wind",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Wind strength.",
+            ),
+            FieldSpec(
+                name="fog_density",
+                label="Fog density",
+                kind="number",
+                default=None,
+                required=False,
+                unit="%",
+                help="Thickness of the fog.",
+            ),
+            FieldSpec(
+                name="fog_distance",
+                label="Fog distance",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help="How far away the fog starts.",
+            ),
+            FieldSpec(
+                name="sun_altitude_angle",
+                label="Sun altitude",
+                kind="number",
+                default=None,
+                required=False,
+                unit="deg",
+                help="Degrees above the horizon; negative is night.",
+            ),
+            FieldSpec(
+                name="sun_azimuth_angle",
+                label="Sun azimuth",
+                kind="number",
+                default=None,
+                required=False,
+                unit="deg",
+                help="Compass direction of the sun.",
+            ),
+        ),
+        description=(
+            "Set the weather and the position of the sun.  Every field left "
+            "empty keeps what the world already has, so a scenario that wants "
+            "rain does not have to restate the time of day and reset it by "
+            "accident.  Time of day is the sun's angle: CARLA has no clock."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="lane_change",
         title="Lane Change",
         category="Vehicle / Motion",
@@ -706,33 +818,23 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
-                name="transition",
-                label="Transition",
-                kind="select",
-                default="step",
-                options=(
-                    SelectOption("step", "Step -- apply at once"),
-                    SelectOption("linear", "Linear -- ramp over a duration"),
-                ),
-                required=False,
-            ),
-            FieldSpec(
-                name="duration",
-                label="Duration",
+                name="rate_kmh_s",
+                label="Rate",
                 kind="number",
-                default=0.0,
+                default=None,
                 required=False,
-                unit="s",
+                unit="km/h/s",
                 help=(
-                    "How long a linear ramp takes.  Leave at zero for a step; "
-                    "a linear transition needs a positive value."
+                    "Most the speed may change per second.  Leave empty to "
+                    "command the new speed at once."
                 ),
             ),
         ),
         description=(
-            "Command a vehicle to drive at a new speed.  The card stays "
-            "running for the whole of a linear ramp, so another action can "
-            "wait for it to finish rather than for the command to go out."
+            "Command a vehicle to drive at a new speed.  Given a rate, the "
+            "card stays running until the vehicle has actually reached the "
+            "speed, so another action can wait for the manoeuvre rather than "
+            "for the command."
         ),
     )
 )
@@ -982,6 +1084,70 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="distance",
+        title="Distance to a place",
+        category="Relative",
+        builder="build_distance_condition",
+        target="..conditions:EntityPositionDistanceCondition",
+        argmap=(("entity", "entity_name"), ("distance", "value")),
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Distance",
+            subject="entity",
+            target="lanelet_id",
+            target_prefix="Lanelet",
+            rule="rule",
+            value="distance",
+            unit="m",
+            details=("s",),
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help=(
+                    "The lanelet holding the place to measure to.  Unlike "
+                    "Position (Lanelet2), which asks whether the entity is on "
+                    "a lane, this measures to a point: say where along the "
+                    "lanelet with s."
+                ),
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            _rule_field(),
+            FieldSpec(
+                name="distance",
+                label="Distance",
+                kind="number",
+                default=20.0,
+                unit="m",
+            ),
+        ),
+        description=(
+            "Distance from an entity to a place on the map -- a stop line, a "
+            "conflict point.  Use Distance for the gap between two vehicles."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="ttc",
         title="TTC",
         category="Relative",
@@ -1012,6 +1178,42 @@ register_condition_spec(
 # ---------------------------------------------------------------------------
 # Built-in conditions -- single entity
 # ---------------------------------------------------------------------------
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="time_headway",
+        title="Time headway",
+        category="Relative",
+        builder="build_time_headway_condition",
+        target="..conditions:TimeHeadwayCondition",
+        argmap=(("entity", "source"), ("seconds", "value")),
+        visual=ConditionVisual(
+            metric="Headway",
+            subject="entity",
+            target="target",
+            rule="rule",
+            value="seconds",
+            unit="s",
+        ),
+        fields=(
+            _entity_field("entity", "Follower"),
+            _entity_field("target", "Vehicle ahead"),
+            _rule_field(),
+            FieldSpec(
+                name="seconds", label="Headway", kind="number", default=2.0, unit="s"
+            ),
+        ),
+        description=(
+            "How long the follower would take to reach where the vehicle "
+            "ahead is now, at its own current speed.  Unlike TTC this is "
+            "defined even when the gap is steady, which is what makes it the "
+            "following-distance measure; it is undefined, and never fires, "
+            "while the follower is stopped.  Measured in a straight line "
+            "along the direction of travel, not along the lane: on a curve it "
+            "under-reads, and past a quarter turn it stops firing entirely."
+        ),
+    )
+)
 
 register_condition_spec(
     ConditionSpec(
@@ -1185,6 +1387,24 @@ register_condition_spec(
             ),
         ),
         description="The entity stays (almost) stopped for a duration.",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="lane_change_settled",
+        title="Lane Change Settled",
+        category="Entity",
+        builder="build_lane_change_settled_condition",
+        target="..conditions:LaneChangeSettledCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(metric="Lane change settled", subject="entity"),
+        fields=(_entity_field("entity", "Subject"),),
+        description=(
+            "The entity has settled onto the lane it was sent to.  This is how "
+            "a Lane Change card knows it is over, and an author can wait on "
+            "the same thing."
+        ),
     )
 )
 
@@ -1520,7 +1740,12 @@ register_condition_spec(
         category="World",
         builder="build_collision_condition",
         target="..conditions:CollisionCondition",
-        visual=ConditionVisual(metric="Collision", value_label="occurred"),
+        visual=ConditionVisual(
+            metric="Collision",
+            target="target",
+            value_label="occurred",
+            details=("target_type",),
+        ),
         fields=(
             FieldSpec(
                 name="min_impulse",
@@ -1530,8 +1755,33 @@ register_condition_spec(
                 unit="N s",
                 required=False,
             ),
+            _entity_field("target", "With entity", required=False),
+            FieldSpec(
+                name="target_type",
+                label="With any",
+                kind="select",
+                default="ANY",
+                options=(
+                    SelectOption("ANY", "Anything"),
+                    SelectOption("VEHICLE", "Vehicle"),
+                    SelectOption("PEDESTRIAN", "Pedestrian"),
+                    SelectOption("STATIC", "Static object"),
+                ),
+                required=False,
+                help=(
+                    "A class of object instead of one named entity.  Set the "
+                    "entity or this, never both: they are two ways of saying "
+                    "what was hit, and a condition that said both would be "
+                    "asserting one thing twice."
+                ),
+            ),
         ),
-        description="The ego vehicle collided with any actor.",
+        description=(
+            "The ego vehicle collided.  Unrestricted it fires on hitting "
+            "anything, which in a scenario with several actors cannot tell "
+            "the collision under test from clipping a kerb -- name the entity "
+            "or the class of object the scenario is about."
+        ),
     )
 )
 

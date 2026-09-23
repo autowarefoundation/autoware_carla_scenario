@@ -406,8 +406,26 @@ def _field_expression(
         # and it is kept uniform on purpose: a rule that holds for every text
         # kind needs no per-kind exception to stay true when one of those
         # guarantees moves.
+        #
+        # An optional one is the exception that has to be made, and only
+        # because ``str`` is total: ``str(None)`` is the string ``"None"``,
+        # which is a perfectly good role name as far as every later step is
+        # concerned, so an unset entity field would arrive at the runtime as a
+        # vehicle called "None" rather than as no vehicle at all.
+        if _optional(field, annotation):
+            return f"(str({source}) if {source} is not None else None)", None
         return f"str({source})", None
     return source, None
+
+
+def _optional(field: FieldSpec, annotation: Any) -> bool:
+    """Whether *field* may be left unset and its parameter accepts ``None``.
+
+    Both halves are required.  A field the spec marks optional whose parameter
+    is not ``Optional`` is a spec bug rather than a value to pass through, and
+    an ``Optional`` parameter behind a required field never receives ``None``.
+    """
+    return not field.required and type(None) in typing.get_args(annotation)
 
 
 def _build_one(

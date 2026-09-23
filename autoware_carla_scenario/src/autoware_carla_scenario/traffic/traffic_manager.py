@@ -251,9 +251,11 @@ class TrafficManagerBackend(TrafficBackend):
         """Hold *entity* at *speed_kmh*.
 
         ``set_desired_speed`` is a target, not a jump: the TrafficManager gets
-        the vehicle there under its own acceleration limits.  A ramp asked for
-        by the scenario is therefore a ramp of *targets*, applied by the action
-        once per tick, and this call is one step of it.
+        the vehicle there under its own acceleration limits.  A rate asked for
+        by the scenario is therefore a walk of *targets*, stepped by the action
+        once per tick from the vehicle's own speed, and this call is one step
+        of it.  The value given here stays in force until it is changed, which
+        is why the action reissues only when it has a rate to walk.
         """
         del world
         actor = _require_actor(entity, "set_speed")

@@ -130,11 +130,15 @@ class SettingSpeed(Protocol):
     """What :class:`~autoware_carla_scenario.actions.set_speed.SetSpeedAction`
     needs of an entity.
 
-    One call, and no "finished" question beside it: unlike a lane change, a
-    commanded speed has no manoeuvre to settle into.  What takes time is the
-    *ramp*, and a ramp is storyboard vocabulary -- it is the action that
-    interpolates and the backend that is told a target, so a traffic model
-    which is not the TrafficManager needs to understand only the target.
+    One call, and a target rather than a transition.  A rate-limited change is
+    the action walking that target towards its goal a tick at a time, so a
+    traffic model which is not the TrafficManager needs to understand only
+    "drive at this speed" and never a transition model of its own.
+
+    Whether the target has to be re-sent to stay in force is this backend's
+    business too, and it says so through the action's *reissue* argument rather
+    than here: ``set_desired_speed`` holds the last value it was given, while a
+    command carrying its own rate does not need repeating at all.
     """
 
     def set_speed(self, world: Any, speed_kmh: float) -> None:
@@ -288,7 +292,7 @@ class TrafficBackend:
 
         Args:
             world: The CARLA world.
-            elapsed: Seconds since the scenario clock started.
+            elapsed: Simulated seconds since the run began.
         """
 
     def close(self) -> None:
@@ -341,9 +345,10 @@ class TrafficBackend:
     def set_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
         """Drive *entity* at *speed_kmh* from now on.
 
-        The target only; any ramp towards it has already been interpolated by
-        the caller, so a backend implements one call rather than a transition
-        model of its own.
+        The target only; a rate limit has already been applied by the caller,
+        which walks the target from the vehicle's own speed and re-sends it,
+        so a backend implements one call rather than a transition model of its
+        own.
 
         Args:
             entity: The entity asking for the new speed.
