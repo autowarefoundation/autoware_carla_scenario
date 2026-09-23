@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from .models import (
+    SIGNAL_STATE_NAMES,
     ActionNode,
     ConditionNode,
     ConstraintNode,
@@ -674,6 +675,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
 
     _check_lanelet_slots(out, document)
     _check_sweep_shape(out, document)
+    _check_signal_controllers(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
 
@@ -740,3 +742,217 @@ def _check_sweep_shape(out: _Collector, document: ScenarioDocument) -> None:
                 f"{entity.id!r} keeps its fixed value of {entity.spawn.s.value}.",
                 entity.id,
             )
+
+
+def _check_signal_controllers(out: _Collector, document: ScenarioDocument) -> None:
+    """Check the junction cycles the map declares, and every use of them.
+
+    A phase table is the one part of a scenario whose mistakes are invisible at
+    runtime: a misspelt phase name leaves the junction cycling normally, and a
+    scenario that waits for that phase simply never fires.  So the names are
+    checked against each other here, while the document is being written,
+    rather than discovered as a run that timed out for no stated reason.
+    """
+    declared = document.map.traffic_signal_controllers
+    by_name: dict[str, Any] = {}
+
+    for index, controller in enumerate(declared):
+        path = f"map.traffic_signal_controllers[{index}]"
+        name = (controller.name or "").strip()
+        if not name:
+            out.error(path, "A signal controller needs a name.")
+        elif name in by_name:
+            out.error(path, f"Duplicate signal controller name {name!r}.")
+        else:
+            by_name[name] = controller
+
+        _check_signal_phases(out, path, controller)
+        _check_signal_offset(out, path, controller)
+
+    _check_signal_reference_targets(out, declared, by_name)
+    _check_signal_reference_cycles(out, declared, by_name)
+    _check_signal_uses(out, document, by_name)
+
+
+def _check_signal_phases(out: _Collector, path: str, controller: Any) -> None:
+    """Check one controller's cycle: its phases, their durations and states."""
+    if not controller.phases:
+        out.error(
+            f"{path}.phases",
+            f"Signal controller {controller.name!r} declares no phases, so it "
+            "would never show anything.",
+        )
+        return
+
+    seen: set[str] = set()
+    for index, phase in enumerate(controller.phases):
+        phase_path = f"{path}.phases[{index}]"
+        name = (phase.name or "").strip()
+        if not name:
+            out.error(phase_path, "A phase needs a name, since actions call it by one.")
+        elif name in seen:
+            out.error(
+                phase_path,
+                f"Signal controller {controller.name!r} declares two phases "
+                f"named {name!r}; an action naming it would be ambiguous.",
+            )
+        seen.add(name)
+
+        if phase.duration_seconds < 0:
+            out.error(
+                f"{phase_path}.duration_seconds",
+                "A phase duration cannot be negative.",
+            )
+
+        if not phase.states:
+            # Not an error: a phase that holds the junction unchanged for a
+            # while is a legitimate thing to write, even if it is rarely what
+            # was meant.
+            out.warn(
+                f"{phase_path}.states",
+                f"Phase {phase.name!r} sets no signal, so it only spends time.",
+            )
+
+        for state_index, entry in enumerate(phase.states):
+            if str(entry.state).lower() not in SIGNAL_STATE_NAMES:
+                out.error(
+                    f"{phase_path}.states[{state_index}].state",
+                    f"Unknown signal state {entry.state!r}; expected one of "
+                    + ", ".join(sorted(SIGNAL_STATE_NAMES)),
+                )
+
+
+def _check_signal_offset(out: _Collector, path: str, controller: Any) -> None:
+    """Check the controller's offset from another one.
+
+    A delay measures from the moment its reference started, so a delay with
+    nothing to measure from is not a controller that starts late -- it is one
+    whose author expected an offset that silently does not exist.
+    """
+    if controller.delay_seconds < 0:
+        out.error(
+            f"{path}.delay_seconds",
+            "A start delay cannot be negative.",
+        )
+    if controller.delay_seconds and controller.reference is None:
+        out.error(
+            f"{path}.delay_seconds",
+            f"Signal controller {controller.name!r} declares a start delay but "
+            "no reference controller to measure it from.",
+        )
+
+
+def _check_signal_reference_targets(
+    out: _Collector, declared: "list[Any]", by_name: "dict[str, Any]"
+) -> None:
+    """Every ``reference`` must name a controller this map declares."""
+    for index, controller in enumerate(declared):
+        reference = controller.reference
+        if reference is None:
+            continue
+        if reference == controller.name:
+            out.error(
+                f"map.traffic_signal_controllers[{index}].reference",
+                f"Signal controller {controller.name!r} is offset from itself.",
+            )
+        elif reference not in by_name:
+            out.error(
+                f"map.traffic_signal_controllers[{index}].reference",
+                f"Signal controller {controller.name!r} is offset from "
+                f"{reference!r}, which this map does not declare.",
+            )
+
+
+def _check_signal_reference_cycles(
+    out: _Collector, declared: "list[Any]", by_name: "dict[str, Any]"
+) -> None:
+    """Reject controllers that wait on each other.
+
+    Each controller starts once the one it references has, so a loop is a set
+    of junctions none of which can ever begin -- a run where every light in the
+    corridor stays on CARLA's own cycle and nothing says why.
+    """
+    reported: set[str] = set()
+    for controller in declared:
+        walked: list[str] = []
+        current = controller
+        while current is not None and current.reference is not None:
+            if current.name in walked:
+                loop = walked[walked.index(current.name) :]
+                key = " -> ".join(sorted(loop))
+                if key not in reported:
+                    reported.add(key)
+                    out.error(
+                        "map.traffic_signal_controllers",
+                        "These signal controllers are offset from each other in "
+                        "a loop, so none of them can start: "
+                        + " -> ".join(loop + [current.name]),
+                    )
+                break
+            walked.append(current.name)
+            current = by_name.get(current.reference)
+
+
+def _check_signal_uses(
+    out: _Collector, document: ScenarioDocument, by_name: "dict[str, Any]"
+) -> None:
+    """Every action and condition naming a controller and phase must resolve."""
+    for path, node in _signal_controller_nodes(document):
+        controller_name = str(node.params.get("controller") or "").strip()
+        phase_name = str(node.params.get("phase") or "").strip()
+        controller = by_name.get(controller_name)
+        if controller is None:
+            out.error(
+                f"{path}.controller",
+                f"No signal controller named {controller_name!r} is declared on "
+                "this map."
+                if controller_name
+                else "This card needs the name of a signal controller.",
+                node.id,
+            )
+            continue
+        if not phase_name:
+            out.error(f"{path}.phase", "This card needs the name of a phase.", node.id)
+            continue
+        if phase_name not in {p.name for p in controller.phases}:
+            out.error(
+                f"{path}.phase",
+                f"Signal controller {controller_name!r} has no phase named "
+                f"{phase_name!r}; it has "
+                + (
+                    ", ".join(repr(p.name) for p in controller.phases)
+                    or "no phases at all"
+                ),
+                node.id,
+            )
+
+
+def _signal_controller_nodes(
+    document: ScenarioDocument,
+) -> "list[tuple[str, Any]]":
+    """Every action and condition in *document* of the controller type.
+
+    Conditions are reached wherever they are written -- a trigger, a nested
+    composition, an assertion -- because a phase name is just as wrong in each.
+    """
+    found: "list[tuple[str, Any]]" = []
+
+    def walk_condition(path: str, node: ConditionNode) -> None:
+        if node.type == "traffic_signal_controller":
+            found.append((path, node))
+        for index, child in enumerate(node.children):
+            walk_condition(f"{path}.children[{index}]", child)
+
+    for index, action in enumerate(document.actions):
+        path = f"actions[{index}]"
+        if action.type == "traffic_signal_controller":
+            found.append((path, action))
+        if action.trigger is not None:
+            walk_condition(f"{path}.trigger", action.trigger)
+
+    for index, condition in enumerate(document.assertions.pass_conditions):
+        walk_condition(f"assertions.pass[{index}]", condition)
+    for index, condition in enumerate(document.assertions.fail_conditions):
+        walk_condition(f"assertions.fail[{index}]", condition)
+
+    return found

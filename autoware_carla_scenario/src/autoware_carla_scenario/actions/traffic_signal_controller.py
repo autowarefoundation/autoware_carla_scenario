@@ -5,17 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
-import carla
-
 from ..conditions import BaseCondition
-from ..coordinate.traffic_light import (
-    find_traffic_lights_for_lanelet2_id,
-    junction_group_of,
-)
+from ..signals.registry import find_signal_controller
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
-    pass
+    import carla
 
 logger = logging.getLogger(__name__)
 
@@ -23,79 +18,66 @@ __all__ = ["TrafficSignalControllerAction"]
 
 
 class TrafficSignalControllerAction(BaseAction):
-    """Put a junction's signals into the phase that gives one approach green.
+    """Jump a junction's controller to one of its declared phases.
 
     The difference from :class:`~autoware_carla_scenario.TrafficSignalAction`
-    is not bureaucratic.  Setting lights one at a time can leave two
-    conflicting approaches green -- a state no real junction reaches -- so a
-    scenario built that way tests the ego against a road that cannot exist.
-    A *phase* is the unit that keeps a junction consistent, and this action
-    applies one: the named approach green, every other light of its group red.
+    is not bureaucratic.  That one sets the lights it is given to the colour it
+    is given, so a junction has to be assembled a light at a time -- and a
+    scenario that forgets one, or that is interrupted between two of them,
+    leaves two conflicting approaches green, a state no real road reaches.  A
+    *phase* is the unit that keeps a junction consistent: it names every signal
+    its controller drives, so applying it puts the whole junction into a known
+    state at once.
 
-    A phase is addressed by the Lanelet2 regulatory element whose signals it
-    makes green, rather than by a phase table on the document.  OpenSCENARIO
-    declares phases under ``RoadNetwork/TrafficSignals``, which a
-    ``ScenarioDocument`` has no place for; naming the phase by its leading
-    signal needs no such place and no new IR.
+    The phases themselves are declared on the map (``map.traffic_signal_
+    controllers`` in the document), not here, because a junction's cycle is a
+    property of the road network -- which is where OpenSCENARIO keeps it too.
+    This action only says *which* of them to show, by name.
+
+    The cycle carries on from the phase this jumps to.  A junction forced green
+    does not therefore stay green: that would be a second decision, and a
+    scenario that wants it makes it by naming a phase whose duration is long
+    enough, or by declaring a controller with one phase.
 
     Args:
-        lanelet2_regulatory_element_id: The approach that gets green, named by
-            the Lanelet2 regulatory element its signals belong to -- the same
-            id, and the same name for it, that
-            :class:`~autoware_carla_scenario.TrafficSignalAction` takes for one
-            light.  Every other light in the same CARLA group goes red.
+        controller: Name of the controller, as declared on the map.
+        phase: Name of the phase to show.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
-        freeze: Freeze the group so the TrafficManager does not resume cycling
-            it.  On by default: a phase a scenario set and the simulator then
-            moved on from is not a phase the scenario can assert about.
     """
 
     def __init__(
         self,
-        lanelet2_regulatory_element_id: int,
+        controller: str,
+        phase: str,
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "traffic_signal_controller",
         once: bool = True,
-        freeze: bool = True,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._lanelet2_regulatory_element_id = lanelet2_regulatory_element_id
-        self._freeze = freeze
+        self._controller = controller
+        self._phase = phase
 
     def execute(self, world: "carla.World") -> None:
-        """Set the named approach green and the rest of its junction red."""
-        green = find_traffic_lights_for_lanelet2_id(
-            world, self._lanelet2_regulatory_element_id
-        )
-        if not green:
+        """Show the named phase, and let the cycle continue from it."""
+        controller = find_signal_controller(self._controller)
+        if controller is None:
             logger.warning(
-                "TrafficSignalControllerAction [%s]: no traffic light found "
-                "for Lanelet2 regulatory element ID %d",
+                "TrafficSignalControllerAction [%s]: no controller named '%s' "
+                "is running; the map declares none by that name",
                 self.label,
-                self._lanelet2_regulatory_element_id,
+                self._controller,
             )
             return
 
-        green_ids = {light.id for light in green}
-        group = junction_group_of(green)
-        for light in group:
-            light.set_state(
-                carla.TrafficLightState.Green
-                if light.id in green_ids
-                else carla.TrafficLightState.Red
+        if controller.change_phase_to(self._phase, world):
+            logger.info(
+                "TrafficSignalControllerAction [%s]: '%s' now in phase '%s'",
+                self.label,
+                self._controller,
+                self._phase,
             )
-            light.freeze(self._freeze)
-
-        logger.info(
-            "TrafficSignalControllerAction [%s]: lanelet2 %d green, %d other "
-            "light(s) in its junction red (freeze=%s)",
-            self.label,
-            self._lanelet2_regulatory_element_id,
-            len(group) - len(green_ids),
-            self._freeze,
-        )

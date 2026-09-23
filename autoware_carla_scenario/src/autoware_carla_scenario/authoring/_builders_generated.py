@@ -560,7 +560,8 @@ def build_traffic_signal_controller_condition(
 
     params = compiled.params
     return TrafficSignalControllerCondition(
-        lanelet2_regulatory_element_id=params["lanelet2_regulatory_element_id"],
+        controller=str(params["controller"]),
+        phase=str(params["phase"]),
         label=compiled.label,
     )
 
@@ -608,12 +609,12 @@ def build_traffic_signal_controller_action(
 
     params = compiled.params
     return TrafficSignalControllerAction(
-        lanelet2_regulatory_element_id=params["lanelet2_regulatory_element_id"],
+        controller=str(params["controller"]),
+        phase=str(params["phase"]),
         condition=condition,
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
-        freeze=params["freeze"],
     )
 
 

@@ -977,33 +977,33 @@ register_action_spec(
         default_phase="init",
         fields=(
             FieldSpec(
-                name="lanelet2_regulatory_element_id",
-                label="Approach given green",
-                kind="int",
-                default=0,
+                name="controller",
+                label="Controller",
+                kind="text",
+                default="",
                 help=(
-                    "Every other light of the same junction goes red.  That "
-                    "is what makes this a phase rather than a light: setting "
-                    "lights one at a time can leave two conflicting "
-                    "approaches green, which no real junction does."
+                    "A controller declared on the map.  Its phases, and how "
+                    "long each holds, are declared there too -- a junction's "
+                    "cycle belongs to the road rather than to one scenario."
                 ),
             ),
             FieldSpec(
-                name="freeze",
-                label="Freeze the junction",
-                kind="bool",
-                default=True,
-                required=False,
+                name="phase",
+                label="Phase",
+                kind="text",
+                default="",
                 help=(
-                    "Stop the simulator resuming its own cycle.  A phase the "
-                    "scenario set and the simulator then moved on from is not "
-                    "a phase the scenario can assert about."
+                    "Which of that controller's phases to show.  The cycle "
+                    "carries on from it, so this starts the junction at a "
+                    "point rather than holding it there."
                 ),
             ),
         ),
         description=(
-            "Put a junction into the phase that gives one approach green and "
-            "the rest red."
+            "Jump a junction's controller to one of the phases its map "
+            "declares.  A phase names every signal the controller drives, so "
+            "the junction goes to a consistent state rather than one light at "
+            "a time."
         ),
     )
 )
@@ -1875,25 +1875,32 @@ register_condition_spec(
         target="..conditions:TrafficSignalControllerCondition",
         visual=ConditionVisual(
             metric="Junction phase",
-            target="lanelet2_regulatory_element_id",
-            target_prefix="Regulatory element",
-            value_label="holds",
+            target="controller",
+            target_prefix="Controller",
+            value="phase",
+            value_label="shows",
         ),
         fields=(
             FieldSpec(
-                name="lanelet2_regulatory_element_id",
-                label="Approach given green",
-                kind="int",
-                default=0,
+                name="controller",
+                label="Controller",
+                kind="text",
+                default="",
+                help="A controller declared on the map.",
+            ),
+            FieldSpec(
+                name="phase",
+                label="Phase",
+                kind="text",
+                default="",
                 help=(
-                    "Passes while that approach is green and the rest of its "
-                    "junction is red.  A single-signal check cannot tell "
-                    '"green for us" from "green for us and for the crossing '
-                    'traffic too".'
+                    "Passes while that phase is the one showing.  Read off the "
+                    'controller rather than off the lights, so it means "this '
+                    'phase is running" and not "something set these colours".'
                 ),
             ),
         ),
-        description=("The junction is in the phase that gives one approach green."),
+        description=("The junction's controller is showing a named phase."),
     )
 )
 

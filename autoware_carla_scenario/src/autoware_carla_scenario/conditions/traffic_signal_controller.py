@@ -1,20 +1,15 @@
-"""Traffic signal controller condition: is a junction in a named phase?"""
+"""Traffic signal controller condition: is a junction showing a named phase?"""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-import carla
-
-from ..coordinate.traffic_light import (
-    find_traffic_lights_for_lanelet2_id,
-    junction_group_of,
-)
+from ..signals.registry import find_signal_controller
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
-    pass
+    import carla
 
 logger = logging.getLogger(__name__)
 
@@ -22,99 +17,89 @@ __all__ = ["TrafficSignalControllerCondition"]
 
 
 class TrafficSignalControllerCondition(BaseCondition):
-    """Fire when a junction is in the phase that gives one approach green.
+    """Fire while a junction's controller is showing a named phase.
 
     The counterpart of
     :class:`~autoware_carla_scenario.TrafficSignalControllerAction`, and the
     question it answers is about the whole junction rather than one light:
-    *is the named approach the one that is going?*  A single-signal check
-    cannot tell "green for us" from "green for us and green for the crossing
-    traffic as well", and the second is a junction state the ego should never
-    be tested against by accident.
+    *is this the phase that is running?*  A single-signal check cannot tell
+    "green for us" from "green for us and green for the crossing traffic as
+    well", and it cannot see an amber interval as a thing with a name at all.
+
+    Read off the controller rather than off the lights.  The controller is what
+    decided the lights, so asking it is asking the source: a check that
+    re-derived the phase by reading every light back would also report a phase
+    when some other actor had happened to set the same colours, which is not
+    the same statement.
 
     Args:
-        lanelet2_regulatory_element_id: The approach the phase gives green,
-            named by the Lanelet2 regulatory element its signals belong to --
-            the same id, and the same name for it, that
-            :class:`~autoware_carla_scenario.TrafficSignalAction` takes for one
-            light.
+        controller: Name of the controller, as declared on the map.
+        phase: Name of the phase to wait for.
         label: Human-readable identifier for this condition.
     """
 
-    def __init__(self, lanelet2_regulatory_element_id: int, *, label: str) -> None:
+    def __init__(self, controller: str, phase: str, *, label: str) -> None:
         super().__init__(label=label)
-        self._lanelet2_regulatory_element_id = lanelet2_regulatory_element_id
-        #: Whether the id failing to resolve has already been reported.  It is
-        #: checked every tick and the answer does not change between them, so
-        #: an unguarded warning would print at the tick rate for a whole run.
-        self._warned_unresolved = False
+        self._controller = controller
+        self._phase = phase
+        #: Whether the controller being absent has already been reported.  The
+        #: condition is checked every tick and the answer does not change
+        #: between them, so an unguarded warning would print at the tick rate.
+        self._warned_missing = False
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
-        """Return a pass result while the junction holds the named phase.
+        """Return a pass result while the named phase is the one showing.
 
-        ``None`` covers two different situations, and they are logged
-        differently because only one of them is the scenario's own answer:
+        ``None`` covers three situations, and they are logged differently
+        because only one of them is the scenario's own answer:
 
-        * **The id resolves to nothing.**  A setup problem -- a mistyped
-          regulatory element, or a map that is not loaded -- and reported once
-          as a warning, because a condition that never fires for a whole run
-          should say why rather than leave the reader to guess between this
-          and the phase simply never arriving.
-        * **The junction is in some other phase.**  The ordinary answer, true
-          on most ticks of most runs, so it is logged at debug and names the
-          lights that disagreed: which light is wrong is the first thing
-          anyone asks.
+        * **No such controller.**  A setup problem -- a mistyped name, or a map
+          that declares no controllers -- warned once, because a condition that
+          never fires for a whole run should say why.
+        * **The cycle has not started.**  True for the first ticks of a
+          controller that waits on another one's delay.  Silent: it is about to
+          change by itself.
+        * **Some other phase is showing.**  The ordinary answer, true for most
+          of every cycle, and logged at debug naming the phase that *is*
+          showing -- which is the first thing anyone asks.
 
-        Both still return ``None`` rather than a failing result.  An action
+        All three return ``None`` rather than a failing result: an action
         treats any non-``None`` result as its trigger having fired, so a
         ``passed=False`` here would start the action it is meant to hold back.
         """
-        green = find_traffic_lights_for_lanelet2_id(
-            world, self._lanelet2_regulatory_element_id
-        )
-        if not green:
-            if not self._warned_unresolved:
-                self._warned_unresolved = True
+        controller = find_signal_controller(self._controller)
+        if controller is None:
+            if not self._warned_missing:
+                self._warned_missing = True
                 logger.warning(
-                    "TrafficSignalControllerCondition [%s]: Lanelet2 "
-                    "regulatory element %d resolves to no traffic light, so "
-                    "this condition cannot fire. Check the id, or that the "
-                    "map is loaded.",
+                    "TrafficSignalControllerCondition [%s]: no controller "
+                    "named '%s' is running, so this condition cannot fire. "
+                    "Check the name against the map's declared controllers.",
                     self.label,
-                    self._lanelet2_regulatory_element_id,
+                    self._controller,
                 )
             return None
 
-        green_ids = {light.id for light in green}
-        wrong: list[str] = []
-        for light in junction_group_of(green):
-            expected = (
-                carla.TrafficLightState.Green
-                if light.id in green_ids
-                else carla.TrafficLightState.Red
-            )
-            state = light.get_state()
-            if state != expected:
-                wrong.append(f"{light.get_opendrive_id()}={state}")
+        current = controller.current_phase
+        if current is None:
+            return None
 
-        if wrong:
+        if current.name != self._phase:
             logger.debug(
-                "TrafficSignalControllerCondition [%s]: not the phase of "
-                "lanelet2 %d -- %s",
+                "TrafficSignalControllerCondition [%s]: '%s' is in phase "
+                "'%s', not '%s'",
                 self.label,
-                self._lanelet2_regulatory_element_id,
-                ", ".join(wrong),
+                self._controller,
+                current.name,
+                self._phase,
             )
             return None
 
         return ScenarioResult(
             passed=True,
-            message=(
-                f"Junction of lanelet2 {self._lanelet2_regulatory_element_id} is in its "
-                f"phase: that approach green, the rest red"
-            ),
+            message=(f"Controller '{self._controller}' is in phase '{self._phase}'"),
             elapsed_seconds=elapsed,
         )
 
     def get_details(self) -> dict[str, Any]:
-        return {"lanelet2_regulatory_element_id": self._lanelet2_regulatory_element_id}
+        return {"controller": self._controller, "phase": self._phase}

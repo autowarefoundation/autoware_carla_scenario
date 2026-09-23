@@ -46,6 +46,10 @@ __all__ = [
     "LaneletSlot",
     "MapRef",
     "ScenarioDocument",
+    "SIGNAL_STATE_NAMES",
+    "SignalControllerRef",
+    "SignalPhaseRef",
+    "SignalStateRef",
     "SpawnMode",
     "SpawnSpec",
     "SValue",
@@ -553,6 +557,73 @@ class UiLayout(_Node):
 # ---------------------------------------------------------------------------
 
 
+#: The signal states a phase may name.
+#:
+#: Mirrors :data:`autoware_carla_scenario.signals.STATE_NAMES`, which holds the
+#: same words with their CARLA members attached; the pair is pinned by a test,
+#: because this package must not import CARLA and the runtime must not import
+#: this one.  Lower case because a scenario document should not be spelling a
+#: simulator's enum members.
+SIGNAL_STATE_NAMES: tuple[str, ...] = ("green", "yellow", "red", "off", "unknown")
+
+
+class SignalStateRef(_Node):
+    """One signal's state for the duration of a phase.
+
+    Attributes:
+        lanelet2_regulatory_element_id: The signal, named by the Lanelet2
+            regulatory element it belongs to -- the same id every other signal
+            primitive here takes.
+        state: ``green``, ``yellow``, ``red``, ``off`` or ``unknown``.
+    """
+
+    lanelet2_regulatory_element_id: int
+    state: str = "red"
+
+
+class SignalPhaseRef(_Node):
+    """One step of a junction's cycle.
+
+    A phase states every signal its controller drives, not only the ones that
+    change.  That is what makes it a phase rather than a set of edits: applying
+    it puts the junction into a known whole, so no earlier phase can leave a
+    light behind in a state nobody wrote.
+
+    Attributes:
+        name: What the scenario calls this phase; unique within its controller.
+        duration_seconds: How long it holds before the cycle moves on.
+        states: The signals and their states.
+    """
+
+    name: str
+    duration_seconds: float = 10.0
+    states: list[SignalStateRef] = Field(default_factory=list)
+
+
+class SignalControllerRef(_Node):
+    """A junction's cycle, declared on the map it belongs to.
+
+    Declared here rather than in the storyboard because a cycle is a property
+    of the road network -- which is where OpenSCENARIO puts it too, under
+    ``RoadNetwork/TrafficSignals``.  Two scenarios on the same map describe the
+    same junction, and a phase named in an action refers to this.
+
+    Attributes:
+        name: What the scenario calls this controller.
+        phases: The cycle, in order.  Walked in a loop, each phase for its own
+            duration.
+        delay_seconds: How long after *reference* starts its first phase this
+            one starts.  Requires *reference*.
+        reference: Another controller this one is offset from, which is how a
+            green wave along a corridor is written.
+    """
+
+    name: str
+    phases: list[SignalPhaseRef] = Field(default_factory=list)
+    delay_seconds: float = 0.0
+    reference: Optional[str] = None
+
+
 class MapRef(_Node):
     """The map the scenario runs on.
 
@@ -573,6 +644,7 @@ class MapRef(_Node):
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     no_3d_model_lanelet_ids: list[int] = Field(default_factory=list)
+    traffic_signal_controllers: list[SignalControllerRef] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

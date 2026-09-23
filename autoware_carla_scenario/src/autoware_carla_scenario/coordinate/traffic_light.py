@@ -13,7 +13,7 @@ The rest supply the road network a run happens to have loaded, because
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 from ..utils.traffic_light import (
     get_signal_ids_for_controller as _signal_ids_of,
@@ -114,22 +114,3 @@ def find_traffic_lights_for_lanelet2_id(
         for actor in world.get_actors().filter("traffic.traffic_light*")
         if actor.get_opendrive_id() in signal_ids
     ]
-
-
-def junction_group_of(lights: "Sequence[carla.Actor]") -> "list[carla.Actor]":
-    """Return every light controlled together with *lights*, deduplicated.
-
-    CARLA groups the lights of one junction, and the group is what makes a
-    *phase* expressible: the alternative -- setting lights one at a time -- can
-    leave two conflicting approaches green, which is a world state no real
-    junction reaches, so a scenario built that way tests the ego against a road
-    that cannot exist.
-
-    Deduplicated by actor id because every member of a group reports the whole
-    group, so asking two of them returns the group twice.
-    """
-    seen: dict[int, "carla.Actor"] = {}
-    for light in lights:
-        for member in light.get_group_traffic_lights():
-            seen.setdefault(member.id, member)
-    return list(seen.values())

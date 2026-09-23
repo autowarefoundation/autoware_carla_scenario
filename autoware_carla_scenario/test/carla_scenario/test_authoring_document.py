@@ -21,6 +21,9 @@ from autoware_carla_scenario.authoring.models import (
     ConstraintNode,
     Entity,
     ScenarioDocument,
+    SignalControllerRef,
+    SignalPhaseRef,
+    SignalStateRef,
     SpawnSpec,
 )
 from autoware_carla_scenario.authoring.persistence import (
@@ -709,3 +712,217 @@ class TestInitTakesNoCondition:
 
         report = validate_document(document)
         assert [i for i in report.errors if "initialization phase" in i.message]
+
+
+class TestSignalControllerValidation:
+    """The phase table's own rules.
+
+    A phase table is the one part of a scenario whose mistakes are invisible at
+    runtime -- a misspelt phase name leaves the junction cycling normally and
+    the scenario waiting for something that never comes -- so the names are
+    checked against each other while the document is being written.
+    """
+
+    @staticmethod
+    def _with_controllers(*controllers: SignalControllerRef) -> ScenarioDocument:
+        document = new_document()
+        document.map.traffic_signal_controllers = list(controllers)
+        return document
+
+    @staticmethod
+    def _crossing(name: str = "crossing") -> SignalControllerRef:
+        return SignalControllerRef(
+            name=name,
+            phases=[
+                SignalPhaseRef(
+                    name="ns_green",
+                    duration_seconds=5.0,
+                    states=[
+                        SignalStateRef(
+                            lanelet2_regulatory_element_id=1001, state="green"
+                        )
+                    ],
+                ),
+                SignalPhaseRef(
+                    name="ns_amber",
+                    duration_seconds=2.0,
+                    states=[
+                        SignalStateRef(
+                            lanelet2_regulatory_element_id=1001, state="yellow"
+                        )
+                    ],
+                ),
+            ],
+        )
+
+    def test_a_declared_cycle_is_valid(self) -> None:
+        report = validate_document(self._with_controllers(self._crossing()))
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_two_controllers_of_the_same_name_is_an_error(self) -> None:
+        document = self._with_controllers(self._crossing(), self._crossing())
+        assert any(
+            "Duplicate signal controller name" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_a_controller_with_no_phases_is_an_error(self) -> None:
+        document = self._with_controllers(SignalControllerRef(name="empty"))
+        assert any(
+            "declares no phases" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_two_phases_of_the_same_name_is_an_error(self) -> None:
+        """An action naming it could not say which one it meant."""
+        controller = self._crossing()
+        controller.phases[1].name = "ns_green"
+        assert any(
+            "two phases named" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_a_negative_duration_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.phases[0].duration_seconds = -1.0
+        assert any(
+            "duration cannot be negative" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_an_unknown_state_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.phases[0].states[0].state = "chartreuse"
+        assert any(
+            "Unknown signal state" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_the_older_cards_spelling_of_a_colour_is_accepted(self) -> None:
+        """``Green`` is how the single-signal card spells it."""
+        controller = self._crossing()
+        controller.phases[0].states[0].state = "Green"
+        assert validate_document(self._with_controllers(controller)).ok
+
+    def test_a_phase_that_sets_nothing_is_only_a_warning(self) -> None:
+        """Spending time without touching a light is odd but legitimate."""
+        controller = self._crossing()
+        controller.phases[0].states = []
+        report = validate_document(self._with_controllers(controller))
+        assert report.ok
+        assert any("only spends time" in i.message for i in report.warnings)
+
+    def test_a_delay_with_nothing_to_measure_from_is_an_error(self) -> None:
+        """Not a controller that starts late: one whose offset silently is not."""
+        controller = self._crossing()
+        controller.delay_seconds = 3.0
+        assert any(
+            "no reference controller" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_a_reference_to_a_controller_this_map_lacks_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.reference = "nonesuch"
+        controller.delay_seconds = 3.0
+        assert any(
+            "which this map does not declare" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_a_controller_offset_from_itself_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.reference = controller.name
+        assert any(
+            "offset from itself" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_controllers_offset_from_each_other_in_a_loop_is_an_error(self) -> None:
+        """None of them could ever start, and nothing at runtime would say so."""
+        first = self._crossing("first")
+        first.reference = "second"
+        second = self._crossing("second")
+        second.reference = "first"
+        assert any(
+            "in a loop" in i.message
+            for i in validate_document(self._with_controllers(first, second)).errors
+        )
+
+    def test_a_chain_of_offsets_is_fine(self) -> None:
+        first = self._crossing("first")
+        second = self._crossing("second")
+        second.reference = "first"
+        second.delay_seconds = 3.0
+        third = self._crossing("third")
+        third.reference = "second"
+        third.delay_seconds = 3.0
+        report = validate_document(self._with_controllers(first, second, third))
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_an_action_naming_an_undeclared_controller_is_an_error(self) -> None:
+        document = self._with_controllers(self._crossing())
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "nonesuch", "phase": "ns_green"},
+            )
+        )
+        assert any(
+            "No signal controller named" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_an_action_naming_a_phase_the_controller_lacks_is_an_error(self) -> None:
+        document = self._with_controllers(self._crossing())
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing", "phase": "ew_green"},
+            )
+        )
+        report = validate_document(document)
+        assert any("has no phase named" in i.message for i in report.errors)
+        # The phases it does have are named, since that is the next question.
+        assert any("'ns_amber'" in i.message for i in report.errors)
+
+    def test_a_condition_nested_in_a_trigger_is_checked_too(self) -> None:
+        """A phase name is just as wrong wherever it is written."""
+        document = self._with_controllers(self._crossing())
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing", "phase": "ns_green"},
+                trigger=ConditionNode(
+                    type="all",
+                    children=[
+                        ConditionNode(
+                            type="traffic_signal_controller",
+                            params={"controller": "crossing", "phase": "nonesuch"},
+                        ),
+                        ConditionNode(
+                            type="traffic_signal_controller",
+                            params={"controller": "crossing", "phase": "ns_amber"},
+                        ),
+                    ],
+                ),
+            )
+        )
+        errors = [
+            i
+            for i in validate_document(document).errors
+            if "no phase named" in i.message
+        ]
+        assert len(errors) == 1
+        assert "nonesuch" in errors[0].message
+
+    def test_an_assertion_naming_a_good_phase_is_valid(self) -> None:
+        document = self._with_controllers(self._crossing())
+        document.assertions.pass_conditions = [
+            ConditionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing", "phase": "ns_amber"},
+            )
+        ]
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]

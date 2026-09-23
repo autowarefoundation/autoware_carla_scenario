@@ -34,11 +34,20 @@ from autoware_carla_scenario.authoring.builders import (
     instantiate_condition,
 )
 from autoware_carla_scenario.authoring.compiler import BuildContext, compile_document
-from autoware_carla_scenario.authoring.models import ConditionNode
+from autoware_carla_scenario.authoring.models import (
+    ConditionNode,
+    SignalControllerRef,
+    SignalPhaseRef,
+    SignalStateRef,
+)
 from autoware_carla_scenario.authoring.starter import new_document
 from autoware_carla_scenario.declarative import (
     DeclarativeScenario,
     DeclarativeScenarioConfig,
+)
+from autoware_carla_scenario.signals import (
+    clear_signal_controllers,
+    find_signal_controller,
 )
 
 
@@ -403,3 +412,70 @@ class TestTheInitPhaseIsAPhaseAndNotATick:
         assert ActionNode.model_validate(
             {"type": "t", "timing": "post_tick"}
         ).phase == ("post_tick")
+
+
+@pytest.fixture(autouse=True)
+def _clean_signal_registry() -> "Any":
+    """The controller registry is module state, so it is cleared around tests."""
+    clear_signal_controllers()
+    yield
+    clear_signal_controllers()
+
+
+class TestSignalControllersStart:
+    """The map's junction cycles are set running at setup, not by the storyboard.
+
+    A controller is not something the scenario *does*; it is a part of the road
+    that keeps running underneath it.  So it goes on the pre-tick list rather
+    than into the actions, where an ``action_completed`` condition could name
+    it.
+    """
+
+    @staticmethod
+    def _with_a_crossing() -> Any:
+        document = new_document()
+        document.map.traffic_signal_controllers = [
+            SignalControllerRef(
+                name="crossing",
+                phases=[
+                    SignalPhaseRef(
+                        name="ns_green",
+                        duration_seconds=5.0,
+                        states=[
+                            SignalStateRef(
+                                lanelet2_regulatory_element_id=1001, state="green"
+                            )
+                        ],
+                    )
+                ],
+            )
+        ]
+        return document
+
+    def test_the_declared_controller_is_registered_and_ticked(self) -> None:
+        scenario = _scenario(self._with_a_crossing())
+        before = len(scenario._pre_tick_callbacks)
+
+        scenario._start_signal_controllers()
+
+        assert find_signal_controller("crossing") is not None
+        assert len(scenario._pre_tick_callbacks) == before + 1
+
+    def test_a_document_without_controllers_registers_nothing(self) -> None:
+        scenario = _scenario()
+        before = len(scenario._pre_tick_callbacks)
+
+        scenario._start_signal_controllers()
+
+        assert len(scenario._pre_tick_callbacks) == before
+
+    def test_the_previous_scenarios_controllers_do_not_carry_over(self) -> None:
+        """The registry outlives one scenario; a leftover would drive lights
+        this run never declared, which reads in a report as a junction
+        misbehaving."""
+        _scenario(self._with_a_crossing())._start_signal_controllers()
+        assert find_signal_controller("crossing") is not None
+
+        _scenario()._start_signal_controllers()
+
+        assert find_signal_controller("crossing") is None

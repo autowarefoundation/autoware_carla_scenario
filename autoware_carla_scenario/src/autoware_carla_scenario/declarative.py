@@ -25,6 +25,11 @@ from .authoring.compiler import BuildContext, CompiledScenario, compile_document
 from .authoring.models import Entity, ScenarioDocument
 from .authoring.persistence import load_document
 from .actions.base import TickTiming
+from .signals import (
+    build_controllers,
+    clear_signal_controllers,
+    register_signal_controller,
+)
 from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
 from .entity._spawn import SpawnTransform
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
@@ -215,6 +220,32 @@ class DeclarativeScenario(BaseScenario):
     # BaseScenario interface
     # ------------------------------------------------------------------
 
+    def _start_signal_controllers(self) -> None:
+        """Build the map's signal controllers and set them running.
+
+        Registered as pre-tick callbacks rather than as actions: a controller
+        is not something the storyboard does, it is a part of the road that
+        keeps running underneath it, and registering it as an action would put
+        it in the list an ``action_completed`` condition can name.
+
+        Cleared first, because the registry outlives a single scenario and a
+        controller left over from the previous one would go on driving lights
+        that this one never declared -- which reads in a report as this
+        junction misbehaving.
+        """
+        clear_signal_controllers()
+        controllers = build_controllers(self._document.map.traffic_signal_controllers)
+        for controller in controllers:
+            register_signal_controller(controller)
+            self.register_pre_tick(controller.tick)
+        if controllers:
+            logger.info(
+                "DeclarativeScenario '%s': running %d signal controller(s): %s",
+                self._document.id,
+                len(controllers),
+                ", ".join(c.name for c in controllers),
+            )
+
     def setup(self) -> None:
         """Spawn the entities and register the document's actions and assertions."""
         od_pose: OpenDrivePose = self._setup_ego_spawn()
@@ -225,6 +256,7 @@ class DeclarativeScenario(BaseScenario):
         )
 
         self._spawn_npcs()
+        self._start_signal_controllers()
 
         ctx = BuildContext(scenario=self)
 

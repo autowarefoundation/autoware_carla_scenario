@@ -296,10 +296,6 @@ class TestSelectFieldDefaults:
             # which is worse than a text box.
             ("traffic_signal", "lanelet2_regulatory_element_id"),
             ("traffic_signal", "lanelet2_traffic_light_ids"),
-            # The same regulatory element under the same name, reached by the
-            # action and the condition that put a junction into a phase and
-            # read it back, and unpickable for the same reason.
-            ("traffic_signal_controller", "lanelet2_regulatory_element_id"),
         }
 
         offenders = []
