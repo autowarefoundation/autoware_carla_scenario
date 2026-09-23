@@ -232,6 +232,47 @@ def _destroy_all_dynamic_actors(
         logger.info("[%s] Destroyed %d leftover actor(s)", scenario_name, destroyed)
 
 
+class _ScenarioClock:
+    """The run's clock: simulated seconds since it began.
+
+    A scenario is measured on the world's clock and on nothing else.  The world
+    advances by ``fixed_delta_seconds`` per tick and the loop steps it as fast
+    as the slowest client allows, so how much simulated time fits into a second
+    of real time is a property of the machine.  A duration read off the wall
+    clock would make the same scenario fire its triggers in different places on
+    a fast host and a slow one, which is the determinism that synchronous mode
+    exists to provide.
+
+    That holds for the runner's own timeout as much as for a condition an
+    author wrote: a scenario that is given sixty seconds is given sixty of its
+    own.  The wall-clock protection a run needs against a *stuck* simulator
+    lives where it belongs -- the CARLA client's RPC timeout, which raises when
+    ``world.tick()`` stops returning, and the sweeper's ``job_timeout_seconds``,
+    which bounds a whole job.
+
+    It starts when the clock is built, which is after the ego is ready: an
+    entity that needs an autonomy stack to come up would otherwise spend most
+    of the scenario's timeout booting.  Simulation time does advance during
+    that wait, which is why the start is measured rather than assumed to be
+    zero.
+
+    Args:
+        world: The CARLA world whose simulated time is read.
+    """
+
+    def __init__(self, world: "carla.World") -> None:
+        self._world = world
+        self._simulated_start = self._simulated_now()
+
+    def _simulated_now(self) -> float:
+        return float(self._world.get_snapshot().timestamp.elapsed_seconds)
+
+    @property
+    def simulated(self) -> float:
+        """Simulated seconds since the run began."""
+        return self._simulated_now() - self._simulated_start
+
+
 class ScenarioRunner:
     """Orchestrates scenario execution: map loading, tick loop, and recording.
 
@@ -265,7 +306,10 @@ class ScenarioRunner:
             host: CARLA server hostname.
             port: CARLA server RPC port.
             tm_port: CARLA TrafficManager port.
-            timeout_seconds: Default timeout applied to every scenario.
+            timeout_seconds: Default ``TimeoutCondition`` registered on every
+                scenario, in **simulated** seconds -- the same clock every
+                other duration is on, so a scenario given sixty seconds is
+                given sixty of its own however fast the host runs.
             output_dir: Directory where CARLA recording logs are saved.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
@@ -787,16 +831,24 @@ class ScenarioRunner:
             # The clock starts here, after the ego is ready: an entity that
             # needs a stack to come up would otherwise spend most of the
             # scenario's timeout booting.
-            start_time = time.monotonic()
+            clock = _ScenarioClock(world)
 
             # Tick loop
             while not scenario.is_done():
-                elapsed = time.monotonic() - start_time
+                # Read once before the world advances and once after, because
+                # on the simulated clock those are a whole `fixed_delta_seconds`
+                # apart rather than the sliver of real time a tick takes.  Each
+                # half of the loop is told the time of the world it is looking
+                # at: a pre-tick action acts on the world as it stands, and
+                # everything below `world.tick()` observes the world it has
+                # become.  Handing the earlier reading to both would date every
+                # post-tick observation one step early.
+                pre_tick_elapsed = clock.simulated
                 tick_count += 1
 
-                # Pre-tick actions (receive elapsed)
+                # Pre-tick actions (receive the time they act at)
                 for action in scenario._pre_tick_actions:
-                    action.tick(world, elapsed)
+                    action.tick(world, pre_tick_elapsed)
 
                 # Pre-tick callbacks
                 for cb in scenario._pre_tick_callbacks:
@@ -804,6 +856,10 @@ class ScenarioRunner:
 
                 self._pace_tick()
                 world.tick()
+
+                # The world has advanced; everything from here reads the time
+                # it advanced to.
+                elapsed = clock.simulated
 
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
@@ -907,7 +963,7 @@ class ScenarioRunner:
 
             # If the loop exited via is_done() with no result, treat as passed
             if result is None:
-                elapsed = time.monotonic() - start_time
+                elapsed = clock.simulated
                 result = ScenarioResult(
                     passed=True,
                     message="Scenario completed successfully",

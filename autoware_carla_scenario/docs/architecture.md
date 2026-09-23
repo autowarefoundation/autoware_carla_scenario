@@ -233,6 +233,38 @@ The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode.
 - **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure.
 - If the loop exits via `is_done()` returning `True` with no condition triggered, the scenario is treated as **passed**.
 
+### The scenario clock
+
+`_ScenarioClock` supplies the `elapsed` every action, condition, entity and
+backend receives, and the `elapsed_seconds` on a `ScenarioResult`. It reads
+`world.get_snapshot().timestamp.elapsed_seconds` — **simulated** time, and
+nothing else.
+
+The world advances by `fixed_delta_seconds` per tick and the loop steps it as
+fast as the slowest client allows (see `max_tick_rate_hz`), so how much
+simulated time fits into a second of real time is a property of the host. A
+scenario whose durations came off the wall clock would fire its triggers in
+different places on a fast machine and a slow one — the determinism that
+synchronous mode exists to provide.
+
+That holds for `ScenarioRunner.timeout_seconds` as much as for a condition an
+author wrote. It is registered as a default `TimeoutCondition` on every
+scenario, so a scenario given sixty seconds is given sixty of *its own*
+however fast the host runs.
+
+Wall-clock protection against a **stuck** simulator lives outside the scenario
+clock, where it belongs:
+
+| Guard | Where | Covers |
+|---|---|---|
+| CARLA client RPC timeout (60 s) | `ScenarioRunner.__init__` | `world.tick()` stops returning |
+| `sweep.job_timeout_seconds` (120 s) | sweeper config | a whole job overrunning |
+
+The clock starts after the ego is ready, so an entity that needs an autonomy
+stack to come up does not spend the scenario's timeout booting. Simulation
+time does advance during that wait, which is why the start is measured rather
+than assumed to be zero.
+
 ### ScenarioQueue: Batch Execution and Retry
 
 `ScenarioQueue` wraps `ScenarioRunner` to support sequential execution of multiple scenarios:
@@ -321,7 +353,9 @@ classDiagram
 
     class EntityLanePositionCondition
     class EntityDistanceCondition
+    class EntityPositionDistanceCondition
     class TimeToCollisionCondition
+    class TimeHeadwayCondition
     class RelativeSpeedCondition
     class SpeedCondition
     class AccelerationCondition
@@ -343,7 +377,9 @@ classDiagram
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- EntityLanePositionCondition
     BaseCondition <|-- EntityDistanceCondition
+    BaseCondition <|-- EntityPositionDistanceCondition
     BaseCondition <|-- TimeToCollisionCondition
+    BaseCondition <|-- TimeHeadwayCondition
     BaseCondition <|-- RelativeSpeedCondition
     BaseCondition <|-- SpeedCondition
     BaseCondition <|-- AccelerationCondition
@@ -365,14 +401,25 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection, actor alive checks |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection — with anything, or with a named entity or class of object — and actor alive checks |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map, time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
-| **Relative** | `EntityDistanceCondition`, `TimeToCollisionCondition`, `RelativeSpeedCondition` | Gap, time to collision and speed difference between two entities |
 | **Traffic** | `TrafficSignalCondition` | Traffic light state checks |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
+
+> **Distances are measured in a straight line, not along the lane.**
+> `EntityDistanceCondition`, `TimeHeadwayCondition` and the TTC conditions all
+> work in the entity coordinate system — a world-frame offset projected onto
+> the subject's heading or direction of travel. OpenSCENARIO's
+> `coordinateSystem: lane`, which `scenario_simulator_v2` measures by default,
+> is not implemented: it needs the lanelet routing graph at run time, and the
+> runtime holds none. On a curve the projection under-reads, and for
+> `TimeHeadwayCondition` past a quarter turn it inverts and the condition stops
+> firing. Tracked in
+> [#62](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive/issues/62).
 
 **`check()` contract:**
 
@@ -391,6 +438,8 @@ classDiagram
         +label: str
         +timing: TickTiming
         +once: bool
+        +state: ActionState
+        +reissues_while_running: bool
         +execute(world) void
         +tick(world, elapsed) void
     }
@@ -400,23 +449,71 @@ classDiagram
     }
 
     class TrafficSignalAction
+    class EnvironmentAction
     class TurnAction
     class WalkStraightAction
     class LaneChangeAction
+    class RoutingAction
+    class SetSpeedAction
 
     BaseAction <|-- TrafficSignalAction
+    BaseAction <|-- EnvironmentAction
     BaseAction <|-- TurnAction
     BaseAction <|-- WalkStraightAction
     BaseAction <|-- LaneChangeAction
+    BaseAction <|-- RoutingAction
+    BaseAction <|-- SetSpeedAction
     BaseAction --> BaseCondition : trigger condition
 ```
 
 **Action lifecycle:**
 
-1. Each tick, the runner calls `action.tick(world, elapsed)`.
-2. `tick()` checks the internal `BaseCondition` via `condition.check(world, elapsed)`.
-3. If the condition returns a non-`None` result, `execute(world)` is called.
-4. If `once=True` (default), the action is marked as `done` and never re-evaluated.
+Each tick the runner calls `action.tick(world, elapsed)`, which walks the action
+through the OpenSCENARIO storyboard element states held in `ActionState`
+(`standbyState` -> `startTransition` -> `runningState` -> `endTransition` ->
+`completeState`).
+
+1. **Standby.** The trigger `BaseCondition` is evaluated via
+   `condition.check(world, elapsed)`. A non-`None` result fires the action:
+   `execute(world)` runs and the action enters `startTransition`.
+2. **Running.** The trigger is not re-evaluated, so one run cannot begin on top
+   of another. Two independent questions are then asked every tick, in this
+   order:
+
+   **Does `execute` repeat?** — `reissues_while_running`. This is a fact about
+   the *command*, not about the manoeuvre: a TrafficManager target persists
+   until it is changed, while a command that walks a target towards a goal has
+   to be re-sent on every tick to move at all. Because that depends on what
+   drives the entity, it is resolved in the order the knowledge is available:
+
+   | Source | Who knows |
+   |---|---|
+   | `reissue=` constructor argument | whoever knows the backend — the injection point |
+   | `_reissues_by_default()` override | the action, from its own configuration or by asking its entity |
+   | `REISSUES_BY_DEFAULT` class attribute | the action's class, when it has one answer |
+
+   **When does the run end?** — `until`, a `BaseCondition`. This is the same
+   kind of object the trigger is written in, so the two ends of a run read
+   together. No `until` means there was nothing to wait for, and the run is
+   over on the tick after the one it was commanded on.
+
+   Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
+   hands work to the simulator and watches for it to land — `force_lane_change`
+   returns long before the vehicle is in the next lane, and must not be re-sent
+   — so it supplies a `LaneChangeSettledCondition` as its `until` and does not
+   repeat. A rate-limited speed change says both.
+3. **End.** `endTransition` is held for one tick so a condition can watch for
+   it. Then `once` decides: `True` (default) means `completeState` and no
+   further evaluation; `False` returns the action to standby to be triggered
+   again.
+
+`until`, `reissues_while_running` and `once` are all independent — `until` says
+when *this* run ends, `reissues_while_running` says whether the command repeats
+while it does, and `once` says whether another run may begin.
+
+`ActionStateCondition` observes these states, which is what lets one actor react
+to another *finishing* a manoeuvre rather than to the command having gone out
+(`done` only reports the latter).
 
 **Tick timing:**
 

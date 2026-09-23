@@ -46,6 +46,7 @@ __all__ = [
     "LaneChangeDirection",
     "TurnDirection",
     "LaneChanging",
+    "SettingSpeed",
     "TurningAtJunctions",
     "TrafficBackend",
     "TrafficBackendError",
@@ -122,6 +123,29 @@ class LaneChanging(Protocol):
 
     def lane_change_finished(self, world: Any) -> bool:
         """Whether the manoeuvre has settled."""
+        ...
+
+
+@runtime_checkable
+class SettingSpeed(Protocol):
+    """What :class:`~autoware_carla_scenario.actions.set_speed.SetSpeedAction`
+    needs of an entity.
+
+    One call, and a target rather than a transition.  A rate-limited change is
+    the action walking that target towards its goal a tick at a time, so a
+    traffic model which is not the TrafficManager needs to understand only
+    "drive at this speed" and never a transition model of its own.
+
+    The corollary is that this seam carries no rate, so a backend cannot honour
+    one natively however it drives: a rate is always walked by the action, and
+    therefore always reissued.  What *is* this backend's business is whether an
+    immediate target survives being sent once -- ``set_desired_speed`` holds the
+    last value it was given, and a backend that keeps nothing says so through
+    the action's *reissue* argument rather than here.
+    """
+
+    def set_desired_speed(self, world: Any, speed_kmh: float) -> None:
+        """Aim for *speed_kmh* from now on."""
         ...
 
 
@@ -271,7 +295,7 @@ class TrafficBackend:
 
         Args:
             world: The CARLA world.
-            elapsed: Seconds since the scenario clock started.
+            elapsed: Simulated seconds since the run began.
         """
 
     def close(self) -> None:
@@ -320,6 +344,22 @@ class TrafficBackend:
         """
         del entity, world
         return False
+
+    def set_desired_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+        """Drive *entity* at *speed_kmh* from now on.
+
+        The target only; a rate limit has already been applied by the caller,
+        which walks the target from the vehicle's own speed and re-sends it,
+        so a backend implements one call rather than a transition model of its
+        own.
+
+        Args:
+            entity: The entity asking for the new speed.
+            world: The CARLA world.
+            speed_kmh: The speed to hold, in km/h.  Never negative.
+        """
+        del world, speed_kmh
+        self._unavailable("set_desired_speed", entity)
 
     def turn_at_junction(
         self, entity: Any, world: Any, direction: TurnDirection, **kwargs: Any

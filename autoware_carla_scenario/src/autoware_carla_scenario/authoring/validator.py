@@ -293,8 +293,36 @@ def _check_condition(
             node.id,
         )
 
+    _check_collision_names_one_target(out, path, node)
+
     for index, child in enumerate(node.children):
         _check_condition(out, f"{path}.children[{index}]", child, refs, owner)
+
+
+def _check_collision_names_one_target(
+    out: _Collector, path: str, node: ConditionNode
+) -> None:
+    """Reject a collision condition that names an entity *and* a type.
+
+    The runtime refuses the pair too, but it refuses at construction -- which
+    happens inside ``DeclarativeScenario.setup``, against a live CARLA world.
+    Everything before that point succeeds: the document saves, compiles and
+    exports, and the exported package's own tests pass.  The scenario then
+    fails on the simulator for a mistake that was visible while it was being
+    written.
+    """
+    if node.type != "collision":
+        return
+    named_entity = not _is_blank(node.params.get("target"))
+    named_type = str(node.params.get("target_type", "ANY")) != "ANY"
+    if named_entity and named_type:
+        out.error(
+            f"{path}.target",
+            "A collision condition names an entity or a class of object, not "
+            "both: they are two ways of saying what was hit, so one of them "
+            "would have to be ignored.",
+            node.id,
+        )
 
 
 def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
@@ -359,9 +387,41 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
+    _check_init_is_not_asked_to_wait(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
+
+
+def _check_init_is_not_asked_to_wait(
+    out: _Collector, path: str, node: ActionNode
+) -> None:
+    """Reject an action that needs the tick loop but was put in ``init``.
+
+    ``init`` is a phase and not a tick: ``run_init`` performs each action once,
+    and nothing ticks again before the loop starts.  An action whose work plays
+    out over time is therefore never advanced there -- it would command
+    nothing, and sit in ``startTransition`` for the whole run while an
+    ``action_state`` condition waited for a completion that could not arrive.
+
+    Only one action can be written that way today, so the rule names it rather
+    than inventing a spec flag for a single case.  It is stated as a *value* of
+    that action and not as its type, because the same action without a rate is
+    perfectly good in ``init`` -- setting a speed once, before anything moves,
+    is exactly what ``init`` is for.
+    """
+    if node.type != "set_speed" or node.phase != "init":
+        return
+    if node.params.get("rate_kmh_s") in (None, ""):
+        return
+    out.error(
+        f"{path}.phase",
+        "A rate-limited speed change cannot run in the init phase: init "
+        "performs each action once, so the speed would never be walked to its "
+        "target. Move it to a tick phase, or drop the rate to command the "
+        "speed at once.",
+        node.id,
+    )
 
 
 def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
