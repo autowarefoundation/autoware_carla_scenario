@@ -1,4 +1,4 @@
-"""Relative distance type and freespace: what "20 m apart" is actually asking.
+"""Relative distance type and edge_to_edge: what "20 m apart" is actually asking.
 
 Both options exist because the default answers a question scenarios rarely
 mean.  These tests are built around the two cases that motivated them: a car in
@@ -136,7 +136,7 @@ class TestFreespace:
             _actor("npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75)),
         )
         centres = _measured(_condition(), world)
-        gap = _measured(_condition(freespace=True), world)
+        gap = _measured(_condition(edge_to_edge=True), world)
 
         assert math.isclose(centres, 10.0, abs_tol=0.01)
         assert math.isclose(gap, 5.0, abs_tol=0.01)
@@ -147,7 +147,7 @@ class TestFreespace:
             _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
             _actor("npc1", (0, 10, 0), extent=(2.5, 1.0, 0.75)),
         )
-        gap = _measured(_condition(freespace=True), world)
+        gap = _measured(_condition(edge_to_edge=True), world)
         assert math.isclose(gap, 8.0, abs_tol=0.01)
 
     def test_overlapping_boxes_clamp_at_zero(self) -> None:
@@ -155,7 +155,7 @@ class TestFreespace:
             _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
             _actor("npc1", (3, 0, 0), extent=(2.5, 1.0, 0.75)),
         )
-        assert _measured(_condition(freespace=True), world) == 0.0
+        assert _measured(_condition(edge_to_edge=True), world) == 0.0
 
     def test_a_diagonal_gap_is_the_real_box_to_box_distance(self) -> None:
         """Not the centre distance minus each box's reach along that line.
@@ -169,16 +169,16 @@ class TestFreespace:
             _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
             _actor("npc1", (6, 6, 0), extent=(2.5, 1.0, 0.75)),
         )
-        gap = _measured(_condition(freespace=True), world)
+        gap = _measured(_condition(edge_to_edge=True), world)
         assert math.isclose(gap, math.hypot(1.0, 4.0), abs_tol=0.01)
 
     def test_height_counts_when_vertical_is_asked_for(self) -> None:
-        """The box has a roof, so a vertical freespace gap has to use it."""
+        """The box has a roof, so a vertical edge_to_edge gap has to use it."""
         world = _world(
             _actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)),
             _actor("npc1", (0, 0, 10), extent=(2.5, 1.0, 0.75)),
         )
-        gap = _measured(_condition(freespace=True, vertical=True), world)
+        gap = _measured(_condition(edge_to_edge=True, vertical=True), world)
         assert math.isclose(gap, 10.0 - 1.5, abs_tol=0.01)
 
     def test_the_box_offset_from_the_actor_origin_is_used(self) -> None:
@@ -195,8 +195,8 @@ class TestFreespace:
             ),
         )
         assert math.isclose(
-            _measured(_condition(freespace=True), offset)
-            - _measured(_condition(freespace=True), plain),
+            _measured(_condition(edge_to_edge=True), offset)
+            - _measured(_condition(edge_to_edge=True), plain),
             1.0,
             abs_tol=0.01,
         )
@@ -219,10 +219,10 @@ class TestFreespace:
             _actor("npc1", (10, 0, 0), extent=(2.5, 1.0, 0.75), box_yaw=90.0),
         )
         assert math.isclose(
-            _measured(_condition(freespace=True), aligned), 5.0, abs_tol=0.01
+            _measured(_condition(edge_to_edge=True), aligned), 5.0, abs_tol=0.01
         )
         assert math.isclose(
-            _measured(_condition(freespace=True), turned), 6.5, abs_tol=0.01
+            _measured(_condition(edge_to_edge=True), turned), 6.5, abs_tol=0.01
         )
 
     def test_a_box_with_no_rotation_reported_uses_the_actor_axes(self) -> None:
@@ -231,7 +231,7 @@ class TestFreespace:
         del actor.bounding_box.rotation
         world = _world(_actor("Ego", (0, 0, 0), extent=(2.5, 1.0, 0.75)), actor)
         assert math.isclose(
-            _measured(_condition(freespace=True), world), 5.0, abs_tol=0.01
+            _measured(_condition(edge_to_edge=True), world), 5.0, abs_tol=0.01
         )
 
     def test_an_actor_without_a_bounding_box_contributes_nothing(self) -> None:
@@ -241,7 +241,7 @@ class TestFreespace:
             _actor("npc1", (10, 0, 0), extent=None),
         )
         assert math.isclose(
-            _measured(_condition(freespace=True), world), 7.5, abs_tol=0.01
+            _measured(_condition(edge_to_edge=True), world), 7.5, abs_tol=0.01
         )
 
 
@@ -278,8 +278,8 @@ class TestDefaultsAndGuards:
 
     def test_details_report_both_choices(self) -> None:
         condition = _condition(
-            distance_type=RelativeDistanceType.LATERAL, freespace=True
+            distance_type=RelativeDistanceType.LATERAL, edge_to_edge=True
         )
         details = condition.get_details()
         assert details["distance_type"] == "LATERAL"
-        assert details["freespace"] is True
+        assert details["edge_to_edge"] is True
