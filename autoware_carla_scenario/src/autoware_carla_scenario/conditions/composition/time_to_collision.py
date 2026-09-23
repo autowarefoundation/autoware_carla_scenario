@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
-from ...coordinate.lane_distance import lane_closing_speed, lane_gap
+from ...coordinate.lane_distance import lane_closing_speed, lane_separation
 from ...coordinate.poses import CarlaWorldPose
 from ..base import ScenarioResult, find_actor_pair
 from ..comparison import ComparisonRule, ScalarComparisonRule
@@ -139,17 +139,24 @@ class TimeToCollisionCondition(CompositionCondition):
         that has nothing to do with the road -- the same silent swap of one
         measure for another that the lane frame exists to remove.
 
-        The target must be *ahead* along the road.  In the entity frame a
-        receding pair is excluded by the closing speed alone; here a target
-        behind the source is excluded outright, because a positive closing
-        speed towards something behind is a vehicle reversing into it, not a
-        collision this condition is asked about.
+        Otherwise this asks exactly what the entity frame asks, and answers it
+        for the same pairs.  The separation is unsigned and which way is
+        "towards" comes from where the two are along the road, not from how the
+        source is driving, so neither of these is lost:
+
+        * a **stationary** source with something bearing down on it, whose time
+          to collision is finite and is the target's approach;
+        * a **faster target behind**, which is a rear-end collision.
+
+        Taking the gap from the source's own direction of travel would answer
+        ``None`` to both -- a collision measure that goes quiet exactly when a
+        collision is coming.
         """
         source_pose = CarlaWorldPose(x=src_loc.x, y=src_loc.y, z=src_loc.z, yaw=0.0)
         target_pose = CarlaWorldPose(x=tgt_loc.x, y=tgt_loc.y, z=tgt_loc.z, yaw=0.0)
 
-        gap = lane_gap(source_pose, src_vel.x, src_vel.y, target_pose)
-        if gap is None or gap <= _CLOSING_SPEED_EPSILON:
+        separation = lane_separation(source_pose, target_pose)
+        if separation is None or separation < _CLOSING_SPEED_EPSILON:
             return None
 
         closing_speed = lane_closing_speed(
@@ -161,9 +168,11 @@ class TimeToCollisionCondition(CompositionCondition):
             tgt_vel.y,
         )
         if closing_speed is None or closing_speed <= _CLOSING_SPEED_EPSILON:
+            # Receding, or holding station: the TTC is unbounded, which is the
+            # same answer the entity frame gives.
             return None
 
-        return gap / closing_speed
+        return separation / closing_speed
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the TTC satisfies the comparison rule."""

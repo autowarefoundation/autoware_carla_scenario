@@ -76,6 +76,19 @@ def _towards(a: CarlaWorldPose, b: CarlaWorldPose) -> tuple[float, float]:
     return dx / length, dy / length
 
 
+def _road_direction(s: float, *, road: str = ROAD) -> tuple[float, float]:
+    """Return the road's own unit direction at arc length *s*.
+
+    A vehicle's velocity has to be built from the tangent **at its own
+    position**.  On a sharp bend that matters a great deal: road 147 turns
+    137.7 degrees between ``s = 5`` and ``s = 25``, so borrowing one end's
+    tangent for a car at the other end describes a car driving across the road
+    rather than along it -- and then a test proves nothing about the thing it
+    names.
+    """
+    return _towards(_at(s, road=road), _at(s + 1.0, road=road))
+
+
 class TestSeparation:
     def test_it_is_the_arc_length_between_them(self, loaded_map: MapManager) -> None:
         behind, ahead = _at(10.0), _at(30.0)
@@ -203,6 +216,53 @@ class TestClosingSpeed:
         )
 
         assert closing == pytest.approx(0.0, abs=1.0)
+
+    def test_a_still_source_is_closed_on_by_a_moving_target(
+        self, loaded_map: MapManager
+    ) -> None:
+        """A parked car has a closing speed; what it does not have is a headway.
+
+        Which way is "towards" comes from where the two are along the road, not
+        from how the source is driving -- so a stationary source is not an
+        unanswerable one, and the pair has a finite time to collision.
+        """
+        parked, approaching = _at(10.0), _at(30.0)
+        # Driving back down the road, towards the parked car.
+        vx, vy = _towards(approaching, parked)
+
+        closing = lane_closing_speed(
+            parked, 0.0, 0.0, approaching, vx * 10.0, vy * 10.0
+        )
+
+        assert closing is not None
+        assert 0.0 < closing <= 10.0
+
+    def test_a_faster_target_behind_is_closing_not_receding(
+        self, loaded_map: MapManager
+    ) -> None:
+        """A rear-end collision closes just as surely as one in front."""
+        overtaken, catching_up = _at(30.0), _at(10.0)
+        forward_x, forward_y = _towards(catching_up, overtaken)
+
+        closing = lane_closing_speed(
+            overtaken,
+            forward_x * 5.0,
+            forward_y * 5.0,
+            catching_up,
+            forward_x * 15.0,
+            forward_y * 15.0,
+        )
+
+        assert closing is not None
+        assert closing > 0.0
+
+    def test_two_level_along_the_road_have_no_direction_to_close_along(
+        self, loaded_map: MapManager
+    ) -> None:
+        here = _at(10.0)
+        vx, vy = _towards(here, _at(30.0))
+
+        assert lane_closing_speed(here, vx, vy, here, 0.0, 0.0) is None
 
     def test_a_faster_target_is_opening_the_gap(self, loaded_map: MapManager) -> None:
         behind, ahead = _at(10.0), _at(30.0)
@@ -393,6 +453,63 @@ class TestTheConditionsInLaneFrame:
 
         assert ttc(1.0).check(world, 1.0) is None
         assert ttc(5.0).check(world, 1.0) is not None
+
+    def test_lane_ttc_answers_for_the_same_pairs_as_the_entity_frame(
+        self, loaded_map: MapManager
+    ) -> None:
+        """Regression for two pairs the lane frame used to go quiet on.
+
+        The first version took the gap from `lane_gap`, which needs a moving
+        source and signs by its travel.  That returned `None` for a stationary
+        source being bore down on, and for a faster target closing from behind
+        -- both of them collisions, and both of them the silent never-fires
+        this coordinate system exists to remove.  Neither frame may refuse a
+        pair the other answers for.
+
+        Run on the gentle road rather than on the bend, because the claim is
+        that the lane frame answers wherever the entity frame does -- which
+        needs a stretch where the entity frame is itself trustworthy.  The bend
+        is where the two are *supposed* to differ, and the test above covers
+        that.  Each velocity still comes from the road's direction at that
+        vehicle's own position.
+        """
+        behind, ahead = _at(10.0), _at(30.0)
+        at_behind = _road_direction(10.0)
+        at_ahead = _road_direction(30.0)
+
+        def ttc_fires(world: MagicMock, system: DistanceCoordinateSystem) -> bool:
+            condition = TimeToCollisionCondition(
+                source="Ego",
+                target="npc1",
+                value=60.0,
+                rule=ComparisonRule.LESS_THAN,
+                coordinate_system=system,
+                label="ttc",
+            )
+            return condition.check(world, 1.0) is not None
+
+        # Parked, with a vehicle coming back down the road at it.
+        stationary_source = _world(
+            _actor("Ego", behind),
+            _actor("npc1", ahead, velocity=(-at_ahead[0] * 10.0, -at_ahead[1] * 10.0)),
+        )
+        # Both going the same way, the one behind going three times faster.
+        target_behind = _world(
+            _actor("Ego", ahead, velocity=(at_ahead[0] * 5.0, at_ahead[1] * 5.0)),
+            _actor("npc1", behind, velocity=(at_behind[0] * 15.0, at_behind[1] * 15.0)),
+        )
+
+        for name, world in (
+            ("a stationary source being closed on", stationary_source),
+            ("a faster target behind", target_behind),
+        ):
+            assert ttc_fires(
+                world, DistanceCoordinateSystem.ENTITY
+            ), f"{name}: the entity frame is expected to answer here"
+            assert ttc_fires(world, DistanceCoordinateSystem.LANE), (
+                f"{name}: the lane frame went quiet on a pair the entity "
+                f"frame answers for"
+            )
 
     def test_the_entity_frame_is_still_the_default(
         self, loaded_map: MapManager

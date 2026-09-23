@@ -138,36 +138,66 @@ def lane_closing_speed(
     target_travel_x: float,
     target_travel_y: float,
 ) -> Optional[float]:
-    """Return how fast the along-road gap between the two is shrinking.
+    """Return how fast the along-road separation between the two is shrinking.
 
     Positive means closing, negative means opening.  Both speeds are the
     component **along the road**, which is the whole point: a straight-line
     closing speed on a curve counts a vehicle's cornering as approach, and a
     time-to-collision built on it is short for the wrong reason.
 
+    **Which way is "towards" comes from where the two are, not from how the
+    source is driving.**  That distinction is the difference between this and
+    :func:`lane_gap`, and it decides two cases a collision measure must not
+    lose:
+
+    * a **stationary** source with something bearing down on it -- the closing
+      speed is the target's, and the pair has a perfectly finite time to
+      collision;
+    * a **faster target behind**, which is a rear-end collision and closes just
+      as surely as one in front.
+
+    Signing by the source's travel instead would answer ``None`` to both, which
+    is the silent never-fires this whole coordinate system exists to remove.
+
     Returns:
-        Metres per second, or ``None`` when either entity has no along-road
-        motion to measure (same cases as :func:`lane_gap`).
+        Metres per second, or ``None`` when the two are not on one road, when
+        either cannot be placed on it, or when they are level along it -- with
+        no separation there is no direction to close along.
     """
-    source_fix = _speed_along_s(source, source_travel_x, source_travel_y)
+    source_od = _project(source)
     target_od = _project(target)
-    if source_fix is None or target_od is None:
+    if source_od is None or target_od is None:
         return None
-    source_od, source_along = source_fix
     if source_od.road_id != target_od.road_id:
         return None
-    if abs(source_along) < _NEAR_ZERO:
+
+    offset = target_od.s - source_od.s
+    if abs(offset) < _NEAR_ZERO:
         return None
 
-    target_fix = _speed_along_s(target, target_travel_x, target_travel_y)
-    # A stationary target still has an along-road speed, and it is zero: the
-    # gap closes at the source's own rate.  Only one that cannot be placed on
-    # the road at all leaves the question unanswered, and the projection above
-    # has already established that it can.
-    target_along = 0.0 if target_fix is None else target_fix[1]
+    source_along = _along_s(source, source_travel_x, source_travel_y)
+    target_along = _along_s(target, target_travel_x, target_travel_y)
+    if source_along is None or target_along is None:
+        return None
 
-    sign = 1.0 if source_along > 0 else -1.0
+    # The separation is ``abs(offset)``, so it shrinks at
+    # ``sign(offset) * (source_along - target_along)``: whoever is behind
+    # closes by going faster along the road, whichever of them that is.
+    sign = 1.0 if offset > 0 else -1.0
     return sign * (source_along - target_along)
+
+
+def _along_s(pose: CarlaWorldPose, travel_x: float, travel_y: float) -> Optional[float]:
+    """Return the entity's speed along increasing ``s``, zero when it is still.
+
+    A stationary entity is not an unanswerable one: its progress along the road
+    is zero, which is a number a closing speed can be built from.  ``None`` is
+    kept for the entity that cannot be placed on the road at all.
+    """
+    if math.hypot(travel_x, travel_y) < _NEAR_ZERO:
+        return 0.0
+    fix = _speed_along_s(pose, travel_x, travel_y)
+    return None if fix is None else fix[1]
 
 
 def _project(pose: CarlaWorldPose) -> Optional[OpenDrivePose]:
