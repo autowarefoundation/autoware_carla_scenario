@@ -135,10 +135,12 @@ class SettingSpeed(Protocol):
     traffic model which is not the TrafficManager needs to understand only
     "drive at this speed" and never a transition model of its own.
 
-    Whether the target has to be re-sent to stay in force is this backend's
-    business too, and it says so through the action's *reissue* argument rather
-    than here: ``set_desired_speed`` holds the last value it was given, while a
-    command carrying its own rate does not need repeating at all.
+    The corollary is that this seam carries no rate, so a backend cannot honour
+    one natively however it drives: a rate is always walked by the action, and
+    therefore always reissued.  What *is* this backend's business is whether an
+    immediate target survives being sent once -- ``set_desired_speed`` holds the
+    last value it was given, and a backend that keeps nothing says so through
+    the action's *reissue* argument rather than here.
     """
 
     def set_speed(self, world: Any, speed_kmh: float) -> None:

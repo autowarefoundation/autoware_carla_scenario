@@ -243,6 +243,36 @@ class TestWhenARateLimitedRunIsOver:
 
         assert state is ActionState.COMPLETE
 
+    def test_the_exact_target_is_the_last_value_commanded(self) -> None:
+        """What the backend keeps must be what the scenario asked for.
+
+        The backend holds the last target it was given forever, so a run that
+        completes one step short leaves an intermediate value in force.  It
+        bites whenever `rate_kmh_s * delta_seconds` is smaller than the arrival
+        band -- here 3 km/h/s over a 0.05 s tick is 0.15 km/h against a 0.5
+        km/h band -- and a brake to a stop is the case that shows it: the
+        action would report `completeState` while the vehicle crawled on.
+        """
+        entity = _RecordingVehicle(speed_kmh=1.0)
+        register_entity("npc1", entity)
+        try:
+            action = SetSpeedAction(
+                entity_name="npc1", target_speed_kmh=0.0, rate_kmh_s=3.0
+            )
+            _drive(
+                action,
+                _FakeWorld(entity, delta_seconds=0.05),
+                ticks=30,
+                follows=entity,
+                step_seconds=0.05,
+            )
+            state = action.state
+        finally:
+            unregister_entity("npc1")
+
+        assert state is ActionState.COMPLETE
+        assert entity.commanded[-1] == 0.0
+
     def test_a_given_until_replaces_the_arrival_condition(
         self, vehicle: _RecordingVehicle
     ) -> None:
@@ -385,3 +415,29 @@ class TestConstruction:
     def test_a_negative_rate_is_refused(self) -> None:
         with pytest.raises(ValueError, match="must be positive"):
             SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=-1.0)
+
+    def test_a_rate_that_is_told_not_to_reissue_is_refused(self) -> None:
+        """The seam carries a target and not a rate, so the walk must re-send.
+
+        Accepting it would send one step and then wait forever for an arrival
+        that nothing was still driving towards -- and no backend could take
+        over, because `set_speed` is handed that intermediate value rather than
+        the rate or the final target.
+        """
+        with pytest.raises(ValueError, match="must reissue"):
+            SetSpeedAction(
+                entity_name="npc1",
+                target_speed_kmh=50.0,
+                rate_kmh_s=10.0,
+                reissue=False,
+            )
+
+    def test_an_immediate_change_may_still_be_told_to_reissue(self) -> None:
+        """The injection point survives: only the impossible corner is closed.
+
+        A backend that keeps nothing needs the same target sent again, and that
+        is exactly what `reissue` is for.
+        """
+        action = SetSpeedAction(entity_name="npc1", target_speed_kmh=50.0, reissue=True)
+
+        assert action.reissues_while_running is True

@@ -77,14 +77,19 @@ class SetSpeedAction(BaseAction):
             for a rate-limited change, and to nothing at all for an immediate
             one -- there is no manoeuvre to wait for when the target is simply
             handed over.
-        reissue: Overrides whether the command is re-sent every tick.  The
-            default follows *rate_kmh_s*, which is right for a backend that
-            holds only the last target it was given; a backend whose command
-            carries the rate itself needs no repeat, and says so through this.
+        reissue: Overrides whether the command is re-sent every tick.  It is
+            the injection point for an *immediate* change, whose single call a
+            backend that does not hold its target would need repeated.  A
+            rate-limited change has no such choice: the seam carries a target
+            and not a rate, so the walk advances only by being re-sent, and
+            ``reissue=False`` beside a rate is refused rather than left to
+            stall one step short.
 
     Raises:
-        ValueError: If *target_speed_kmh* is negative, or *rate_kmh_s* is not
-            positive.  A rate of zero is a change that never arrives, which is
+        ValueError: If *target_speed_kmh* is negative, if *rate_kmh_s* is not
+            positive, or if *reissue* is ``False`` while a rate is given.  A
+            rate of zero is a change that never arrives, and a rate that is
+            never re-sent is a walk that never takes its second step; both are
             worth reporting rather than running.
     """
 
@@ -105,6 +110,14 @@ class SetSpeedAction(BaseAction):
             raise ValueError("target_speed_kmh must not be negative")
         if rate_kmh_s is not None and rate_kmh_s <= 0:
             raise ValueError("rate_kmh_s must be positive")
+        if rate_kmh_s is not None and reissue is False:
+            raise ValueError(
+                "a rate-limited speed change must reissue: the traffic seam "
+                "carries a target and not a rate, so the walk towards it only "
+                "advances by being re-sent. A backend that honours a rate "
+                "natively cannot be told one through set_speed, so drop "
+                "rate_kmh_s to command the target at once."
+            )
 
         if until is None and rate_kmh_s is not None:
             until = SpeedCondition(
@@ -157,11 +170,22 @@ class SetSpeedAction(BaseAction):
             )
             return
 
+        now_kmh = _current_speed_kmh(entity)
+        if abs(now_kmh - self._target_speed_kmh) <= ARRIVAL_TOLERANCE_KMH:
+            # Inside the arrival band the walk is over, so send the target
+            # itself rather than one more step towards it.
+            #
+            # This is what the run ends on, and `execute` runs before `until`
+            # is asked within the same tick, so the value the backend is left
+            # holding is the one the scenario asked for.  Stepping here instead
+            # would leave an intermediate target in force forever whenever
+            # `rate_kmh_s * delta_seconds` is smaller than the band -- a brake
+            # to a stop would complete while still commanding a crawl.
+            entity.set_speed(world, self._target_speed_kmh)
+            return
+
         step = self._rate_kmh_s * _tick_seconds(world)
-        entity.set_speed(
-            world,
-            _toward(_current_speed_kmh(entity), self._target_speed_kmh, step),
-        )
+        entity.set_speed(world, _toward(now_kmh, self._target_speed_kmh, step))
 
 
 # ---------------------------------------------------------------------------
