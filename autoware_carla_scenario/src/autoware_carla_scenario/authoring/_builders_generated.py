@@ -36,6 +36,7 @@ __all__ = [
     "build_sticky_condition",
     "build_acceleration_condition",
     "build_entity_existence_condition",
+    "build_lane_change_settled_condition",
     "build_waypoint_condition",
     "build_entity_lane_position_condition",
     "build_entity_road_position_condition",
@@ -162,6 +163,21 @@ def build_entity_existence_condition(
 
     params = compiled.params
     return EntityExistenceCondition(
+        entity_name=str(params["entity"]),
+        label=compiled.label,
+    )
+
+
+def build_lane_change_settled_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`LaneChangeSettledCondition`."""
+    from ..conditions import LaneChangeSettledCondition  # noqa: PLC0415
+
+    params = compiled.params
+    return LaneChangeSettledCondition(
         entity_name=str(params["entity"]),
         label=compiled.label,
     )

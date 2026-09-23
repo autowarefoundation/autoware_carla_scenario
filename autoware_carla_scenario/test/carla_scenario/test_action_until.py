@@ -49,7 +49,6 @@ class _CountingAction(BaseAction):
         condition: Optional[BaseCondition] = None,
         *,
         once: bool = True,
-        finished: bool = True,
         reissue: Optional[bool] = None,
     ) -> None:
         super().__init__(
@@ -61,15 +60,9 @@ class _CountingAction(BaseAction):
             reissue=reissue,
         )
         self.executed = 0
-        self.is_finished_calls = 0
-        self._finished = finished
 
     def execute(self, world: object) -> None:
         self.executed += 1
-
-    def is_finished(self, world: object, running_for: float) -> bool:
-        self.is_finished_calls += 1
-        return self._finished
 
 
 def _tick(action: BaseAction, elapsed: float) -> ActionState:
@@ -78,7 +71,7 @@ def _tick(action: BaseAction, elapsed: float) -> ActionState:
 
 
 class TestWithoutUntil:
-    """Every action that existed before ``until`` keeps its exact behaviour."""
+    """No condition means nothing to wait for."""
 
     def test_an_instantaneous_action_is_unchanged(self) -> None:
         action = _CountingAction()
@@ -86,16 +79,6 @@ class TestWithoutUntil:
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert _tick(action, 0.1) is ActionState.COMPLETE
         assert action.executed == 1
-
-    def test_is_finished_still_decides_a_watching_action(self) -> None:
-        action = _CountingAction(finished=False)
-
-        assert _tick(action, 0.0) is ActionState.START_TRANSITION
-        assert _tick(action, 0.1) is ActionState.RUNNING
-        assert _tick(action, 0.2) is ActionState.RUNNING
-        # Watching is not acting: `execute` ran once, when the trigger fired.
-        assert action.executed == 1
-        assert action.is_finished_calls == 2
 
 
 class TestReissuing:
@@ -183,17 +166,21 @@ class TestTheTwoAxesAreIndependent:
         # One command, at the trigger.  The rest of the run was watching.
         assert action.executed == 1
 
-    def test_reissue_alone_repeats_while_is_finished_decides(self) -> None:
-        action = _CountingAction(finished=False, reissue=True)
+    def test_reissue_alone_repeats_until_the_trigger_stops_it(self) -> None:
+        """Reissuing without an end condition keeps going for one tick.
 
-        _tick(action, 0.0)
+        With nothing to wait for the run is over as soon as it is looked at, so
+        the command goes out on the trigger's tick and once more on the tick
+        the run is found to be finished.
+        """
+        action = _CountingAction(reissue=True)
+
+        assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert action.executed == 1
-        assert _tick(action, 0.1) is ActionState.RUNNING
+        assert _tick(action, 0.1) is ActionState.END_TRANSITION
         assert action.executed == 2
-        assert _tick(action, 0.2) is ActionState.RUNNING
-        assert action.executed == 3
-        # `is_finished` is still the one being asked.
-        assert action.is_finished_calls == 2
+        assert _tick(action, 0.2) is ActionState.COMPLETE
+        assert action.executed == 2
 
     def test_neither_is_the_instantaneous_action_unchanged(self) -> None:
         action = _CountingAction()
@@ -216,7 +203,7 @@ class TestWhoDecidesReissuing:
     """The answer depends on what drives the entity, so it can be injected."""
 
     def test_the_class_default_applies_when_nothing_is_injected(self) -> None:
-        action = _CountingAction(finished=False)
+        action = _CountingAction(until=_AfterNChecks(9))
 
         _tick(action, 0.0)
         _tick(action, 0.1)
@@ -230,7 +217,7 @@ class TestWhoDecidesReissuing:
             def _reissues_by_default(self) -> bool:
                 return True
 
-        action = _SelfDeciding(finished=False)
+        action = _SelfDeciding(until=_AfterNChecks(9))
 
         assert action.reissues_while_running is True
         _tick(action, 0.0)
@@ -244,7 +231,7 @@ class TestWhoDecidesReissuing:
             def _reissues_by_default(self) -> bool:
                 return True
 
-        action = _SelfDeciding(finished=False, reissue=False)
+        action = _SelfDeciding(until=_AfterNChecks(9), reissue=False)
 
         assert action.reissues_while_running is False
         _tick(action, 0.0)
@@ -252,25 +239,9 @@ class TestWhoDecidesReissuing:
         assert action.executed == 1
 
     def test_injecting_true_turns_repeating_on(self) -> None:
-        action = _CountingAction(finished=False, reissue=True)
+        action = _CountingAction(reissue=True)
 
         assert action.reissues_while_running is True
-
-
-class TestUntilTakesPrecedence:
-    def test_is_finished_is_not_consulted(self) -> None:
-        """Two answers to one question would be a silent contradiction.
-
-        The action below says it is finished; its *until* says it is not.  The
-        run continues, and `is_finished` is never asked -- an action written
-        for `until` is not also asked to keep a stale predicate honest.
-        """
-        action = _CountingAction(until=_AfterNChecks(3), finished=True)
-
-        assert _tick(action, 0.0) is ActionState.START_TRANSITION
-        assert _tick(action, 0.1) is ActionState.RUNNING
-        assert _tick(action, 0.2) is ActionState.RUNNING
-        assert action.is_finished_calls == 0
 
 
 class TestUntilIsIndependentOfOnce:

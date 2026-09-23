@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Union
 
 from typing import Optional as _Optional
 
-from ..conditions import BaseCondition
+from ..conditions import BaseCondition, LaneChangeSettledCondition
 from ..entity.registry import find_entity_by_role_name
-from ..traffic import LaneChangeDirection, LaneChanging
+from ..traffic import LaneChangeDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 
@@ -29,11 +29,17 @@ class LaneChangeAction(BaseAction):
        command an immediate lane change
 
     ``force_lane_change`` only queues the manoeuvre, so the action keeps
-    watching the vehicle afterwards (see :meth:`is_finished`) and stays
+    watching the vehicle afterwards and stays
     :attr:`~autoware_carla_scenario.actions.base.ActionState.RUNNING` until the
     vehicle has actually settled onto the next lane.  That is the signal another
     actor can react to; ``done`` would fire while the car is still straddling
     the line.
+
+    The waiting is a :class:`LaneChangeSettledCondition` supplied as the run's
+    *until*, so the end of the manoeuvre is written in the same vocabulary as
+    the trigger that started it.  The command itself is **not** reissued: one
+    ``force_lane_change`` queues the manoeuvre, and sending it again every tick
+    would restart it.
 
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.
@@ -41,6 +47,8 @@ class LaneChangeAction(BaseAction):
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
+        until: Overrides what counts as the manoeuvre having settled.  Defaults
+            to :class:`LaneChangeSettledCondition` on *entity_name*.
     """
 
     def __init__(
@@ -52,14 +60,21 @@ class LaneChangeAction(BaseAction):
         *,
         label: str = "lane_change",
         once: bool = True,
+        until: _Optional[BaseCondition] = None,
     ) -> None:
-        super().__init__(label=label, condition=condition, timing=timing, once=once)
+        super().__init__(
+            label=label,
+            condition=condition,
+            timing=timing,
+            once=once,
+            until=(
+                until
+                if until is not None
+                else LaneChangeSettledCondition(entity_name, label=f"{label}_settled")
+            ),
+        )
         self._entity_name = entity_name
         self._direction = direction
-        #: The entity resolved in :meth:`execute`, asked each tick whether the
-        #: manoeuvre has settled.  Looked up once rather than per tick: the
-        #: registry is cheap, but the answer cannot change mid-manoeuvre.
-        self._entity: _Optional[LaneChanging] = None
 
     # ------------------------------------------------------------------
     # BaseAction interface
@@ -72,37 +87,6 @@ class LaneChangeAction(BaseAction):
             logger.warning(
                 "LaneChangeAction: entity '%s' not found", str(self._entity_name)
             )
-            self._entity = None
             return
 
-        self._entity = entity
         entity.change_lane(world, self._direction)
-
-    def is_finished(self, world: "carla.World", running_for: float) -> bool:
-        """Whether the entity reports the manoeuvre settled.
-
-        Asked of the entity rather than measured here: what "finished" means
-        depends on what performed the change.  A TrafficManager-driven vehicle
-        has settled once it is centred on the lane it was sent to; a stack that
-        plans its own manoeuvres would answer from its own state.
-
-        A manoeuvre that never happens simply never finishes, and the action
-        stays :attr:`~autoware_carla_scenario.action_state.ActionState.RUNNING`.
-        That is OpenSCENARIO's behaviour, and it keeps ``completeState`` from
-        being reached by a lane change that did not happen; ending the run on a
-        timer is the scenario timeout's job, not this action's.
-
-        Args:
-            world: The CARLA world instance.
-            running_for: Seconds since the command was issued.
-        """
-        if self._entity is None:
-            return False
-        finished = self._entity.lane_change_finished(world)
-        if finished:
-            logger.info(
-                "LaneChangeAction: '%s' settled onto its new lane after %.1fs",
-                self._entity_name,
-                running_for,
-            )
-        return finished

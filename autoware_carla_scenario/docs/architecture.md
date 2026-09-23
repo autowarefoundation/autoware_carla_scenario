@@ -441,7 +441,6 @@ classDiagram
         +state: ActionState
         +reissues_while_running: bool
         +execute(world) void
-        +is_finished(world, running_for) bool
         +tick(world, elapsed) void
     }
 
@@ -485,16 +484,16 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    | `_reissues_by_default()` override | the action, from its own configuration or by asking its entity |
    | `REISSUES_BY_DEFAULT` class attribute | the action's class, when it has one answer |
 
-   **When does the run end?** — `until` (a `BaseCondition`) when one is given,
-   otherwise `is_finished(world, running_for)` (a predicate), otherwise the run
-   is over at once. `until` takes precedence: when one is given, `is_finished`
-   is not consulted.
+   **When does the run end?** — `until`, a `BaseCondition`. This is the same
+   kind of object the trigger is written in, so the two ends of a run read
+   together. No `until` means there was nothing to wait for, and the run is
+   over on the tick after the one it was commanded on.
 
    Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
    hands work to the simulator and watches for it to land — `force_lane_change`
    returns long before the vehicle is in the next lane, and must not be re-sent
-   — so it ends on a condition without repeating. A rate-limited speed change
-   says both.
+   — so it supplies a `LaneChangeSettledCondition` as its `until` and does not
+   repeat. A rate-limited speed change says both.
 3. **End.** `endTransition` is held for one tick so a condition can watch for
    it. Then `once` decides: `True` (default) means `completeState` and no
    further evaluation; `False` returns the action to standby to be triggered

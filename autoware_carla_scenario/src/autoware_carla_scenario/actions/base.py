@@ -48,8 +48,8 @@ class BaseAction(ABC):
         until: A :class:`BaseCondition` that ends the run, on the first tick
             it returns a non-``None`` result -- the same "a result means it
             fired" convention the trigger uses, so a failing result ends the
-            run too.  ``None`` (default) leaves the action instantaneous unless
-            it overrides :meth:`is_finished`.
+            run too.  ``None`` (default) makes the action instantaneous: it is
+            over on the tick after the one it was commanded on.
         reissue: Whether :meth:`execute` is called again on every tick of the
             run, overriding what the action would decide for itself.  ``None``
             (default) leaves that decision to
@@ -58,16 +58,16 @@ class BaseAction(ABC):
     Firing and finishing are two different moments.  :meth:`execute` only
     *starts* the work -- ``force_lane_change`` returns long before the vehicle
     is in the next lane -- so an action stays observable afterwards through
-    :meth:`is_finished`, and :attr:`state` reports where it is in the
-    :class:`ActionState` lifecycle.  Anything reacting to a manoeuvre having
-    finished has to wait for :attr:`ActionState.COMPLETE`; :attr:`done` only
-    says the command went out.
+    *until*, and :attr:`state` reports where it is in the :class:`ActionState`
+    lifecycle.  Anything reacting to a manoeuvre having finished has to wait for
+    :attr:`ActionState.COMPLETE`; :attr:`done` only says the command went out.
 
     A run has two independent questions, and they are asked separately because
     the answers come from different places:
 
-    * **When does it end?**  *until* (a condition), or :meth:`is_finished` (a
-      predicate) when no *until* is given.  This is about the world.
+    * **When does it end?**  *until*, a condition -- the same kind the trigger
+      is written in, which is what lets the two be read together.  This is
+      about the world.
     * **Does :meth:`execute` repeat while it runs?**
       :meth:`reissues_while_running`.  This is about the *command*, not the
       manoeuvre: whether the thing the action called holds the intent by itself
@@ -89,8 +89,6 @@ class BaseAction(ABC):
 
     An action that reissues has an :meth:`execute` that runs many times, and
     must be written for it -- idempotent, or advancing the work by one tick.
-    When *until* is given it decides the run on its own and :meth:`is_finished`
-    is not consulted.
     """
 
     #: What :meth:`reissues_while_running` answers when nothing was injected
@@ -121,10 +119,6 @@ class BaseAction(ABC):
         self._reissue = reissue
         self._done = False
         self._lifecycle = ActionState.STANDBY
-        #: Elapsed time at which the current run started.  Only read while
-        #: running, and always written on the way in, so there is no "not
-        #: started" value to confuse with an action triggered at 0.0.
-        self._running_since: float = 0.0
 
     @property
     def timing(self) -> TickTiming:
@@ -175,31 +169,6 @@ class BaseAction(ABC):
         """
         return self.REISSUES_BY_DEFAULT
 
-    def is_finished(self, world: "carla.World", running_for: float) -> bool:
-        """Whether the work :meth:`execute` started has met its completion criteria.
-
-        Called every tick while the action is
-        :attr:`~ActionState.RUNNING`, so a manoeuvre that takes seconds to play
-        out can say when it is genuinely over.
-
-        Args:
-            world: The CARLA world instance.
-            running_for: Simulated seconds since :meth:`execute` was called.
-
-        Returns:
-            ``True`` once the work is complete, ``False`` while it is still
-            under way.
-
-        Not consulted at all when the action was given an *until* condition,
-        which decides the run by itself.
-
-        The default is instantaneous: an action with nothing to observe after
-        :meth:`execute` -- setting a traffic light, attaching a sensor -- is
-        complete the moment it has run, which is what every action did before
-        this hook existed.
-        """
-        return True
-
     @abstractmethod
     def execute(self, world: "carla.World") -> None:
         """Perform the action.
@@ -244,10 +213,10 @@ class BaseAction(ABC):
                 self.execute(world)
             # Asked second, and separately: what ends the run is a question
             # about the world, not about whether the command had to be re-sent.
-            if self._until is not None:
-                finished = self._until.check(world, elapsed) is not None
-            else:
-                finished = self.is_finished(world, elapsed - self._running_since)
+            # No `until` means there was nothing to wait for.
+            finished = (
+                self._until is None or self._until.check(world, elapsed) is not None
+            )
             if not finished:
                 # The trigger is deliberately not re-evaluated while running,
                 # so a repeating action cannot start a second run on top of one
@@ -272,7 +241,6 @@ class BaseAction(ABC):
             # A repeating action goes back to standby to be triggered again,
             # which is what OpenSCENARIO does for an element with a maximum
             # execution count above one.
-            self._running_since = 0.0
             self._lifecycle = (
                 ActionState.COMPLETE if self._once else ActionState.STANDBY
             )
@@ -290,7 +258,6 @@ class BaseAction(ABC):
         )
         self.execute(world)
         self._done = True
-        self._running_since = elapsed
         # Held for this whole tick, so a condition watching `startTransition`
         # has a tick on which to see it.
         self._lifecycle = ActionState.START_TRANSITION
