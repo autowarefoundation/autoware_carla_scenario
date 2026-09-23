@@ -87,6 +87,7 @@ if TYPE_CHECKING:
         TrafficSignalAction as TrafficSignalAction,
         TurnAction as TurnAction,
         TurnDirection as TurnDirection,
+        WalkStraightAction as WalkStraightAction,
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
     from .conditions import (
@@ -165,6 +166,8 @@ if TYPE_CHECKING:
         AutowareEntity as AutowareEntity,
         CarlaDriverEntity as CarlaDriverEntity,
         EgoVehicle as EgoVehicle,
+        PedestrianEntity as PedestrianEntity,
+        PedestrianEntityConfig as PedestrianEntityConfig,
         SpawnLocation as SpawnLocation,
         SpawnPointIndex as SpawnPointIndex,
         SpawnTransform as SpawnTransform,
@@ -315,6 +318,8 @@ __all__ = [
     "EgoDriverGrpcClient",
     "EgoConfig",
     "EgoVehicle",
+    "PedestrianEntity",
+    "PedestrianEntityConfig",
     "SpawnLocation",
     "SpawnPointIndex",
     "SpawnTransform",
@@ -365,6 +370,7 @@ __all__ = [
     "WaypointCondition",
     "TurnAction",
     "TurnDirection",
+    "WalkStraightAction",
     # Sensors
     "CameraRecorder",
     "CameraSensorBase",
@@ -389,6 +395,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "SetSpeedAction": (".actions", "SetSpeedAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),
     "TurnAction": (".actions", "TurnAction"),
+    "WalkStraightAction": (".actions", "WalkStraightAction"),
     "TurnDirection": (".actions", "TurnDirection"),
     # camera / sensor
     "CameraRecorder": (".camera_recorder", "CameraRecorder"),
@@ -465,6 +472,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AutowareEntity": (".entity", "AutowareEntity"),
     "CarlaDriverEntity": (".entity", "CarlaDriverEntity"),
     "EgoVehicle": (".entity", "EgoVehicle"),
+    "PedestrianEntity": (".entity", "PedestrianEntity"),
+    "PedestrianEntityConfig": (".entity", "PedestrianEntityConfig"),
     "SpawnLocation": (".entity", "SpawnLocation"),
     "SpawnPointIndex": (".entity", "SpawnPointIndex"),
     "SpawnTransform": (".entity", "SpawnTransform"),

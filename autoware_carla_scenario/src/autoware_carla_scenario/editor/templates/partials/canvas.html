@@ -34,9 +34,14 @@
         {% if phase %}<input type="hidden" name="phase" value="{{ phase }}">{% endif %}
         <select name="type_id" class="ed-input-xs" style="flex:1">
           {# Each track offers only what belongs in it: a vehicle cannot set the
-             traffic lights, and the environment cannot change lane. #}
+             traffic lights, the environment cannot change lane, and a
+             pedestrian can do neither -- the kinds an action is for are the
+             spec's, so this list needs no per-type branching of its own. #}
+          {%- set actor_entity = draft.document.entity(actor) if actor else None -%}
+          {%- set actor_kind = actor_entity.kind if actor_entity else '' -%}
           {% for spec in action_specs() %}
-            {% if spec.actor_required == (actor != '') %}
+            {% if spec.actor_required == (actor != '')
+                  and (not spec.actor_required or actor_kind in spec.actor_kinds) %}
               <option value="{{ spec.type_id }}">{{ spec.title }}</option>
             {% endif %}
           {% endfor %}
@@ -168,6 +173,7 @@
           style="display:flex; align-items:center; gap:7px">
       <select name="kind" class="ed-input-sm">
         <option value="vehicle">Vehicle</option>
+        <option value="pedestrian">Pedestrian</option>
         <option value="ego" {% if document.ego %}disabled{% endif %}>Ego</option>
       </select>
       <button type="submit" class="ed-btn-sm">{{ ic.icon('plus', 12) }} Actor</button>

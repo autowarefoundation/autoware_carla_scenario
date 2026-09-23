@@ -1375,6 +1375,23 @@ class TestEnvironmentTrack:
         assert offers["ego"] == {"lane_change", "routing", "set_speed", "turn"}
         assert offers[""] == {"environment", "traffic_signal"}
 
+    def test_a_pedestrian_track_offers_walking_and_nothing_else(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The other half of the rule above, for the kind that has its own."""
+        client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
+        body = client.get(f"/draft/{draft_id}").text
+
+        forms = re.findall(r'<form[^>]*?/action"[\s\S]*?</form>', body)
+        offers = {}
+        for form in forms:
+            actor = re.search(r'name="actor" value="([^"]*)"', form)
+            assert actor is not None
+            offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
+
+        assert offers["walker1"] == {"walk_straight"}
+        assert "walk_straight" not in offers["ego"]
+
     def test_an_environment_action_needs_no_actor(
         self, client: TestClient, draft_id: str
     ) -> None:
