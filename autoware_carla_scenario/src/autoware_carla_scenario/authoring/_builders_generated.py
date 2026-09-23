@@ -36,6 +36,7 @@ __all__ = [
     "build_sticky_condition",
     "build_acceleration_condition",
     "build_entity_existence_condition",
+    "build_lane_change_settled_condition",
     "build_waypoint_condition",
     "build_entity_lane_position_condition",
     "build_entity_road_position_condition",
@@ -43,9 +44,11 @@ __all__ = [
     "build_standstill_condition",
     "build_temporary_stop_condition",
     "build_entity_distance_condition",
+    "build_distance_condition",
     "build_relative_speed_condition",
     "build_ttc_condition",
     "build_ttc_to_position_condition",
+    "build_time_headway_condition",
     "build_action_state_condition",
     "build_always_true_condition",
     "build_collision_condition",
@@ -53,8 +56,10 @@ __all__ = [
     "build_timeout_condition",
     "build_traffic_signal_condition",
     "build_traffic_signal_action",
+    "build_environment_action",
     "build_lane_change_action",
     "build_routing_action",
+    "build_set_speed_action",
     "build_turn_action",
 ]
 
@@ -161,6 +166,21 @@ def build_entity_existence_condition(
 
     params = compiled.params
     return EntityExistenceCondition(
+        entity_name=str(params["entity"]),
+        label=compiled.label,
+    )
+
+
+def build_lane_change_settled_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`LaneChangeSettledCondition`."""
+    from ..conditions import LaneChangeSettledCondition  # noqa: PLC0415
+
+    params = compiled.params
+    return LaneChangeSettledCondition(
         entity_name=str(params["entity"]),
         label=compiled.label,
     )
@@ -384,6 +404,30 @@ def build_entity_distance_condition(
     )
 
 
+def build_distance_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityPositionDistanceCondition`."""
+    from ..conditions import EntityPositionDistanceCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+    )
+    return EntityPositionDistanceCondition(
+        entity_name=str(params["entity"]),
+        position=position,
+        value=params["distance"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        label=compiled.label,
+    )
+
+
 def build_relative_speed_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",
@@ -450,6 +494,25 @@ def build_ttc_to_position_condition(
     )
 
 
+def build_time_headway_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TimeHeadwayCondition`."""
+    from ..conditions import TimeHeadwayCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    return TimeHeadwayCondition(
+        source=str(params["entity"]),
+        target=str(params["target"]),
+        value=params["seconds"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        label=compiled.label,
+    )
+
+
 def build_action_state_condition(
     compiled: "CompiledCondition",
     children: "list[BaseCondition]",
@@ -487,10 +550,13 @@ def build_collision_condition(
 ) -> "BaseCondition":
     """Build a :class:`CollisionCondition`."""
     from ..conditions import CollisionCondition  # noqa: PLC0415
+    from ..conditions import CollisionTargetType  # noqa: PLC0415
 
     params = compiled.params
     return CollisionCondition(
         min_impulse=params["min_impulse"],
+        target=(str(params["target"]) if params["target"] is not None else None),
+        target_type=CollisionTargetType[str(params["target_type"])],
         label=compiled.label,
     )
 
@@ -574,6 +640,33 @@ def build_traffic_signal_action(
     )
 
 
+def build_environment_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`EnvironmentAction`."""
+    from ..actions import EnvironmentAction  # noqa: PLC0415
+
+    params = compiled.params
+    return EnvironmentAction(
+        cloudiness=params["cloudiness"],
+        precipitation=params["precipitation"],
+        precipitation_deposits=params["precipitation_deposits"],
+        wetness=params["wetness"],
+        wind_intensity=params["wind_intensity"],
+        fog_density=params["fog_density"],
+        fog_distance=params["fog_distance"],
+        sun_altitude_angle=params["sun_altitude_angle"],
+        sun_azimuth_angle=params["sun_azimuth_angle"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
 def build_lane_change_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -615,6 +708,28 @@ def build_routing_action(
     return RoutingAction(
         entity_name=compiled.actor_role,
         goal=goal,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_set_speed_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`SetSpeedAction`."""
+    from ..actions import SetSpeedAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return SetSpeedAction(
+        entity_name=compiled.actor_role,
+        target_speed_kmh=params["target_speed_kmh"],
+        rate_kmh_s=params["rate_kmh_s"],
         condition=condition,
         timing=timing,
         label=compiled.label,

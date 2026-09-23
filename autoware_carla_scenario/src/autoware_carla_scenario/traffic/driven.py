@@ -151,6 +151,10 @@ class BackendDriven:
         """Whether the manoeuvre has settled."""
         return self._resolve_backend().lane_change_finished(self, world)
 
+    def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
+        """Aim for *speed_kmh* from now on."""
+        self._resolve_backend().set_desired_speed(self, world, speed_kmh)
+
     def turn_at_junction(
         self, world: "carla.World", direction: TurnDirection, **kwargs: Any
     ) -> None:

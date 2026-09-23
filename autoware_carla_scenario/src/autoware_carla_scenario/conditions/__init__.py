@@ -10,7 +10,7 @@ from .base import (
     find_actor_by_role_name,
     find_actor_in_list,
 )
-from .collision import CollisionCondition
+from .collision import CollisionCondition, CollisionTargetType
 from .comparison import ComparisonRule, ScalarComparisonRule, compare
 from .composition import (
     AccelerationCondition,
@@ -18,12 +18,14 @@ from .composition import (
     EntityDistanceCondition,
     RelativeDistanceType,
     EntityLanePositionCondition,
+    EntityPositionDistanceCondition,
     RelativeSpeedCondition,
     SpeedCondition,
     SpeedCoordinateSystem,
     SpeedDirection,
     StandstillCondition,
     TemporaryStopCondition,
+    TimeHeadwayCondition,
     TimeToCollisionCondition,
     WaypointCheckType,
     WaypointCondition,
@@ -33,6 +35,7 @@ from .entity_existence import EntityExistenceCondition
 from .not_condition import NotCondition
 from .or_condition import OrCondition
 from .persistent import PersistentCondition
+from .lane_change_settled import LaneChangeSettledCondition
 from .sticky import StickyCondition
 from .timeout import TimeoutCondition
 from .traffic_signal import TrafficSignalCondition
@@ -45,6 +48,7 @@ __all__ = [
     "AndCondition",
     "BaseCondition",
     "CollisionCondition",
+    "CollisionTargetType",
     "ComparisonRule",
     "ConditionStatus",
     "compare",
@@ -52,6 +56,7 @@ __all__ = [
     "EntityDistanceCondition",
     "EntityExistenceCondition",
     "EntityLanePositionCondition",
+    "EntityPositionDistanceCondition",
     "NotCondition",
     "OrCondition",
     "PersistentCondition",
@@ -63,8 +68,10 @@ __all__ = [
     "SpeedCoordinateSystem",
     "SpeedDirection",
     "StandstillCondition",
+    "LaneChangeSettledCondition",
     "StickyCondition",
     "TemporaryStopCondition",
+    "TimeHeadwayCondition",
     "TimeToCollisionCondition",
     "TimeoutCondition",
     "WaypointCheckType",

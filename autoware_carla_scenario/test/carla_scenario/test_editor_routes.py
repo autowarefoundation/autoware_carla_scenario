@@ -1372,8 +1372,8 @@ class TestEnvironmentTrack:
             actor = re.search(r'name="actor" value="([^"]*)"', form)
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
-        assert offers["ego"] == {"lane_change", "routing", "turn"}
-        assert offers[""] == {"traffic_signal"}
+        assert offers["ego"] == {"lane_change", "routing", "set_speed", "turn"}
+        assert offers[""] == {"environment", "traffic_signal"}
 
     def test_an_environment_action_needs_no_actor(
         self, client: TestClient, draft_id: str
