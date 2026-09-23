@@ -247,7 +247,7 @@ class TrafficManagerBackend(TrafficBackend):
             <= LANE_CHANGE_HEADING_TOLERANCE_DEG
         )
 
-    def set_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+    def set_desired_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
         """Hold *entity* at *speed_kmh*.
 
         ``set_desired_speed`` is a target, not a jump: the TrafficManager gets
@@ -258,10 +258,10 @@ class TrafficManagerBackend(TrafficBackend):
         is why the action reissues only when it has a rate to walk.
         """
         del world
-        actor = _require_actor(entity, "set_speed")
+        actor = _require_actor(entity, "set_desired_speed")
         if actor is None:
             return
-        tm = self._require_tm("set_speed")
+        tm = self._require_tm("set_desired_speed")
         if tm is None:
             return
 

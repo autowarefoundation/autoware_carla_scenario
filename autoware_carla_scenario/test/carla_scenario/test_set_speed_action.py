@@ -50,7 +50,7 @@ class _RecordingVehicle:
             self.speed_kmh / _KMH_PER_MS, 0.0, 0.0
         )
 
-    def set_speed(self, world: object, speed_kmh: float) -> None:
+    def set_desired_speed(self, world: object, speed_kmh: float) -> None:
         self.commanded.append(speed_kmh)
 
 
@@ -318,7 +318,7 @@ class TestSelfDrivenEgos:
     """An ego the TrafficManager does not drive must refuse, not pretend."""
 
     @pytest.mark.parametrize("class_name", ["AutowareEgoEntity", "CarlaDriverEntity"])
-    def test_the_class_overrides_set_speed(self, class_name: str) -> None:
+    def test_the_class_overrides_set_desired_speed(self, class_name: str) -> None:
         """Inherited, it would send the command to the TrafficManager.
 
         The runner puts these egos in `skip_actor_ids`, so the command would
@@ -332,9 +332,9 @@ class TestSelfDrivenEgos:
         import autoware_carla_scenario as acs
 
         entity_class = getattr(acs, class_name)
-        assert "set_speed" in vars(entity_class), (
-            f"{class_name} inherits set_speed from BackendDriven, so a speed "
-            f"command would go to the TrafficManager"
+        assert "set_desired_speed" in vars(entity_class), (
+            f"{class_name} inherits set_desired_speed from BackendDriven, so a "
+            f"speed command would go to the TrafficManager"
         )
 
     def test_a_refusal_is_logged_rather_than_silent(
@@ -343,7 +343,7 @@ class TestSelfDrivenEgos:
         from autoware_carla_scenario import CarlaDriverEntity
 
         with caplog.at_level("WARNING"):
-            CarlaDriverEntity.set_speed(MagicMock(), MagicMock(), 30.0)
+            CarlaDriverEntity.set_desired_speed(MagicMock(), MagicMock(), 30.0)
         assert "not driven by the TrafficManager" in caplog.text
 
 
@@ -421,7 +421,7 @@ class TestConstruction:
 
         Accepting it would send one step and then wait forever for an arrival
         that nothing was still driving towards -- and no backend could take
-        over, because `set_speed` is handed that intermediate value rather than
+        over, because `set_desired_speed` is handed that intermediate value rather
         the rate or the final target.
         """
         with pytest.raises(ValueError, match="must reissue"):

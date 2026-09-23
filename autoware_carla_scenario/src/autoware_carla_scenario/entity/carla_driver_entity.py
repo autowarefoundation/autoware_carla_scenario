@@ -133,7 +133,7 @@ class CarlaDriverEntity(EgoVehicle):
             type(self).__name__,
         )
 
-    def set_speed(self, world: "carla.World", speed_kmh: float) -> None:
+    def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
         """Refuse a TrafficManager speed: nothing here is driven by it.
 
         The driver policy holds the throttle; a desired speed set on the

@@ -115,8 +115,8 @@ class SetSpeedAction(BaseAction):
                 "a rate-limited speed change must reissue: the traffic seam "
                 "carries a target and not a rate, so the walk towards it only "
                 "advances by being re-sent. A backend that honours a rate "
-                "natively cannot be told one through set_speed, so drop "
-                "rate_kmh_s to command the target at once."
+                "natively cannot be told one through set_desired_speed, so "
+                "drop rate_kmh_s to command the target at once."
             )
 
         if until is None and rate_kmh_s is not None:
@@ -162,7 +162,7 @@ class SetSpeedAction(BaseAction):
             return
 
         if self._rate_kmh_s is None:
-            entity.set_speed(world, self._target_speed_kmh)
+            entity.set_desired_speed(world, self._target_speed_kmh)
             logger.info(
                 "SetSpeedAction: '%s' commanded to %.1f km/h",
                 self._entity_name,
@@ -181,11 +181,11 @@ class SetSpeedAction(BaseAction):
             # would leave an intermediate target in force forever whenever
             # `rate_kmh_s * delta_seconds` is smaller than the band -- a brake
             # to a stop would complete while still commanding a crawl.
-            entity.set_speed(world, self._target_speed_kmh)
+            entity.set_desired_speed(world, self._target_speed_kmh)
             return
 
         step = self._rate_kmh_s * _tick_seconds(world)
-        entity.set_speed(world, _toward(now_kmh, self._target_speed_kmh, step))
+        entity.set_desired_speed(world, _toward(now_kmh, self._target_speed_kmh, step))
 
 
 # ---------------------------------------------------------------------------

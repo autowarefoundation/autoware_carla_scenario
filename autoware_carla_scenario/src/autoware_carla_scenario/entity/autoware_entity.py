@@ -276,7 +276,7 @@ class AutowareEgoEntity(EgoVehicle):
             type(self).__name__,
         )
 
-    def set_speed(self, world: "carla.World", speed_kmh: float) -> None:
+    def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
         """Refuse a TrafficManager speed: nothing here is driven by it.
 
         Autoware decides its own speed from its planner and the map's limits.

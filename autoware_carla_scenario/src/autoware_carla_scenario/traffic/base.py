@@ -46,6 +46,7 @@ __all__ = [
     "LaneChangeDirection",
     "TurnDirection",
     "LaneChanging",
+    "SettingSpeed",
     "TurningAtJunctions",
     "TrafficBackend",
     "TrafficBackendError",
@@ -143,8 +144,8 @@ class SettingSpeed(Protocol):
     the action's *reissue* argument rather than here.
     """
 
-    def set_speed(self, world: Any, speed_kmh: float) -> None:
-        """Drive at *speed_kmh* from now on."""
+    def set_desired_speed(self, world: Any, speed_kmh: float) -> None:
+        """Aim for *speed_kmh* from now on."""
         ...
 
 
@@ -344,7 +345,7 @@ class TrafficBackend:
         del entity, world
         return False
 
-    def set_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+    def set_desired_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
         """Drive *entity* at *speed_kmh* from now on.
 
         The target only; a rate limit has already been applied by the caller,
@@ -358,7 +359,7 @@ class TrafficBackend:
             speed_kmh: The speed to hold, in km/h.  Never negative.
         """
         del world, speed_kmh
-        self._unavailable("set_speed", entity)
+        self._unavailable("set_desired_speed", entity)
 
     def turn_at_junction(
         self, entity: Any, world: Any, direction: TurnDirection, **kwargs: Any
