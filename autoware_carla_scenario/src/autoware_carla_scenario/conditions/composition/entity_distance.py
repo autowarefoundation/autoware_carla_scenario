@@ -32,9 +32,9 @@ class EntityDistanceCondition(CompositionCondition):
     * *distance_type* picks the axis within the entity frame.  A car in the
       next lane is 20 m away in a straight line and 2 m away longitudinally,
       and a following-distance or cut-in scenario means the second.
-    * *freespace* measures between bounding boxes rather than between centres.
-      The difference is about a vehicle length, which at a 5 m threshold is
-      most of the threshold.
+    * *edge_to_edge* measures between the bounding boxes rather than between
+      the centres.  The difference is about a vehicle length, which at a 5 m
+      threshold is most of the threshold.
 
     This is the relational counterpart of
     :class:`~autoware_carla_scenario.conditions.composition.speed.SpeedCondition`:
@@ -52,9 +52,9 @@ class EntityDistanceCondition(CompositionCondition):
             to :attr:`RelativeDistanceType.EUCLIDEAN`, the previous behaviour.
             A lane-frame distance is along the road by construction, so only
             the euclidean and longitudinal values mean anything there.
-        freespace: Measure between bounding boxes rather than centres, clamped
-            at zero once they overlap.  Off by default, and not available in
-            the lane frame.
+        edge_to_edge: Measure between the bounding boxes rather than the
+            centres, clamped at zero once they overlap.  Off by default,
+            OpenSCENARIO's ``freespace``, and not available in the lane frame.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
             measures the straight line between the two.
@@ -73,7 +73,7 @@ class EntityDistanceCondition(CompositionCondition):
               rather than a refinement.
             * a lateral *distance_type* in the lane frame.  A length along the
               road is one-dimensional; there is no across-it to report.
-            * *freespace* in the lane frame.  Bumper-to-bumper along a curve
+            * *edge_to_edge* in the lane frame.  Bumper-to-bumper along a curve
               needs the boxes projected onto the road, which this does not do,
               and quietly measuring centre to centre instead would make a
               close-quarters scenario pass for the wrong reason.
@@ -90,7 +90,7 @@ class EntityDistanceCondition(CompositionCondition):
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
         vertical: bool = False,
         distance_type: RelativeDistanceType = RelativeDistanceType.EUCLIDEAN,
-        freespace: bool = False,
+        edge_to_edge: bool = False,
         tolerance: float = 1e-6,
         coordinate_system: DistanceCoordinateSystem = (DistanceCoordinateSystem.ENTITY),
         *,
@@ -116,16 +116,17 @@ class EntityDistanceCondition(CompositionCondition):
                 "no lateral component to report; measure the lateral offset in "
                 "the entity frame"
             )
-        if in_lane and freespace:
+        if in_lane and edge_to_edge:
             raise ValueError(
-                "freespace is not available in the lane frame: bumper to bumper "
-                "along a curve needs the bounding boxes projected onto the road"
+                "edge_to_edge is not available in the lane frame: bumper to "
+                "bumper along a curve needs the bounding boxes projected onto "
+                "the road"
             )
         super().__init__(entity_name=source, label=label)
         self._target = target
         self._vertical = vertical
         self._distance_type = distance_type
-        self._freespace = freespace
+        self._edge_to_edge = edge_to_edge
         self._coordinate_system = coordinate_system
         self._comparison = ScalarComparisonRule(
             field="distance", rule=rule, value=value, tolerance=tolerance
@@ -145,7 +146,7 @@ class EntityDistanceCondition(CompositionCondition):
                 "rule": self._comparison.rule.name,
                 "vertical": self._vertical,
                 "distance_type": self._distance_type.name,
-                "freespace": self._freespace,
+                "edge_to_edge": self._edge_to_edge,
                 "coordinate_system": self._coordinate_system.name,
             }
         )
@@ -176,7 +177,7 @@ class EntityDistanceCondition(CompositionCondition):
             source,
             target,
             distance_type=self._distance_type,
-            freespace=self._freespace,
+            edge_to_edge=self._edge_to_edge,
             vertical=self._vertical,
         )
 

@@ -523,6 +523,49 @@ class TestTheConditionsInLaneFrame:
         ):
             assert condition.get_details()["coordinate_system"] == "ENTITY"
 
+    def test_ttc_to_a_place_measures_along_the_road(
+        self, loaded_map: MapManager
+    ) -> None:
+        """A stop line on a bend, which is where the frame changes the answer.
+
+        The place is 20 m up the lane at 10 m/s, so about 2 s away along the
+        road.  The entity frame reads about **47 s**: the chord to the stop
+        line is very nearly square to the direction of travel on this bend, so
+        the component of the speed along it nearly vanishes and the quotient
+        blows up.  A "TTC to the stop line under 4 s" rule therefore never
+        fires there, on an approach that is two seconds out.
+
+        A place does not move, so in the lane frame the closing speed reduces
+        to the subject's own speed along the road -- which is what "time to the
+        stop line" means.
+        """
+        world, _, _ = _on_the_bend(speed=10.0)
+        stop_line = OpenDrivePose(
+            road_id=BEND, lane_id=-1, s=BEND_START + BEND_GAP, t=0.0
+        )
+
+        lane_frame = TimeToCollisionCondition(
+            source="Ego",
+            position=stop_line,
+            value=4.0,
+            rule=ComparisonRule.LESS_THAN,
+            coordinate_system=DistanceCoordinateSystem.LANE,
+            label="lane",
+        )
+        entity_frame = TimeToCollisionCondition(
+            source="Ego",
+            position=stop_line,
+            value=4.0,
+            rule=ComparisonRule.LESS_THAN,
+            label="entity",
+        )
+
+        assert lane_frame.check(world, 1.0) is not None
+        assert entity_frame.check(world, 1.0) is None, (
+            "the entity frame is expected to be wrong here -- if it is not, "
+            "this bend is no longer a bend and the test proves nothing"
+        )
+
 
 class TestRefusedCombinations:
     def test_a_lane_distance_cannot_also_be_vertical(self) -> None:
@@ -578,19 +621,44 @@ class TestRefusedCombinations:
 
         assert condition.get_details()["coordinate_system"] == "LANE"
 
-    def test_a_lane_distance_cannot_be_freespace(self) -> None:
+    def test_a_lane_frame_ttc_cannot_be_edge_to_edge(self) -> None:
+        """Same refusal, same reason, on the condition where it costs most.
+
+        TTC is compared against a handful of seconds, so a vehicle length in
+        the numerator is a large fraction of the answer -- which is exactly why
+        measuring centre to centre and calling it bumper to bumper would be
+        worth refusing rather than approximating.
+        """
+        with pytest.raises(ValueError, match="edge_to_edge is not available"):
+            TimeToCollisionCondition(
+                source="a",
+                target="b",
+                value=4.0,
+                edge_to_edge=True,
+                coordinate_system=DistanceCoordinateSystem.LANE,
+                label="both",
+            )
+
+    def test_an_entity_frame_ttc_may_still_be_edge_to_edge(self) -> None:
+        condition = TimeToCollisionCondition(
+            source="a", target="b", value=4.0, edge_to_edge=True, label="boxes"
+        )
+
+        assert condition.get_details()["edge_to_edge"] is True
+
+    def test_a_lane_distance_cannot_be_edge_to_edge(self) -> None:
         """Bumper to bumper along a curve needs the boxes put on the road.
 
         Refused rather than quietly measured centre to centre: that is wrong by
         about a vehicle length, which at a close-quarters threshold is most of
         the threshold.
         """
-        with pytest.raises(ValueError, match="freespace is not available"):
+        with pytest.raises(ValueError, match="edge_to_edge is not available"):
             EntityDistanceCondition(
                 source="a",
                 target="b",
                 value=1.0,
-                freespace=True,
+                edge_to_edge=True,
                 coordinate_system=DistanceCoordinateSystem.LANE,
                 label="both",
             )
