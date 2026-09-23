@@ -454,6 +454,7 @@ classDiagram
     class TrafficSignalControllerAction
     class EnvironmentAction
     class TurnAction
+    class WalkStraightAction
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
@@ -462,6 +463,7 @@ classDiagram
     BaseAction <|-- TrafficSignalControllerAction
     BaseAction <|-- EnvironmentAction
     BaseAction <|-- TurnAction
+    BaseAction <|-- WalkStraightAction
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction

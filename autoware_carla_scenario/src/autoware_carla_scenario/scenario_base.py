@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Union
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
+    from .entity.pedestrian_entity import PedestrianEntity
 
 import carla
 
@@ -540,6 +541,22 @@ class BaseScenario(ABC):
             self._traffic_backend.adopt(entity)
         elif self._client is not None:
             entity.set_client(self._client, self._tm_port)
+
+    def register_pedestrian(self, entity: "PedestrianEntity") -> None:
+        """Register a spawned pedestrian so actions can name it.
+
+        A separate call from :meth:`register_entity` rather than a wider type
+        on it, because the two share only the lookup.  Registering a vehicle
+        also hands it the run's traffic backend and puts it on the list whose
+        initial speed is applied after warm-up; a walker is driven by nothing
+        and starts at rest, so both of those would be wrong for it -- and a
+        single method that skipped them for one kind would read as though the
+        skipping were an optimisation.
+
+        Args:
+            entity: A :class:`PedestrianEntity` spawned in :meth:`setup`.
+        """
+        _register_entity(entity.role_name, entity)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.

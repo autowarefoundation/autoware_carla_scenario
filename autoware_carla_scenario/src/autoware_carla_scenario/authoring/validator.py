@@ -10,7 +10,7 @@ neither CARLA nor lanelet2 -- the editor validates on every keystroke.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from .models import (
@@ -126,11 +126,16 @@ class _Refs:
 
     entities: set[str]
     actions: set[str]
+    #: Entity id -> its kind, so an action can be held to the kinds its spec
+    #: names.  Kept beside the id set rather than replacing it: every existing
+    #: check asks only whether an id exists, and a dict would have made each
+    #: of them read as though it cared which kind it was.
+    entity_kinds: dict[str, str] = field(default_factory=dict)
 
 
 #: Spawn constraints and offset bindings describe lanelets, never entities or
 #: actions, so nothing in them may point at either.
-_NO_REFS = _Refs(entities=set(), actions=set())
+_NO_REFS = _Refs(entities=set(), actions=set(), entity_kinds={})
 
 
 def _check_field(
@@ -364,6 +369,15 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
                 f"{spec.title} references unknown entity {node.actor!r}.",
                 node.id,
             )
+        else:
+            kind = refs.entity_kinds.get(str(node.actor), "")
+            if kind and kind not in spec.actor_kinds:
+                out.error(
+                    f"{path}.actor",
+                    f"{spec.title} cannot be performed by a {kind}; it is for "
+                    f"{' or '.join(spec.actor_kinds)}.",
+                    node.id,
+                )
     elif node.actor is not None and node.actor not in refs.entities:
         out.error(
             f"{path}.actor",
@@ -414,6 +428,7 @@ def _check_init_is_not_asked_to_wait(
 def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
     """Validate one entity, its spawn definition and its goal."""
     _check_goal(out, path, entity)
+    _check_model(out, path, entity)
     spawn = entity.spawn
     # The search itself -- its constraints, and the default it falls back to --
     # is checked with every other searched lanelet in `_check_lanelet_slots`,
@@ -451,6 +466,25 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
                         _NO_REFS,
                         entity.id,
                     )
+
+
+def _check_model(out: _Collector, path: str, entity: Entity) -> None:
+    """Check the blueprint belongs to the family this kind spawns from.
+
+    A pedestrian is not a vehicle with a different model: the two come from
+    different CARLA blueprint families, and a document that names the wrong one
+    is one the editor accepted and the runtime cannot spawn.  Caught here so
+    the answer arrives while the scenario is being written rather than as a
+    failed spawn against a live server.
+    """
+    wanted = "walker." if entity.kind == "pedestrian" else "vehicle."
+    if not entity.vehicle_type.startswith(wanted):
+        out.error(
+            f"{path}.vehicle_type",
+            f"A {entity.kind} spawns from a {wanted}* blueprint, "
+            f"but this one names {entity.vehicle_type!r}.",
+            entity.id,
+        )
 
 
 def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
@@ -639,7 +673,11 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
 
     # Every id is gathered before anything is checked, so a forward reference
     # to an action declared further down is not a validation error.
-    refs = _Refs(entities=entity_ids, actions={a.id for a in document.actions})
+    refs = _Refs(
+        entities=entity_ids,
+        actions={a.id for a in document.actions},
+        entity_kinds={e.id: e.kind for e in document.entities},
+    )
 
     seen_actions: set[str] = set()
     for index, action in enumerate(document.actions):
