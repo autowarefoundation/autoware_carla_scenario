@@ -389,6 +389,7 @@ def build_entity_distance_condition(
     """Build an :class:`EntityDistanceCondition`."""
     from ..conditions import EntityDistanceCondition  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import RelativeDistanceType  # noqa: PLC0415
     from ..conditions import DistanceCoordinateSystem  # noqa: PLC0415
 
     params = compiled.params
@@ -397,6 +398,8 @@ def build_entity_distance_condition(
         target=str(params["target"]),
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        distance_type=RelativeDistanceType[str(params["distance_type"])],
+        freespace=params["freespace"],
         coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
     )

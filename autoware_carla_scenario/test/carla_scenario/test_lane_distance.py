@@ -24,6 +24,7 @@ from autoware_carla_scenario import (
     ComparisonRule,
     DistanceCoordinateSystem,
     EntityDistanceCondition,
+    RelativeDistanceType,
     TimeHeadwayCondition,
     TimeToCollisionCondition,
 )
@@ -546,3 +547,50 @@ class TestRefusedCombinations:
         )
 
         assert condition.get_details()["vertical"] is True
+
+    def test_a_lane_distance_cannot_also_be_lateral(self) -> None:
+        """The two frames arrived in separate PRs and meet here.
+
+        ``distance_type`` picks a component of the straight line; the lane
+        frame is along the road by construction, so there is no across-it to
+        report and no reading of the pair that keeps both.
+        """
+        with pytest.raises(ValueError, match="no lateral component"):
+            EntityDistanceCondition(
+                source="a",
+                target="b",
+                value=1.0,
+                distance_type=RelativeDistanceType.LATERAL,
+                coordinate_system=DistanceCoordinateSystem.LANE,
+                label="both",
+            )
+
+    def test_a_longitudinal_lane_distance_is_accepted(self) -> None:
+        """Saying it twice is redundant, not contradictory."""
+        condition = EntityDistanceCondition(
+            source="a",
+            target="b",
+            value=1.0,
+            distance_type=RelativeDistanceType.LONGITUDINAL,
+            coordinate_system=DistanceCoordinateSystem.LANE,
+            label="along",
+        )
+
+        assert condition.get_details()["coordinate_system"] == "LANE"
+
+    def test_a_lane_distance_cannot_be_freespace(self) -> None:
+        """Bumper to bumper along a curve needs the boxes put on the road.
+
+        Refused rather than quietly measured centre to centre: that is wrong by
+        about a vehicle length, which at a close-quarters threshold is most of
+        the threshold.
+        """
+        with pytest.raises(ValueError, match="freespace is not available"):
+            EntityDistanceCondition(
+                source="a",
+                target="b",
+                value=1.0,
+                freespace=True,
+                coordinate_system=DistanceCoordinateSystem.LANE,
+                label="both",
+            )

@@ -1101,6 +1101,10 @@ register_condition_spec(
             rule="rule",
             value="distance",
             unit="m",
+            # Both of these change what the threshold means, so a card that
+            # left them out drew a longitudinal freespace gap and a Euclidean
+            # centre distance identically.
+            details=("measure", "distance_type", "freespace"),
         ),
         fields=(
             _entity_field("source", "Subject"),
@@ -1110,10 +1114,44 @@ register_condition_spec(
                 name="distance", label="Distance", kind="number", default=20.0, unit="m"
             ),
             _coordinate_system_field(),
+            FieldSpec(
+                name="distance_type",
+                label="Component",
+                kind="select",
+                default="EUCLIDEAN",
+                options=(
+                    SelectOption("EUCLIDEAN", "Straight line"),
+                    SelectOption("LONGITUDINAL", "Along the subject"),
+                    SelectOption("LATERAL", "Across the subject"),
+                ),
+                required=False,
+                help=(
+                    "Which part of the straight-line separation is meant.  A "
+                    "car in the next lane is 20 m away in a straight line and "
+                    "2 m away longitudinally, and following-distance and "
+                    "cut-in scenarios mean the second.  Along the road is "
+                    "one-dimensional, so this is only read when Measured is "
+                    "a straight line."
+                ),
+            ),
+            FieldSpec(
+                name="freespace",
+                label="Between bounding boxes",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "Measure bumper to bumper rather than centre to centre.  "
+                    "The difference is about a vehicle length, which at a "
+                    "close-quarters threshold is most of the threshold.  Not "
+                    "available along the road."
+                ),
+            ),
         ),
         description=(
-            "Distance from the subject to the target, in a straight line or "
-            "along the road they share."
+            "Distance from the subject to the target.  Say which frame and "
+            "component are meant and whether the vehicles' extents count; "
+            "the defaults are a straight line between centres."
         ),
     )
 )
