@@ -44,17 +44,45 @@ class TrafficSignalControllerCondition(BaseCondition):
     def __init__(self, lanelet2_regulatory_element_id: int, *, label: str) -> None:
         super().__init__(label=label)
         self._lanelet2_regulatory_element_id = lanelet2_regulatory_element_id
+        #: Whether the id failing to resolve has already been reported.  It is
+        #: checked every tick and the answer does not change between them, so
+        #: an unguarded warning would print at the tick rate for a whole run.
+        self._warned_unresolved = False
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result while the junction holds the named phase.
 
-        Returns ``None`` while the id resolves to nothing -- the map may not be
-        loaded yet, and that is not the same as the phase being wrong.
+        ``None`` covers two different situations, and they are logged
+        differently because only one of them is the scenario's own answer:
+
+        * **The id resolves to nothing.**  A setup problem -- a mistyped
+          regulatory element, or a map that is not loaded -- and reported once
+          as a warning, because a condition that never fires for a whole run
+          should say why rather than leave the reader to guess between this
+          and the phase simply never arriving.
+        * **The junction is in some other phase.**  The ordinary answer, true
+          on most ticks of most runs, so it is logged at debug and names the
+          lights that disagreed: which light is wrong is the first thing
+          anyone asks.
+
+        Both still return ``None`` rather than a failing result.  An action
+        treats any non-``None`` result as its trigger having fired, so a
+        ``passed=False`` here would start the action it is meant to hold back.
         """
         green = find_traffic_lights_for_lanelet2_id(
             world, self._lanelet2_regulatory_element_id
         )
         if not green:
+            if not self._warned_unresolved:
+                self._warned_unresolved = True
+                logger.warning(
+                    "TrafficSignalControllerCondition [%s]: Lanelet2 "
+                    "regulatory element %d resolves to no traffic light, so "
+                    "this condition cannot fire. Check the id, or that the "
+                    "map is loaded.",
+                    self.label,
+                    self._lanelet2_regulatory_element_id,
+                )
             return None
 
         green_ids = {light.id for light in green}
@@ -70,6 +98,13 @@ class TrafficSignalControllerCondition(BaseCondition):
                 wrong.append(f"{light.get_opendrive_id()}={state}")
 
         if wrong:
+            logger.debug(
+                "TrafficSignalControllerCondition [%s]: not the phase of "
+                "lanelet2 %d -- %s",
+                self.label,
+                self._lanelet2_regulatory_element_id,
+                ", ".join(wrong),
+            )
             return None
 
         return ScenarioResult(

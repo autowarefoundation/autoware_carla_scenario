@@ -152,3 +152,63 @@ class TestCondition:
             lanelet2_regulatory_element_id=_NORTH, label="north_phase"
         )
         assert condition.get_details() == {"lanelet2_regulatory_element_id": _NORTH}
+
+
+class TestWhyItDidNotFire:
+    """A condition that never fires has to say which of the two reasons it is.
+
+    Both return ``None`` -- an action treats any non-``None`` result as its
+    trigger firing, so a failing result here would start the action this
+    condition exists to hold back -- so the logs are the only thing that tells
+    a mistyped id apart from a phase that simply never arrived.
+    """
+
+    def test_an_unresolvable_id_is_reported_once_not_every_tick(
+        self, junction: dict[str, MagicMock], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        condition = TrafficSignalControllerCondition(
+            lanelet2_regulatory_element_id=9999, label="nowhere"
+        )
+
+        with caplog.at_level("WARNING"):
+            for _ in range(5):
+                assert condition.check(MagicMock(), 1.0) is None
+
+        assert caplog.text.count("resolves to no traffic light") == 1
+
+    def test_the_wrong_phase_names_the_lights_that_disagree(
+        self, junction: dict[str, MagicMock], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Which light is wrong is the first thing anyone asks.
+
+        Debug rather than warning: on most ticks of most runs the junction is
+        in some other phase, and that is an answer rather than a fault.
+        """
+        # North green as the phase wants, but east green too -- the conflicting
+        # green a single-signal check cannot see.
+        junction["n"].get_state.return_value = _GREEN
+        junction["e"].get_state.return_value = _GREEN
+        condition = TrafficSignalControllerCondition(
+            lanelet2_regulatory_element_id=_NORTH, label="north_phase"
+        )
+
+        with caplog.at_level("DEBUG"):
+            assert condition.check(MagicMock(), 1.0) is None
+
+        assert "not the phase" in caplog.text
+        # The east light is actor id 2, and it is the one that disagreed.
+        assert "2=" in caplog.text
+        assert "1=" not in caplog.text
+
+    def test_a_junction_in_its_phase_logs_nothing(
+        self, junction: dict[str, MagicMock], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        junction["n"].get_state.return_value = _GREEN
+        condition = TrafficSignalControllerCondition(
+            lanelet2_regulatory_element_id=_NORTH, label="north_phase"
+        )
+
+        with caplog.at_level("DEBUG"):
+            assert condition.check(MagicMock(), 1.0) is not None
+
+        assert "not the phase" not in caplog.text
