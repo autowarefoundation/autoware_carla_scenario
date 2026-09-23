@@ -39,8 +39,11 @@ class TrafficSignalControllerAction(BaseAction):
     signal needs no such place and no new IR.
 
     Args:
-        green_lanelet2_id: Lanelet2 regulatory element id of the approach that
-            gets green.  Every other light in the same CARLA group goes red.
+        lanelet2_regulatory_element_id: The approach that gets green, named by
+            the Lanelet2 regulatory element its signals belong to -- the same
+            id, and the same name for it, that
+            :class:`~autoware_carla_scenario.TrafficSignalAction` takes for one
+            light.  Every other light in the same CARLA group goes red.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.
         label: Human-readable identifier.
@@ -52,7 +55,7 @@ class TrafficSignalControllerAction(BaseAction):
 
     def __init__(
         self,
-        green_lanelet2_id: int,
+        lanelet2_regulatory_element_id: int,
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
@@ -61,18 +64,20 @@ class TrafficSignalControllerAction(BaseAction):
         freeze: bool = True,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._green_lanelet2_id = green_lanelet2_id
+        self._lanelet2_regulatory_element_id = lanelet2_regulatory_element_id
         self._freeze = freeze
 
     def execute(self, world: "carla.World") -> None:
         """Set the named approach green and the rest of its junction red."""
-        green = find_traffic_lights_for_lanelet2_id(world, self._green_lanelet2_id)
+        green = find_traffic_lights_for_lanelet2_id(
+            world, self._lanelet2_regulatory_element_id
+        )
         if not green:
             logger.warning(
                 "TrafficSignalControllerAction [%s]: no traffic light found "
                 "for Lanelet2 regulatory element ID %d",
                 self.label,
-                self._green_lanelet2_id,
+                self._lanelet2_regulatory_element_id,
             )
             return
 
@@ -90,7 +95,7 @@ class TrafficSignalControllerAction(BaseAction):
             "TrafficSignalControllerAction [%s]: lanelet2 %d green, %d other "
             "light(s) in its junction red (freeze=%s)",
             self.label,
-            self._green_lanelet2_id,
+            self._lanelet2_regulatory_element_id,
             len(group) - len(green_ids),
             self._freeze,
         )

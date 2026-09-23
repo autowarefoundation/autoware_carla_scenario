@@ -64,7 +64,9 @@ class TestAction:
     def test_the_named_approach_goes_green_and_the_rest_red(
         self, junction: dict[str, MagicMock]
     ) -> None:
-        TrafficSignalControllerAction(green_lanelet2_id=_NORTH).execute(MagicMock())
+        TrafficSignalControllerAction(lanelet2_regulatory_element_id=_NORTH).execute(
+            MagicMock()
+        )
 
         junction["n"].set_state.assert_called_once_with(_GREEN)
         for name in "esw":
@@ -74,15 +76,17 @@ class TestAction:
         self, junction: dict[str, MagicMock]
     ) -> None:
         """A phase the simulator then cycles away from cannot be asserted about."""
-        TrafficSignalControllerAction(green_lanelet2_id=_NORTH).execute(MagicMock())
+        TrafficSignalControllerAction(lanelet2_regulatory_element_id=_NORTH).execute(
+            MagicMock()
+        )
 
         for light in junction.values():
             light.freeze.assert_called_once_with(True)
 
     def test_freezing_can_be_declined(self, junction: dict[str, MagicMock]) -> None:
-        TrafficSignalControllerAction(green_lanelet2_id=_NORTH, freeze=False).execute(
-            MagicMock()
-        )
+        TrafficSignalControllerAction(
+            lanelet2_regulatory_element_id=_NORTH, freeze=False
+        ).execute(MagicMock())
 
         for light in junction.values():
             light.freeze.assert_called_once_with(False)
@@ -90,7 +94,9 @@ class TestAction:
     def test_an_unknown_approach_touches_nothing(
         self, junction: dict[str, MagicMock]
     ) -> None:
-        TrafficSignalControllerAction(green_lanelet2_id=9999).execute(MagicMock())
+        TrafficSignalControllerAction(lanelet2_regulatory_element_id=9999).execute(
+            MagicMock()
+        )
 
         for light in junction.values():
             light.set_state.assert_not_called()
@@ -102,7 +108,7 @@ class TestCondition:
     ) -> None:
         junction["n"].get_state.return_value = _GREEN
         condition = TrafficSignalControllerCondition(
-            green_lanelet2_id=_NORTH, label="north_phase"
+            lanelet2_regulatory_element_id=_NORTH, label="north_phase"
         )
         result = condition.check(MagicMock(), 1.0)
         assert result is not None
@@ -120,7 +126,7 @@ class TestCondition:
         junction["n"].get_state.return_value = _GREEN
         junction["e"].get_state.return_value = _GREEN
         condition = TrafficSignalControllerCondition(
-            green_lanelet2_id=_NORTH, label="north_phase"
+            lanelet2_regulatory_element_id=_NORTH, label="north_phase"
         )
         assert condition.check(MagicMock(), 1.0) is None
 
@@ -128,7 +134,7 @@ class TestCondition:
         self, junction: dict[str, MagicMock]
     ) -> None:
         condition = TrafficSignalControllerCondition(
-            green_lanelet2_id=_NORTH, label="north_phase"
+            lanelet2_regulatory_element_id=_NORTH, label="north_phase"
         )
         assert condition.check(MagicMock(), 1.0) is None
 
@@ -137,12 +143,12 @@ class TestCondition:
     ) -> None:
         """The map may not be loaded yet, which is not the phase being wrong."""
         condition = TrafficSignalControllerCondition(
-            green_lanelet2_id=9999, label="missing"
+            lanelet2_regulatory_element_id=9999, label="missing"
         )
         assert condition.check(MagicMock(), 1.0) is None
 
     def test_details_name_the_approach(self) -> None:
         condition = TrafficSignalControllerCondition(
-            green_lanelet2_id=_NORTH, label="north_phase"
+            lanelet2_regulatory_element_id=_NORTH, label="north_phase"
         )
-        assert condition.get_details() == {"green_lanelet2_id": _NORTH}
+        assert condition.get_details() == {"lanelet2_regulatory_element_id": _NORTH}

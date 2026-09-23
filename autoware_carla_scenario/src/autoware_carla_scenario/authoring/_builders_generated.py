@@ -560,7 +560,7 @@ def build_traffic_signal_controller_condition(
 
     params = compiled.params
     return TrafficSignalControllerCondition(
-        green_lanelet2_id=params["green_lanelet2_id"],
+        lanelet2_regulatory_element_id=params["lanelet2_regulatory_element_id"],
         label=compiled.label,
     )
 
@@ -608,7 +608,7 @@ def build_traffic_signal_controller_action(
 
     params = compiled.params
     return TrafficSignalControllerAction(
-        green_lanelet2_id=params["green_lanelet2_id"],
+        lanelet2_regulatory_element_id=params["lanelet2_regulatory_element_id"],
         condition=condition,
         timing=timing,
         label=compiled.label,

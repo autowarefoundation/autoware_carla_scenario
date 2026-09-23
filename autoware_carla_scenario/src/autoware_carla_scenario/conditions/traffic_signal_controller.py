@@ -33,14 +33,17 @@ class TrafficSignalControllerCondition(BaseCondition):
     be tested against by accident.
 
     Args:
-        green_lanelet2_id: Lanelet2 regulatory element id of the approach that
-            the phase gives green.
+        lanelet2_regulatory_element_id: The approach the phase gives green,
+            named by the Lanelet2 regulatory element its signals belong to --
+            the same id, and the same name for it, that
+            :class:`~autoware_carla_scenario.TrafficSignalAction` takes for one
+            light.
         label: Human-readable identifier for this condition.
     """
 
-    def __init__(self, green_lanelet2_id: int, *, label: str) -> None:
+    def __init__(self, lanelet2_regulatory_element_id: int, *, label: str) -> None:
         super().__init__(label=label)
-        self._green_lanelet2_id = green_lanelet2_id
+        self._lanelet2_regulatory_element_id = lanelet2_regulatory_element_id
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result while the junction holds the named phase.
@@ -48,7 +51,9 @@ class TrafficSignalControllerCondition(BaseCondition):
         Returns ``None`` while the id resolves to nothing -- the map may not be
         loaded yet, and that is not the same as the phase being wrong.
         """
-        green = find_traffic_lights_for_lanelet2_id(world, self._green_lanelet2_id)
+        green = find_traffic_lights_for_lanelet2_id(
+            world, self._lanelet2_regulatory_element_id
+        )
         if not green:
             return None
 
@@ -70,11 +75,11 @@ class TrafficSignalControllerCondition(BaseCondition):
         return ScenarioResult(
             passed=True,
             message=(
-                f"Junction of lanelet2 {self._green_lanelet2_id} is in its "
+                f"Junction of lanelet2 {self._lanelet2_regulatory_element_id} is in its "
                 f"phase: that approach green, the rest red"
             ),
             elapsed_seconds=elapsed,
         )
 
     def get_details(self) -> dict[str, Any]:
-        return {"green_lanelet2_id": self._green_lanelet2_id}
+        return {"lanelet2_regulatory_element_id": self._lanelet2_regulatory_element_id}

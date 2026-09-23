@@ -977,7 +977,7 @@ register_action_spec(
         default_phase="init",
         fields=(
             FieldSpec(
-                name="green_lanelet2_id",
+                name="lanelet2_regulatory_element_id",
                 label="Approach given green",
                 kind="int",
                 default=0,
@@ -1875,13 +1875,13 @@ register_condition_spec(
         target="..conditions:TrafficSignalControllerCondition",
         visual=ConditionVisual(
             metric="Junction phase",
-            target="green_lanelet2_id",
-            target_prefix="Lanelet",
+            target="lanelet2_regulatory_element_id",
+            target_prefix="Regulatory element",
             value_label="holds",
         ),
         fields=(
             FieldSpec(
-                name="green_lanelet2_id",
+                name="lanelet2_regulatory_element_id",
                 label="Approach given green",
                 kind="int",
                 default=0,
