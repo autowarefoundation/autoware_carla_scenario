@@ -330,6 +330,12 @@ class ActionSpec:
     #: vehicle's lane while the runtime, which never reads the field, went on
     #: setting the same lights.
     scope: Literal["actor", "environment"] = "actor"
+    #: Entity kinds that may perform this action.  Read by the validator, so a
+    #: pedestrian asked to change lane is a document error rather than a
+    #: warning in a run's log -- and so the rule lives with the action rather
+    #: than as a list of type ids the validator would have to be kept in step
+    #: with.  Ignored for an ``environment`` action, which has no actor.
+    actor_kinds: tuple[str, ...] = ("ego", "vehicle")
     #: ``instant`` renders as a diamond on the swimlane, ``continuous`` as a bar.
     visual_kind: Literal["instant", "continuous"] = "instant"
     #: The phase a freshly added card lands in.  ``init`` for anything the run
@@ -855,6 +861,37 @@ register_action_spec(
             ),
         ),
         description="Route the actor through the next junction in a direction.",
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="walk_straight",
+        title="Walk Straight",
+        category="Pedestrian",
+        builder="build_walk_straight_action",
+        target="..actions:WalkStraightAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=(
+            FieldSpec(
+                name="speed_ms",
+                label="Walking speed",
+                kind="number",
+                default=1.4,
+                unit="m/s",
+                help=(
+                    "Zero stops the pedestrian where it stands, so one card "
+                    "can start a crossing and a second can end it."
+                ),
+            ),
+        ),
+        description=(
+            "Send a pedestrian forward the way it is facing, with no "
+            "destination.  It keeps going rather than routing around the "
+            "vehicle the scenario is about, which is what makes it usable "
+            "for a crossing."
+        ),
     )
 )
 

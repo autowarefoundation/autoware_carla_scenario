@@ -18,7 +18,7 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_args
 
 from ..authoring.models import (
     ActionNode,
@@ -442,14 +442,26 @@ class EditorService:
     # Entities
     # ------------------------------------------------------------------
 
+    #: Id prefix per entity kind.  A walker called ``npc3`` reads as a vehicle
+    #: in every log line and every condition that names it, so the kinds are
+    #: told apart by their names as well as by their field.
+    _ID_PREFIXES: ClassVar[dict[str, str]] = {
+        "ego": "ego",
+        "vehicle": "npc",
+        "pedestrian": "walker",
+    }
+
     def add_entity(self, document: ScenarioDocument, kind: str = "vehicle") -> Entity:
         """Append a new entity and return it."""
+        if kind not in self._ID_PREFIXES:
+            raise EditorError(f"Unknown entity kind {kind!r}.")
         if kind == "ego" and document.ego is not None:
             raise EditorError("The scenario already has an ego entity.")
-        entity_id = _unique_entity_id(document, "ego" if kind == "ego" else "npc")
+        entity_id = _unique_entity_id(document, self._ID_PREFIXES[kind])
         entity = Entity(
             id=entity_id,
-            kind="ego" if kind == "ego" else "vehicle",
+            # The blueprint follows from the kind; `Entity` fills it in.
+            kind=kind,  # type: ignore[arg-type]
             title="Ego" if kind == "ego" else entity_id.upper(),
             spawn=SpawnSpec(lanelet_id=document.entities[0].spawn.lanelet_id)
             if document.entities
