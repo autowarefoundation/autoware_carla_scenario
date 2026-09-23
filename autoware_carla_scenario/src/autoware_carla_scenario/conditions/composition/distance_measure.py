@@ -6,7 +6,7 @@ the author:
 
 * **along which axis** -- the straight line between the two, or the gap along
   the road, or the offset across it;
-* **between which points** -- centre to centre, or bumper to bumper.
+* **between which points** -- centre to centre, or edge to edge.
 
 Both are load-bearing.  A car in the next lane is not "20 m away" in any sense
 a following-distance scenario means, and centre-to-centre is wrong by about a
@@ -114,8 +114,9 @@ def half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
 
     The box's own axes are used, not the actor's; see :func:`_box_axes`.
 
-    An actor with no bounding box contributes nothing, which makes freespace
-    degrade to centre-to-centre for that actor rather than fail.
+    An actor with no bounding box contributes nothing, which makes an
+    edge-to-edge measurement degrade to centre-to-centre for that actor rather
+    than fail.
     """
     box = getattr(actor, "bounding_box", None)
     if box is None:
@@ -199,7 +200,7 @@ def separation(
     target: "carla.Actor",
     *,
     distance_type: RelativeDistanceType = RelativeDistanceType.EUCLIDEAN,
-    freespace: bool = False,
+    edge_to_edge: bool = False,
     vertical: bool = False,
 ) -> Optional[float]:
     """Return the distance from *source* to *target*, or ``None`` if unknowable.
@@ -209,8 +210,10 @@ def separation(
             directional *distance_type*.
         target: The actor measured to.
         distance_type: Which component to measure.
-        freespace: Measure between bounding boxes rather than between centres,
-            clamped at zero once they overlap.
+        edge_to_edge: Measure between the two bounding boxes rather than
+            between the two centres, clamped at zero once they overlap.  This
+            is OpenSCENARIO's ``freespace``, under a name that says what the
+            measurement runs between.
         vertical: Include the height difference.  Only meaningful for
             :attr:`RelativeDistanceType.EUCLIDEAN`; the directional components
             are ground-plane by construction.
@@ -220,7 +223,7 @@ def separation(
         asked for and the source's heading is degenerate -- which is "cannot
         tell" and must not be reported as a zero component.
     """
-    if freespace:
+    if edge_to_edge:
         src = _box_centre(source)
         tgt = _box_centre(target)
     else:
@@ -236,7 +239,7 @@ def separation(
     )
 
     if distance_type is RelativeDistanceType.EUCLIDEAN:
-        if not freespace:
+        if not edge_to_edge:
             return delta.magnitude()
         return _euclidean_gap(source, target, delta, vertical)
 
@@ -247,7 +250,7 @@ def separation(
     axis = forward if distance_type is RelativeDistanceType.LONGITUDINAL else left
 
     distance = abs(delta.dot(axis))
-    if not freespace:
+    if not edge_to_edge:
         return distance
     return max(
         0.0,

@@ -118,7 +118,7 @@ class TestFreespace:
             _actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0), extent=(2.5, 1.0, 0.75))
         )
         assert math.isclose(
-            _ttc(_to_stop_line(freespace=True), world), 9.75, abs_tol=0.01
+            _ttc(_to_stop_line(edge_to_edge=True), world), 9.75, abs_tol=0.01
         )
 
     def test_both_bumpers_count_for_an_entity_target(self) -> None:
@@ -131,12 +131,12 @@ class TestFreespace:
             target="npc1",
             value=1e9,
             rule=ComparisonRule.LESS_THAN,
-            freespace=True,
+            edge_to_edge=True,
             label="ttc",
         )
         assert math.isclose(_ttc(condition, world), 9.5, abs_tol=0.01)
 
-    def test_freespace_is_off_by_default(self) -> None:
+    def test_edge_to_edge_is_off_by_default(self) -> None:
         world = _world(_actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0)))
         assert math.isclose(_ttc(_to_stop_line(), world), 10.0, abs_tol=0.01)
 

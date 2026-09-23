@@ -42,10 +42,10 @@ class TimeToCollisionCondition(CompositionCondition):
     source's own speed along the line of sight -- the same expression with the
     target's velocity zero, rather than a second code path.
 
-    *freespace* measures from the source's bounding box rather than its centre.
-    It matters more here than anywhere else: TTC is compared against a handful
-    of seconds, so a vehicle length in the numerator is a large fraction of the
-    answer.
+    *edge_to_edge* measures from the source's bounding box rather than from its
+    centre.  It matters more here than anywhere else: TTC is compared against a
+    handful of seconds, so a vehicle length in the numerator is a large
+    fraction of the answer.
 
     It reads as ``source -> target | TTC | <rule> <value> s``.
 
@@ -57,7 +57,8 @@ class TimeToCollisionCondition(CompositionCondition):
             CARLA world pose.  Resolved once, in this constructor.
         value: Threshold time in seconds.
         rule: Comparison operator applied to ``ttc`` vs *value*.
-        freespace: Measure from the bounding boxes rather than the centres.
+        edge_to_edge: Measure from the bounding boxes rather than from the
+            centres.  This is OpenSCENARIO's ``freespace``.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         label: Human-readable identifier for this condition.
 
@@ -76,7 +77,7 @@ class TimeToCollisionCondition(CompositionCondition):
         value: float = 4.0,
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
         position: Optional[AnyPose] = None,
-        freespace: bool = False,
+        edge_to_edge: bool = False,
         tolerance: float = 1e-6,
         *,
         label: str,
@@ -90,7 +91,7 @@ class TimeToCollisionCondition(CompositionCondition):
             )
         super().__init__(entity_name=source, label=label)
         self._target = target
-        self._freespace = freespace
+        self._edge_to_edge = edge_to_edge
         self._place: Optional[Vector3] = None
         if position is not None:
             location = to_carla_location(position)
@@ -110,7 +111,7 @@ class TimeToCollisionCondition(CompositionCondition):
                 "source": str(self._entity_name),
                 "value": self._comparison.value,
                 "rule": self._comparison.rule.name,
-                "freespace": self._freespace,
+                "edge_to_edge": self._edge_to_edge,
             }
         )
         if self._target is not None:
@@ -153,7 +154,7 @@ class TimeToCollisionCondition(CompositionCondition):
             return None
         direction = offset / distance
 
-        if self._freespace:
+        if self._edge_to_edge:
             distance = max(0.0, distance - half_extent_along(source, direction))
             if target is not None:
                 distance = max(0.0, distance - half_extent_along(target, direction))

@@ -488,23 +488,30 @@ def _rule_field(default: str = "less_than") -> FieldSpec:
     )
 
 
-def _freespace_field() -> FieldSpec:
+def _edge_to_edge_field() -> FieldSpec:
     """Return the bounding-box-versus-centres switch.
 
     Shared because the choice means the same thing wherever a distance is
     measured, and a second copy would be a second place for its help text to
     drift from what the measurement does.
+
+    OpenSCENARIO spells this ``freespace``, and this library does not.  The
+    standard's name says what is being measured *through* rather than what the
+    measurement runs *between*, so as a bare boolean it tells a reader nothing
+    about bounding boxes; the mapping belongs in the transpiler, next to the
+    other names it translates, rather than in the vocabulary an author reads.
     """
     return FieldSpec(
-        name="freespace",
+        name="edge_to_edge",
         label="Between bounding boxes",
         kind="bool",
         default=False,
         required=False,
         help=(
-            "Measure bumper to bumper rather than centre to centre.  The "
-            "difference is about a vehicle length, which matters most where "
-            "the answer is a handful of seconds."
+            "Measure between the vehicles' bounding boxes rather than between "
+            "their centres.  The difference is about a vehicle length, which "
+            "matters most where the answer is a handful of seconds.  This is "
+            "OpenSCENARIO's freespace."
         ),
     )
 
@@ -1091,9 +1098,9 @@ register_condition_spec(
             value="distance",
             unit="m",
             # Both of these change what the threshold means, so a card that
-            # left them out drew a longitudinal freespace gap and a Euclidean
-            # centre distance identically.
-            details=("distance_type", "freespace"),
+            # left them out drew a longitudinal edge-to-edge gap and a
+            # Euclidean centre distance identically.
+            details=("distance_type", "edge_to_edge"),
         ),
         fields=(
             _entity_field("source", "Subject"),
@@ -1119,7 +1126,7 @@ register_condition_spec(
                     "cut-in scenarios mean the second."
                 ),
             ),
-            _freespace_field(),
+            _edge_to_edge_field(),
         ),
         description=(
             "Distance from the subject to the target.  Say which component "
@@ -1216,7 +1223,7 @@ register_condition_spec(
             FieldSpec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
-            _freespace_field(),
+            _edge_to_edge_field(),
         ),
         description="Time to collision from the subject to the target.",
     )
@@ -1273,7 +1280,7 @@ register_condition_spec(
             FieldSpec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
-            _freespace_field(),
+            _edge_to_edge_field(),
         ),
         description=(
             "Time until the subject reaches a place on the map -- a stop "

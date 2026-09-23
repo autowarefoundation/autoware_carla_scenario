@@ -399,7 +399,7 @@ def build_entity_distance_condition(
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         distance_type=RelativeDistanceType[str(params["distance_type"])],
-        freespace=params["freespace"],
+        edge_to_edge=params["edge_to_edge"],
         label=compiled.label,
     )
 
@@ -464,7 +464,7 @@ def build_ttc_condition(
         target=str(params["target"]),
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
-        freespace=params["freespace"],
+        edge_to_edge=params["edge_to_edge"],
         label=compiled.label,
     )
 
@@ -489,7 +489,7 @@ def build_ttc_to_position_condition(
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         position=position,
-        freespace=params["freespace"],
+        edge_to_edge=params["edge_to_edge"],
         label=compiled.label,
     )
 
