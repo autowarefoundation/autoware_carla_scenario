@@ -65,9 +65,9 @@ class TimeToCollisionCondition(CompositionCondition):
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
             measures the straight line; :attr:`~DistanceCoordinateSystem.LANE`
-            measures along the road the two share, and has no answer while they
-            are on different roads.  Both halves of the TTC change frame
-            together -- see :meth:`_lane_ttc`.
+            measures along the roads that connect the two, and has no answer
+            once a junction stands between them.  Both halves of the TTC
+            change frame together -- see :meth:`_lane_ttc`.
         label: Human-readable identifier for this condition.
 
     Raises:

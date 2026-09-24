@@ -30,10 +30,11 @@ class DistanceCoordinateSystem(Enum):
         ENTITY: A straight-line offset in the world frame, projected onto a
             direction belonging to the subject.  The default, so a document
             written before this existed keeps its meaning.
-        LANE: The distance *along the road* the two share, which is the gap a
-            driver would describe.  Needs a loaded map, and has no answer when
-            the two are on different roads -- see
-            :mod:`autoware_carla_scenario.coordinate.lane_distance`.
+        LANE: The distance *along the road*, which is the gap a driver would
+            describe.  Follows the chain of connected roads between the two,
+            and has no answer once a junction stands between them -- see
+            :mod:`autoware_carla_scenario.coordinate.lane_distance`.  Needs a
+            loaded map.
 
     The two agree on a straight road and part company on a curve, where the
     entity frame reads short: for a leader 20 m ahead along the lane it gives

@@ -278,10 +278,10 @@ class TestClosingSpeed:
 
 
 class TestWhenThereIsNoAnswer:
-    def test_two_different_roads_are_refused_rather_than_approximated(
+    def test_roads_no_chain_joins_are_refused_rather_than_approximated(
         self, loaded_map: MapManager
     ) -> None:
-        """The junction case, which needs a routing graph nothing holds yet.
+        """Across a junction, which needs a routing graph nothing holds yet.
 
         Falling back to the straight line here would be the silent swap of one
         measure for another that the whole lane frame exists to remove: a
@@ -662,3 +662,112 @@ class TestRefusedCombinations:
                 coordinate_system=DistanceCoordinateSystem.LANE,
                 label="both",
             )
+
+
+# ---------------------------------------------------------------------------
+# Across connected roads
+# ---------------------------------------------------------------------------
+
+#: A chain of three roads the fixture joins end to end, and their lengths.
+#: The middle one is 16 m long, which is the point: an OpenDRIVE map is cut
+#: into roads far shorter than a following distance, so a leader 20 m ahead is
+#: routinely on the next road rather than this one.
+CHAIN = ("32", "34", "36")
+
+
+def _chain_lengths() -> "tuple[float, float, float]":
+    lengths = tuple(lane_distance._road_length(road) for road in CHAIN)
+    assert all(length is not None for length in lengths), CHAIN
+    return lengths  # type: ignore[return-value]
+
+
+class TestAcrossConnectedRoads:
+    """The case measuring within one road answers ``None`` to.
+
+    Not an edge case: on this fixture the median road is 33 m and three
+    quarters are under 50 m, so this is where most following scenarios live.
+    """
+
+    def test_the_next_road_along_is_measured_not_refused(
+        self, loaded_map: MapManager
+    ) -> None:
+        first, _, _ = CHAIN
+        length, _, _ = _chain_lengths()
+        behind = _at(length - 5.0, road=first)
+        ahead = _at(7.0, road=CHAIN[1])
+
+        assert lane_separation(behind, ahead) == pytest.approx(12.0, abs=0.1)
+
+    def test_the_walk_carries_on_over_several_roads(
+        self, loaded_map: MapManager
+    ) -> None:
+        first, middle, last = CHAIN
+        first_length, middle_length, _ = _chain_lengths()
+        behind = _at(first_length - 5.0, road=first)
+        ahead = _at(3.0, road=last)
+
+        assert lane_separation(behind, ahead) == pytest.approx(
+            5.0 + middle_length + 3.0, abs=0.1
+        )
+
+    def test_a_separation_reads_the_same_from_either_end(
+        self, loaded_map: MapManager
+    ) -> None:
+        """Which vehicle is asked must not change the answer.
+
+        Worth pinning rather than assuming: this converter writes the links
+        asymmetrically -- on this fixture 367 of 490 road-to-road successors
+        have no matching predecessor on the far side -- so a walk that trusted
+        each road's own ``predecessor`` would measure one way and refuse the
+        other.
+        """
+        first, middle, _ = CHAIN
+        first_length, _, _ = _chain_lengths()
+        behind = _at(first_length - 5.0, road=first)
+        ahead = _at(7.0, road=middle)
+
+        there = lane_separation(behind, ahead)
+        back = lane_separation(ahead, behind)
+        assert there is not None and back is not None
+        assert there == pytest.approx(back)
+
+    def test_a_gap_over_the_join_keeps_its_sign(self, loaded_map: MapManager) -> None:
+        first, middle, _ = CHAIN
+        first_length, _, _ = _chain_lengths()
+        behind = _at(first_length - 5.0, road=first)
+        ahead = _at(7.0, road=middle)
+        ux, uy = _towards(behind, _at(first_length - 4.0, road=first))
+
+        assert lane_gap(behind, ux * 10, uy * 10, ahead) == pytest.approx(12.0, abs=0.1)
+        # Same pair, driving the other way: the leader is now behind.
+        assert lane_gap(behind, -ux * 10, -uy * 10, ahead) == pytest.approx(
+            -12.0, abs=0.1
+        )
+
+    def test_a_closing_speed_over_the_join_is_the_along_road_difference(
+        self, loaded_map: MapManager
+    ) -> None:
+        """Each road numbers ``s`` its own way, so the two speeds are put on
+        the axis running from the source to the target before subtracting."""
+        first, middle, _ = CHAIN
+        first_length, _, _ = _chain_lengths()
+        behind = _at(first_length - 5.0, road=first)
+        ahead = _at(7.0, road=middle)
+        ux, uy = _towards(behind, _at(first_length - 4.0, road=first))
+        tx, ty = _towards(ahead, _at(8.0, road=middle))
+
+        # Closing on a parked car at the follower's own along-road speed.
+        assert lane_closing_speed(
+            behind, ux * 10, uy * 10, ahead, 0.0, 0.0
+        ) == pytest.approx(10.0, abs=0.1)
+        # Keeping pace over the join: barely closing at all.
+        assert lane_closing_speed(
+            behind, ux * 10, uy * 10, ahead, tx * 10, ty * 10
+        ) == pytest.approx(0.0, abs=0.1)
+
+    def test_a_pair_further_apart_than_a_scenario_asks_about_is_refused(
+        self, loaded_map: MapManager
+    ) -> None:
+        """The walk is bounded, so a map cannot be searched indefinitely."""
+        first, _, _ = CHAIN
+        assert lane_separation(_at(0.0, road=first), _at(200.0, road="2")) is None

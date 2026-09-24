@@ -17,23 +17,37 @@ function per question rather than one that returns a tuple nobody wants whole:
 
 What is here, and what is not
 -----------------------------
-Only the **same-road** case: both entities projected onto one OpenDRIVE road,
-and their ``s`` compared.  That covers the curvature error, which is where the
-entity frame does real damage, and it needs no routing graph.
+Both entities are projected onto the road network and their ``s`` compared,
+following the chain of connected roads between them when they are not on the
+same one.
 
-A pair on two different roads -- the junction case -- has no answer here.  It
-is not approximated and it does not fall back to the straight line: a scenario
-that silently swaps one measure for another passes for the wrong reason, which
-is worse than not firing.  Reaching across roads needs a lanelet2 routing graph
-in the live runtime, which nothing holds yet.
+Following the chain is not a refinement, it is the difference between the
+measurement working and not.  An OpenDRIVE map is cut into short roads -- on
+this project's own fixture the median road is 33 m and three quarters are
+under 50 m -- so a leader at an ordinary following distance is usually on the
+*next* road, not the one behind it.  Measuring within a single road would
+answer "no measurement" to most of the following scenarios this coordinate
+system exists for, which is exactly the silent never-fires it exists to
+remove.  The links are read off the OpenDRIVE the converter already emits, so
+this needs no routing graph.
+
+What has no answer is a **junction**: several roads leave it, and which one a
+vehicle will take is a route rather than a geometric fact.  A walk stops
+there, and the pair is reported as having no measurement rather than
+approximated or quietly swapped for the straight line -- a scenario that
+silently changes what it measures passes for the wrong reason, which is worse
+than not firing.  Reaching across a junction needs a lanelet2 routing graph in
+the live runtime, which nothing holds yet.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from typing import Optional
 
+from .map_manager import MapManager
 from .poses import CarlaWorldPose, OpenDrivePose
 from .transform import to_opendrive
 
@@ -70,9 +84,8 @@ def lane_separation(source: CarlaWorldPose, target: CarlaWorldPose) -> Optional[
     target_od = _project(target)
     if source_od is None or target_od is None:
         return None
-    if source_od.road_id != target_od.road_id:
-        return None
-    return abs(target_od.s - source_od.s)
+    reach = _reach(source_od, target_od)
+    return None if reach is None else reach.distance
 
 
 def lane_gap(
@@ -94,8 +107,9 @@ def lane_gap(
       once, because unlike the others this is a misconfiguration rather than a
       fact about the scenario, and a condition that never fires for a whole run
       should say why.
-    * **The two are on different roads.**  The junction case, which needs a
-      routing graph; see the module docstring.
+    * **No chain of roads joins the two.**  A junction stands between them, or
+      they are further apart than a measurement reaches; see the module
+      docstring.
     * **The source is not moving.**  There is no direction of travel to measure
       along.
     * **The source is moving square across the road.**  It makes no progress
@@ -119,15 +133,20 @@ def lane_gap(
     if fix is None or target_od is None:
         return None
     source_od, along = fix
-    if source_od.road_id != target_od.road_id:
-        return None
     if abs(along) < _NEAR_ZERO:
         # Moving, but square across the road: no progress along it to measure
         # a gap in front of.
         return None
+    reach = _reach(source_od, target_od)
+    if reach is None:
+        return None
 
-    sign = 1.0 if along > 0 else -1.0
-    return sign * (target_od.s - source_od.s)
+    # `reach.forward` is where the target lies in the source road's own `s`;
+    # `along` is which way the source is driving in it.  Ahead is when the two
+    # agree.
+    driving_forward = along > 0
+    sign = 1.0 if reach.forward == driving_forward else -1.0
+    return sign * reach.distance
 
 
 def lane_closing_speed(
@@ -168,11 +187,9 @@ def lane_closing_speed(
     target_od = _project(target)
     if source_od is None or target_od is None:
         return None
-    if source_od.road_id != target_od.road_id:
-        return None
-
-    offset = target_od.s - source_od.s
-    if abs(offset) < _NEAR_ZERO:
+    reach = _reach(source_od, target_od)
+    if reach is None or reach.distance < _NEAR_ZERO:
+        # Level along the road: no separation, so no direction to close along.
         return None
 
     source_along = _along_s(source, source_travel_x, source_travel_y)
@@ -180,11 +197,13 @@ def lane_closing_speed(
     if source_along is None or target_along is None:
         return None
 
-    # The separation is ``abs(offset)``, so it shrinks at
-    # ``sign(offset) * (source_along - target_along)``: whoever is behind
-    # closes by going faster along the road, whichever of them that is.
-    sign = 1.0 if offset > 0 else -1.0
-    return sign * (source_along - target_along)
+    # Both speeds are read off their own road's `s`, and the two roads may
+    # number it opposite ways round.  Putting each on the axis that runs from
+    # the source to the target is what makes them subtractable: the separation
+    # then shrinks at source minus target, whichever of the two is behind.
+    source_sign = 1.0 if reach.forward else -1.0
+    target_sign = 1.0 if reach.target_forward else -1.0
+    return source_sign * source_along - target_sign * target_along
 
 
 def _along_s(pose: CarlaWorldPose, travel_x: float, travel_y: float) -> Optional[float]:
@@ -280,3 +299,215 @@ def _speed_along_s(
         return None
 
     return facing_od, speed * math.cos(facing_od.heading)
+
+
+# ---------------------------------------------------------------------------
+# Walking the chain of connected roads
+# ---------------------------------------------------------------------------
+
+#: How far along the chain of connected roads a measurement will reach.
+#:
+#: Bounded because the search runs over a graph the scenario does not control,
+#: and because a pair further apart than this is not one any of these
+#: conditions is written about.  200 m covers a time-to-collision at motorway
+#: speed over the handful of seconds a threshold is set at, which is the
+#: longest range asked for here.
+_MAX_CHAIN_METRES = 200.0
+
+#: Belt to the budget's braces: links that form a loop would otherwise be
+#: walked until the distance cap caught them, once per condition per tick.
+_MAX_CHAIN_HOPS = 24
+
+
+@dataclass(frozen=True)
+class _Reach:
+    """How *target* was reached from *source* along the roads joining them.
+
+    Attributes:
+        distance: Along-road metres between the two points, never negative.
+            Which way the target lies is *forward*.
+        forward: Whether it lies in the direction its source's road numbers
+            ``s``, rather than against it.
+        target_forward: Whether the **target's** road numbers ``s`` the same
+            way the measurement runs.  A chain can enter a road from its far
+            end, and a speed read off that road's own ``s`` then has the wrong
+            sign for a closing speed.
+    """
+
+    distance: float
+    forward: bool
+    target_forward: bool
+
+
+def _road(road_id: str) -> Optional[object]:
+    """Return the loaded road with *road_id*, or ``None``."""
+    try:
+        network = MapManager.get_instance().road_network
+    except RuntimeError:
+        return None
+    return network.road_ids_to_object.get(str(road_id))
+
+
+def _road_length(road_id: str) -> Optional[float]:
+    """Return the road's reference-line length in metres, or ``None``."""
+    road = _road(road_id)
+    if road is None:
+        return None
+    try:
+        return float(road["length"])  # type: ignore[index]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+#: The road link graph, rebuilt when a different map is loaded.
+#:
+#: Keyed by the identity of the loaded network rather than by a map name: a
+#: scenario queue re-initializes :class:`MapManager`, and a stale graph would
+#: measure against the previous run's roads.
+_links_for: "Optional[tuple[int, dict[tuple[str, str], tuple[str, str]]]]" = None
+
+
+def _link_graph() -> "dict[tuple[str, str], tuple[str, str]]":
+    """Return which road is reached by leaving a given road at a given end.
+
+    A node is ``(road_id, end)`` -- the end being left by, ``"start"`` or
+    ``"end"`` -- and the value is the road entered and the end entered at.
+
+    Built in one pass and cached, for two reasons:
+
+    * **Every link is read both ways.**  This converter emits them
+      asymmetrically -- on the project's own fixture 367 of 490 road-to-road
+      successors are not matched by a predecessor on the other side -- so a
+      walk that trusted ``predecessor`` alone would measure A to B and then
+      refuse B to A.  A separation that depends on which vehicle is asked is
+      not a separation.
+    * A condition is evaluated every tick, and the graph does not change
+      between ticks.
+
+    Links naming a **junction** are left out, which is what stops a walk
+    there: several roads leave a junction and picking one is a route, not a
+    geometric fact.  The map's own statement wins over the one derived by
+    reversing another link, so a map that does spell out both directions is
+    read as it is written.
+    """
+    global _links_for
+
+    try:
+        network = MapManager.get_instance().road_network
+    except RuntimeError:
+        return {}
+    if _links_for is not None and _links_for[0] == id(network):
+        return _links_for[1]
+
+    explicit: "dict[tuple[str, str], tuple[str, str]]" = {}
+    derived: "dict[tuple[str, str], tuple[str, str]]" = {}
+    for road_id, road in network.road_ids_to_object.items():
+        link = road.road_xml.find("link")
+        if link is None:
+            continue
+        # A road is left by its `end` to reach a successor, by its `start` to
+        # reach a predecessor.
+        for kind, leaving in (("successor", "end"), ("predecessor", "start")):
+            for element in link.findall(kind):
+                if element.attrib.get("elementType") != "road":
+                    continue
+                other = element.attrib.get("elementId")
+                if other is None:
+                    continue
+                entered = element.attrib.get("contactPoint", "start")
+                explicit[(str(road_id), leaving)] = (str(other), entered)
+                # Coming back the other way leaves the far road by the very
+                # end this link met it at.
+                derived.setdefault((str(other), entered), (str(road_id), leaving))
+
+    graph = dict(derived)
+    graph.update(explicit)
+    _links_for = (id(network), graph)
+    return graph
+
+
+def _next_road(road_id: str, along_s: bool) -> Optional["tuple[str, bool]"]:
+    """Return the road continuing past *road_id*, and how it is entered.
+
+    Travelling along ``s`` leaves a road by its ``end``, and against ``s`` by
+    its ``start``.  Entering the next road at its ``start`` leaves the walk
+    travelling along that road's ``s``; entering at its ``end`` turns it
+    around.
+
+    ``None`` where the network ends, and -- the case worth naming -- where the
+    only way on is through a **junction**, which is where a chain stops being
+    a chain.
+    """
+    step = _link_graph().get((str(road_id), "end" if along_s else "start"))
+    if step is None:
+        return None
+    next_id, entered = step
+    return next_id, entered == "start"
+
+
+def _reach(source: OpenDrivePose, target: OpenDrivePose) -> Optional[_Reach]:
+    """Return how far *target* lies from *source* along the roads joining them.
+
+    The same road needs no walk.  Otherwise the chain is followed both ways,
+    because a leader on the next road along is the ordinary case rather than
+    the exotic one: an OpenDRIVE map is cut into short roads -- a median of
+    33 m on this project's own fixture, three quarters of them under 50 m --
+    so a vehicle at a comfortable following distance is usually *not* on the
+    road behind it.  Measuring only within one road would answer ``None`` to
+    most of the following scenarios this coordinate system exists for, which
+    is the silent never-fires it exists to remove.
+
+    Returns:
+        A :class:`_Reach`, or ``None`` when no chain of roads joins the two
+        within :data:`_MAX_CHAIN_METRES`.
+    """
+    if source.road_id == target.road_id:
+        offset = target.s - source.s
+        forward = offset >= 0
+        return _Reach(abs(offset), forward=forward, target_forward=forward)
+
+    for forward in (True, False):
+        found = _walk(source, target, forward)
+        if found is not None:
+            return found
+    return None
+
+
+def _walk(
+    source: OpenDrivePose, target: OpenDrivePose, forward: bool
+) -> Optional[_Reach]:
+    """Follow the chain one way from *source*, and report reaching *target*."""
+    source_length = _road_length(source.road_id)
+    if source_length is None:
+        return None
+
+    # As far as the end of the source's own road that the walk leaves by.
+    travelled = (source_length - source.s) if forward else source.s
+    road_id = source.road_id
+    along_s = forward
+
+    for _ in range(_MAX_CHAIN_HOPS):
+        step = _next_road(road_id, along_s)
+        if step is None:
+            return None
+        road_id, along_s = step
+
+        length = _road_length(road_id)
+        if length is None:
+            return None
+
+        if road_id == target.road_id:
+            # `along_s` says whether this road numbers `s` the way the walk is
+            # travelling, which is what turns its `s` into a distance from
+            # where the walk entered it.
+            inner = target.s if along_s else (length - target.s)
+            total = travelled + inner
+            if total > _MAX_CHAIN_METRES:
+                return None
+            return _Reach(total, forward=forward, target_forward=along_s)
+
+        travelled += length
+        if travelled > _MAX_CHAIN_METRES:
+            return None
+
+    return None

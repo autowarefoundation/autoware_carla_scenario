@@ -58,9 +58,10 @@ class EntityDistanceCondition(CompositionCondition):
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
             measures the straight line between the two.
-            :attr:`~DistanceCoordinateSystem.LANE` measures along the road they
-            share, which on a curve is the longer and more useful number, and
-            which has no answer at all when they are on different roads.
+            :attr:`~DistanceCoordinateSystem.LANE` measures along the roads
+            that connect them, which on a curve is the longer and more useful
+            number, and which has no answer once a junction stands between
+            them.
         label: Human-readable identifier for this condition.
 
     Raises:

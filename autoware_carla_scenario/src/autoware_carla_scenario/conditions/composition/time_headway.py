@@ -55,9 +55,9 @@ class TimeHeadwayCondition(CompositionCondition):
 
     :attr:`~DistanceCoordinateSystem.LANE` measures along the road instead,
     which is what `scenario_simulator_v2` does and what OpenSCENARIO's
-    ``coordinateSystem: lane`` asks for.  It needs a loaded map, and it has no
-    answer when the two are on different roads -- a junction -- rather than
-    falling back to the straight line.
+    ``coordinateSystem: lane`` asks for.  It needs a loaded map, follows the
+    roads that connect the two, and has no answer once a junction stands
+    between them -- rather than falling back to the straight line.
 
     That is the difference from :class:`TimeToCollisionCondition`, and it is
     not a detail.  TTC divides by the *closing* speed, so it is undefined
