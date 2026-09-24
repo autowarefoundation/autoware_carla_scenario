@@ -376,6 +376,14 @@ class AutowareEgoEntity(EgoVehicle):
         if not synchronous:
             time.sleep(_ATTACH_POLL_INTERVAL_S)
             return
+        # The scenario's own actors are already spawned by the time the ego is
+        # attached, and the runner does not start holding them until the warm-up
+        # after this returns.  Ticking without the hold would let a car parked on
+        # a slope roll away, changing the layout the scenario was written for
+        # before its clock has started.
+        from ..utils.vehicles import hold_vehicles_still  # noqa: PLC0415
+
+        hold_vehicles_still(world)
         world.tick()
         time.sleep(_ATTACH_TICK_PAUSE_S)
 

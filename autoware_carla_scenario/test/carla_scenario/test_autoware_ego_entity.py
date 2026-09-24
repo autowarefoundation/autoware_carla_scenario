@@ -66,6 +66,10 @@ class _FakeActor:
         self.attributes = {"role_name": role_name}
         self.destroyed = False
         self._transform = transform if transform is not None else _CARLA_SPAWN
+        self.controls: List["carla.VehicleControl"] = []
+
+    def apply_control(self, control: "carla.VehicleControl") -> None:
+        self.controls.append(control)
 
     def get_transform(self) -> "carla.Transform":
         return self._transform
@@ -80,6 +84,10 @@ class _FakeActorList:
 
     def __iter__(self):
         return iter(self._actors)
+
+    def filter(self, _pattern: str) -> List[_FakeActor]:
+        """Every fake actor here is a vehicle, so the pattern does not narrow."""
+        return list(self._actors)
 
 
 class _FakeSettings:
@@ -218,6 +226,33 @@ def test_spawn_ticks_a_synchronous_world_until_the_ego_appears(
 
     assert attached is ego_actor
     assert world.ticks >= 3
+
+
+def test_spawn_holds_the_other_vehicles_while_it_ticks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A car parked on a slope must not roll away during the attach ticks.
+
+    The scenario's actors are already spawned by then, and the runner only
+    starts holding them after the attach returns.
+    """
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.autoware_entity.time.sleep", lambda _s: None
+    )
+    npc = _FakeActor(1, "npc1")
+    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
+    world = _FakeWorld(
+        [npc], synchronous_mode=True, reveal_after_ticks=3, revealed=ego_actor
+    )
+    entity = _make_entity(attach_timeout=30.0)
+
+    entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+    assert npc.controls, "the npc was never held"
+    held = npc.controls[-1]
+    assert held.brake == pytest.approx(1.0)
+    assert held.hand_brake is True
+    assert held.throttle == pytest.approx(0.0)
 
 
 def test_spawn_does_not_tick_an_asynchronous_world(
