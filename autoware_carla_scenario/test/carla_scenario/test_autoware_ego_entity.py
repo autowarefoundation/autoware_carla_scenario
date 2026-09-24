@@ -82,9 +82,42 @@ class _FakeActorList:
         return iter(self._actors)
 
 
+class _FakeSettings:
+    def __init__(self, synchronous_mode: bool) -> None:
+        self.synchronous_mode = synchronous_mode
+
+
 class _FakeWorld:
-    def __init__(self, actors: List[_FakeActor]) -> None:
+    def __init__(
+        self,
+        actors: List[_FakeActor],
+        synchronous_mode: bool = False,
+        reveal_after_ticks: int | None = None,
+        revealed: "_FakeActor | None" = None,
+    ) -> None:
         self._actors = actors
+        self._settings = _FakeSettings(synchronous_mode)
+        self._reveal_after_ticks = reveal_after_ticks
+        self._revealed = revealed
+        self.ticks = 0
+
+    def get_settings(self) -> _FakeSettings:
+        return self._settings
+
+    def tick(self) -> None:
+        """Step the world, revealing the ego once enough ticks have passed.
+
+        Stands in for the interface node, which spawns the ego only after it has
+        seen the world advance.
+        """
+        self.ticks += 1
+        if (
+            self._reveal_after_ticks is not None
+            and self._revealed is not None
+            and self.ticks >= self._reveal_after_ticks
+            and self._revealed not in self._actors
+        ):
+            self._actors.append(self._revealed)
 
     def get_actors(self) -> _FakeActorList:
         return _FakeActorList(self._actors)
@@ -158,6 +191,49 @@ def test_spawn_attaches_to_existing_ego_actor() -> None:
 
     assert attached is ego_actor
     assert entity.actor is ego_actor
+
+
+def test_spawn_ticks_a_synchronous_world_until_the_ego_appears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wait drives the clock, because the interface waits for it to.
+
+    Nothing else ticks the world before the ego is attached, and the interface
+    node will not spawn the ego until it has seen a tick.  A wait that only
+    polls therefore deadlocks.
+    """
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.autoware_entity.time.sleep", lambda _s: None
+    )
+    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
+    world = _FakeWorld(
+        [_FakeActor(1, "npc1")],
+        synchronous_mode=True,
+        reveal_after_ticks=3,
+        revealed=ego_actor,
+    )
+    entity = _make_entity(attach_timeout=30.0)
+
+    attached = entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+    assert attached is ego_actor
+    assert world.ticks >= 3
+
+
+def test_spawn_does_not_tick_an_asynchronous_world(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An async server steps itself; ticking it would race its own stepping."""
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.autoware_entity.time.sleep", lambda _s: None
+    )
+    world = _FakeWorld([_FakeActor(1, "npc1")], synchronous_mode=False)
+    entity = _make_entity(attach_timeout=0.2)
+
+    with pytest.raises(RuntimeError, match="No ego actor"):
+        entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+    assert world.ticks == 0
 
 
 def test_spawn_times_out_when_ego_absent() -> None:
