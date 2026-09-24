@@ -375,12 +375,15 @@ def _link_graph() -> "dict[tuple[str, str], tuple[str, str]]":
 
     Built in one pass and cached, for two reasons:
 
-    * **Every link is read both ways.**  This converter emits them
-      asymmetrically -- on the project's own fixture 367 of 490 road-to-road
-      successors are not matched by a predecessor on the other side -- so a
-      walk that trusted ``predecessor`` alone would measure A to B and then
-      refuse B to A.  A separation that depends on which vehicle is asked is
-      not a separation.
+    * **Every link is read both ways.**  A road-to-road link is usually
+      written from one side only: OpenDRIVE has a road adjoining a junction
+      name the *junction*, not the connecting road on the far side, so B
+      commonly says "predecessor: junction 7" where A says "successor: B".
+      On this project's fixture 367 of 490 road-to-road successors have no
+      matching road predecessor, and most of that is this idiom rather than
+      anything wrong.  A walk that trusted each road's own ``predecessor``
+      would measure A to B and then refuse B to A, and a separation that
+      depends on which vehicle is asked is not a separation.
     * A condition is evaluated every tick, and the graph does not change
       between ticks.
 

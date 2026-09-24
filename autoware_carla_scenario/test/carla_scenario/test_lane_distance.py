@@ -715,11 +715,12 @@ class TestAcrossConnectedRoads:
     ) -> None:
         """Which vehicle is asked must not change the answer.
 
-        Worth pinning rather than assuming: this converter writes the links
-        asymmetrically -- on this fixture 367 of 490 road-to-road successors
-        have no matching predecessor on the far side -- so a walk that trusted
-        each road's own ``predecessor`` would measure one way and refuse the
-        other.
+        Worth pinning rather than assuming: a road-to-road link is usually
+        written from one side only, because OpenDRIVE has a road adjoining a
+        junction name the junction rather than the road beyond it.  On this
+        fixture 367 of 490 road-to-road successors have no matching road
+        predecessor, so a walk that trusted each road's own ``predecessor``
+        would measure one way and refuse the other.
         """
         first, middle, _ = CHAIN
         first_length, _, _ = _chain_lengths()
