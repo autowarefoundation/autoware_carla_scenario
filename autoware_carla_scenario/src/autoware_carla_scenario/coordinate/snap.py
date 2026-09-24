@@ -163,6 +163,30 @@ def _snap_lanelet2_via_opendrive(
     center_t = _lane_center_t(road, od_projected.s, od_projected.lane_id)
 
     if center_t is not None:
+        # The lane centre has to be on the side of the reference line the pose is
+        # actually on. OpenDRIVE numbers lanes positive to the left of the
+        # reference line and negative to the right, so the sign of the centre
+        # follows the lane id -- and on a left-hand-traffic map converted from
+        # Lanelet2 the id the lanelet-to-road mapping hands back is frequently
+        # for the other side, because the reference line runs against the lane.
+        # Taking that centre verbatim reflects the pose across the reference line
+        # into the opposing lane: on Odaiba's lanelet 176640 the projection put
+        # the pose at t = -1.71 m, dead centre of a 3.76 m lane, and the "lane
+        # centre" came back as +1.91 m, which lands 3.62 m from the lanelet's own
+        # centreline and outside its bounds. Mirroring the centre back onto the
+        # projected side keeps the correction -- the lane centre is still what is
+        # wanted, the Lanelet2 centreline and the XODR lane centre do differ --
+        # without moving the pose to a lane it was never on.
+        if center_t * od_projected.t < 0.0:
+            logger.debug(
+                "Lane centre for road '%s' lane %d is on the far side of the "
+                "reference line (%.2f vs projected %.2f); mirroring it back",
+                od_projected.road_id,
+                od_projected.lane_id,
+                center_t,
+                od_projected.t,
+            )
+            center_t = -center_t
         corrected_t = center_t
     else:
         corrected_t = od_projected.t
