@@ -259,8 +259,10 @@ def _lanelet2_to_opendrive_direct(pose: Lanelet2Pose) -> Optional[OpenDrivePose]
     x_cl, y_cl, _z_cl, heading_cl = _interpolate_at_s(points, pose.s)
     total_heading = heading_cl + pose.heading
 
-    x = x_cl + pose.t * (-math.sin(total_heading))
-    y = y_cl + pose.t * math.cos(total_heading)
+    # t is offset from the centreline, so it is laid off the centreline's own
+    # direction -- see the note in _opendrive_to_carla.
+    x = x_cl + pose.t * (-math.sin(heading_cl))
+    y = y_cl + pose.t * math.cos(heading_cl)
 
     # Convert MGRS -> XODR: subtract offset, NO y-flip
     offset_x, offset_y = mm.mgrs_offset
@@ -367,9 +369,10 @@ def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
     x_cl, y_cl, z_cl, heading_cl = _interpolate_at_s(points, pose.s)
     total_heading = heading_cl + pose.heading
 
-    # Apply lateral offset (positive t = left of heading direction)
-    x = x_cl + pose.t * (-math.sin(total_heading))
-    y = y_cl + pose.t * math.cos(total_heading)
+    # Positive t is left of the CENTRELINE, not of the pose: see the note in
+    # _opendrive_to_carla.
+    x = x_cl + pose.t * (-math.sin(heading_cl))
+    y = y_cl + pose.t * math.cos(heading_cl)
 
     # Lanelet2 centerline uses MGRS absolute coords; CARLA world uses
     # XODR-relative coords.  Subtract the MGRS offset for x/y, and the
@@ -405,9 +408,20 @@ def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
     heading_ref = _heading_at_s(ref_line, arc_lengths, pose.s)
     total_heading = heading_ref + pose.heading
 
-    # Apply lateral offset (OpenDRIVE: positive t = left of reference line direction)
-    x = x_ref + pose.t * (-math.sin(total_heading))
-    y = y_ref + pose.t * math.cos(total_heading)
+    # OpenDRIVE defines t as the offset perpendicular to the REFERENCE LINE,
+    # positive to its left, and that is how it was measured on the way in (see
+    # _signed_perp_distance, which is given heading_ref). The pose's own heading
+    # says which way the thing at (s, t) faces; it does not move it. Laying t off
+    # `total_heading` instead is the same thing only while the pose happens to
+    # point along the reference line -- and this map is full of lanelets that do
+    # not, because it is left-hand traffic converted from Lanelet2, where the
+    # reference line commonly runs against the lane. For those, pose.heading is
+    # about pi, the (-sin, cos) pair flips, and the point lands on the wrong side
+    # of the line by twice t. Measured on lanelet 176640: t = -1.55 m came back
+    # 3.09 m away, t = -1.71 m came back 3.43 m away -- 2|t| every time, which for
+    # a goal pose is a whole lane.
+    x = x_ref + pose.t * (-math.sin(heading_ref))
+    y = y_ref + pose.t * math.cos(heading_ref)
 
     # XODR coords are already in CARLA's coordinate frame (same origin);
     # just flip y for CARLA's left-hand system (South=+y).
