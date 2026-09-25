@@ -14,6 +14,7 @@ The transforms are exercised against a stand-in map, so these run without one.
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pytest
 
@@ -36,7 +37,11 @@ class _Lanelet:
 
 
 class _Road:
-    reference_line = None  # filled in by the fixture, which needs numpy
+    # Both are filled in by the fixture, which needs numpy.  Declared here, and
+    # as Any, so mypy sees attributes that exist and does not infer them as
+    # ``None`` from the placeholder.
+    reference_line: Any = None
+    z_coordinates: Any = None
 
 
 class _RoadNetwork:
