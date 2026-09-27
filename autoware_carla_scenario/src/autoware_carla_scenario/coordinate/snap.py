@@ -79,11 +79,14 @@ def snap_to_carla_road(
 ) -> CarlaWorldPose:
     """Snap a pose onto the CARLA drivable surface.
 
-    When given a :class:`Lanelet2Pose`, the function converts to an approximate
-    CARLA position via the Lanelet2 centerline, projects it onto the nearest
-    OpenDRIVE road, then re-converts through the XODR geometry.  This
-    round-trip ensures the final position lies on the XODR road surface that
-    CARLA trusts.
+    When given a :class:`Lanelet2Pose`, x and y come from the lanelet the pose
+    names -- ``s`` along its centreline, ``t`` across it -- and are **not**
+    projected onto an OpenDRIVE road or moved to a CARLA lane centre.  Only the
+    height is taken from CARLA.  Where the Lanelet2 and CARLA road geometries
+    disagree the returned position follows the Lanelet2 map, which is the map
+    the pose was written against and the one Autoware plans on; a caller that
+    needs a position validated against the XODR network wants an
+    :class:`OpenDrivePose`, below.
 
     When given an :class:`OpenDrivePose`, the function uses
     ``carla.Map.get_waypoint_xodr(road_id, lane_id, s)`` to obtain the exact
@@ -95,7 +98,8 @@ def snap_to_carla_road(
     API to project x/y onto the nearest road.
 
     For Lanelet2 and CARLA-world inputs z is corrected using the nearest CARLA
-    spawn point (spawn-point elevations match the physics-engine ground plane).
+    spawn point (spawn-point elevations match the physics-engine ground plane),
+    then refined by a ray cast onto the ground.
 
     If the pose cannot be matched to any road, a warning is logged and the
     original pose (or its CARLA equivalent) is returned unchanged.
@@ -116,7 +120,7 @@ def snap_to_carla_road(
         A new pose snapped to the road surface.
     """
     if isinstance(pose, Lanelet2Pose):
-        return _snap_lanelet2_via_opendrive(
+        return _snap_lanelet2_to_its_centreline(
             pose, world, ground_projection=ground_projection
         )
     if isinstance(pose, OpenDrivePose):
@@ -127,107 +131,83 @@ def snap_to_carla_road(
 
 
 # ---------------------------------------------------------------------------
-# Lanelet2Pose path – snap via OpenDRIVE projection
+# Lanelet2Pose path – read the lanelet the pose names
 # ---------------------------------------------------------------------------
 
 
-def _snap_lanelet2_via_opendrive(
+def _snap_lanelet2_to_its_centreline(
     pose: Lanelet2Pose,
     world: "carla.World",
     *,
     ground_projection: GroundProjectionConfig,
 ) -> CarlaWorldPose:
-    """Snap a Lanelet2 pose by projecting through OpenDRIVE geometry.
+    """Place a Lanelet2 pose where its own lanelet says, and put it on the ground.
 
-    1. Convert directly to OpenDRIVE (s, t) using the cached lanelet-to-road
-       mapping.  Lanelet2's reference line is the centerline; OpenDRIVE's is
-       the right boundary (LHT).  The mapping provides road_id and lane_id;
-       s and t are computed by projecting the centerline point onto the road
-       reference line.
-    2. Correct t to the lane centre.
-    3. Convert the OpenDRIVE pose to CARLA world coordinates (XODR geometry).
-    4. Replace z with the nearest spawn-point elevation.
+    A :class:`Lanelet2Pose` is a Frenet pose on one named lanelet: ``s`` along
+    that lanelet's centreline, ``t`` across it. Everything needed to turn it into
+    a position is therefore in the lanelet, and the map Autoware plans on is the
+    Lanelet2 one -- so the lanelet's own answer is not an approximation of the
+    right answer, it *is* the right answer.
+
+    This used to go round by OpenDRIVE: project the centreline point onto the
+    road's reference line for ``(s, t)``, move ``t`` to the lane centre, convert
+    back through the XODR geometry. The stated reason was to land on the surface
+    CARLA trusts, but the only part of the pose CARLA is actually the authority
+    on is its height, which is read off the ground below. The round trip bought
+    nothing for x and y and cost a great deal:
+
+    * ``t`` was laid off the pose's own heading rather than the line it was
+      measured against, so a lanelet running against its road's reference line
+      -- the common case on a left-hand-traffic map converted from Lanelet2 --
+      came back reflected by 2t, up to 3.5 m;
+    * the lane centre it corrected to followed a lane id that, for those same
+      lanelets, named the lane on the other side of the reference line, moving a
+      goal into the opposing lane;
+    * the projection took the nearest vertex of the reference line over the
+      whole road, so a road that passes near itself resolved ``s`` onto the
+      wrong stretch;
+    * and the heading had to be taken back off the lanelet anyway, for exactly
+      the reason the position now is.
+
+    None of those can arise from reading the lanelet directly.
+
+    Height still comes from CARLA: the nearest spawn point gives the elevation
+    the physics engine uses, and a ray cast refines it, so a pose written on a
+    map with its own idea of elevation still lands on the road.
     """
-    from .map_manager import MapManager  # noqa: PLC0415
-    from .transform import _lane_center_t, to_carla_world, to_opendrive  # noqa: PLC0415
+    from .transform import to_carla_world  # noqa: PLC0415
 
-    # Direct Lanelet2 → OpenDRIVE (uses cached mapping for road_id/lane_id,
-    # projects centerline point onto the road reference line for s/t).
-    od_projected = to_opendrive(pose)
+    on_lanelet = to_carla_world(pose)
 
-    # Correct t to the lane centre (the projected t reflects the offset
-    # between the Lanelet2 centreline and the XODR reference line, which
-    # does not correspond to the lane centre).
-    mm = MapManager.get_instance()
-    road = mm.road_network.road_ids_to_object[od_projected.road_id]
-    center_t = _lane_center_t(road, od_projected.s, od_projected.lane_id)
-
-    if center_t is not None:
-        corrected_t = center_t
-    else:
-        corrected_t = od_projected.t
-        logger.warning(
-            "Could not compute lane centre t for road '%s' lane %d; "
-            "using projected t=%.2f",
-            od_projected.road_id,
-            od_projected.lane_id,
-            od_projected.t,
-        )
-
-    logger.info(
-        "Lanelet2Pose(lanelet_id=%d, s=%.2f, t=%.2f) -> "
-        "OpenDrivePose(road='%s', lane=%d, s=%.2f, t=%.2f -> centre_t=%.2f)",
-        pose.lanelet_id,
-        pose.s,
-        pose.t,
-        od_projected.road_id,
-        od_projected.lane_id,
-        od_projected.s,
-        od_projected.t,
-        corrected_t,
-    )
-
-    od_corrected = OpenDrivePose(
-        road_id=od_projected.road_id,
-        lane_id=od_projected.lane_id,
-        s=od_projected.s,
-        t=corrected_t,
-        heading=od_projected.heading,
-    )
-
-    # Re-convert via XODR geometry (position now lies on the lane centre)
-    carla_from_od = to_carla_world(od_corrected)
-
-    # Z correction: first from nearest spawn point, then refine via ground projection
-    snapped_z = _z_from_nearest_spawn_point(carla_from_od.x, carla_from_od.y, world)
-    base_z = snapped_z if snapped_z is not None else carla_from_od.z
+    snapped_z = _z_from_nearest_spawn_point(on_lanelet.x, on_lanelet.y, world)
+    base_z = snapped_z if snapped_z is not None else on_lanelet.z
     refined_z = refine_z_with_ground_projection(
-        carla_from_od.x,
-        carla_from_od.y,
+        on_lanelet.x,
+        on_lanelet.y,
         base_z,
         world,
         ground_projection=ground_projection,
     )
 
     result = CarlaWorldPose(
-        x=carla_from_od.x,
-        y=carla_from_od.y,
+        x=on_lanelet.x,
+        y=on_lanelet.y,
         z=refined_z,
-        roll=carla_from_od.roll,
-        pitch=carla_from_od.pitch,
-        yaw=carla_from_od.yaw,
+        roll=on_lanelet.roll,
+        pitch=on_lanelet.pitch,
+        yaw=on_lanelet.yaw,
     )
 
-    logger.debug(
-        "snap (Lanelet2): od=(road=%s, s=%.2f, t=%.2f) -> snapped=(%.2f, %.2f, %.2f)",
-        od_corrected.road_id,
-        od_corrected.s,
-        od_corrected.t,
+    logger.info(
+        "snap (Lanelet2): lanelet %d s=%.2f t=%.2f -> CARLA (%.2f, %.2f, %.3f) yaw=%.1f",
+        pose.lanelet_id,
+        pose.s,
+        pose.t,
         result.x,
         result.y,
         result.z,
+        result.yaw,
     )
-
     return result
 
 

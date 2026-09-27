@@ -141,9 +141,12 @@ class IntersectionPassingScenario(BaseScenario):
             npc_pose = Lanelet2Pose(
                 lanelet_id=npc_cfg.spawn_lanelet_id, s=npc_cfg.spawn_s
             )
+            # Snapped as the Lanelet2 pose it was authored as; the OpenDRIVE
+            # pose is carried on to the entity only to enable the spawn retries
+            # (which offset the snapped transform, not this pose).
             npc_od_pose = to_opendrive(npc_pose)
             npc_snapped = snap_to_carla_road(
-                npc_od_pose, world, ground_projection=self._ground_projection
+                npc_pose, world, ground_projection=self._ground_projection
             )
             npc_entity = VehicleEntity(
                 VehicleEntityConfig(
