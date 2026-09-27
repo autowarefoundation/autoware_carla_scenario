@@ -459,7 +459,13 @@ class AutowareEgoEntity(EgoVehicle):
         # of scenarios is built before the first one runs, and two bridges
         # cannot hold the same address at once.
         self._bridge.start()
-        self._bridge.configure(initial_pose, self._goal_pose, self._waypoint_poses)
+        # Waypoints only when there are some, so a bridge implementing the
+        # two-argument configure() it was written against keeps working for
+        # every mission that names none.
+        if self._waypoint_poses:
+            self._bridge.configure(initial_pose, self._goal_pose, self._waypoint_poses)
+        else:
+            self._bridge.configure(initial_pose, self._goal_pose)
         self._configured = True
 
     def _resolve_initial_pose(self) -> "BridgePose":

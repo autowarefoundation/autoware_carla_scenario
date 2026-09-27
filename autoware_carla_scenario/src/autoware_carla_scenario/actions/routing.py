@@ -121,10 +121,14 @@ class RoutingAction(BaseAction):
             )
             return
 
+        # Waypoints only when there are some: an entity that overrides
+        # route_to() with the signature it had before waypoints existed keeps
+        # working for every run that names none.
+        extra = {"waypoints": self._waypoints} if self._waypoints else {}
         entity.route_to(
             world,
             self._goal,
             initial_pose=self._initial_pose,
             ground_projection=self._ground_projection,
-            waypoints=self._waypoints,
+            **extra,
         )

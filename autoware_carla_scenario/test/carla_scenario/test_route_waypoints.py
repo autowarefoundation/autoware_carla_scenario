@@ -160,3 +160,58 @@ def test_the_entity_snaps_each_waypoint_as_the_lanelet_pose_it_was_written_as(
     # The goal is snapped last, after the waypoints it is the end of.
     assert seen == [via[0], via[1], goal]
     assert not any(isinstance(p, OpenDrivePose) for p in seen)
+
+
+class TestTheRoutingActionHandsThemOn:
+    """Waypoints reach the entity only when the scenario named some."""
+
+    @staticmethod
+    def _execute(monkeypatch: pytest.MonkeyPatch, entity, waypoints) -> None:
+        from autoware_carla_scenario.actions.routing import RoutingAction
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.actions.routing.find_entity_by_role_name",
+            lambda _name: entity,
+        )
+        RoutingAction(
+            "ego", Lanelet2Pose(lanelet_id=3, s=7.0), waypoints=waypoints
+        ).execute(object())  # type: ignore[arg-type]
+
+    def test_an_entity_with_the_route_to_it_had_before_waypoints_still_works(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """route_to() is overridable; an override written before waypoints
+        existed must keep working for every run that names none."""
+        routed: list[object] = []
+
+        class _LegacyEntity:
+            def route_to(
+                self, world, goal, *, initial_pose=None, ground_projection=None
+            ):
+                routed.append(goal)
+
+        self._execute(monkeypatch, _LegacyEntity(), ())
+
+        assert routed == [Lanelet2Pose(lanelet_id=3, s=7.0)]
+
+    def test_named_waypoints_are_handed_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[object] = []
+
+        class _Entity:
+            def route_to(
+                self,
+                world,
+                goal,
+                *,
+                initial_pose=None,
+                ground_projection=None,
+                waypoints=(),
+            ):
+                seen.extend(waypoints)
+
+        via = (Lanelet2Pose(lanelet_id=1, s=0.0),)
+        self._execute(monkeypatch, _Entity(), via)
+
+        assert seen == list(via)
