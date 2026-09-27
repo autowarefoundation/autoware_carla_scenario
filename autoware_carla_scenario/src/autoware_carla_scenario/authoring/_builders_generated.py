@@ -394,6 +394,7 @@ def build_entity_distance_condition(
     from ..conditions import EntityDistanceCondition  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
     from ..conditions import RelativeDistanceType  # noqa: PLC0415
+    from ..conditions import DistanceCoordinateSystem  # noqa: PLC0415
 
     params = compiled.params
     return EntityDistanceCondition(
@@ -403,6 +404,7 @@ def build_entity_distance_condition(
         rule=ComparisonRule[str(params["rule"]).upper()],
         distance_type=RelativeDistanceType[str(params["distance_type"])],
         edge_to_edge=params["edge_to_edge"],
+        coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
     )
 
@@ -460,6 +462,7 @@ def build_ttc_condition(
     """Build a :class:`TimeToCollisionCondition`."""
     from ..conditions import TimeToCollisionCondition  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import DistanceCoordinateSystem  # noqa: PLC0415
 
     params = compiled.params
     return TimeToCollisionCondition(
@@ -468,6 +471,7 @@ def build_ttc_condition(
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         edge_to_edge=params["edge_to_edge"],
+        coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
     )
 
@@ -505,6 +509,7 @@ def build_time_headway_condition(
     """Build a :class:`TimeHeadwayCondition`."""
     from ..conditions import TimeHeadwayCondition  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
+    from ..conditions import DistanceCoordinateSystem  # noqa: PLC0415
 
     params = compiled.params
     return TimeHeadwayCondition(
@@ -512,6 +517,7 @@ def build_time_headway_condition(
         target=str(params["target"]),
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
     )
 

@@ -35,10 +35,13 @@ class RelativeDistanceType(enum.Enum):
     Mirrors OpenSCENARIO's ``RelativeDistanceType`` for the three values that
     have a meaning without a road reference.  ``LONGITUDINAL`` and ``LATERAL``
     are taken in the **source** entity's frame -- the entity coordinate system,
-    in OpenSCENARIO's terms.  Its ``lane`` coordinate system is not offered:
-    that needs the lanelet routing graph, and approximating it with the
-    source's heading would be right on a straight road and wrong exactly where
-    it matters.
+    in OpenSCENARIO's terms.
+
+    OpenSCENARIO's ``lane`` coordinate system is a separate axis, chosen with
+    ``coordinate_system`` rather than here, and measured by
+    :mod:`autoware_carla_scenario.coordinate.lane_distance`.  It is along the
+    road by construction, so of the three values below only the euclidean and
+    longitudinal ones still mean anything once it is picked.
 
     Every value is a *distance*: non-negative, whichever side the target is on.
     A signed reading would make ``< 20`` true for a vehicle 30 m behind, which

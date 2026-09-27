@@ -29,6 +29,7 @@ from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
+from .trajectory_recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -415,24 +416,12 @@ class ScenarioRunner:
     def _hold_vehicles_still(world: "carla.World") -> None:
         """Keep every vehicle stopped while the run is still being set up.
 
-        The init phase has to advance simulation time -- an autonomy stack only
-        localizes, routes and engages while the clock ticks, and its sensors
-        only publish then -- but nothing should have moved before the run
-        starts.  Two things would move otherwise: a car parked on a slope rolls,
-        and an ego engages partway through the wait and drives off before the
-        scenario has begun measuring anything.
-
-        The hold is the brakes, not frozen physics: a stopped car with its
-        handbrake on is a state the simulation and the stack both understand,
-        while a vehicle with physics disabled reports poses no suspension has
-        settled.  It is re-applied every tick because whatever drives the ego
-        applies its own control every tick too.
+        See :func:`~autoware_carla_scenario.utils.vehicles.hold_vehicles_still`;
+        the ego attach wait applies the same hold, so it lives there.
         """
-        import carla  # noqa: PLC0415 -- the runner is CARLA-side by definition
+        from .utils.vehicles import hold_vehicles_still  # noqa: PLC0415
 
-        stopped = carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True)
-        for actor in world.get_actors().filter("vehicle.*"):
-            actor.apply_control(stopped)
+        hold_vehicles_still(world)
 
     @staticmethod
     def _release_vehicles(world: "carla.World") -> None:
@@ -705,6 +694,9 @@ class ScenarioRunner:
         world.apply_settings(settings)
 
         recording_started = False
+        trajectory = TrajectoryRecorder(
+            self.output_dir / f"{scenario_name}.trajectory.jsonl"
+        )
         tick_count = 0
         result: Optional[ScenarioResult] = None
 
@@ -832,6 +824,11 @@ class ScenarioRunner:
             # needs a stack to come up would otherwise spend most of the
             # scenario's timeout booting.
             clock = _ScenarioClock(world)
+            # The motion of everything on the road, recorded from the ticks
+            # this loop steps -- in-process, so no second client has to follow
+            # the world from outside.
+            trajectory.start(world)
+            trajectory.record(world, clock.simulated)
 
             # Tick loop
             while not scenario.is_done():
@@ -860,6 +857,7 @@ class ScenarioRunner:
                 # The world has advanced; everything from here reads the time
                 # it advanced to.
                 elapsed = clock.simulated
+                trajectory.record(world, elapsed)
 
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
@@ -1000,6 +998,11 @@ class ScenarioRunner:
             if recording_started:
                 self._client.stop_recorder()
                 logger.info("[%s] Recorder stopped", scenario_name)
+            if trajectory.active:
+                trajectory.close()
+                logger.info(
+                    "[%s] Trajectory written to %s", scenario_name, trajectory.path
+                )
 
             # Close the backend so the next run starts with a fresh one --
             # for the TrafficManager that resets its InMemoryMap cache and

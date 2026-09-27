@@ -7,6 +7,7 @@ configurable number of polls, so an :class:`AutowareEgoEntity` can be driven to
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -30,15 +31,23 @@ class FakeAutowareBridge(AutowareBridge):
     configured_initial_pose: Optional[BridgePose] = None
     #: The goal passed to :meth:`configure`, if any.
     configured_goal: Optional[BridgePose] = None
+    #: The waypoints passed to :meth:`configure`, in order.
+    configured_waypoints: List[BridgePose] = field(default_factory=list)
     #: Whether :meth:`close` has been called.
     closed: bool = False
 
     _ready_polls: int = 0
 
-    def configure(self, initial_pose: BridgePose, goal: BridgePose) -> None:
+    def configure(
+        self,
+        initial_pose: BridgePose,
+        goal: BridgePose,
+        waypoints: Sequence[BridgePose] = (),
+    ) -> None:
         self.calls.append("configure")
         self.configured_initial_pose = initial_pose
         self.configured_goal = goal
+        self.configured_waypoints = list(waypoints)
 
     def is_ready(self) -> bool:
         self.calls.append("is_ready")

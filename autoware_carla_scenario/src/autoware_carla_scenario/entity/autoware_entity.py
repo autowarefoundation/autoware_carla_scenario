@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -50,6 +51,11 @@ logger = logging.getLogger(__name__)
 
 #: Polling interval while waiting for the interface node to spawn the ego actor.
 _ATTACH_POLL_INTERVAL_S: float = 0.5
+
+#: Pause after each tick taken while waiting for the ego to appear.  Matches the
+#: usual ``fixed_delta_seconds``, so the wait advances the world at roughly real
+#: time instead of as fast as the server will step it.
+_ATTACH_TICK_PAUSE_S: float = 0.05
 
 #: How far, horizontally, the ego may be from where the scenario expected it
 #: before that disagreement is worth a warning.  Snapping a spawn onto the road
@@ -140,6 +146,7 @@ class AutowareEgoEntity(EgoVehicle):
         self._bridge = bridge
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
+        self._waypoint_poses: tuple = ()
         self._configured: bool = False
         self._ready: bool = False
         self._ready_ticks: int = 0
@@ -150,7 +157,10 @@ class AutowareEgoEntity(EgoVehicle):
     # ------------------------------------------------------------------
 
     def set_mission(
-        self, initial_pose: Optional["BridgePose"], goal_pose: "BridgePose"
+        self,
+        initial_pose: Optional["BridgePose"],
+        goal_pose: "BridgePose",
+        waypoints: Sequence["BridgePose"] = (),
     ) -> None:
         """Set the mission before :meth:`on_scenario_start` hands it over.
 
@@ -176,9 +186,11 @@ class AutowareEgoEntity(EgoVehicle):
             initial_pose: Map-frame pose Autoware initializes localization at,
                 or ``None`` to take it from the attached ego actor.
             goal_pose: Map-frame goal pose Autoware plans the route to.
+            waypoints: Map-frame poses the route must pass through, in order.
         """
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
+        self._waypoint_poses = tuple(waypoints)
 
     def route_to(
         self,
@@ -187,6 +199,7 @@ class AutowareEgoEntity(EgoVehicle):
         *,
         initial_pose: Optional["CarlaWorldPose"] = None,
         ground_projection: Optional["GroundProjectionConfig"] = None,
+        waypoints: Sequence["Lanelet2Pose"] = (),
     ) -> None:
         """Send Autoware to *goal*: snap it, put it in the map frame, hand it over.
 
@@ -209,29 +222,49 @@ class AutowareEgoEntity(EgoVehicle):
                 reads the attached actor.
             ground_projection: Settings used to snap the goal to the road
                 surface.  Defaults to :class:`GroundProjectionConfig`.
+            waypoints: Lanelet2 poses the route must pass through, in order.
+                Snapped exactly as the goal is, and for the same reason: they are
+                what the scenario author wrote, and Autoware needs map-frame poses
+                on the road it will actually drive.
         """
         from ..coordinate import (  # noqa: PLC0415
             GroundProjectionConfig,
             snap_to_carla_road,
-            to_opendrive,
         )
 
-        snapped = snap_to_carla_road(
-            to_opendrive(goal),
-            world,
-            ground_projection=ground_projection or GroundProjectionConfig(),
-        )
-        logger.info(
-            "Routing to lanelet %d s=%.1f -> CARLA (%.1f, %.1f, %.1f)",
-            goal.lanelet_id,
-            goal.s,
-            snapped.x,
-            snapped.y,
-            snapped.z,
-        )
+        # The goal is snapped as the Lanelet2 pose it was written as, not as its
+        # OpenDRIVE projection: the snap takes its heading from the frame it is
+        # given, and only the Lanelet2 frame carries the lanelet's direction of
+        # travel. On a left-hand-traffic map converted from Lanelet2 the road's
+        # reference line runs the other way, so a goal snapped as an OpenDRIVE
+        # pose faces back down its lane; the mission planner then measures the
+        # goal against its lanelet's angle, finds ~180 degrees against a 45
+        # degree threshold, and answers "Goal is not valid!" -- every route
+        # request comes back "The planned route is empty" and the scenario never
+        # becomes ready. The OpenDRIVE round trip would also move the position
+        # (see snap_to_carla_road), and the goal needs no OpenDRIVE metadata.
+        projection = ground_projection or GroundProjectionConfig()
+
+        def _snap(pose: "Lanelet2Pose", what: str) -> "CarlaWorldPose":
+            snapped = snap_to_carla_road(pose, world, ground_projection=projection)
+            logger.info(
+                "%s lanelet %d s=%.1f -> CARLA (%.1f, %.1f, %.1f) yaw=%.1f",
+                what,
+                pose.lanelet_id,
+                pose.s,
+                snapped.x,
+                snapped.y,
+                snapped.z,
+                snapped.yaw,
+            )
+            return snapped
+
+        snapped_waypoints = [_snap(pose, "Routing via") for pose in waypoints]
+        snapped_goal = _snap(goal, "Routing to")
         self.set_mission(
             None if initial_pose is None else to_map_frame(initial_pose),
-            to_map_frame(snapped),
+            to_map_frame(snapped_goal),
+            [to_map_frame(pose) for pose in snapped_waypoints],
         )
 
     # ------------------------------------------------------------------
@@ -345,7 +378,42 @@ class AutowareEgoEntity(EgoVehicle):
                     "autoware_carla_interface is running and launched with "
                     "ego_vehicle_role_name:=Ego."
                 )
+            self._advance_while_waiting(world)
+
+    def _advance_while_waiting(self, world: "carla.World") -> None:
+        """Step the world once while waiting for the interface to spawn the ego.
+
+        The interface node does not spawn the ego until it has seen the world
+        advance: an observed tick is how it tells a scenario world that is being
+        driven from the asynchronous one CARLA starts on.  At this point in the
+        run nothing else drives the clock -- the tick loop only begins once the
+        ego is attached -- so polling without ticking deadlocks, each side
+        waiting for the other.  The symptom is a runner that sits at "Spawning
+        ego vehicle ..." while the interface logs that it is still waiting for
+        the runner to drive its world, and a CARLA with no vehicles in it.
+
+        An asynchronous world advances on its own and ticking it would race the
+        server's own stepping, so there this only waits.
+        """
+        try:
+            synchronous = world.get_settings().synchronous_mode
+        except (AttributeError, RuntimeError):
+            # A world that will not report its settings is one this should not
+            # be stepping; fall back to waiting.
+            synchronous = False
+        if not synchronous:
             time.sleep(_ATTACH_POLL_INTERVAL_S)
+            return
+        # The scenario's own actors are already spawned by the time the ego is
+        # attached, and the runner does not start holding them until the warm-up
+        # after this returns.  Ticking without the hold would let a car parked on
+        # a slope roll away, changing the layout the scenario was written for
+        # before its clock has started.
+        from ..utils.vehicles import hold_vehicles_still  # noqa: PLC0415
+
+        hold_vehicles_still(world)
+        world.tick()
+        time.sleep(_ATTACH_TICK_PAUSE_S)
 
     def destroy(self) -> None:
         """Detach from the ego actor without destroying it.
@@ -391,7 +459,13 @@ class AutowareEgoEntity(EgoVehicle):
         # of scenarios is built before the first one runs, and two bridges
         # cannot hold the same address at once.
         self._bridge.start()
-        self._bridge.configure(initial_pose, self._goal_pose)
+        # Waypoints only when there are some, so a bridge implementing the
+        # two-argument configure() it was written against keeps working for
+        # every mission that names none.
+        if self._waypoint_poses:
+            self._bridge.configure(initial_pose, self._goal_pose, self._waypoint_poses)
+        else:
+            self._bridge.configure(initial_pose, self._goal_pose)
         self._configured = True
 
     def _resolve_initial_pose(self) -> "BridgePose":

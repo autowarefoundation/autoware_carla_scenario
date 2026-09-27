@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent import futures
+from collections.abc import Sequence
 from typing import Optional, Tuple
 
 import grpc
@@ -112,7 +113,9 @@ class GrpcAutowareBridgeServer(AutowareBridge):
     ) -> None:
         self._config = config or AutowareBridgeConfig()
         self._lock = threading.Lock()
-        self._mission: Optional[Tuple[BridgePose, BridgePose]] = None
+        self._mission: Optional[
+            Tuple[BridgePose, BridgePose, Tuple[BridgePose, ...]]
+        ] = None
         self._ready: bool = False
         self._closed: bool = False
 
@@ -172,11 +175,12 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             mission = self._mission
         if mission is None:
             return pb2.GetMissionResponse(available=False)
-        initial, goal = mission
+        initial, goal, waypoints = mission
         return pb2.GetMissionResponse(
             available=True,
             initial_pose=_pose_to_proto(initial),
             goal=_pose_to_proto(goal),
+            waypoints=[_pose_to_proto(pose) for pose in waypoints],
         )
 
     def _record_readiness(self, ready: bool) -> None:
@@ -199,10 +203,18 @@ class GrpcAutowareBridgeServer(AutowareBridge):
     # AutowareBridge contract (driven by the entity / tick loop)
     # ------------------------------------------------------------------
 
-    def configure(self, initial_pose: BridgePose, goal: BridgePose) -> None:
+    def configure(
+        self,
+        initial_pose: BridgePose,
+        goal: BridgePose,
+        waypoints: Sequence[BridgePose] = (),
+    ) -> None:
         with self._lock:
-            self._mission = (initial_pose, goal)
-        logger.info("AutowareBridge mission configured; awaiting Autoware readiness")
+            self._mission = (initial_pose, goal, tuple(waypoints))
+        logger.info(
+            "AutowareBridge mission configured (%d waypoint(s)); awaiting Autoware readiness",
+            len(self._mission[2]),
+        )
 
     def is_ready(self) -> bool:
         with self._lock:

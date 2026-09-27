@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
@@ -15,6 +16,35 @@ if TYPE_CHECKING:
 
 _NEAR_ZERO_THRESHOLD = 1e-12
 """Magnitude below which a forward vector is considered degenerate."""
+
+
+class DistanceCoordinateSystem(Enum):
+    """Which frame a distance between two entities is measured in.
+
+    OpenSCENARIO carries this on ``RelativeDistanceCondition``,
+    ``TimeHeadwayCondition`` and ``TimeToCollisionCondition`` alike, and the
+    two values are genuinely different measurements rather than two spellings
+    of one.
+
+    Attributes:
+        ENTITY: A straight-line offset in the world frame, projected onto a
+            direction belonging to the subject.  The default, so a document
+            written before this existed keeps its meaning.
+        LANE: The distance *along the road*, which is the gap a driver would
+            describe.  Follows the chain of connected roads between the two,
+            and has no answer once a junction stands between them -- see
+            :mod:`autoware_carla_scenario.coordinate.lane_distance`.  Needs a
+            loaded map.
+
+    The two agree on a straight road and part company on a curve, where the
+    entity frame reads short: for a leader 20 m ahead along the lane it gives
+    19.5 m at a 50 m radius and 14.6 m at 15 m.  Past a quarter turn the
+    projection changes sign, and a condition that only looks ahead stops firing
+    for a leader that is directly in front.
+    """
+
+    ENTITY = auto()
+    LANE = auto()
 
 
 def entity_axes(actor: "carla.Actor") -> Optional[tuple[Vector3, Vector3]]:

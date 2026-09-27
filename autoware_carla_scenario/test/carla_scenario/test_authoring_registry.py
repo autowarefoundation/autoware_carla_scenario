@@ -384,6 +384,36 @@ class TestGeneratedBuilders:
             f"{stale}"
         )
 
+    def test_an_argument_too_wide_for_the_formatter_is_refused(self) -> None:
+        """The width check has to be able to fail, or it guards nothing.
+
+        The generator renders what ``ruff-format`` would write rather than
+        predicting how it wraps, and that holds only while each argument line
+        fits.  One that does not is rewrapped the moment it is committed, and
+        `test_committed_module_is_not_stale` then fails on every run with
+        nothing a regeneration can change -- a dead end that says nothing about
+        the field whose name got long.  So the generator refuses at generation
+        time instead, and this checks that it does.
+        """
+        codegen = pytest.importorskip(
+            "autoware_carla_scenario.authoring.codegen",
+            reason="the generator introspects the runtime, which needs CARLA",
+        )
+
+        with pytest.raises(codegen.GenerationError, match="characters wide"):
+            codegen._check_arguments_fit(
+                [("a_keyword_of_entirely_unreasonable_length", "x" * 60)],
+                "somewhere",
+            )
+
+    def test_an_argument_that_fits_is_left_alone(self) -> None:
+        codegen = pytest.importorskip(
+            "autoware_carla_scenario.authoring.codegen",
+            reason="the generator introspects the runtime, which needs CARLA",
+        )
+
+        codegen._check_arguments_fit([("label", "compiled.label")], "somewhere")
+
     @pytest.mark.parametrize(
         "spec",
         _ALL_SPECS,

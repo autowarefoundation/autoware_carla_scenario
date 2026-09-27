@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -90,6 +91,7 @@ class EgoVehicle(BackendDriven):
         *,
         initial_pose: "Optional[CarlaWorldPose]" = None,
         ground_projection: "Optional[GroundProjectionConfig]" = None,
+        waypoints: "Sequence[Lanelet2Pose]" = (),
     ) -> None:
         """Send this entity to *goal*, if it is the kind that plans a route.
 

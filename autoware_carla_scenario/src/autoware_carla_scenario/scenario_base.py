@@ -65,6 +65,11 @@ class EgoConfig(VehicleEntityConfig):
     #: Lanelet2 pose the ego is routed to, or ``None`` until something names it.
     goal_pose: Optional[Lanelet2Pose]
 
+    #: Lanelet2 poses the route must pass through, in order.  Empty leaves the
+    #: way to the goal to whatever plans the route, which is right when any way
+    #: there will do and wrong when the run *is* a particular drive.
+    waypoint_poses: List[Lanelet2Pose]
+
     def __init__(
         self,
         spawn_location: SpawnLocation,
@@ -75,6 +80,7 @@ class EgoConfig(VehicleEntityConfig):
         spawn_retry_z_step: float = 0.5,
         *,
         goal_pose: Optional[Lanelet2Pose] = None,
+        waypoint_poses: Optional[Sequence[Lanelet2Pose]] = None,
     ) -> None:
         super().__init__(
             role_name=EGO_ROLE_NAME,
@@ -86,6 +92,7 @@ class EgoConfig(VehicleEntityConfig):
             spawn_retry_z_step=spawn_retry_z_step,
         )
         self.goal_pose = goal_pose
+        self.waypoint_poses = list(waypoint_poses or ())
 
 
 class BaseScenario(ABC):
@@ -182,6 +189,19 @@ class BaseScenario(ABC):
     def goal_pose(self, pose: Optional[Lanelet2Pose]) -> None:
         self.ego_config.goal_pose = pose
 
+    @property
+    def waypoint_poses(self) -> List[Lanelet2Pose]:
+        """Lanelet2 poses the ego's route must pass through, in order.
+
+        Stored on the ego config, like the goal, so a scenario may name them in
+        ``setup()`` from what it knows -- see :meth:`derive_waypoints_from_route`.
+        """
+        return self.ego_config.waypoint_poses
+
+    @waypoint_poses.setter
+    def waypoint_poses(self, poses: Sequence[Lanelet2Pose]) -> None:
+        self.ego_config.waypoint_poses = list(poses)
+
     def create_ego(self) -> "EgoVehicle":
         """Return the ego entity :class:`ScenarioRunner` should spawn.
 
@@ -262,12 +282,14 @@ class BaseScenario(ABC):
     # ------------------------------------------------------------------
 
     def _setup_ego_spawn(self) -> OpenDrivePose:
-        """Convert the Lanelet2 spawn pose to CARLA and update ego_config.
+        """Place the Lanelet2 spawn pose in CARLA and update ego_config.
 
-        Converts :attr:`_spawn_pose` through OpenDRIVE to a CARLA world
-        position, snaps it to the road surface, updates :attr:`ego_config`
-        with the resulting spawn location, and registers spectator-follow
-        and position-logging callbacks.
+        Snaps :attr:`_spawn_pose` onto the road surface as the Lanelet2 pose it
+        is -- x and y from the centreline of the lanelet it names, height from
+        the world below -- updates :attr:`ego_config` with the resulting spawn
+        location, and registers spectator-follow and position-logging
+        callbacks.  The equivalent :class:`OpenDrivePose` is derived alongside
+        for its lane metadata, and returned.
 
         The snapped pose is also the one an ego that plans its own route
         localizes at, so this hands it to :meth:`register_route_to_goal` on the
@@ -285,11 +307,20 @@ class BaseScenario(ABC):
             msg = f"spawn_pose is required for {type(self).__name__}"
             raise ValueError(msg)
         ll2_pose = self._spawn_pose
-        od_pose = to_opendrive(ll2_pose)
         world = self.world
+        # Placed as the Lanelet2 pose it was written as, on the centreline of
+        # the lanelet the author named.
         snapped = snap_to_carla_road(
-            od_pose, world, ground_projection=self._ground_projection
+            ll2_pose, world, ground_projection=self._ground_projection
         )
+        # The OpenDRIVE pose is still derived, because callers need its lane
+        # metadata -- the lane-change target lane, the road id a route condition
+        # watches.  It is read off where the ego actually is, not converted
+        # from the Lanelet2 pose: on a map where the two disagree that
+        # conversion can name the lane on the other side of the reference line,
+        # while EntityLanePositionCondition reads the lane off the actor's CARLA
+        # position -- a target derived from the converted lane could never match.
+        od_pose = to_opendrive(snapped)
 
         logger.info(
             "Lanelet %d -> OpenDRIVE road='%s' lane=%d s=%.1f -> "
@@ -376,6 +407,40 @@ class BaseScenario(ABC):
             return
         self.goal_pose = Lanelet2Pose(lanelet_id=route_lanelet_ids[-1], s=0.0)
 
+    def derive_waypoints_from_route(self, route_lanelet_ids: Sequence[int]) -> None:
+        """Make the route the scenario asserts the route Autoware is asked for.
+
+        A goal alone is planned for by the shortest way there, which is a
+        different drive from the one a scenario that lists its lanelets meant.
+        The listed lanelets become the waypoints, so the route follows them
+        instead of merely being checked against them afterwards.
+
+        The route's last lanelet is dropped only when it is where the run ends.
+        That is the usual case -- :meth:`derive_goal_from_route` makes it the
+        goal, and a route with no goal yet implies the same -- and listing the
+        goal as a waypoint too would be redundant.  But that method deliberately
+        keeps a goal the config named somewhere else, and then the route's last
+        lanelet is an ordinary stretch of the way there: dropping it would let
+        Autoware reach the configured goal without ever driving it, which is the
+        shortcut this exists to prevent.
+
+        Waypoints already named elsewhere win, and an empty route leaves them
+        empty -- a run with no particular way there is a legitimate run.
+
+        Call it from :meth:`setup` before :meth:`_setup_ego_spawn`, which is
+        where the mission is handed to an ego that plans its own route.  Call it
+        after :meth:`derive_goal_from_route`, so the goal it compares against is
+        the one the run will use.
+        """
+        if self.waypoint_poses or not route_lanelet_ids:
+            return
+        goal = self.goal_pose
+        ends_at_the_goal = goal is None or goal.lanelet_id == route_lanelet_ids[-1]
+        via = route_lanelet_ids[:-1] if ends_at_the_goal else route_lanelet_ids
+        self.waypoint_poses = [
+            Lanelet2Pose(lanelet_id=lanelet_id, s=0.0) for lanelet_id in via
+        ]
+
     def register_route_to_goal(
         self, initial_pose: Optional[CarlaWorldPose] = None
     ) -> None:
@@ -419,6 +484,7 @@ class BaseScenario(ABC):
                 goal,
                 initial_pose=initial_pose,
                 ground_projection=self._ground_projection,
+                waypoints=self.waypoint_poses,
                 label="route_ego_to_goal",
             )
         )

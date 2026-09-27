@@ -3,9 +3,10 @@
 # # Source: proto/autoware_bridge/v0/autoware_bridge.proto (this repository)
 # # Regenerate with: uv run python autoware_carla_scenario/scripts/compile_protos.py
 
+from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -44,14 +45,16 @@ class GetMissionRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetMissionResponse(_message.Message):
-    __slots__ = ("available", "initial_pose", "goal")
+    __slots__ = ("available", "initial_pose", "goal", "waypoints")
     AVAILABLE_FIELD_NUMBER: _ClassVar[int]
     INITIAL_POSE_FIELD_NUMBER: _ClassVar[int]
     GOAL_FIELD_NUMBER: _ClassVar[int]
+    WAYPOINTS_FIELD_NUMBER: _ClassVar[int]
     available: bool
     initial_pose: Pose
     goal: Pose
-    def __init__(self, available: bool = ..., initial_pose: _Optional[_Union[Pose, _Mapping]] = ..., goal: _Optional[_Union[Pose, _Mapping]] = ...) -> None: ...
+    waypoints: _containers.RepeatedCompositeFieldContainer[Pose]
+    def __init__(self, available: bool = ..., initial_pose: _Optional[_Union[Pose, _Mapping]] = ..., goal: _Optional[_Union[Pose, _Mapping]] = ..., waypoints: _Optional[_Iterable[_Union[Pose, _Mapping]]] = ...) -> None: ...
 
 class ReportReadinessRequest(_message.Message):
     __slots__ = ("ready",)
