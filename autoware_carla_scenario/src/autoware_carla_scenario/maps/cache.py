@@ -84,6 +84,26 @@ TIP_SUFFIX = ".tip.json"
 #: How long a git call may take before it is abandoned.  A clone of a map
 #: repository is seconds; anything approaching this is a hung transport.
 _GIT_TIMEOUT_SECONDS = 600.0
+#: Variables that point git at a repository (``git rev-parse --local-env-vars``).
+#: git exports them to its hooks, so a scenario run started from one would
+#: otherwise have the cache's clone/fetch/checkout act on the hook's repository.
+_GIT_REPO_ENV_VARS = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_INTERNAL_SUPER_PREFIX",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    }
+)
 
 _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -454,7 +474,7 @@ class GitMapCache:
         Raises:
             MapCacheError: If git is missing, timed out, or exited non-zero.
         """
-        env = dict(os.environ)
+        env = {k: v for k, v in os.environ.items() if k not in _GIT_REPO_ENV_VARS}
         # Every checkout in this cache is deliberately pointer-only; the content
         # that is actually wanted is pulled by pattern afterwards.
         env["GIT_LFS_SKIP_SMUDGE"] = "1"
