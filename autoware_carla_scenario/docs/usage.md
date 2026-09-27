@@ -120,6 +120,19 @@ uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compl
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
 not `outputs/`. The result viewer scans both directories.
 
+To get the concrete scenarios without running them (for example, to fan them
+out over a cluster), use `scenario-expand`. It takes the same arguments as
+`scenario` and prints JSON with one list of Hydra overrides per concrete
+scenario. These are the same cases, in the same order, that the sweeper runs:
+
+```bash
+uv run scenario-expand scenario=traffic_light_compliance/traffic_light_compliance
+# {"scenario": "...", "cases": [["ego.spawn_lanelet_id=5", "ego.spawn_s=18.62..."], ...]}
+```
+
+A scenario without a `sweep:` section is already concrete, so it expands to a
+single empty case. Only the Lanelet2 map is needed, not a CARLA server.
+
 ### Resume from a Specific Scenario
 
 When running large batches, you can skip already-completed scenarios:
