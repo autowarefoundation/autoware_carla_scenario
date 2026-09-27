@@ -424,14 +424,27 @@ classDiagram
 >   TTC the closing speed is resolved onto the road too, so a vehicle's
 >   cornering is not counted as approach.
 >
-> `LANE` covers the **same-road** case only. Two entities on different roads —
-> the junction case — have no lane distance, and the condition returns no
-> measurement rather than falling back to the straight line: silently swapping
-> one measure for another makes a scenario pass for the wrong reason. Reaching
-> across roads needs a lanelet routing graph in the live runtime, which nothing
-> holds yet; see
-> [#62](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive/issues/62).
-> The measurement itself lives in
+> `LANE` follows the **chain of connected roads** between the two, which it has
+> to: an OpenDRIVE map is cut into short roads — a median of 33 m on the
+> converter's own fixture — so a leader at an ordinary following distance is
+> usually on the next road, not the one behind it. Measuring within one road
+> would answer "no measurement" to most following scenarios.
+>
+> A **junction** is measured too. Its connecting roads are ordinary roads
+> carrying `junction="<id>"`, so the chain reaches them like any other, and two
+> entities on one connecting road need no walk at all — which is the measurement
+> an intersection scenario is usually about. What a junction cannot settle is
+> *which* way out a vehicle will take, so that ambiguity is reported rather than
+> hidden: where several chains reach the target the shortest answers, by
+> distance rather than by which link the map happens to list first, and every
+> measurement carries whether it ran through a junction. A caller that must not
+> have a turn chosen for it passes `across_junctions=False` and gets no
+> measurement instead.
+>
+> Nothing falls back to the straight line: silently swapping one measure for
+> another makes a scenario pass for the wrong reason. Bounded at 200 m, which
+> covers a motorway-speed TTC over the seconds a threshold is set at. The
+> measurement itself lives in
 > `autoware_carla_scenario.coordinate.lane_distance`.
 
 **`check()` contract:**

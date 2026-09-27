@@ -281,15 +281,20 @@ class TestWhenThereIsNoAnswer:
     def test_roads_no_chain_joins_are_refused_rather_than_approximated(
         self, loaded_map: MapManager
     ) -> None:
-        """Across a junction, which needs a routing graph nothing holds yet.
+        """Two roads with no chain of links between them, 10 m apart on the map.
 
-        Falling back to the straight line here would be the silent swap of one
-        measure for another that the whole lane frame exists to remove: a
-        scenario would pass, and nothing would say which measure it passed on.
+        Not the distance cap doing the refusing -- these two are well inside it,
+        which is the point: the straight line would happily answer here, and
+        falling back to it would be the silent swap of one measure for another
+        that the whole lane frame exists to remove.  A scenario would pass, and
+        nothing would say which measure it passed on.
+
+        Nor is it a junction doing the refusing: a junction *is* measured, and
+        says so -- see :class:`TestThroughAJunction`.
         """
         here = _at(10.0)
         elsewhere = _at(10.0, road="598")
-        assert elsewhere.x != here.x or elsewhere.y != here.y
+        assert math.hypot(here.x - elsewhere.x, here.y - elsewhere.y) < 20.0
 
         assert lane_separation(here, elsewhere) is None
 
@@ -772,3 +777,194 @@ class TestAcrossConnectedRoads:
         """The walk is bounded, so a map cannot be searched indefinitely."""
         first, _, _ = CHAIN
         assert lane_separation(_at(0.0, road=first), _at(200.0, road="2")) is None
+
+
+# ---------------------------------------------------------------------------
+# Junctions
+# ---------------------------------------------------------------------------
+
+#: An ordinary road, and the connecting road inside a junction it leads onto.
+#: `124` leaves by its `end` into `351`, which belongs to junction `1000`.
+APPROACH, CONNECTING, JUNCTION_OF_CONNECTING = "124", "351", "1000"
+
+#: A road whose `start` two roads claim: one ordinary continuation and one
+#: connecting road.  Which of them a single-edge graph kept was the order they
+#: happened to appear in the file.
+FORK = "34"
+FORK_STRAIGHT_ON = "32"
+FORK_INTO_JUNCTION = "317"
+
+
+class TestThroughAJunction:
+    """A junction is measured, and every measurement says whether it crossed one.
+
+    A connecting road is an ordinary ``<road>`` carrying ``junction="<id>"`` --
+    391 of this fixture's 693 -- and it names its incoming and outgoing roads as
+    roads, so a chain reaches it like any other.  Refusing there would refuse
+    the measurement inside an intersection, which is one a scenario legitimately
+    wants.
+
+    What a junction cannot settle is which way out a vehicle takes, so that is
+    reported rather than hidden: the shortest chain answers, and
+    ``across_junctions=False`` is how a caller that must not have a turn chosen
+    for it declines.
+    """
+
+    def _road_length(self, loaded_map: MapManager, road: str) -> float:
+        return float(loaded_map.road_network.road_ids_to_object[road]["length"])
+
+    def test_a_connecting_road_is_reached_and_not_refused(
+        self, loaded_map: MapManager
+    ) -> None:
+        approach_length = self._road_length(loaded_map, APPROACH)
+        before = _at(approach_length - 3.0, road=APPROACH)
+        inside = _at(3.0, road=CONNECTING)
+
+        assert lane_separation(before, inside) == pytest.approx(6.0, abs=0.5)
+
+    def test_it_reports_having_crossed_one(self, loaded_map: MapManager) -> None:
+        approach_length = self._road_length(loaded_map, APPROACH)
+        reach = lane_distance._reach(
+            OpenDrivePose(road_id=APPROACH, lane_id=-1, s=approach_length - 3.0, t=0.0),
+            OpenDrivePose(road_id=CONNECTING, lane_id=-1, s=3.0, t=0.0),
+        )
+
+        assert reach is not None
+        assert reach.through_junction is True
+
+    def test_a_caller_that_must_not_have_a_turn_chosen_can_refuse(
+        self, loaded_map: MapManager
+    ) -> None:
+        approach_length = self._road_length(loaded_map, APPROACH)
+        before = _at(approach_length - 3.0, road=APPROACH)
+        inside = _at(3.0, road=CONNECTING)
+
+        assert lane_separation(before, inside) is not None
+        assert lane_separation(before, inside, across_junctions=False) is None
+
+    def test_two_on_one_connecting_road_cross_nothing_and_always_measure(
+        self, loaded_map: MapManager
+    ) -> None:
+        """Being *inside* a junction is not an approximation: no turn was taken.
+
+        So refusing junction crossings must not refuse this, which is exactly
+        the measurement an intersection scenario is about.
+        """
+        length = self._road_length(loaded_map, CONNECTING)
+        near, far = _at(1.0, road=CONNECTING), _at(length - 1.0, road=CONNECTING)
+
+        both_ways = (
+            lane_separation(near, far),
+            lane_separation(near, far, across_junctions=False),
+        )
+
+        assert both_ways[0] == pytest.approx(length - 2.0, abs=0.5)
+        assert both_ways[1] == both_ways[0]
+
+    def test_an_ordinary_chain_does_not_claim_to_have_crossed_one(
+        self, loaded_map: MapManager
+    ) -> None:
+        first, middle, _ = CHAIN
+        first_length, _, _ = _chain_lengths()
+        reach = lane_distance._reach(
+            OpenDrivePose(road_id=first, lane_id=-1, s=first_length - 5.0, t=0.0),
+            OpenDrivePose(road_id=middle, lane_id=-1, s=7.0, t=0.0),
+        )
+
+        assert reach is not None
+        assert reach.through_junction is False
+
+
+class TestEveryWayOnIsWalked:
+    """A fork offers more than one road, and all of them must be reachable.
+
+    Regression: the graph held one road per ``(road, end)`` and kept whichever
+    the file listed first, which left 422 branches of this fixture unreachable.
+    A vehicle straight ahead was measured and one through the junction was not,
+    an asymmetry no scenario author could see or control.
+    """
+
+    def test_both_branches_of_a_fork_are_reachable(
+        self, loaded_map: MapManager
+    ) -> None:
+        """Asked of the walk directly, because one branch has no geometry.
+
+        Road 317 is a 1 cm connecting road whose reference line is empty, so no
+        CARLA pose can be placed on it -- a converter matter, and beside the
+        point here.  Whether the walk *reaches* a road is the walk's own
+        property, and that is what the single-edge graph got wrong.
+        """
+
+        def reaches(target: str) -> bool:
+            length = float(loaded_map.road_network.road_ids_to_object[target]["length"])
+            return (
+                lane_distance._reach(
+                    OpenDrivePose(road_id=FORK, lane_id=-1, s=3.0, t=0.0),
+                    OpenDrivePose(
+                        road_id=target, lane_id=-1, s=min(3.0, length / 2), t=0.0
+                    ),
+                )
+                is not None
+            )
+
+        assert reaches(FORK_STRAIGHT_ON)
+        assert reaches(FORK_INTO_JUNCTION)
+
+    def test_a_node_with_two_ways_on_keeps_both(self, loaded_map: MapManager) -> None:
+        ways = lane_distance._link_graph()[(FORK, "start")]
+
+        assert {road for road, _ in ways} >= {FORK_STRAIGHT_ON, FORK_INTO_JUNCTION}
+
+
+class TestTheShortestChainAnswers:
+    """Where two chains reach the target, distance decides -- not file order.
+
+    Driven against a hand-built graph rather than the fixture: the property is
+    about the search, and a fixture that happens to have a diamond in it would
+    pin the fixture as much as the search.
+    """
+
+    @pytest.fixture
+    def _diamond(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``A`` forks onto a long way and a short way, both reaching ``Z``.
+
+        The long way is listed first, so a search that took the first branch it
+        was offered would answer with it.
+        """
+        graph = {
+            ("A", "end"): (("LONG", "start"), ("SHORT", "start")),
+            ("LONG", "end"): (("Z", "start"),),
+            ("SHORT", "end"): (("Z", "start"),),
+        }
+        lengths = {"A": 10.0, "LONG": 100.0, "SHORT": 5.0, "Z": 50.0}
+        monkeypatch.setattr(lane_distance, "_link_graph", lambda: graph)
+        monkeypatch.setattr(lane_distance, "_junction_roads", frozenset)
+        monkeypatch.setattr(
+            lane_distance, "_road_length", lambda road_id: lengths.get(str(road_id))
+        )
+
+    def test_the_short_way_round_is_the_answer(self, _diamond: None) -> None:
+        reach = lane_distance._reach(
+            OpenDrivePose(road_id="A", lane_id=-1, s=4.0, t=0.0),
+            OpenDrivePose(road_id="Z", lane_id=-1, s=8.0, t=0.0),
+        )
+
+        assert reach is not None
+        # 6 m to the end of A, 5 m over SHORT, 8 m into Z.
+        assert reach.distance == pytest.approx(19.0)
+
+    def test_a_junction_on_the_short_way_is_reported(
+        self, _diamond: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            lane_distance, "_junction_roads", lambda: frozenset({"SHORT"})
+        )
+
+        reach = lane_distance._reach(
+            OpenDrivePose(road_id="A", lane_id=-1, s=4.0, t=0.0),
+            OpenDrivePose(road_id="Z", lane_id=-1, s=8.0, t=0.0),
+        )
+
+        assert reach is not None
+        assert reach.distance == pytest.approx(19.0)
+        assert reach.through_junction is True

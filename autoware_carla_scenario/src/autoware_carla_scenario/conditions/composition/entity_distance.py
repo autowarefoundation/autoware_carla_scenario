@@ -60,8 +60,8 @@ class EntityDistanceCondition(CompositionCondition):
             measures the straight line between the two.
             :attr:`~DistanceCoordinateSystem.LANE` measures along the roads
             that connect them, which on a curve is the longer and more useful
-            number, and which has no answer once a junction stands between
-            them.
+            number, and which reaches through a junction by the shortest chain
+            of roads that joins the two.
         label: Human-readable identifier for this condition.
 
     Raises:

@@ -31,17 +31,27 @@ system exists for, which is exactly the silent never-fires it exists to
 remove.  The links are read off the OpenDRIVE the converter already emits, so
 this needs no routing graph.
 
-What has no answer is a **junction**: several roads leave it, and which one a
-vehicle will take is a route rather than a geometric fact.  A walk stops
-there, and the pair is reported as having no measurement rather than
-approximated or quietly swapped for the straight line -- a scenario that
-silently changes what it measures passes for the wrong reason, which is worse
-than not firing.  Reaching across a junction needs a lanelet2 routing graph in
-the live runtime, which nothing holds yet.
+A **junction** is measured too, and said so.  Its connecting roads are ordinary
+roads carrying ``junction="<id>"``, and they name their incoming and outgoing
+roads as roads, so the chain reaches them like any other -- two entities on one
+connecting road need no walk at all, and 240 links of this project's fixture
+lead from an ordinary road into one.  What a junction genuinely cannot settle is
+*which* way out a vehicle will take: several roads leave it, and that is a route
+rather than a geometric fact.
+
+So the ambiguity is reported rather than hidden.  Where several chains reach the
+target the **shortest** answers -- by distance, not by which link the file
+happened to list first -- and every measurement says whether it ran through a
+junction.  Each function takes ``across_junctions``, so a caller that must not
+have a turn chosen for it refuses instead, and one measuring inside an
+intersection gets its number.  Nothing falls back to the straight line: a
+scenario that silently changes what it measures passes for the wrong reason,
+which is worse than not firing.
 """
 
 from __future__ import annotations
 
+import heapq
 import logging
 import math
 from dataclasses import dataclass
@@ -70,11 +80,23 @@ _NEAR_ZERO = 1e-9
 _warned_without_map = False
 
 
-def lane_separation(source: CarlaWorldPose, target: CarlaWorldPose) -> Optional[float]:
+def lane_separation(
+    source: CarlaWorldPose,
+    target: CarlaWorldPose,
+    *,
+    across_junctions: bool = True,
+) -> Optional[float]:
     """Return how far apart the two are along their shared road, unsigned.
 
     No velocity is needed: a separation has no direction, so neither entity has
     to be moving for this to mean something.
+
+    Args:
+        across_junctions: Whether a chain that runs through a junction may
+            answer.  ``True`` measures it -- the arc length is exact -- and
+            ``False`` refuses, for a caller that must not have one of the ways
+            out of a junction chosen for it.  Two entities on one road are
+            unaffected either way, a junction's own connecting road included.
 
     Returns:
         Metres along the road, or ``None`` when there is no such measurement
@@ -85,7 +107,9 @@ def lane_separation(source: CarlaWorldPose, target: CarlaWorldPose) -> Optional[
     if source_od is None or target_od is None:
         return None
     reach = _reach(source_od, target_od)
-    return None if reach is None else reach.distance
+    if reach is None or (reach.through_junction and not across_junctions):
+        return None
+    return reach.distance
 
 
 def lane_gap(
@@ -93,6 +117,8 @@ def lane_gap(
     travel_x: float,
     travel_y: float,
     target: CarlaWorldPose,
+    *,
+    across_junctions: bool = True,
 ) -> Optional[float]:
     """Return how far *target* is ahead of *source* along their shared road.
 
@@ -124,6 +150,9 @@ def lane_gap(
         travel_x: The source's velocity, x component (CARLA world frame).
         travel_y: The source's velocity, y component.
         target: The other entity's position, in CARLA world coordinates.
+        across_junctions: Whether a chain that runs through a junction may
+            answer.  ``True`` measures it, ``False`` refuses rather than have
+            one of the ways out of a junction chosen for it.
 
     Returns:
         The signed along-road distance in metres, or ``None``.
@@ -138,7 +167,7 @@ def lane_gap(
         # a gap in front of.
         return None
     reach = _reach(source_od, target_od)
-    if reach is None:
+    if reach is None or (reach.through_junction and not across_junctions):
         return None
 
     # `reach.forward` is where the target lies in the source road's own `s`;
@@ -156,6 +185,8 @@ def lane_closing_speed(
     target: CarlaWorldPose,
     target_travel_x: float,
     target_travel_y: float,
+    *,
+    across_junctions: bool = True,
 ) -> Optional[float]:
     """Return how fast the along-road separation between the two is shrinking.
 
@@ -178,16 +209,23 @@ def lane_closing_speed(
     Signing by the source's travel instead would answer ``None`` to both, which
     is the silent never-fires this whole coordinate system exists to remove.
 
+    Args:
+        across_junctions: Whether a chain that runs through a junction may
+            answer.  ``True`` measures it, ``False`` refuses rather than have
+            one of the ways out of a junction chosen for it.
+
     Returns:
-        Metres per second, or ``None`` when the two are not on one road, when
-        either cannot be placed on it, or when they are level along it -- with
-        no separation there is no direction to close along.
+        Metres per second, or ``None`` when no chain of roads joins the two,
+        when either cannot be placed on one, or when they are level along it --
+        with no separation there is no direction to close along.
     """
     source_od = _project(source)
     target_od = _project(target)
     if source_od is None or target_od is None:
         return None
     reach = _reach(source_od, target_od)
+    if reach is not None and reach.through_junction and not across_junctions:
+        return None
     if reach is None or reach.distance < _NEAR_ZERO:
         # Level along the road: no separation, so no direction to close along.
         return None
@@ -332,11 +370,20 @@ class _Reach:
             way the measurement runs.  A chain can enter a road from its far
             end, and a speed read off that road's own ``s`` then has the wrong
             sign for a closing speed.
+        through_junction: Whether the chain between the two ran through a
+            road inside a junction.  The distance is exact either way -- it is
+            arc length over real roads -- but a junction offers several ways
+            out, and which one a vehicle will take is a route rather than a
+            geometric fact, so a caller that must not have a turn chosen for it
+            can refuse on this.  Two entities on one road never set it, a
+            junction's own connecting road included: nothing was crossed and
+            nothing was chosen.
     """
 
     distance: float
     forward: bool
     target_forward: bool
+    through_junction: bool
 
 
 def _road(road_id: str) -> Optional[object]:
@@ -364,14 +411,22 @@ def _road_length(road_id: str) -> Optional[float]:
 #: Keyed by the identity of the loaded network rather than by a map name: a
 #: scenario queue re-initializes :class:`MapManager`, and a stale graph would
 #: measure against the previous run's roads.
-_links_for: "Optional[tuple[int, dict[tuple[str, str], tuple[str, str]]]]" = None
+_links_for: "Optional[tuple[int, dict[tuple[str, str], tuple[tuple[str, str], ...]]]]" = None
+
+#: Roads that sit inside a junction, by id, for the loaded network.
+_junction_roads_for: "Optional[tuple[int, frozenset[str]]]" = None
 
 
-def _link_graph() -> "dict[tuple[str, str], tuple[str, str]]":
-    """Return which road is reached by leaving a given road at a given end.
+def _link_graph() -> "dict[tuple[str, str], tuple[tuple[str, str], ...]]":
+    """Return every road reached by leaving a given road at a given end.
 
     A node is ``(road_id, end)`` -- the end being left by, ``"start"`` or
-    ``"end"`` -- and the value is the road entered and the end entered at.
+    ``"end"`` -- and the value is **all** the roads entered from it, each with
+    the end it is entered at.  More than one is the normal case at a junction
+    and at a merge, which is why this is a list rather than one road: keeping
+    only the first left 422 branches of this project's own fixture unreachable,
+    and which one survived was the order the roads happened to appear in the
+    file.
 
     Built in one pass and cached, for two reasons:
 
@@ -387,11 +442,18 @@ def _link_graph() -> "dict[tuple[str, str], tuple[str, str]]":
     * A condition is evaluated every tick, and the graph does not change
       between ticks.
 
-    Links naming a **junction** are left out, which is what stops a walk
-    there: several roads leave a junction and picking one is a route, not a
-    geometric fact.  The map's own statement wins over the one derived by
-    reversing another link, so a map that does spell out both directions is
-    read as it is written.
+    Links naming a **junction** carry no road to walk to, so they contribute
+    nothing here.  That is not what keeps a junction out of a measurement:
+    a junction's connecting roads name their incoming and outgoing roads as
+    *roads* in their own ``link``, so reading every link both ways reaches them
+    -- 240 edges of this fixture lead from an ordinary road into a connecting
+    road.  Crossing one is therefore something the walk can do and reports
+    having done, rather than something it cannot; see
+    :attr:`_Reach.through_junction`.
+
+    The map's own statement comes first, so a map that spells out both
+    directions is read as it is written, and the reversed reading only adds
+    what it left out.
     """
     global _links_for
 
@@ -402,8 +464,8 @@ def _link_graph() -> "dict[tuple[str, str], tuple[str, str]]":
     if _links_for is not None and _links_for[0] == id(network):
         return _links_for[1]
 
-    explicit: "dict[tuple[str, str], tuple[str, str]]" = {}
-    derived: "dict[tuple[str, str], tuple[str, str]]" = {}
+    explicit: "dict[tuple[str, str], list[tuple[str, str]]]" = {}
+    derived: "dict[tuple[str, str], list[tuple[str, str]]]" = {}
     for road_id, road in network.road_ids_to_object.items():
         link = road.road_xml.find("link")
         if link is None:
@@ -418,47 +480,89 @@ def _link_graph() -> "dict[tuple[str, str], tuple[str, str]]":
                 if other is None:
                     continue
                 entered = element.attrib.get("contactPoint", "start")
-                explicit[(str(road_id), leaving)] = (str(other), entered)
+                explicit.setdefault((str(road_id), leaving), []).append(
+                    (str(other), entered)
+                )
                 # Coming back the other way leaves the far road by the very
                 # end this link met it at.
-                derived.setdefault((str(other), entered), (str(road_id), leaving))
+                derived.setdefault((str(other), entered), []).append(
+                    (str(road_id), leaving)
+                )
 
-    graph = dict(derived)
-    graph.update(explicit)
+    graph: "dict[tuple[str, str], tuple[tuple[str, str], ...]]" = {}
+    for node in set(explicit) | set(derived):
+        ways: "list[tuple[str, str]]" = []
+        for way in explicit.get(node, []) + derived.get(node, []):
+            if way not in ways:
+                ways.append(way)
+        graph[node] = tuple(ways)
     _links_for = (id(network), graph)
     return graph
 
 
-def _next_road(road_id: str, along_s: bool) -> Optional["tuple[str, bool]"]:
-    """Return the road continuing past *road_id*, and how it is entered.
+def _junction_roads() -> "frozenset[str]":
+    """Return the ids of roads that sit inside a junction.
+
+    A connecting road carries ``junction="<id>"``; every other road carries
+    ``-1`` or nothing at all.
+    """
+    global _junction_roads_for
+
+    try:
+        network = MapManager.get_instance().road_network
+    except RuntimeError:
+        return frozenset()
+    if _junction_roads_for is not None and _junction_roads_for[0] == id(network):
+        return _junction_roads_for[1]
+
+    inside = {
+        str(road_id)
+        for road_id, road in network.road_ids_to_object.items()
+        if str(road.road_xml.get("junction", "-1")) not in ("-1", "")
+    }
+    _junction_roads_for = (id(network), frozenset(inside))
+    return _junction_roads_for[1]
+
+
+def _next_roads(road_id: str, along_s: bool) -> "tuple[tuple[str, bool], ...]":
+    """Return every road continuing past *road_id*, and how each is entered.
 
     Travelling along ``s`` leaves a road by its ``end``, and against ``s`` by
     its ``start``.  Entering the next road at its ``start`` leaves the walk
     travelling along that road's ``s``; entering at its ``end`` turns it
     around.
 
-    ``None`` where the network ends, and -- the case worth naming -- where the
-    only way on is through a **junction**, which is where a chain stops being
-    a chain.
+    Empty where the network ends.  Several where a junction or a merge offers
+    more than one way on -- all of them are returned, and which is taken is
+    decided by distance in :func:`_reach`, not by the order the file lists
+    them in.
     """
-    step = _link_graph().get((str(road_id), "end" if along_s else "start"))
-    if step is None:
-        return None
-    next_id, entered = step
-    return next_id, entered == "start"
+    return tuple(
+        (next_id, entered == "start")
+        for next_id, entered in _link_graph().get(
+            (str(road_id), "end" if along_s else "start"), ()
+        )
+    )
 
 
 def _reach(source: OpenDrivePose, target: OpenDrivePose) -> Optional[_Reach]:
     """Return how far *target* lies from *source* along the roads joining them.
 
-    The same road needs no walk.  Otherwise the chain is followed both ways,
-    because a leader on the next road along is the ordinary case rather than
-    the exotic one: an OpenDRIVE map is cut into short roads -- a median of
-    33 m on this project's own fixture, three quarters of them under 50 m --
-    so a vehicle at a comfortable following distance is usually *not* on the
-    road behind it.  Measuring only within one road would answer ``None`` to
-    most of the following scenarios this coordinate system exists for, which
-    is the silent never-fires it exists to remove.
+    The same road needs no walk.  Otherwise the chains leaving both ends of the
+    source's road are followed, because a leader on the next road along is the
+    ordinary case rather than the exotic one: an OpenDRIVE map is cut into
+    short roads -- a median of 33 m on this project's own fixture, three
+    quarters of them under 50 m -- so a vehicle at a comfortable following
+    distance is usually *not* on the road behind it.  Measuring only within one
+    road would answer ``None`` to most of the following scenarios this
+    coordinate system exists for, which is the silent never-fires it exists to
+    remove.
+
+    Where more than one chain reaches the target -- which a junction and a
+    merge both produce -- the **shortest** is the answer, and it is found by
+    distance rather than by which link the file happened to list first.  The
+    route it took is reported in :attr:`_Reach.through_junction` so a caller
+    that must not have a turn chosen for it can refuse.
 
     Returns:
         A :class:`_Reach`, or ``None`` when no chain of roads joins the two
@@ -467,50 +571,95 @@ def _reach(source: OpenDrivePose, target: OpenDrivePose) -> Optional[_Reach]:
     if source.road_id == target.road_id:
         offset = target.s - source.s
         forward = offset >= 0
-        return _Reach(abs(offset), forward=forward, target_forward=forward)
+        return _Reach(
+            abs(offset),
+            forward=forward,
+            target_forward=forward,
+            through_junction=False,
+        )
 
+    best: Optional[_Reach] = None
     for forward in (True, False):
         found = _walk(source, target, forward)
-        if found is not None:
-            return found
-    return None
+        if found is not None and (best is None or found.distance < best.distance):
+            best = found
+    return best
 
 
 def _walk(
     source: OpenDrivePose, target: OpenDrivePose, forward: bool
 ) -> Optional[_Reach]:
-    """Follow the chain one way from *source*, and report reaching *target*."""
+    """Follow the chains one way from *source*, shortest first, to *target*.
+
+    A uniform-cost search rather than a single-file walk, because the graph
+    branches: one road can be left onto several, and the first branch the file
+    lists is not the nearest.  Frontier entries are ordered by metres, and an
+    entry that *is* the answer sorts before one that is still to be expanded at
+    the same distance -- so the first answer taken off the frontier is the
+    shortest any chain gives, and file order cannot decide it.
+    """
     source_length = _road_length(source.road_id)
     if source_length is None:
         return None
 
+    inside_junction = _junction_roads()
+
     # As far as the end of the source's own road that the walk leaves by.
-    travelled = (source_length - source.s) if forward else source.s
-    road_id = source.road_id
-    along_s = forward
+    start = (source_length - source.s) if forward else source.s
+    if start > _MAX_CHAIN_METRES:
+        return None
 
-    for _ in range(_MAX_CHAIN_HOPS):
-        step = _next_road(road_id, along_s)
-        if step is None:
-            return None
-        road_id, along_s = step
+    #: (metres, kind, hops, road_id, along_s, crossed a junction), where kind 0
+    #: is a reached target and 1 is a road still to be expanded.
+    _ANSWER, _EXPAND = 0, 1
+    frontier: "list[tuple[float, int, int, str, bool, bool]]" = [
+        (start, _EXPAND, 0, source.road_id, forward, source.road_id in inside_junction)
+    ]
+    seen: "set[tuple[str, bool]]" = set()
 
-        length = _road_length(road_id)
-        if length is None:
-            return None
+    while frontier:
+        travelled, kind, hops, road_id, along_s, crossed = heapq.heappop(frontier)
 
-        if road_id == target.road_id:
-            # `along_s` says whether this road numbers `s` the way the walk is
-            # travelling, which is what turns its `s` into a distance from
-            # where the walk entered it.
-            inner = target.s if along_s else (length - target.s)
-            total = travelled + inner
-            if total > _MAX_CHAIN_METRES:
-                return None
-            return _Reach(total, forward=forward, target_forward=along_s)
+        if kind == _ANSWER:
+            return _Reach(
+                travelled,
+                forward=forward,
+                target_forward=along_s,
+                through_junction=crossed,
+            )
 
-        travelled += length
-        if travelled > _MAX_CHAIN_METRES:
-            return None
+        if (road_id, along_s) in seen:
+            continue
+        seen.add((road_id, along_s))
+        if hops >= _MAX_CHAIN_HOPS:
+            continue
+
+        for next_id, next_along_s in _next_roads(road_id, along_s):
+            length = _road_length(next_id)
+            if length is None:
+                continue
+            next_crossed = crossed or next_id in inside_junction
+
+            if next_id == target.road_id:
+                # `next_along_s` says whether this road numbers `s` the way the
+                # walk is travelling, which is what turns its `s` into a
+                # distance from where the walk entered it.
+                inner = target.s if next_along_s else (length - target.s)
+                total = travelled + inner
+                if total <= _MAX_CHAIN_METRES:
+                    heapq.heappush(
+                        frontier,
+                        (total, _ANSWER, hops + 1, next_id, next_along_s, next_crossed),
+                    )
+                # Not `continue`: a road can also be driven through on the way
+                # to a shorter way round to the same place.
+
+            onward = travelled + length
+            if onward > _MAX_CHAIN_METRES or (next_id, next_along_s) in seen:
+                continue
+            heapq.heappush(
+                frontier,
+                (onward, _EXPAND, hops + 1, next_id, next_along_s, next_crossed),
+            )
 
     return None
