@@ -53,10 +53,9 @@ def spawn_vehicle_actor(
     :class:`VehicleEntity`.
 
     When the initial spawn fails and *spawn_retry_max_count* > 0 and
-    *od_pose* is provided, the function retries by shifting the lateral
-    offset *t* in the OpenDRIVE coordinate system in increments of
-    *spawn_retry_t_step* metres, recomputing the CARLA position via
-    :func:`snap_to_carla_road` for each attempt.
+    *od_pose* is provided, the function retries by shifting the spawn
+    transform across its own heading in increments of *spawn_retry_t_step*
+    metres (and up by *spawn_retry_z_step*).
 
     Args:
         world: The CARLA world instance.
@@ -64,17 +63,16 @@ def spawn_vehicle_actor(
         role_name: Value for the ``role_name`` actor attribute.
         spawn_location: Where to place the vehicle \u2014 either an explicit
             :class:`SpawnTransform` or a :class:`SpawnPointIndex`.
-        od_pose: Optional :class:`OpenDrivePose` used to recompute the
-            spawn position with a shifted *t* on retry.
+        od_pose: Optional :class:`OpenDrivePose` of the spawn; giving it
+            marks the spawn as a road placement and enables the retries,
+            which are offset from the spawn transform itself.
         spawn_retry_max_count: Maximum number of lateral-shift retries
             when the initial spawn fails.  0 disables retries.
         spawn_retry_t_step: Lateral shift in OpenDRIVE *t* (metres) per
             retry attempt.
         spawn_retry_z_step: Vertical shift (metres) per retry attempt.
-        ground_projection: Ground projection config used when snapping
-            the shifted pose on retry.  Defaults to
-            :class:`~autoware_carla_scenario.coordinate.snap.GroundProjectionConfig`
-            with its default values.
+        ground_projection: Accepted for compatibility; unused now that the
+            retries offset the resolved spawn transform instead of re-snapping.
 
     Returns:
         The spawned vehicle actor.
@@ -127,21 +125,15 @@ def spawn_vehicle_actor(
     )
     actor = world.try_spawn_actor(vehicle_bp, resolved_transform)
 
-    # Retry by shifting laterally (t) and vertically (z) from the
-    # snapped lane-centre position.
+    # Retry by shifting laterally (t) and vertically (z) from the position the
+    # first attempt was made at.  That transform is already the resolved
+    # placement; re-snapping ``od_pose`` instead would, on a map where the
+    # Lanelet2 and OpenDRIVE geometries disagree, move the retries back to the
+    # OpenDRIVE lane -- possibly the opposing one -- before offsetting them.
     if actor is None and spawn_retry_max_count > 0 and od_pose is not None:
-        from ..coordinate.snap import GroundProjectionConfig, snap_to_carla_road  # noqa: PLC0415
-
         import carla  # noqa: PLC0415
 
-        gp = (
-            ground_projection
-            if ground_projection is not None
-            else GroundProjectionConfig()
-        )
-        # Snap once: get_waypoint_xodr already returns the lane centre.
-        base_snapped = snap_to_carla_road(od_pose, world, ground_projection=gp)
-        base_transform = base_snapped.to_carla_transform()
+        base_transform = resolved_transform
         yaw_rad = math.radians(base_transform.rotation.yaw)
         sin_yaw = math.sin(yaw_rad)
         cos_yaw = math.cos(yaw_rad)

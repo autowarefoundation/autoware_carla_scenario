@@ -287,16 +287,20 @@ class BaseScenario(ABC):
             msg = f"spawn_pose is required for {type(self).__name__}"
             raise ValueError(msg)
         ll2_pose = self._spawn_pose
-        # The OpenDRIVE pose is still derived, because callers genuinely need
-        # its lane metadata -- the lane-change target lane, the road id a route
-        # condition watches, the retry base in ``ego_config``.  It is not what
-        # gets snapped: the spawn is placed as the Lanelet2 pose it was written
-        # as, on the centreline of the lanelet the author named.
-        od_pose = to_opendrive(ll2_pose)
         world = self.world
+        # Placed as the Lanelet2 pose it was written as, on the centreline of
+        # the lanelet the author named.
         snapped = snap_to_carla_road(
             ll2_pose, world, ground_projection=self._ground_projection
         )
+        # The OpenDRIVE pose is still derived, because callers need its lane
+        # metadata -- the lane-change target lane, the road id a route condition
+        # watches.  It is read off where the ego actually is, not converted
+        # from the Lanelet2 pose: on a map where the two disagree that
+        # conversion can name the lane on the other side of the reference line,
+        # while EntityLanePositionCondition reads the lane off the actor's CARLA
+        # position -- a target derived from the converted lane could never match.
+        od_pose = to_opendrive(snapped)
 
         logger.info(
             "Lanelet %d -> OpenDRIVE road='%s' lane=%d s=%.1f -> "
