@@ -558,7 +558,7 @@ scenarios and what does not.
 movements cross each other, are facts about the junction: every scenario that
 runs here inherits the same ones. Naming a group is also the only way a phase
 table stays writable — one approach of three lanes is three regulatory
-elements, and nishishinjuku declares over three hundred of them.
+elements, and nishishinjuku declares 164 of them.
 
 **`map.traffic_signal_controllers` is this scenario's timing.** A test of an ego
 creeping into a long amber and a test of the same crossing on a short cycle are

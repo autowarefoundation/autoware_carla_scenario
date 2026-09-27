@@ -628,8 +628,8 @@ class SignalGroupRef(_Node):
 
     Naming the group rather than its members is also what keeps a phase table
     writable.  One approach of three lanes is three regulatory elements, and
-    nishishinjuku declares over three hundred of them; a phase that had to list
-    each one would be copied wrong long before it was copied twice.
+    nishishinjuku declares 164 of them; a phase that had to list each one would
+    be copied wrong long before it was copied twice.
 
     Attributes:
         name: What a phase calls this group.  Unique within the map.
