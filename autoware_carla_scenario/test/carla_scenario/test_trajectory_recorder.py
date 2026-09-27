@@ -164,3 +164,24 @@ def test_an_error_stops_recording_without_raising(tmp_path: Path) -> None:
 
     assert not recorder.active
     recorder.record(world, 0.05)  # and stays off
+
+
+class _FailingFile:
+    def write(self, text: str) -> int:
+        raise OSError("No space left on device")
+
+    def close(self) -> None:
+        raise OSError("No space left on device")
+
+
+def test_a_failing_write_and_close_do_not_raise(tmp_path: Path) -> None:
+    world = _World()
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(world)
+    recorder._out = _FailingFile()  # type: ignore[assignment]
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+
+    recorder.record(world, 0.0)  # the write fails, then so does the close
+
+    assert not recorder.active
+    recorder.close()  # and closing again is a no-op

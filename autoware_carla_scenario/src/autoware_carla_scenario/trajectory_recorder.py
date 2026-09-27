@@ -137,9 +137,16 @@ class TrajectoryRecorder:
             self._fail("stopped")
 
     def close(self) -> None:
-        if self._out is not None:
-            self._out.close()
-            self._out = None
+        """Close the file; a failing close (full disk, ...) is logged, never raised."""
+        out, self._out = self._out, None
+        if out is None:
+            return
+        try:
+            out.close()
+        except Exception:
+            logger.warning(
+                "Trajectory recording: closing %s failed", self.path, exc_info=True
+            )
 
     def _emit(self, record: dict[str, Any]) -> None:
         assert self._out is not None
