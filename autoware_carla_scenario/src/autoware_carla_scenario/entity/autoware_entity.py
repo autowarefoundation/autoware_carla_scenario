@@ -218,11 +218,14 @@ class AutowareEgoEntity(EgoVehicle):
         from ..coordinate import (  # noqa: PLC0415
             GroundProjectionConfig,
             snap_to_carla_road,
-            to_opendrive,
         )
 
+        # The goal is snapped as the Lanelet2 pose it was written as.  Handing
+        # ``to_opendrive(goal)`` over instead would route the goal through the
+        # OpenDRIVE round trip, which is the placement error this goal is meant
+        # to be free of -- and the goal needs no OpenDRIVE metadata.
         snapped = snap_to_carla_road(
-            to_opendrive(goal),
+            goal,
             world,
             ground_projection=ground_projection or GroundProjectionConfig(),
         )

@@ -79,11 +79,14 @@ def snap_to_carla_road(
 ) -> CarlaWorldPose:
     """Snap a pose onto the CARLA drivable surface.
 
-    When given a :class:`Lanelet2Pose`, the function converts to an approximate
-    CARLA position via the Lanelet2 centerline, projects it onto the nearest
-    OpenDRIVE road, then re-converts through the XODR geometry.  This
-    round-trip ensures the final position lies on the XODR road surface that
-    CARLA trusts.
+    When given a :class:`Lanelet2Pose`, x and y come from the lanelet the pose
+    names -- ``s`` along its centreline, ``t`` across it -- and are **not**
+    projected onto an OpenDRIVE road or moved to a CARLA lane centre.  Only the
+    height is taken from CARLA.  Where the Lanelet2 and CARLA road geometries
+    disagree the returned position follows the Lanelet2 map, which is the map
+    the pose was written against and the one Autoware plans on; a caller that
+    needs a position validated against the XODR network wants an
+    :class:`OpenDrivePose`, below.
 
     When given an :class:`OpenDrivePose`, the function uses
     ``carla.Map.get_waypoint_xodr(road_id, lane_id, s)`` to obtain the exact
@@ -95,7 +98,8 @@ def snap_to_carla_road(
     API to project x/y onto the nearest road.
 
     For Lanelet2 and CARLA-world inputs z is corrected using the nearest CARLA
-    spawn point (spawn-point elevations match the physics-engine ground plane).
+    spawn point (spawn-point elevations match the physics-engine ground plane),
+    then refined by a ray cast onto the ground.
 
     If the pose cannot be matched to any road, a warning is logged and the
     original pose (or its CARLA equivalent) is returned unchanged.

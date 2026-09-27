@@ -262,12 +262,14 @@ class BaseScenario(ABC):
     # ------------------------------------------------------------------
 
     def _setup_ego_spawn(self) -> OpenDrivePose:
-        """Convert the Lanelet2 spawn pose to CARLA and update ego_config.
+        """Place the Lanelet2 spawn pose in CARLA and update ego_config.
 
-        Converts :attr:`_spawn_pose` through OpenDRIVE to a CARLA world
-        position, snaps it to the road surface, updates :attr:`ego_config`
-        with the resulting spawn location, and registers spectator-follow
-        and position-logging callbacks.
+        Snaps :attr:`_spawn_pose` onto the road surface as the Lanelet2 pose it
+        is -- x and y from the centreline of the lanelet it names, height from
+        the world below -- updates :attr:`ego_config` with the resulting spawn
+        location, and registers spectator-follow and position-logging
+        callbacks.  The equivalent :class:`OpenDrivePose` is derived alongside
+        for its lane metadata, and returned.
 
         The snapped pose is also the one an ego that plans its own route
         localizes at, so this hands it to :meth:`register_route_to_goal` on the
@@ -285,10 +287,15 @@ class BaseScenario(ABC):
             msg = f"spawn_pose is required for {type(self).__name__}"
             raise ValueError(msg)
         ll2_pose = self._spawn_pose
+        # The OpenDRIVE pose is still derived, because callers genuinely need
+        # its lane metadata -- the lane-change target lane, the road id a route
+        # condition watches, the retry base in ``ego_config``.  It is not what
+        # gets snapped: the spawn is placed as the Lanelet2 pose it was written
+        # as, on the centreline of the lanelet the author named.
         od_pose = to_opendrive(ll2_pose)
         world = self.world
         snapped = snap_to_carla_road(
-            od_pose, world, ground_projection=self._ground_projection
+            ll2_pose, world, ground_projection=self._ground_projection
         )
 
         logger.info(
