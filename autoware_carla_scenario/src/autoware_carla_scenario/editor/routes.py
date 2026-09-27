@@ -584,6 +584,164 @@ async def reorder_actors(request: Request, draft_id: str) -> HTMLResponse:
 
 
 # ---------------------------------------------------------------------------
+# Traffic signals
+#
+# The panel lives on the scenario inspector, so every one of these re-selects
+# "scenario": the thing being edited is the map's own declaration, not a card.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/draft/{draft_id}/signal-group", response_class=HTMLResponse)
+def add_signal_group(request: Request, draft_id: str) -> HTMLResponse:
+    """Declare one more movement."""
+    service = _service(request)
+    return _apply(
+        request, draft_id, "scenario", lambda doc: service.add_signal_group(doc)
+    )
+
+
+@router.post("/draft/{draft_id}/signal-group/{index}", response_class=HTMLResponse)
+async def update_signal_group(
+    request: Request, draft_id: str, index: int
+) -> HTMLResponse:
+    """Apply one signal group's form."""
+    raw = await request.form()
+    # `conflicts_with` is a set of checkboxes, so it arrives repeated; the rest
+    # are single values. `dict(form)` would keep only the last conflict.
+    form: dict[str, Any] = dict(raw)
+    form["conflicts_with"] = [str(value) for value in raw.getlist("conflicts_with")]
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.update_signal_group(doc, index, form),
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/signal-group/{index}/delete", response_class=HTMLResponse
+)
+def delete_signal_group(request: Request, draft_id: str, index: int) -> HTMLResponse:
+    """Remove a group, and every phase state and conflict naming it."""
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.delete_signal_group(doc, index),
+    )
+
+
+@router.post("/draft/{draft_id}/signal-controller", response_class=HTMLResponse)
+def add_signal_controller(request: Request, draft_id: str) -> HTMLResponse:
+    """Declare one more junction cycle."""
+    service = _service(request)
+    return _apply(
+        request, draft_id, "scenario", lambda doc: service.add_signal_controller(doc)
+    )
+
+
+@router.post("/draft/{draft_id}/signal-controller/{index}", response_class=HTMLResponse)
+async def update_signal_controller(
+    request: Request, draft_id: str, index: int
+) -> HTMLResponse:
+    """Apply one controller's name and offset."""
+    form = dict(await request.form())
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.update_signal_controller(doc, index, form),
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/signal-controller/{index}/delete", response_class=HTMLResponse
+)
+def delete_signal_controller(
+    request: Request, draft_id: str, index: int
+) -> HTMLResponse:
+    """Remove a controller, and drop the offsets that measured from it."""
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.delete_signal_controller(doc, index),
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/signal-controller/{index}/phase", response_class=HTMLResponse
+)
+def add_signal_phase(request: Request, draft_id: str, index: int) -> HTMLResponse:
+    """Add a step to a cycle."""
+    service = _service(request)
+    return _apply(
+        request, draft_id, "scenario", lambda doc: service.add_signal_phase(doc, index)
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/signal-controller/{index}/phase/{phase_index}",
+    response_class=HTMLResponse,
+)
+async def update_signal_phase(
+    request: Request, draft_id: str, index: int, phase_index: int
+) -> HTMLResponse:
+    """Apply one phase's name, duration and colours."""
+    form = dict(await request.form())
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.update_signal_phase(doc, index, phase_index, form),
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/signal-controller/{index}/phase/{phase_index}/delete",
+    response_class=HTMLResponse,
+)
+def delete_signal_phase(
+    request: Request, draft_id: str, index: int, phase_index: int
+) -> HTMLResponse:
+    """Remove one step of a cycle."""
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.delete_signal_phase(doc, index, phase_index),
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/signal-controller/{index}/phase/{phase_index}/move",
+    response_class=HTMLResponse,
+)
+async def move_signal_phase(
+    request: Request, draft_id: str, index: int, phase_index: int
+) -> HTMLResponse:
+    """Shift a phase along its cycle.  Order is semantics here, not layout."""
+    form = await request.form()
+    try:
+        delta = int(str(form.get("delta") or 1))
+    except ValueError:
+        delta = 1
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.move_signal_phase(doc, index, phase_index, delta),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Predicates
 # ---------------------------------------------------------------------------
 

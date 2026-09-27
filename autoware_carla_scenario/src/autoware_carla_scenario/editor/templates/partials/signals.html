@@ -1,0 +1,235 @@
+{% import "partials/icons.html" as ic %}
+{# The junction editor: the map's movements, and this scenario's timings.
+
+   Split the way the document is.  `signal_groups` is the road -- which signals
+   change as one, which movements cross -- and is the same for every scenario
+   here.  `traffic_signal_controllers` is the timing, which is this scenario's
+   to choose.
+
+   Every control posts on change and swaps the whole body, like the rest of the
+   inspector, so a rename reaches the lists that offer the name immediately. #}
+
+{%- set groups = document.map.signal_groups -%}
+{%- set controllers = document.map.traffic_signal_controllers -%}
+
+<h4 class="ed-subheading">{{ ic.icon('target', 12) }} Traffic signals</h4>
+
+<p class="ed-help" style="margin:-4px 0 10px">
+  Movements belong to the map; timings belong to this scenario. A phase sets
+  every movement at once, which is what keeps a junction consistent.
+</p>
+
+{# -- the road ---------------------------------------------------------- #}
+
+<p class="ed-kicker" style="margin-bottom:6px">Signal groups</p>
+
+{% if not groups %}
+  <p class="ed-help" style="margin-bottom:8px">
+    None yet. A group is the set of signals that change together — one
+    approach, usually.
+  </p>
+{% endif %}
+
+{% for group in groups %}
+  <div class="ed-constraint" style="margin-bottom:8px">
+    <div class="ed-constraint-head">
+      <span class="ed-constraint-title">{{ group.name or 'unnamed' }}</span>
+      <span class="ed-constraint-params">
+        {{ group.lanelet2_regulatory_element_ids|length }} signal{{ '' if group.lanelet2_regulatory_element_ids|length == 1 else 's' }}
+      </span>
+      <form hx-post="/draft/{{ draft.id }}/signal-group/{{ loop.index0 }}/delete"
+            hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
+        <button type="submit" class="ed-del" title="Remove group">{{ ic.icon('x', 10) }}</button>
+      </form>
+    </div>
+    <form class="ed-constraint-fields"
+          hx-post="/draft/{{ draft.id }}/signal-group/{{ loop.index0 }}"
+          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <div class="ed-field">
+        <label class="ed-label">Name</label>
+        <input type="text" name="name" class="ed-input mono" value="{{ group.name }}">
+      </div>
+      <div class="ed-field">
+        <label class="ed-label">Regulatory element IDs</label>
+        <input type="text" name="lanelet2_regulatory_element_ids" class="ed-input mono"
+               value="{{ group.lanelet2_regulatory_element_ids|join(', ') }}"
+               placeholder="1330, 1333">
+        <p class="ed-help">
+          The Lanelet2 traffic_light regulatory elements this movement drives.
+        </p>
+      </div>
+      {% set others = groups|rejectattr('name', 'equalto', group.name)|list %}
+      {% if others %}
+        <div class="ed-field">
+          <label class="ed-label">Conflicts with</label>
+          {% for other in others %}
+            <label class="ed-check">
+              <input type="checkbox" name="conflicts_with" value="{{ other.name }}"
+                     {% if other.name in group.conflicts_with
+                           or group.name in other.conflicts_with %}checked{% endif %}>
+              <span>{{ other.name }}</span>
+            </label>
+          {% endfor %}
+          <p class="ed-help">
+            Movements that cross this one. No phase may let both through — the
+            check reads it both ways, so ticking it on either side is enough.
+          </p>
+        </div>
+      {% endif %}
+    </form>
+  </div>
+{% endfor %}
+
+<form hx-post="/draft/{{ draft.id }}/signal-group" hx-target="#editor-body"
+      hx-swap="innerHTML" style="margin-bottom:16px">
+  <button type="submit" class="ed-btn ed-btn-sm">{{ ic.icon('plus', 11) }} Signal group</button>
+</form>
+
+{# -- this scenario's timing -------------------------------------------- #}
+
+<p class="ed-kicker" style="margin-bottom:6px">Controllers</p>
+
+{% if not controllers %}
+  <p class="ed-help" style="margin-bottom:8px">
+    None yet. A controller walks its phases in a loop, each for its own
+    duration.
+  </p>
+{% endif %}
+
+{% for controller in controllers %}
+  {% set ci = loop.index0 %}
+  <div class="ed-constraint" style="margin-bottom:10px">
+    <div class="ed-constraint-head">
+      <span class="ed-constraint-title">{{ controller.name or 'unnamed' }}</span>
+      <span class="ed-constraint-params">
+        {{ controller.phases|length }} phase{{ '' if controller.phases|length == 1 else 's' }}
+        {%- if controller.phases %} · {{ controller.phases|sum(attribute='duration_seconds')|round(1) }} s{% endif %}
+      </span>
+      <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/delete"
+            hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
+        <button type="submit" class="ed-del" title="Remove controller">{{ ic.icon('x', 10) }}</button>
+      </form>
+    </div>
+
+    <form class="ed-constraint-fields"
+          hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}"
+          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <div class="ed-field">
+        <label class="ed-label">Name</label>
+        <input type="text" name="name" class="ed-input mono" value="{{ controller.name }}">
+      </div>
+      {% set peers = controllers|rejectattr('name', 'equalto', controller.name)|list %}
+      {% if peers %}
+        <div class="ed-field">
+          <label class="ed-label">Starts after</label>
+          <select name="reference" class="ed-input">
+            <option value="" {% if not controller.reference %}selected{% endif %}>— with the run —</option>
+            {% for peer in peers %}
+              <option value="{{ peer.name }}"
+                      {% if controller.reference == peer.name %}selected{% endif %}>{{ peer.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if controller.reference %}
+          <div class="ed-field">
+            <label class="ed-label">Delay <span class="unit">(s)</span></label>
+            <input type="number" step="any" name="delay_seconds" class="ed-input"
+                   value="{{ controller.delay_seconds }}">
+            <p class="ed-help">
+              Measured from when {{ controller.reference }} began its first
+              phase. A green wave is declared this way, not timed by actions.
+            </p>
+          </div>
+        {% endif %}
+      {% endif %}
+    </form>
+
+    {# -- the cycle ----------------------------------------------------- #}
+    <div class="ed-constraint-children">
+      {% for phase in controller.phases %}
+        {% set pi = loop.index0 %}
+        <div class="ed-constraint" style="margin-bottom:6px">
+          <div class="ed-constraint-head">
+            <span class="ed-constraint-title mono">{{ phase.name or 'unnamed' }}</span>
+            <span class="ed-constraint-params">{{ phase.duration_seconds }} s</span>
+            <span style="margin-left:auto; display:flex; gap:2px">
+              {% if not loop.first %}
+                <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/move"
+                      hx-target="#editor-body" hx-swap="innerHTML">
+                  <input type="hidden" name="delta" value="-1">
+                  <button type="submit" class="ed-move-btn" title="Earlier in the cycle">↑</button>
+                </form>
+              {% endif %}
+              {% if not loop.last %}
+                <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/move"
+                      hx-target="#editor-body" hx-swap="innerHTML">
+                  <input type="hidden" name="delta" value="1">
+                  <button type="submit" class="ed-move-btn" title="Later in the cycle">↓</button>
+                </form>
+              {% endif %}
+              <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/delete"
+                    hx-target="#editor-body" hx-swap="innerHTML">
+                <button type="submit" class="ed-del" title="Remove phase">{{ ic.icon('x', 10) }}</button>
+              </form>
+            </span>
+          </div>
+          <form class="ed-constraint-fields"
+                hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}"
+                hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+            <div class="ed-field">
+              <label class="ed-label">Name</label>
+              <input type="text" name="name" class="ed-input mono" value="{{ phase.name }}">
+            </div>
+            <div class="ed-field">
+              <label class="ed-label">Holds for <span class="unit">(s)</span></label>
+              <input type="number" step="any" name="duration_seconds" class="ed-input"
+                     value="{{ phase.duration_seconds }}">
+            </div>
+            {% if groups %}
+              {%- set shown = {} -%}
+              {%- for state in phase.states if state.group -%}
+                {%- set _ = shown.update({state.group: state.state}) -%}
+              {%- endfor -%}
+              {% for group in groups %}
+                <div class="ed-field">
+                  <label class="ed-label">{{ group.name }}</label>
+                  <select name="state_{{ group.name }}" class="ed-input">
+                    {% for colour in signal_state_names %}
+                      <option value="{{ colour }}"
+                              {% if shown.get(group.name, 'red') == colour %}selected{% endif %}>
+                        {{ colour }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              {% endfor %}
+            {% else %}
+              <p class="ed-help">
+                Declare a signal group above and this phase will set it.
+              </p>
+            {% endif %}
+            {%- set by_id = phase.states|rejectattr('group')|list -%}
+            {% if by_id %}
+              <p class="ed-help">
+                Also sets {{ by_id|length }} signal{{ '' if by_id|length == 1 else 's' }}
+                by regulatory element id
+                ({{ by_id|map(attribute='lanelet2_regulatory_element_id')|join(', ') }}),
+                written by hand in the document. Left untouched by this form.
+              </p>
+            {% endif %}
+          </form>
+        </div>
+      {% endfor %}
+
+      <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase"
+            hx-target="#editor-body" hx-swap="innerHTML">
+        <button type="submit" class="ed-btn ed-btn-xs">{{ ic.icon('plus', 10) }} Phase</button>
+      </form>
+    </div>
+  </div>
+{% endfor %}
+
+<form hx-post="/draft/{{ draft.id }}/signal-controller" hx-target="#editor-body"
+      hx-swap="innerHTML">
+  <button type="submit" class="ed-btn ed-btn-sm">{{ ic.icon('plus', 11) }} Controller</button>
+</form>

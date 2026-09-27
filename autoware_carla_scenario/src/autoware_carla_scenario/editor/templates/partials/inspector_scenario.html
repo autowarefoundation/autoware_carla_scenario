@@ -87,3 +87,7 @@
 {{ f.lanelet_modal('map_no_3d_model_lanelet_ids',
                    document.map.no_3d_model_lanelet_ids, draft,
                    'excluded lanelets', many=true) }}
+
+{# Junctions come after the map they are on: a signal group names regulatory
+   elements, which mean nothing until the map is settled. #}
+{% include "partials/signals.html" %}
