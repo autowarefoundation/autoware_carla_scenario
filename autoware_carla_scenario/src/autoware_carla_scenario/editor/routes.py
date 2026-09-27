@@ -57,13 +57,20 @@ def _resolve_target(
 ) -> tuple[str, Optional[Any], Optional[str]]:
     """Return ``(kind, object, constraint_owner)`` for an inspector target id.
 
-    ``kind`` is one of ``scenario``, ``entity``, ``action``, ``condition``,
-    ``constraint`` or ``missing``.  ``constraint_owner`` is the id of the object
-    whose lanelet search holds it -- an entity, an action or a condition -- and
-    is set for constraints only.
+    ``kind`` is one of ``scenario``, ``environment``, ``entity``, ``action``,
+    ``condition``, ``constraint`` or ``missing``.  ``constraint_owner`` is the
+    id of the object whose lanelet search holds it -- an entity, an action or a
+    condition -- and is set for constraints only.
+
+    ``environment`` is the one target that is not a node of the document: it is
+    the Environment track, and what it inspects is the part of the world no
+    actor performs.  It reads the document like ``scenario`` does, so the two
+    share a target.
     """
     if not object_id or object_id == "scenario":
         return "scenario", document, None
+    if object_id == "environment":
+        return "environment", document, None
     entity = document.entity(object_id)
     if entity is not None:
         return "entity", entity, None
@@ -586,8 +593,9 @@ async def reorder_actors(request: Request, draft_id: str) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 # Traffic signals
 #
-# The panel lives on the scenario inspector, so every one of these re-selects
-# "scenario": the thing being edited is the map's own declaration, not a card.
+# The panel is the Environment track's inspector, so every one of these
+# re-selects "environment": an edit here must leave the panel it was made in
+# open, not send the author back to the scenario.
 # ---------------------------------------------------------------------------
 
 
@@ -596,7 +604,7 @@ def add_signal_group(request: Request, draft_id: str) -> HTMLResponse:
     """Declare one more movement."""
     service = _service(request)
     return _apply(
-        request, draft_id, "scenario", lambda doc: service.add_signal_group(doc)
+        request, draft_id, "environment", lambda doc: service.add_signal_group(doc)
     )
 
 
@@ -614,7 +622,7 @@ async def update_signal_group(
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.update_signal_group(doc, index, form),
     )
 
@@ -628,7 +636,7 @@ def delete_signal_group(request: Request, draft_id: str, index: int) -> HTMLResp
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.delete_signal_group(doc, index),
     )
 
@@ -638,7 +646,7 @@ def add_signal_controller(request: Request, draft_id: str) -> HTMLResponse:
     """Declare one more junction cycle."""
     service = _service(request)
     return _apply(
-        request, draft_id, "scenario", lambda doc: service.add_signal_controller(doc)
+        request, draft_id, "environment", lambda doc: service.add_signal_controller(doc)
     )
 
 
@@ -652,7 +660,7 @@ async def update_signal_controller(
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.update_signal_controller(doc, index, form),
     )
 
@@ -668,7 +676,7 @@ def delete_signal_controller(
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.delete_signal_controller(doc, index),
     )
 
@@ -680,7 +688,10 @@ def add_signal_phase(request: Request, draft_id: str, index: int) -> HTMLRespons
     """Add a step to a cycle."""
     service = _service(request)
     return _apply(
-        request, draft_id, "scenario", lambda doc: service.add_signal_phase(doc, index)
+        request,
+        draft_id,
+        "environment",
+        lambda doc: service.add_signal_phase(doc, index),
     )
 
 
@@ -697,7 +708,7 @@ async def update_signal_phase(
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.update_signal_phase(doc, index, phase_index, form),
     )
 
@@ -714,7 +725,7 @@ def delete_signal_phase(
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.delete_signal_phase(doc, index, phase_index),
     )
 
@@ -736,7 +747,7 @@ async def move_signal_phase(
     return _apply(
         request,
         draft_id,
-        "scenario",
+        "environment",
         lambda doc: service.move_signal_phase(doc, index, phase_index, delta),
     )
 

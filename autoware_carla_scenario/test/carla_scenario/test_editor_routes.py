@@ -1842,6 +1842,58 @@ class TestTheJunctionEditor:
     def _map(store: DraftStore, draft_id: str) -> Any:
         return _document(store, draft_id).map
 
+    # -- reached from the Environment track --------------------------------
+
+    def test_the_environment_track_opens_the_junction_editor(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The head column is where the canvas says the state at t=0 is.
+
+        A junction's movements and cycle are exactly that, so the track's own
+        head is the way in -- not a section of the scenario, which is where
+        they were first put and where nothing pointed at them.
+        """
+        canvas = client.get(f"/draft/{draft_id}/canvas").text
+        head = canvas.split('data-object-id="environment"')[0].rsplit("<div", 1)[1]
+
+        assert "is-static" not in head
+        assert f'hx-get="/draft/{draft_id}/inspector/environment"' in canvas
+
+    def test_the_environment_inspector_is_the_junction_editor(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        assert "Signal groups" in body
+        assert "Controllers" in body
+
+    def test_the_scenario_inspector_no_longer_holds_it(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """One home. Two ways in would be two things to keep in step."""
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert "Signal groups" not in body
+
+    def test_the_track_head_counts_the_junctions(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A track that says "nothing to place" hides what is declared on it."""
+        assert "no junctions yet" in client.get(f"/draft/{draft_id}/canvas").text
+
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        canvas = client.get(f"/draft/{draft_id}/canvas").text
+        chip = canvas.split('data-object-id="environment"')[1].split("ed-spawn-chip")[1]
+        assert "1 junction" in chip
+        assert "2 movements" in chip
+
+    def test_an_edit_leaves_the_junction_editor_open(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Otherwise every change throws the author back to the scenario."""
+        response = client.post(f"/draft/{draft_id}/signal-group")
+        assert 'data-selected="environment"' in response.text
+
     # -- signal groups -----------------------------------------------------
 
     def test_a_new_group_is_born_with_a_free_name(
@@ -1905,7 +1957,7 @@ class TestTheJunctionEditor:
             },
         )
 
-        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
         first = body.split('name="conflicts_with" value="ew"')[1].split(">")[0]
         assert "checked" in first
 
