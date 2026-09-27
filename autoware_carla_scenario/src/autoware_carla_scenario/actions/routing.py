@@ -23,6 +23,7 @@ give it a condition like any other.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
@@ -67,6 +68,8 @@ class RoutingAction(BaseAction):
             reads the attached actor instead.  Only meaningful for the first
             routing; a re-route leaves localization alone.
         ground_projection: Settings used to snap the goal to the road surface.
+        waypoints: Lanelet2 poses the route must pass through, in order.  Empty
+            leaves the way to the goal to the entity's own planner.
     """
 
     def __init__(
@@ -80,6 +83,7 @@ class RoutingAction(BaseAction):
         once: bool = True,
         initial_pose: Optional[CarlaWorldPose] = None,
         ground_projection: Optional[GroundProjectionConfig] = None,
+        waypoints: Sequence[Lanelet2Pose] = (),
     ) -> None:
         super().__init__(
             label=label,
@@ -91,6 +95,12 @@ class RoutingAction(BaseAction):
         self._goal = goal
         self._initial_pose = initial_pose
         self._ground_projection = ground_projection
+        self._waypoints = tuple(waypoints)
+
+    @property
+    def waypoints(self) -> tuple:
+        """The Lanelet2 poses the route must pass through, in order."""
+        return self._waypoints
 
     @property
     def goal(self) -> Lanelet2Pose:
@@ -116,4 +126,5 @@ class RoutingAction(BaseAction):
             self._goal,
             initial_pose=self._initial_pose,
             ground_projection=self._ground_projection,
+            waypoints=self._waypoints,
         )

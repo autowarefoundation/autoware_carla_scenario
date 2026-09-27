@@ -83,6 +83,17 @@ message GetMissionResponse {
   bool available = 1;
   Pose initial_pose = 2;  // where Autoware initializes localization
   Pose goal = 3;          // where Autoware plans the route to
+
+  // Poses the route must pass through, in order, between the initial pose and
+  // the goal. Empty leaves the way there to Autoware, which is the right answer
+  // when any route to the goal will do.
+  //
+  // It is not the right answer when the scenario is a particular drive rather
+  // than a destination: a goal alone is planned for by the shortest route, and a
+  // run whose point is the road it takes -- one rendered from a recorded drive,
+  // say, where leaving that road means leaving the rendered world -- gets a
+  // different one. The waypoints are how the scenario says which drive it meant.
+  repeated Pose waypoints = 4;
 }
 
 message ReportReadinessRequest {

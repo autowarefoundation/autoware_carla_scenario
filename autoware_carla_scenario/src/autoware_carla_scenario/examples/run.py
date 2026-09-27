@@ -149,6 +149,7 @@ def build_ego_and_spawn(
         spawn_retry_t_step=float(cfg.entity.spawn_retry_t_step),
         spawn_retry_z_step=float(cfg.entity.spawn_retry_z_step),
         goal_pose=build_goal_pose(cfg),
+        waypoint_poses=build_waypoint_poses(cfg),
     )
     spawn_pose = Lanelet2Pose(
         lanelet_id=cfg.ego.spawn_lanelet_id,
@@ -171,6 +172,20 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
         lanelet_id=int(goal_lanelet_id),
         s=float(ego_cfg.get("goal_s", 0.0)),
     )
+
+
+def build_waypoint_poses(cfg: DictConfig) -> list[Lanelet2Pose]:
+    """Extract the ego's waypoints from ``ego.waypoint_lanelet_ids``.
+
+    Each is taken at the start of its lanelet: a waypoint says which road the
+    route goes down, and where along it is the router's business. An absent or
+    empty key means no particular way to the goal was asked for, which is not
+    the same as none being intended -- a scenario may name its own in
+    ``setup()``, e.g. from the route it already asserts.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    lanelet_ids = ego_cfg.get("waypoint_lanelet_ids") or []
+    return [Lanelet2Pose(lanelet_id=int(x), s=0.0) for x in lanelet_ids]
 
 
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
@@ -322,6 +337,13 @@ def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
     it may have derived.  The goal lands on the scenario's ego config --
     ``scenario.goal_pose`` reads and writes
     :attr:`~autoware_carla_scenario.EgoConfig.goal_pose`.
+
+    The way there travels with the goal, for the same reason and under the same
+    rule.  Leaving it behind would drop ``ego.waypoint_lanelet_ids`` silently on
+    this path, and a run that named its roads would be planned by whatever route
+    reached the goal soonest -- the shortcut waypoints exist to prevent.  An
+    empty list is "no particular way there was asked for", not "no way there",
+    so like a missing goal it leaves the scenario's own.
     """
     entity = build_ego_entity(cfg)
     if entity is not None:
@@ -330,6 +352,10 @@ def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
     goal_pose = build_goal_pose(cfg)
     if goal_pose is not None:
         scenario.goal_pose = goal_pose
+
+    waypoint_poses = build_waypoint_poses(cfg)
+    if waypoint_poses:
+        scenario.waypoint_poses = waypoint_poses
 
 
 def run_scenario_with_queue(

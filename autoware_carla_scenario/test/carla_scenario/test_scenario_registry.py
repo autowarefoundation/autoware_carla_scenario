@@ -196,6 +196,49 @@ class TestBuildScenarioInjectable:
         assert result_ego is ego
         assert result_scenario is sentinel
 
+    def test_an_injected_scenario_is_given_the_configured_waypoints(self) -> None:
+        """The way there must reach an injected scenario, like the goal does.
+
+        `build_scenario_fn` bypasses the constructor `build_ego_and_spawn`
+        fills, so whatever `_apply_ego_config` leaves behind is dropped
+        silently.  Dropping the waypoints would let Autoware plan the shortcut
+        they exist to prevent, on exactly the path downstream projects use.
+        """
+        from autoware_carla_scenario.examples.run import build_scenario
+
+        ego = _make_ego()
+        sentinel = _DummyScenario(ego)
+
+        cfg = OmegaConf.create(
+            {
+                "scenario": {"name": "nonexistent"},
+                "ego": {"waypoint_lanelet_ids": [11, 22]},
+            }
+        )
+        build_scenario(cfg, build_scenario_fn=lambda _cfg: (ego, sentinel))
+
+        assert [p.lanelet_id for p in sentinel.waypoint_poses] == [11, 22]
+
+    def test_an_injected_scenario_keeps_its_own_waypoints_when_none_configured(
+        self,
+    ) -> None:
+        """No waypoints configured means none were asked for, not none intended.
+
+        A scenario may derive its own in `setup()`; an empty config list must
+        not overwrite them, for the same reason a missing goal does not.
+        """
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+        from autoware_carla_scenario.examples.run import build_scenario
+
+        ego = _make_ego()
+        sentinel = _DummyScenario(ego)
+        sentinel.waypoint_poses = [Lanelet2Pose(lanelet_id=99, s=0.0)]
+
+        cfg = OmegaConf.create({"scenario": {"name": "nonexistent"}})
+        build_scenario(cfg, build_scenario_fn=lambda _cfg: (ego, sentinel))
+
+        assert [p.lanelet_id for p in sentinel.waypoint_poses] == [99]
+
     def test_build_scenario_unknown_name_raises(self) -> None:
         """build_scenario should raise ValueError for unregistered names."""
         from autoware_carla_scenario.examples.run import build_scenario
