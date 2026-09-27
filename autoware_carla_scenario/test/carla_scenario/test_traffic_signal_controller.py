@@ -22,6 +22,7 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.authoring.models import (
     SIGNAL_STATE_NAMES,
     SignalControllerRef,
+    SignalGroupRef,
     SignalPhaseRef,
     SignalStateRef,
 )
@@ -660,3 +661,196 @@ class TestWhyItDidNotFire:
             assert condition.check(world, 1.0) is None
 
         assert "is in phase 'ns_green', not 'ew_green'" in caplog.text
+
+
+class TestSignalGroupsAreResolvedAtBuild:
+    """A phase names movements; the running controller deals in signals.
+
+    Which signals a movement covers is the map's statement, so it is resolved
+    once at build time rather than carried into the cycle.  What is under test
+    here is that seam: a group becomes one state per member, a bare id still
+    works beside it, and every way of naming nothing is survivable.
+    """
+
+    _NORTH_LANES = [_NORTH, 1003]
+
+    @staticmethod
+    def _groups() -> list[SignalGroupRef]:
+        return [
+            SignalGroupRef(
+                name="ns",
+                lanelet2_regulatory_element_ids=list(
+                    TestSignalGroupsAreResolvedAtBuild._NORTH_LANES
+                ),
+                conflicts_with=["ew"],
+            ),
+            SignalGroupRef(name="ew", lanelet2_regulatory_element_ids=[_EAST]),
+        ]
+
+    @staticmethod
+    def _declared(*states: SignalStateRef) -> list[SignalControllerRef]:
+        return [
+            SignalControllerRef(
+                name="crossing",
+                phases=[
+                    SignalPhaseRef(
+                        name="ns_green",
+                        duration_seconds=5.0,
+                        states=list(states),
+                    )
+                ],
+            )
+        ]
+
+    def test_a_group_becomes_one_state_per_signal_it_covers(self) -> None:
+        """Two lanes of one approach, written once."""
+        (built,) = build_controllers(
+            self._declared(SignalStateRef(group="ns", state="green")),
+            self._groups(),
+        )
+
+        states = built.phases[0].states
+        assert [s.lanelet2_regulatory_element_id for s in states] == self._NORTH_LANES
+        assert {s.state for s in states} == {"green"}
+
+    def test_the_group_it_came_from_is_kept_for_diagnostics(self) -> None:
+        """So a warning can name the movement rather than send a reader to the map."""
+        (built,) = build_controllers(
+            self._declared(SignalStateRef(group="ns", state="green")),
+            self._groups(),
+        )
+
+        assert {s.group for s in built.phases[0].states} == {"ns"}
+
+    def test_a_bare_regulatory_element_still_works_beside_a_group(self) -> None:
+        """The escape hatch: one light out of a movement, named directly."""
+        (built,) = build_controllers(
+            self._declared(
+                SignalStateRef(group="ew", state="red"),
+                SignalStateRef(lanelet2_regulatory_element_id=7, state="off"),
+            ),
+            self._groups(),
+        )
+
+        states = built.phases[0].states
+        assert [
+            (s.lanelet2_regulatory_element_id, s.state, s.group) for s in states
+        ] == [(_EAST, "red", "ew"), (7, "off", None)]
+
+    def test_a_document_with_no_groups_is_unchanged(self) -> None:
+        """Everything written before groups existed keeps working untouched."""
+        (built,) = build_controllers(
+            self._declared(
+                SignalStateRef(lanelet2_regulatory_element_id=_NORTH, state="green")
+            )
+        )
+
+        assert built.phases[0].states == (PhaseState(_NORTH, "green"),)
+
+    def test_a_group_state_is_lower_cased_like_a_bare_one(self) -> None:
+        (built,) = build_controllers(
+            self._declared(SignalStateRef(group="ns", state="Green")),
+            self._groups(),
+        )
+
+        assert {s.state for s in built.phases[0].states} == {"green"}
+
+    def test_an_undeclared_group_drops_the_movement_rather_than_the_run(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The validator rejects it; reaching here means something bypassed it."""
+        with caplog.at_level("WARNING"):
+            (built,) = build_controllers(
+                self._declared(
+                    SignalStateRef(group="nowhere", state="green"),
+                    SignalStateRef(group="ew", state="red"),
+                ),
+                self._groups(),
+            )
+
+        assert [s.lanelet2_regulatory_element_id for s in built.phases[0].states] == [
+            _EAST
+        ]
+        assert "which this map does not declare" in caplog.text
+
+    def test_a_state_naming_nothing_is_skipped_with_a_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            (built,) = build_controllers(
+                self._declared(SignalStateRef(state="red")), self._groups()
+            )
+
+        assert built.phases[0].states == ()
+        assert "naming neither a signal group nor a regulatory element" in caplog.text
+
+    def test_a_state_naming_both_drives_the_group_and_says_so(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The group is the movement the author was describing."""
+        with caplog.at_level("WARNING"):
+            (built,) = build_controllers(
+                self._declared(
+                    SignalStateRef(
+                        group="ew", lanelet2_regulatory_element_id=7, state="green"
+                    )
+                ),
+                self._groups(),
+            )
+
+        assert [s.lanelet2_regulatory_element_id for s in built.phases[0].states] == [
+            _EAST
+        ]
+        assert "driving the group and ignoring the element" in caplog.text
+
+    def test_a_group_that_drives_nothing_is_warned_about(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            (built,) = build_controllers(
+                self._declared(SignalStateRef(group="empty", state="green")),
+                [SignalGroupRef(name="empty", lanelet2_regulatory_element_ids=[])],
+            )
+
+        assert built.phases[0].states == ()
+        assert "which drives no signal" in caplog.text
+
+    def test_a_duplicate_group_name_takes_the_last_declaration(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Not the union: driving both would be a movement nobody declared."""
+        with caplog.at_level("WARNING"):
+            (built,) = build_controllers(
+                self._declared(SignalStateRef(group="ns", state="green")),
+                [
+                    SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[_NORTH]),
+                    SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1003]),
+                ],
+            )
+
+        assert [s.lanelet2_regulatory_element_id for s in built.phases[0].states] == [
+            1003
+        ]
+        assert "declared more than once" in caplog.text
+
+    def test_an_unresolved_group_signal_is_named_by_its_movement(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A warning that says which movement is actionable; a bare id is a lookup."""
+        controller = SignalController(
+            name="crossing",
+            phases=(Phase("ns_green", 5.0, (PhaseState(4242, "green", "ns"),)),),
+        )
+
+        def _none(world: object, lanelet2_id: int) -> list[MagicMock]:
+            return []
+
+        with patch(
+            "autoware_carla_scenario.signals.controller"
+            ".find_traffic_lights_for_lanelet2_id",
+            _none,
+        ):
+            with caplog.at_level("WARNING"):
+                controller.tick(_World())
+
+        assert "4242 (group 'ns')" in caplog.text

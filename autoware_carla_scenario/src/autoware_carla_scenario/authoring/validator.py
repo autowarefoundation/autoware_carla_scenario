@@ -41,6 +41,11 @@ Severity = Literal["error", "warning"]
 #: map config exactly as the existing sweep YAML does.
 MAP_EXCLUSION_REF = "${map.no_3d_model_lanelet_ids}"
 
+#: The signal states that let traffic through.  Amber is one of them: a junction
+#: showing amber to one movement still has vehicles in it, which is exactly why
+#: a real one never shows amber to a movement that crosses it either.
+PERMISSIVE_SIGNAL_STATES = frozenset({"green", "yellow"})
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -783,14 +788,19 @@ def _check_sweep_shape(out: _Collector, document: ScenarioDocument) -> None:
 
 
 def _check_signal_controllers(out: _Collector, document: ScenarioDocument) -> None:
-    """Check the junction cycles the map declares, and every use of them.
+    """Check the map's signal groups, the cycles run on them, and every use.
 
     A phase table is the one part of a scenario whose mistakes are invisible at
     runtime: a misspelt phase name leaves the junction cycling normally, and a
     scenario that waits for that phase simply never fires.  So the names are
     checked against each other here, while the document is being written,
     rather than discovered as a run that timed out for no stated reason.
+
+    The groups come first because the phases are checked against them -- both
+    for a name that resolves and for the one rule the grouping exists to make
+    checkable: that no phase lets two crossing movements through at once.
     """
+    groups = _check_signal_groups(out, document)
     declared = document.map.traffic_signal_controllers
     by_name: dict[str, Any] = {}
 
@@ -804,7 +814,7 @@ def _check_signal_controllers(out: _Collector, document: ScenarioDocument) -> No
         else:
             by_name[name] = controller
 
-        _check_signal_phases(out, path, controller)
+        _check_signal_phases(out, path, controller, groups)
         _check_signal_offset(out, path, controller)
 
     _check_signal_reference_targets(out, declared, by_name)
@@ -812,7 +822,127 @@ def _check_signal_controllers(out: _Collector, document: ScenarioDocument) -> No
     _check_signal_uses(out, document, by_name)
 
 
-def _check_signal_phases(out: _Collector, path: str, controller: Any) -> None:
+@dataclass(frozen=True)
+class _SignalGroups:
+    """The map's signal groups, resolved for the phase checks that follow.
+
+    Attributes:
+        members: Group name -> the regulatory element ids it drives.
+        conflicts: Group name -> the groups whose movements cross it.  Closed
+            symmetrically, so a crossing declared on one side only is still
+            caught from the other.
+    """
+
+    members: "dict[str, set[int]]" = field(default_factory=dict)
+    conflicts: "dict[str, set[str]]" = field(default_factory=dict)
+
+
+def _check_signal_groups(out: _Collector, document: ScenarioDocument) -> _SignalGroups:
+    """Check ``map.signal_groups`` and return it resolved.
+
+    A group is a claim about the road -- these signals change together, those
+    two movements cross -- so the mistakes worth catching here are the ones that
+    make the claim incoherent.  The one that matters most is a signal in two
+    groups: a phase could then ask for two colours on one light, and which it
+    ended up showing would depend on the order the states happened to be written
+    in.
+    """
+    declared = document.map.signal_groups
+    members: "dict[str, set[int]]" = {}
+    #: Which declaration each name came from, so the conflicts pass can tell a
+    #: duplicate's entries from the ones belonging to the group that kept it.
+    declared_at: "dict[str, int]" = {}
+    owner_of: "dict[int, str]" = {}
+
+    for index, group in enumerate(declared):
+        path = f"map.signal_groups[{index}]"
+        name = (group.name or "").strip()
+        if not name:
+            out.error(path, "A signal group needs a name, since phases call it by one.")
+            continue
+        if name in members:
+            out.error(
+                path,
+                f"Duplicate signal group name {name!r}; a phase naming it would "
+                "be ambiguous.",
+            )
+            continue
+
+        ids = set(group.lanelet2_regulatory_element_ids)
+        if not ids:
+            out.error(
+                f"{path}.lanelet2_regulatory_element_ids",
+                f"Signal group {name!r} drives no signal, so a phase naming it "
+                "would set nothing.",
+            )
+        if len(ids) != len(group.lanelet2_regulatory_element_ids):
+            out.warn(
+                f"{path}.lanelet2_regulatory_element_ids",
+                f"Signal group {name!r} names the same regulatory element more "
+                "than once.",
+            )
+        for signal in sorted(ids):
+            existing = owner_of.get(signal)
+            if existing is not None:
+                out.error(
+                    f"{path}.lanelet2_regulatory_element_ids",
+                    f"Regulatory element {signal} is in both signal group "
+                    f"{existing!r} and {name!r}. A signal shows one colour, so "
+                    "a phase naming both groups would not say which.",
+                )
+                continue
+            owner_of[signal] = name
+        members[name] = ids
+        declared_at[name] = index
+
+    conflicts = _check_signal_group_conflicts(out, declared, members, declared_at)
+    return _SignalGroups(members=members, conflicts=conflicts)
+
+
+def _check_signal_group_conflicts(
+    out: _Collector,
+    declared: "list[Any]",
+    members: "dict[str, set[int]]",
+    declared_at: "dict[str, int]",
+) -> "dict[str, set[str]]":
+    """Resolve ``conflicts_with`` into a symmetric relation, reporting bad names.
+
+    Symmetric because a crossing is not directional: an author who wrote it once
+    has said everything there is to say, and demanding the mirror entry would
+    only create a second place for it to be forgotten.
+    """
+    conflicts: "dict[str, set[str]]" = {name: set() for name in members}
+    for index, group in enumerate(declared):
+        name = (group.name or "").strip()
+        if declared_at.get(name) != index:
+            # Nameless, or a duplicate that lost the name.  Already reported, and
+            # its conflicts are not the surviving group's to inherit.
+            continue
+        for other in group.conflicts_with:
+            other = str(other).strip()
+            path = f"map.signal_groups[{index}].conflicts_with"
+            if other == name:
+                out.error(
+                    path,
+                    f"Signal group {name!r} conflicts with itself, which would "
+                    "leave no phase able to let it through.",
+                )
+                continue
+            if other not in members:
+                out.error(
+                    path,
+                    f"Signal group {name!r} conflicts with {other!r}, which this "
+                    "map does not declare.",
+                )
+                continue
+            conflicts[name].add(other)
+            conflicts[other].add(name)
+    return conflicts
+
+
+def _check_signal_phases(
+    out: _Collector, path: str, controller: Any, groups: _SignalGroups
+) -> None:
     """Check one controller's cycle: its phases, their durations and states."""
     if not controller.phases:
         out.error(
@@ -858,6 +988,146 @@ def _check_signal_phases(out: _Collector, path: str, controller: Any) -> None:
                     f"Unknown signal state {entry.state!r}; expected one of "
                     + ", ".join(sorted(SIGNAL_STATE_NAMES)),
                 )
+            _check_signal_phase_subject(
+                out, f"{phase_path}.states[{state_index}]", phase, entry, groups
+            )
+
+        _check_signal_phase_agrees_with_itself(out, phase_path, phase, groups)
+        _check_signal_phase_lets_no_conflict_through(out, phase_path, phase, groups)
+
+
+def _check_signal_phase_subject(
+    out: _Collector, path: str, phase: Any, entry: Any, groups: _SignalGroups
+) -> None:
+    """Every state names exactly one subject, and a named group must exist.
+
+    Both at once is refused rather than resolved by precedence: a rule about
+    which of the two wins is a rule nobody reading the document would know, and
+    the author who wrote both did not have one in mind either.
+    """
+    # A blank is what a form submits for an untouched field, so it reads as
+    # "not named" rather than as a group called "".
+    group = (entry.group or "").strip()
+    signal = entry.lanelet2_regulatory_element_id
+
+    if group and signal is not None:
+        out.error(
+            path,
+            f"Phase {phase.name!r} names both signal group {group!r} and "
+            f"regulatory element {signal} in one state. Name one: the group for "
+            "the movement, the element for a single light.",
+        )
+        return
+    if not group and signal is None:
+        out.error(
+            path,
+            f"Phase {phase.name!r} has a state that names no signal -- give it "
+            "either a signal group or a regulatory element id.",
+        )
+        return
+    if group and group not in groups.members:
+        out.error(
+            f"{path}.group",
+            f"Phase {phase.name!r} names signal group {group!r}, which "
+            "map.signal_groups does not declare."
+            + (
+                " Declared: " + ", ".join(repr(n) for n in sorted(groups.members))
+                if groups.members
+                else " This map declares none."
+            ),
+        )
+
+
+def _check_signal_phase_agrees_with_itself(
+    out: _Collector, path: str, phase: Any, groups: _SignalGroups
+) -> None:
+    """One phase must not ask for two colours on the same signal.
+
+    Applying a phase walks its states in order, so a repeat is not ambiguous at
+    runtime -- the last one wins.  It is ambiguous to the reader, which is the
+    problem: a phase is meant to be readable as the junction's whole state.
+    """
+    seen_groups: set[str] = set()
+    seen_signals: set[int] = set()
+    for entry in phase.states:
+        group = (entry.group or "").strip()
+        if group:
+            if group in seen_groups:
+                out.error(
+                    f"{path}.states",
+                    f"Phase {phase.name!r} sets signal group {group!r} twice.",
+                )
+            seen_groups.add(group)
+            continue
+        if entry.lanelet2_regulatory_element_id is None:
+            continue
+        signal = int(entry.lanelet2_regulatory_element_id)
+        if signal in seen_signals:
+            out.error(
+                f"{path}.states",
+                f"Phase {phase.name!r} sets regulatory element {signal} twice.",
+            )
+        seen_signals.add(signal)
+
+    # A bare element that one of the named groups also covers is the one overlap
+    # that is legitimate: overriding a single light out of a movement.  It is
+    # worth saying out loud, because it only works in the order it is written.
+    covered = {
+        signal for group in seen_groups for signal in groups.members.get(group, set())
+    }
+    for signal in sorted(seen_signals & covered):
+        out.warn(
+            f"{path}.states",
+            f"Phase {phase.name!r} sets regulatory element {signal} on its own "
+            "as well as through a signal group that covers it; whichever is "
+            "written last is what the light shows.",
+        )
+
+
+def _check_signal_phase_lets_no_conflict_through(
+    out: _Collector, path: str, phase: Any, groups: _SignalGroups
+) -> None:
+    """No phase may let two conflicting movements through at once.
+
+    This is the rule the whole grouping exists for.  Two conflicting approaches
+    green is the state a junction assembled one light at a time can reach and a
+    real road cannot, and until the map said which movements cross, nothing
+    could check it -- an author listing twelve regulatory elements per phase had
+    only their own care to rely on.
+
+    It reads the groups a phase names, not the signals it ends up setting, and
+    that is deliberate: naming a group is how an author invokes the map's
+    statement about that movement, including this rule.  A scenario whose
+    subject *is* a junction in an impossible state names the regulatory elements
+    directly and is left alone.
+    """
+    permissive: "dict[str, str]" = {}
+    for entry in phase.states:
+        group = (entry.group or "").strip()
+        if not group or group not in groups.members:
+            continue
+        state = str(entry.state).lower()
+        if state in PERMISSIVE_SIGNAL_STATES:
+            permissive.setdefault(group, state)
+
+    reported: "set[tuple[str, str]]" = set()
+    for group in sorted(permissive):
+        for other in sorted(groups.conflicts.get(group, set())):
+            if other not in permissive:
+                continue
+            first, second = sorted((group, other))
+            if (first, second) in reported:
+                continue
+            reported.add((first, second))
+            out.error(
+                f"{path}.states",
+                f"Phase {phase.name!r} shows {permissive[first]} to signal group "
+                f"{first!r} and {permissive[second]} to {second!r} at the same "
+                "time, but the map declares their movements as crossing. Real "
+                "junctions put an all-red clearance between them. If a junction "
+                "in this state is what the scenario tests, name the regulatory "
+                "elements directly instead of the groups.",
+            )
 
 
 def _check_signal_offset(out: _Collector, path: str, controller: Any) -> None:

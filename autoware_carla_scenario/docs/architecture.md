@@ -538,36 +538,60 @@ light happens to be showing.
 holds, so showing one puts the whole junction into a known state at once, and
 waiting for one is a statement about the junction rather than about a colour.
 
-The phases themselves are not written in the storyboard. They are declared on
-the **map**, under `map.traffic_signal_controllers`, because a junction's cycle
-is a property of the road network — which is where OpenSCENARIO keeps it too
-(`RoadNetwork/TrafficSignals`), and where `scenario_simulator_v2` keeps it:
+A junction is declared in two halves, split along what changes between
+scenarios and what does not.
+
+**`map.signal_groups` is the road.** Which signals change as one, and which
+movements cross each other, are facts about the junction: every scenario that
+runs here inherits the same ones. Naming a group is also the only way a phase
+table stays writable — one approach of three lanes is three regulatory
+elements, and nishishinjuku declares over three hundred of them.
+
+**`map.traffic_signal_controllers` is this scenario's timing.** A test of an ego
+creeping into a long amber and a test of the same crossing on a short cycle are
+two scenarios on one road, so the durations are the scenario's to choose.
+OpenSCENARIO reads the same way: `RoadNetwork/TrafficSignals` holds the
+controllers, and `RoadNetwork` is a section of the *scenario* file, beside the
+`LogicFile` that names the map rather than inside it —
+`scenario_simulator_v2` builds its `TrafficSignalController` from that scenario
+XML too.
 
 ```yaml
 map:
-  traffic_signal_controllers:
+  signal_groups:                        # the road: no colours, no durations
+    - name: ns
+      lanelet2_regulatory_element_ids: [1001, 1003]
+      conflicts_with: [ew]              # read symmetrically
+    - name: ew
+      lanelet2_regulatory_element_ids: [1002]
+
+  traffic_signal_controllers:           # this scenario's timing
     - name: crossing
       phases:
         - name: ns_green
           duration_seconds: 20.0
           states:
-            - {lanelet2_regulatory_element_id: 1001, state: green}
-            - {lanelet2_regulatory_element_id: 1002, state: red}
+            - {group: ns, state: green}
+            - {group: ew, state: red}
         - name: ns_amber
           duration_seconds: 3.0
           states:
-            - {lanelet2_regulatory_element_id: 1001, state: yellow}
-            - {lanelet2_regulatory_element_id: 1002, state: red}
+            - {group: ns, state: yellow}
+            - {group: ew, state: red}
         - name: all_red
           duration_seconds: 1.0
           states:
-            - {lanelet2_regulatory_element_id: 1001, state: red}
-            - {lanelet2_regulatory_element_id: 1002, state: red}
+            - {group: ns, state: red}
+            - {group: ew, state: red}
     - name: next_junction
       reference: crossing      # a green wave along a corridor is declared,
       delay_seconds: 8.0       # not timed by a chain of actions
       phases: [...]
 ```
+
+A state may name a `lanelet2_regulatory_element_id` instead of a `group`, which
+is the escape hatch for a single light — including the case below, where the
+junction's impossible state is the thing under test.
 
 `autoware_carla_scenario.signals` turns those declarations into running
 `SignalController` objects at scenario setup. Each is registered as a
@@ -585,10 +609,25 @@ colours does not read as that phase.
 
 A `reference` offsets one controller's start from another's, which is how a
 progressive system — a green wave — is written. The offsets are declared;
-nothing has to time them. The validator rejects a delay with no reference, a
-reference to a controller the map does not declare, a loop of them, duplicate
-controller or phase names, an unknown state, and any action or condition naming
-a controller or phase that does not exist — all while the document is being
+nothing has to time them.
+
+**Groups are what make the original problem checkable.** Two conflicting
+approaches green is the state a junction assembled one light at a time can
+reach and a real road cannot; while a phase was a list of regulatory element
+ids, nothing could tell. Now `conflicts_with` says which movements cross, so the
+validator rejects any phase that shows green *or amber* to both — amber
+included, because a junction showing amber to one movement still has vehicles in
+it, which is why a real one puts an all-red clearance between them. A scenario
+whose subject *is* a junction in that state names the regulatory elements
+directly and is left alone: naming a group is how an author invokes the map's
+statement about that movement, this rule included.
+
+The validator also rejects a delay with no reference, a reference to a
+controller the document does not declare, a loop of them, duplicate controller,
+phase or group names, a signal in two groups, a group that drives nothing, a
+conflict naming an undeclared group, a phase state naming both a group and an
+element or neither, an unknown state, and any action or condition naming a
+controller or phase that does not exist — all while the document is being
 edited, because a misspelt phase name is invisible at runtime: the junction
 cycles normally and the scenario just waits forever.
 

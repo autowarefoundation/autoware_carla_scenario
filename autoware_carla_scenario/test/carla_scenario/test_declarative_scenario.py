@@ -37,6 +37,7 @@ from autoware_carla_scenario.authoring.compiler import BuildContext, compile_doc
 from autoware_carla_scenario.authoring.models import (
     ConditionNode,
     SignalControllerRef,
+    SignalGroupRef,
     SignalPhaseRef,
     SignalStateRef,
 )
@@ -479,3 +480,35 @@ class TestSignalControllersStart:
         _scenario()._start_signal_controllers()
 
         assert find_signal_controller("crossing") is None
+
+    def test_the_maps_signal_groups_reach_the_controller(self) -> None:
+        """Otherwise a group-addressed phase would build as an empty one.
+
+        The groups and the cycle are declared in two places and joined here, so
+        this is the seam worth pinning: a controller that started with no states
+        would cycle silently and drive nothing.
+        """
+        document = new_document()
+        document.map.signal_groups = [
+            SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001, 1003])
+        ]
+        document.map.traffic_signal_controllers = [
+            SignalControllerRef(
+                name="crossing",
+                phases=[
+                    SignalPhaseRef(
+                        name="ns_green",
+                        duration_seconds=5.0,
+                        states=[SignalStateRef(group="ns", state="green")],
+                    )
+                ],
+            )
+        ]
+
+        _scenario(document)._start_signal_controllers()
+
+        controller = find_signal_controller("crossing")
+        assert controller is not None
+        assert [
+            s.lanelet2_regulatory_element_id for s in controller.phases[0].states
+        ] == [1001, 1003]

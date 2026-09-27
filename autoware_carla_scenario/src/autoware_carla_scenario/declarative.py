@@ -222,7 +222,7 @@ class DeclarativeScenario(BaseScenario):
     # ------------------------------------------------------------------
 
     def _start_signal_controllers(self) -> None:
-        """Build the map's signal controllers and set them running.
+        """Build the document's signal controllers and set them running.
 
         Registered as pre-tick callbacks rather than as actions: a controller
         is not something the storyboard does, it is a part of the road that
@@ -235,7 +235,10 @@ class DeclarativeScenario(BaseScenario):
         junction misbehaving.
         """
         clear_signal_controllers()
-        controllers = build_controllers(self._document.map.traffic_signal_controllers)
+        controllers = build_controllers(
+            self._document.map.traffic_signal_controllers,
+            self._document.map.signal_groups,
+        )
         for controller in controllers:
             register_signal_controller(controller)
             self.register_pre_tick(controller.tick)

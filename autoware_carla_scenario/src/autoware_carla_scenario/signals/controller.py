@@ -19,6 +19,14 @@ This is that cycle, modelled the way OpenSCENARIO models it and the way
 * a phase can also be jumped to by name, which is what
   ``TrafficSignalControllerAction`` does.
 
+Groups are resolved here, not carried
+-------------------------------------
+A phase in the document usually names *signal groups* -- the movements the map
+says change as one -- rather than individual regulatory elements.  That is an
+authoring concern: :func:`build_controllers` expands each group into one
+:class:`PhaseState` per member, and everything from there down deals in single
+signals.
+
 Time is the world's
 -------------------
 Durations are simulated seconds, read from the world rather than from a wall
@@ -71,15 +79,24 @@ STATE_NAMES: "dict[str, carla.TrafficLightState]" = {
 class PhaseState:
     """One signal's state for the duration of a phase.
 
+    Always one signal: a phase the document wrote against a *group* is expanded
+    into one of these per member at build time, so nothing downstream of
+    :func:`build_controllers` has to know that groups exist.  Applying a phase
+    stays a flat walk over signals, which is what it has to be in the end.
+
     Attributes:
         lanelet2_regulatory_element_id: The signal, named by the Lanelet2
             regulatory element it belongs to -- the same id, and the same name
             for it, that every other signal primitive here takes.
         state: One of :data:`STATE_NAMES`.
+        group: The signal group this came from, when it came from one.  Carried
+            for diagnostics only: a warning that says which *movement* failed to
+            resolve is actionable, where one naming a bare id is a lookup.
     """
 
     lanelet2_regulatory_element_id: int
     state: str
+    group: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -228,7 +245,7 @@ def _apply(phase: Phase, world: "carla.World", controller_name: str) -> None:
     controller re-applies on every phase change, so freezing costs nothing it
     would otherwise have.
     """
-    unresolved: list[int] = []
+    unresolved: list[str] = []
     for entry in phase.states:
         state = STATE_NAMES.get(entry.state)
         if state is None:
@@ -237,18 +254,18 @@ def _apply(phase: Phase, world: "carla.World", controller_name: str) -> None:
             # alone beats a run that dies mid-cycle on a KeyError.
             logger.warning(
                 "SignalController '%s': phase '%s' asks for unknown state "
-                "'%s'; leaving signal %d alone",
+                "'%s'; leaving signal %s alone",
                 controller_name,
                 phase.name,
                 entry.state,
-                entry.lanelet2_regulatory_element_id,
+                _describe(entry),
             )
             continue
         lights = find_traffic_lights_for_lanelet2_id(
             world, entry.lanelet2_regulatory_element_id
         )
         if not lights:
-            unresolved.append(entry.lanelet2_regulatory_element_id)
+            unresolved.append(_describe(entry))
             continue
         for light in lights:
             light.set_state(state)
@@ -264,8 +281,19 @@ def _apply(phase: Phase, world: "carla.World", controller_name: str) -> None:
             controller_name,
             phase.name,
             len(unresolved),
-            ", ".join(str(i) for i in unresolved),
+            ", ".join(unresolved),
         )
+
+
+def _describe(entry: PhaseState) -> str:
+    """Name a signal the way a reader can act on it.
+
+    A bare id sends the reader to the map to find out which movement it was; the
+    group name says it outright, so it is given whenever the phase named one.
+    """
+    if entry.group is None:
+        return str(entry.lanelet2_regulatory_element_id)
+    return f"{entry.lanelet2_regulatory_element_id} (group '{entry.group}')"
 
 
 def _simulated_now(world: "carla.World") -> float:
@@ -273,12 +301,117 @@ def _simulated_now(world: "carla.World") -> float:
     return float(world.get_snapshot().timestamp.elapsed_seconds)
 
 
-def build_controllers(declared: "list[Any]") -> "tuple[SignalController, ...]":
-    """Turn the map's declared controllers into running ones.
+def _group_members(declared_groups: "list[Any]") -> "dict[str, tuple[int, ...]]":
+    """Index the map's signal groups by name.
 
-    Resolves ``reference`` from a name to the controller object, which is why
-    this builds them all together rather than one at a time: a green wave is a
-    graph, and half of it is not runnable.
+    A later declaration of an already-taken name wins and says so, rather than
+    being merged into the first: the validator rejects the duplicate while the
+    document is being written, and silently driving the union of two groups
+    somebody meant as one would be a junction nobody wrote.
+    """
+    members: "dict[str, tuple[int, ...]]" = {}
+    for group in declared_groups or ():
+        name = str(group.name)
+        if name in members:
+            logger.warning(
+                "Signal group '%s' is declared more than once on this map; "
+                "the last declaration wins",
+                name,
+            )
+        members[name] = tuple(int(i) for i in group.lanelet2_regulatory_element_ids)
+    return members
+
+
+def _phase_states(
+    phase: "Any",
+    controller_name: str,
+    members: "dict[str, tuple[int, ...]]",
+) -> "tuple[PhaseState, ...]":
+    """Expand one declared phase into one :class:`PhaseState` per signal.
+
+    Every complaint here is a warning rather than a raise, for the reason the
+    rest of this module gives: the validator rejects each of these while the
+    document is being written, so reaching them means something bypassed it, and
+    a junction missing one movement is a better report than a run that would not
+    start.
+    """
+    states: "list[PhaseState]" = []
+    for entry in phase.states:
+        # Lower-cased here rather than demanded of the author: the older
+        # single-signal card spells the same colours as CARLA's enum members,
+        # and a document that mixes 'Green' and 'green' should not mean two
+        # different things.
+        state = str(entry.state).lower()
+        # A blank group reads as "not named", matching the validator: that is
+        # what a form submits for an untouched field.
+        group = (getattr(entry, "group", None) or "").strip() or None
+        signal_id = getattr(entry, "lanelet2_regulatory_element_id", None)
+
+        if group is None:
+            if signal_id is None:
+                logger.warning(
+                    "SignalController '%s': phase '%s' has a state naming "
+                    "neither a signal group nor a regulatory element; skipping it",
+                    controller_name,
+                    phase.name,
+                )
+                continue
+            states.append(
+                PhaseState(lanelet2_regulatory_element_id=int(signal_id), state=state)
+            )
+            continue
+
+        if signal_id is not None:
+            # The group is the movement the author was describing, so it is the
+            # one kept; saying which was dropped is what makes the warning
+            # actionable.
+            logger.warning(
+                "SignalController '%s': phase '%s' names both signal group '%s' "
+                "and regulatory element %s; driving the group and ignoring the "
+                "element",
+                controller_name,
+                phase.name,
+                group,
+                signal_id,
+            )
+
+        ids = members.get(group)
+        if ids is None:
+            logger.warning(
+                "SignalController '%s': phase '%s' names signal group '%s', "
+                "which this map does not declare; that movement will not be "
+                "driven",
+                controller_name,
+                phase.name,
+                group,
+            )
+            continue
+        if not ids:
+            logger.warning(
+                "SignalController '%s': phase '%s' names signal group '%s', "
+                "which drives no signal",
+                controller_name,
+                phase.name,
+                group,
+            )
+        states.extend(
+            PhaseState(lanelet2_regulatory_element_id=signal, state=state, group=group)
+            for signal in ids
+        )
+    return tuple(states)
+
+
+def build_controllers(
+    declared: "list[Any]", signal_groups: "Optional[list[Any]]" = None
+) -> "tuple[SignalController, ...]":
+    """Turn the scenario's declared controllers into running ones.
+
+    Resolves two things a declaration only names.  ``reference`` becomes the
+    controller object, which is why this builds them all together rather than
+    one at a time: a green wave is a graph, and half of it is not runnable.  And
+    each phase state naming a *signal group* becomes one
+    :class:`PhaseState` per regulatory element that group covers, so the
+    running controller deals only in signals.
 
     A reference naming a controller that does not exist is dropped with a
     warning rather than raising.  The validator rejects it while the document
@@ -288,10 +421,14 @@ def build_controllers(declared: "list[Any]") -> "tuple[SignalController, ...]":
     Args:
         declared: ``MapRef.traffic_signal_controllers`` -- typed loosely so
             this module stays independent of the authoring package.
+        signal_groups: ``MapRef.signal_groups``, the map's statement of which
+            signals move together.  Omit it for a document whose phases name
+            regulatory elements directly.
 
     Returns:
         The controllers, in declaration order.
     """
+    members = _group_members(signal_groups or [])
     built: "dict[str, SignalController]" = {}
     for spec in declared:
         built[spec.name] = SignalController(
@@ -300,20 +437,7 @@ def build_controllers(declared: "list[Any]") -> "tuple[SignalController, ...]":
                 Phase(
                     name=phase.name,
                     duration_seconds=float(phase.duration_seconds),
-                    states=tuple(
-                        PhaseState(
-                            lanelet2_regulatory_element_id=int(
-                                entry.lanelet2_regulatory_element_id
-                            ),
-                            # Lower-cased here rather than demanded of the
-                            # author: the older single-signal card spells the
-                            # same colours as CARLA's enum members, and a
-                            # document that mixes 'Green' and 'green' should
-                            # not mean two different things.
-                            state=str(entry.state).lower(),
-                        )
-                        for entry in phase.states
-                    ),
+                    states=_phase_states(phase, spec.name, members),
                 )
                 for phase in spec.phases
             ),
