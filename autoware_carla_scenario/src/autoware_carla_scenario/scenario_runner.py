@@ -29,6 +29,7 @@ from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
+from .trajectory_recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -693,6 +694,9 @@ class ScenarioRunner:
         world.apply_settings(settings)
 
         recording_started = False
+        trajectory = TrajectoryRecorder(
+            self.output_dir / f"{scenario_name}.trajectory.jsonl"
+        )
         tick_count = 0
         result: Optional[ScenarioResult] = None
 
@@ -820,6 +824,11 @@ class ScenarioRunner:
             # needs a stack to come up would otherwise spend most of the
             # scenario's timeout booting.
             clock = _ScenarioClock(world)
+            # The motion of everything on the road, recorded from the ticks
+            # this loop steps -- in-process, so no second client has to follow
+            # the world from outside.
+            trajectory.start(world)
+            trajectory.record(world, clock.simulated)
 
             # Tick loop
             while not scenario.is_done():
@@ -848,6 +857,7 @@ class ScenarioRunner:
                 # The world has advanced; everything from here reads the time
                 # it advanced to.
                 elapsed = clock.simulated
+                trajectory.record(world, elapsed)
 
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
@@ -988,6 +998,11 @@ class ScenarioRunner:
             if recording_started:
                 self._client.stop_recorder()
                 logger.info("[%s] Recorder stopped", scenario_name)
+            if trajectory.active:
+                trajectory.close()
+                logger.info(
+                    "[%s] Trajectory written to %s", scenario_name, trajectory.path
+                )
 
             # Close the backend so the next run starts with a fresh one --
             # for the TrafficManager that resets its InMemoryMap cache and
