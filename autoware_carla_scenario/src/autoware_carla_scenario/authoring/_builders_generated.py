@@ -598,7 +598,7 @@ def build_traffic_signal_controller_condition(
     params = compiled.params
     return TrafficSignalControllerCondition(
         controller=str(params["controller"]),
-        phase=str(params["phase"]),
+        phase=str(params["signal_phase"]),
         label=compiled.label,
     )
 
@@ -647,7 +647,7 @@ def build_traffic_signal_controller_action(
     params = compiled.params
     return TrafficSignalControllerAction(
         controller=str(params["controller"]),
-        phase=str(params["phase"]),
+        phase=str(params["signal_phase"]),
         condition=condition,
         timing=timing,
         label=compiled.label,

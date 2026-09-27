@@ -1207,7 +1207,7 @@ def _check_signal_uses(
     """Every action and condition naming a controller and phase must resolve."""
     for path, node in _signal_controller_nodes(document):
         controller_name = str(node.params.get("controller") or "").strip()
-        phase_name = str(node.params.get("phase") or "").strip()
+        phase_name = str(node.params.get("signal_phase") or "").strip()
         controller = by_name.get(controller_name)
         if controller is None:
             out.error(
@@ -1220,11 +1220,15 @@ def _check_signal_uses(
             )
             continue
         if not phase_name:
-            out.error(f"{path}.phase", "This card needs the name of a phase.", node.id)
+            out.error(
+                f"{path}.signal_phase",
+                "This card needs the name of a signal phase.",
+                node.id,
+            )
             continue
         if phase_name not in {p.name for p in controller.phases}:
             out.error(
-                f"{path}.phase",
+                f"{path}.signal_phase",
                 f"Signal controller {controller_name!r} has no phase named "
                 f"{phase_name!r}; it has "
                 + (

@@ -1073,6 +1073,14 @@ register_action_spec(
         scope="environment",
         visual_kind="instant",
         default_phase="init",
+        # Named `signal_phase` in the document, `phase` on the class.  The
+        # action inspector posts its own `phase` field -- the tick phase every
+        # action has -- into the same flat form namespace, so a card param
+        # called `phase` is a second input of that name: the tick phase would
+        # land in the params and the signal phase would be offered to
+        # `as_action_phase`, which rejects it silently.  The constructor has no
+        # such clash, so only the document-side name moves.
+        argmap=(("signal_phase", "phase"),),
         fields=(
             FieldSpec(
                 name="controller",
@@ -1088,19 +1096,20 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
-                name="phase",
-                label="Phase",
+                name="signal_phase",
+                label="Signal phase",
                 kind="text",
                 default="",
                 help=(
                     "Which of that controller's phases to show.  The cycle "
                     "carries on from it, so this starts the junction at a "
-                    "point rather than holding it there."
+                    "point rather than holding it there.  Not the tick phase "
+                    "below, which is when this card runs."
                 ),
             ),
         ),
         description=(
-            "Jump a junction's controller to one of the phases its map "
+            "Jump a junction's controller to one of the phases this scenario "
             "declares.  A phase names every signal the controller drives, so "
             "the junction goes to a consistent state rather than one light at "
             "a time."
@@ -2080,9 +2089,12 @@ register_condition_spec(
             metric="Junction phase",
             target="controller",
             target_prefix="Controller",
-            value="phase",
+            value="signal_phase",
             value_label="shows",
         ),
+        # Spelled the same way as the action's, so one word means one thing
+        # across the pair; see the note there for why it is not just `phase`.
+        argmap=(("signal_phase", "phase"),),
         fields=(
             FieldSpec(
                 name="controller",
@@ -2095,8 +2107,8 @@ register_condition_spec(
                 ),
             ),
             FieldSpec(
-                name="phase",
-                label="Phase",
+                name="signal_phase",
+                label="Signal phase",
                 kind="text",
                 default="",
                 help=(

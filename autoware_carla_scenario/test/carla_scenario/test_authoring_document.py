@@ -866,7 +866,7 @@ class TestSignalControllerValidation:
         document.actions.append(
             ActionNode(
                 type="traffic_signal_controller",
-                params={"controller": "nonesuch", "phase": "ns_green"},
+                params={"controller": "nonesuch", "signal_phase": "ns_green"},
             )
         )
         assert any(
@@ -879,7 +879,7 @@ class TestSignalControllerValidation:
         document.actions.append(
             ActionNode(
                 type="traffic_signal_controller",
-                params={"controller": "crossing", "phase": "ew_green"},
+                params={"controller": "crossing", "signal_phase": "ew_green"},
             )
         )
         report = validate_document(document)
@@ -893,17 +893,23 @@ class TestSignalControllerValidation:
         document.actions.append(
             ActionNode(
                 type="traffic_signal_controller",
-                params={"controller": "crossing", "phase": "ns_green"},
+                params={"controller": "crossing", "signal_phase": "ns_green"},
                 trigger=ConditionNode(
                     type="all",
                     children=[
                         ConditionNode(
                             type="traffic_signal_controller",
-                            params={"controller": "crossing", "phase": "nonesuch"},
+                            params={
+                                "controller": "crossing",
+                                "signal_phase": "nonesuch",
+                            },
                         ),
                         ConditionNode(
                             type="traffic_signal_controller",
-                            params={"controller": "crossing", "phase": "ns_amber"},
+                            params={
+                                "controller": "crossing",
+                                "signal_phase": "ns_amber",
+                            },
                         ),
                     ],
                 ),
@@ -922,7 +928,7 @@ class TestSignalControllerValidation:
         document.assertions.pass_conditions = [
             ConditionNode(
                 type="traffic_signal_controller",
-                params={"controller": "crossing", "phase": "ns_amber"},
+                params={"controller": "crossing", "signal_phase": "ns_amber"},
             )
         ]
         report = validate_document(document)

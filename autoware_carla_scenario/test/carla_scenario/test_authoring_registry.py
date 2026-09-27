@@ -271,6 +271,31 @@ class TestSelectFieldDefaults:
         assert {"road_id", "lane_id"} <= opendrive_fields
         assert "lanelet_id" not in opendrive_fields
 
+    def test_no_card_param_collides_with_the_inspectors_own_fields(self) -> None:
+        """A card param may not take a name the inspector already posts.
+
+        The action inspector renders a card's fields and its own -- title,
+        actor, the tick phase, once -- into one flat form namespace, so a card
+        param sharing one of those names becomes a second input of that name.
+        Nothing raises: the form is a multidict, the node-level read takes the
+        first value and the params take the last, so the two fields quietly
+        swap contents and the author sees a value they never typed.
+
+        `traffic_signal_controller` hit exactly that with a param called
+        `phase`, and is why its document-side name is `signal_phase` with an
+        argmap back to the constructor's `phase`.
+        """
+        reserved = {"title", "actor", "phase", "once"}
+        offenders = {
+            spec.type_id: sorted({f.name for f in spec.fields} & reserved)
+            for spec in registry.action_specs()
+            if {f.name for f in spec.fields} & reserved
+        }
+        assert not offenders, (
+            "These action cards name a param the inspector already posts; "
+            f"rename the param and map it back with argmap: {offenders}"
+        )
+
     def test_every_lanelet2_id_is_picked_off_the_map(self) -> None:
         """Nothing that names a Lanelet2 primitive may be a plain text box.
 
