@@ -469,6 +469,7 @@ def _build_one(
 
     _check_required(parameters, args, where)
     _check_all_fields_used(by_kwarg, parameters, consumed, where)
+    _check_arguments_fit(args, where)
 
     return RenderedBuilder(
         name=spec.builder,
@@ -644,6 +645,30 @@ def _render_choices(
             )
         )
     return tuple(rendered), consumed
+
+
+def _check_arguments_fit(args: "list[tuple[str, str]]", where: str) -> None:
+    """Fail when a rendered ``kwarg=expression,`` line is wider than the formatter.
+
+    The generator renders what ``ruff-format`` would write rather than
+    predicting how it wraps, which holds only while each line fits.  One that
+    does not is rewrapped by the formatter the moment it is committed, and the
+    drift check then compares the wrapped file against freshly generated
+    unwrapped source and fails on every run with nothing to change.
+
+    Reported here, at generation time, because the failure is otherwise a
+    staleness error that regenerating does not fix -- which says nothing about
+    the field whose name got long enough to cause it.
+    """
+    for name, expression in args:
+        line = f"{' ' * 8}{name}={expression},"
+        if len(line) > LINE_LENGTH:
+            raise GenerationError(
+                f"{where}: the argument for {name!r} renders {len(line)} "
+                f"characters wide and the formatter wraps at {LINE_LENGTH}, "
+                f"which the drift check cannot survive. Shorten the field name "
+                f"with an argmap entry, or the enum's."
+            )
 
 
 def _raise_line(type_id: str, discriminator: str, where: str) -> str:

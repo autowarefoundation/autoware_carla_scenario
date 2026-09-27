@@ -478,6 +478,38 @@ _DIRECTIONS: tuple[SelectOption, ...] = (
 )
 
 
+def _coordinate_system_field() -> FieldSpec:
+    """Return the frame select the three distance conditions share.
+
+    Defaulting to ``entity`` keeps every document written before this existed
+    meaning what it meant.  ``lane`` is the measurement OpenSCENARIO calls
+    ``coordinateSystem: lane``, and the one the transpiler needs in order to
+    carry that attribute across rather than dropping it.
+
+    Named ``measure`` in the document and mapped to the constructor's
+    ``coordinate_system`` by each spec's ``argmap``, the way ``seconds`` maps
+    to ``value``: the short name is what an author reads, and it is also what
+    keeps the generated call inside the width the formatter wraps at.
+    """
+    return FieldSpec(
+        name="measure",
+        label="Measured",
+        kind="select",
+        default="entity",
+        options=(
+            SelectOption("entity", "Straight line"),
+            SelectOption("lane", "Along the road"),
+        ),
+        help=(
+            "In a straight line between the two, or along the road they "
+            "share.  They agree on a straight road and differ on a curve, "
+            "where the straight line reads short.  Along the road needs a "
+            "loaded map, and has no answer while the two are on different "
+            "roads."
+        ),
+    )
+
+
 def _rule_field(default: str = "less_than") -> FieldSpec:
     """Return the comparison-operator select, defaulting to *default*.
 
@@ -517,7 +549,8 @@ def _edge_to_edge_field() -> FieldSpec:
             "Measure between the vehicles' bounding boxes rather than between "
             "their centres.  The difference is about a vehicle length, which "
             "matters most where the answer is a handful of seconds.  This is "
-            "OpenSCENARIO's freespace."
+            "OpenSCENARIO's freespace, and it cannot be combined with "
+            "measuring along the road."
         ),
     )
 
@@ -1126,7 +1159,7 @@ register_condition_spec(
         category="Relative",
         builder="build_entity_distance_condition",
         target="..conditions:EntityDistanceCondition",
-        argmap=(("distance", "value"),),
+        argmap=(("distance", "value"), ("measure", "coordinate_system")),
         visual=ConditionVisual(
             metric="Distance",
             subject="source",
@@ -1137,7 +1170,7 @@ register_condition_spec(
             # Both of these change what the threshold means, so a card that
             # left them out drew a longitudinal edge-to-edge gap and a
             # Euclidean centre distance identically.
-            details=("distance_type", "edge_to_edge"),
+            details=("measure", "distance_type", "edge_to_edge"),
         ),
         fields=(
             _entity_field("source", "Subject"),
@@ -1146,9 +1179,10 @@ register_condition_spec(
             FieldSpec(
                 name="distance", label="Distance", kind="number", default=20.0, unit="m"
             ),
+            _coordinate_system_field(),
             FieldSpec(
                 name="distance_type",
-                label="Measured",
+                label="Component",
                 kind="select",
                 default="EUCLIDEAN",
                 options=(
@@ -1158,17 +1192,20 @@ register_condition_spec(
                 ),
                 required=False,
                 help=(
-                    "A car in the next lane is 20 m away in a straight line "
-                    "and 2 m away longitudinally.  Following-distance and "
-                    "cut-in scenarios mean the second."
+                    "Which part of the straight-line separation is meant.  A "
+                    "car in the next lane is 20 m away in a straight line and "
+                    "2 m away longitudinally, and following-distance and "
+                    "cut-in scenarios mean the second.  Along the road is "
+                    "one-dimensional, so this is only read when Measured is "
+                    "a straight line."
                 ),
             ),
             _edge_to_edge_field(),
         ),
         description=(
-            "Distance from the subject to the target.  Say which component "
-            "is meant and whether the vehicles' extents count; the defaults "
-            "are a straight line between centres."
+            "Distance from the subject to the target.  Say which frame and "
+            "component are meant and whether the vehicles' extents count; "
+            "the defaults are a straight line between centres."
         ),
     )
 )
@@ -1244,7 +1281,7 @@ register_condition_spec(
         category="Relative",
         builder="build_ttc_condition",
         target="..conditions:TimeToCollisionCondition",
-        argmap=(("seconds", "value"),),
+        argmap=(("seconds", "value"), ("measure", "coordinate_system")),
         visual=ConditionVisual(
             metric="TTC",
             subject="source",
@@ -1260,9 +1297,15 @@ register_condition_spec(
             FieldSpec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
+            _coordinate_system_field(),
             _edge_to_edge_field(),
         ),
-        description="Time to collision from the subject to the target.",
+        description=(
+            "Time to collision from the subject to the target.  Measured "
+            "along the road, both the gap and the speed closing it are "
+            "resolved onto the road, so a vehicle's cornering is not counted "
+            "as approach."
+        ),
     )
 )
 
@@ -1339,7 +1382,11 @@ register_condition_spec(
         category="Relative",
         builder="build_time_headway_condition",
         target="..conditions:TimeHeadwayCondition",
-        argmap=(("entity", "source"), ("seconds", "value")),
+        argmap=(
+            ("entity", "source"),
+            ("seconds", "value"),
+            ("measure", "coordinate_system"),
+        ),
         visual=ConditionVisual(
             metric="Headway",
             subject="entity",
@@ -1355,15 +1402,16 @@ register_condition_spec(
             FieldSpec(
                 name="seconds", label="Headway", kind="number", default=2.0, unit="s"
             ),
+            _coordinate_system_field(),
         ),
         description=(
             "How long the follower would take to reach where the vehicle "
             "ahead is now, at its own current speed.  Unlike TTC this is "
             "defined even when the gap is steady, which is what makes it the "
             "following-distance measure; it is undefined, and never fires, "
-            "while the follower is stopped.  Measured in a straight line "
-            "along the direction of travel, not along the lane: on a curve it "
-            "under-reads, and past a quarter turn it stops firing entirely."
+            "while the follower is stopped.  Measured in a straight line by "
+            "default, which on a curve under-reads and past a quarter turn "
+            "stops firing entirely; measure along the road to avoid that."
         ),
     )
 )

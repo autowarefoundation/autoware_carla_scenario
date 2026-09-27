@@ -6,9 +6,11 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
+from ...coordinate.lane_distance import lane_gap
+from ...coordinate.poses import CarlaWorldPose
 from ..base import ScenarioResult, find_actor_pair
 from ..comparison import ComparisonRule, ScalarComparisonRule
-from .base import CompositionCondition
+from .base import CompositionCondition, DistanceCoordinateSystem
 
 if TYPE_CHECKING:
     import carla
@@ -38,25 +40,24 @@ class TimeHeadwayCondition(CompositionCondition):
     so the direction of travel is always defined, and it is the direction the
     gap is actually closing along.
 
-    .. warning::
-        The measurement is in the **entity** coordinate system: a straight-line
-        offset projected onto the direction of travel.  OpenSCENARIO's
-        ``coordinateSystem: lane`` -- the distance *along the road*, which is
-        what `scenario_simulator_v2` measures -- is not implemented; see
-        the issue linked from ``docs/architecture.md``.
+    *coordinate_system* chooses what "the distance ahead" means, and a
+    following distance is the measure that cares most.
 
-        On a straight road the two agree.  On a curve the projection is short,
-        and the error grows with the curvature: for a leader 20 m ahead along
-        the lane it reads 19.5 m on a 50 m radius, 17.9 m on 25 m, and 14.6 m
-        on 15 m.
+    :attr:`~DistanceCoordinateSystem.ENTITY`, the default, projects the
+    straight-line offset onto the direction of travel.  On a straight road that
+    is the along-lane gap.  On a curve it reads short, and the error grows with
+    the curvature: for a leader 20 m ahead along the lane it gives 19.5 m at a
+    50 m radius, 17.9 m at 25 m and 14.6 m at 15 m.  Past a quarter turn it
+    does worse than under-read -- the projection goes negative, the target is
+    taken to be *not ahead*, and the condition stops firing at all, so on a
+    roundabout a leader directly in front in-lane is invisible to it for the
+    whole manoeuvre.
 
-        Past a quarter turn it does worse than under-read: the projection goes
-        negative, the target is taken to be *not ahead*, and the condition
-        stops firing altogether.  On a roundabout or a tight corner a leader
-        directly in front in-lane is invisible to it, silently, for the whole
-        manoeuvre.  Use this condition where the road is straight enough for
-        the difference not to matter, and read a negative result as "cannot
-        tell" rather than as "nothing in front".
+    :attr:`~DistanceCoordinateSystem.LANE` measures along the road instead,
+    which is what `scenario_simulator_v2` does and what OpenSCENARIO's
+    ``coordinateSystem: lane`` asks for.  It needs a loaded map, follows the
+    roads that connect the two, and has no answer once a junction stands
+    between them -- rather than falling back to the straight line.
 
     That is the difference from :class:`TimeToCollisionCondition`, and it is
     not a detail.  TTC divides by the *closing* speed, so it is undefined
@@ -75,6 +76,9 @@ class TimeHeadwayCondition(CompositionCondition):
         value: Threshold time in seconds.
         rule: Comparison operator applied to ``headway`` vs *value*.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
+        coordinate_system: Whether to measure the gap in the entity frame
+            (default) or along the lane.  See above -- on a curve they are
+            different measurements, not different spellings.
         label: Human-readable identifier for this condition.
 
     Raises:
@@ -88,6 +92,7 @@ class TimeHeadwayCondition(CompositionCondition):
         value: float,
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
         tolerance: float = 1e-6,
+        coordinate_system: DistanceCoordinateSystem = (DistanceCoordinateSystem.ENTITY),
         *,
         label: str,
     ) -> None:
@@ -95,6 +100,7 @@ class TimeHeadwayCondition(CompositionCondition):
             raise ValueError("tolerance must be non-negative")
         super().__init__(entity_name=source, label=label)
         self._target = target
+        self._coordinate_system = coordinate_system
         self._comparison = ScalarComparisonRule(
             field="headway", rule=rule, value=value, tolerance=tolerance
         )
@@ -107,6 +113,7 @@ class TimeHeadwayCondition(CompositionCondition):
                 "target": str(self._target),
                 "value": self._comparison.value,
                 "rule": self._comparison.rule.name,
+                "coordinate_system": self._coordinate_system.name,
             }
         )
         return details
@@ -138,14 +145,26 @@ class TimeHeadwayCondition(CompositionCondition):
         if speed < _SPEED_EPSILON:
             return None
 
-        ahead = offset.dot(travel / speed)
+        if self._coordinate_system is DistanceCoordinateSystem.LANE:
+            ahead = lane_gap(
+                CarlaWorldPose(x=src_loc.x, y=src_loc.y, z=src_loc.z, yaw=0.0),
+                travel.x,
+                travel.y,
+                CarlaWorldPose(x=tgt_loc.x, y=tgt_loc.y, z=tgt_loc.z, yaw=0.0),
+            )
+            if ahead is None:
+                return None
+        else:
+            ahead = offset.dot(travel / speed)
+
         if ahead <= _SPEED_EPSILON:
             # Behind, or exactly abeam: there is no gap in front to close.
             #
-            # On a curve sharper than a quarter turn this is also reached by a
-            # leader that *is* ahead along the lane, because the straight-line
-            # projection has gone negative by then.  That is the cost of
-            # measuring in the entity frame; see the class docstring.
+            # In the entity frame a curve sharper than a quarter turn also
+            # reaches here with a leader that *is* ahead along the lane,
+            # because the straight-line projection has gone negative by then.
+            # That is the cost of that frame, and what the lane one removes;
+            # see the class docstring.
             return None
 
         return ahead / speed
