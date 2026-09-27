@@ -1674,3 +1674,138 @@ class TestScenarioMap:
         # projection of the .osm, which could disagree with the drawing.
         assert "focusOn(id)" in script
         assert "getView()" in script
+
+
+class TestJunctionCardsOfferWhatTheDocumentDeclares:
+    """The two junction fields are pickers, not text boxes.
+
+    A controller name and a phase name are the document's own vocabulary: it
+    already says which junctions it runs and what each one's phases are called.
+    Making the author retype them is what the validator's "no controller named"
+    and "has no phase named" errors exist to catch, and an error after the fact
+    is a worse answer than a list of the right names.
+    """
+
+    @staticmethod
+    def _declare(store: DraftStore, draft_id: str, *extra: Any) -> None:
+        """Give the draft two junctions, plus any extra nodes passed."""
+        from autoware_carla_scenario.authoring.models import (
+            SignalControllerRef,
+            SignalPhaseRef,
+        )
+
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers = [
+            SignalControllerRef(
+                name="crossing",
+                phases=[
+                    SignalPhaseRef(name="ns_green", duration_seconds=20.0),
+                    SignalPhaseRef(name="ns_amber", duration_seconds=3.0),
+                ],
+            ),
+            SignalControllerRef(
+                name="next_junction",
+                phases=[SignalPhaseRef(name="ew_green", duration_seconds=15.0)],
+            ),
+        ]
+        draft.document.actions.extend(extra)
+        store.save(draft)
+
+    @staticmethod
+    def _card(node_id: str, controller: str, phase: str) -> Any:
+        from autoware_carla_scenario.authoring.models import ActionNode
+
+        return ActionNode(
+            id=node_id,
+            type="traffic_signal_controller",
+            actor=None,
+            params={"controller": controller, "signal_phase": phase},
+        )
+
+    @staticmethod
+    def _control(body: str, name: str) -> str:
+        return body.split(f'name="{name}"')[1].split("</select>")[0]
+
+    def test_the_controller_field_lists_the_declared_controllers(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._declare(store, draft_id, self._card("a_junction", "crossing", "ns_amber"))
+        body = client.get(f"/draft/{draft_id}/inspector/a_junction").text
+        control = self._control(body, "controller")
+
+        assert '<option value="crossing" selected>' in control
+        assert '<option value="next_junction" >' in control
+
+    def test_the_phase_field_offers_only_that_controllers_phases(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A phase means nothing outside the junction that declares it."""
+        self._declare(store, draft_id, self._card("a_junction", "crossing", "ns_amber"))
+        control = self._control(
+            client.get(f"/draft/{draft_id}/inspector/a_junction").text, "signal_phase"
+        )
+
+        assert '<optgroup label="crossing">' in control
+        assert 'value="ns_green"' in control
+        assert 'value="ns_amber"' in control
+        # Declared by the *other* junction, so it is not on offer here.
+        assert 'value="ew_green"' not in control
+
+    def test_the_phase_durations_are_shown_beside_the_names(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """How long a phase holds is the thing being chosen between."""
+        self._declare(store, draft_id, self._card("a_junction", "crossing", "ns_amber"))
+        control = self._control(
+            client.get(f"/draft/{draft_id}/inspector/a_junction").text, "signal_phase"
+        )
+        assert "20.0 s" in control
+        assert "3.0 s" in control
+
+    def test_a_name_the_document_no_longer_declares_is_kept(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Dropping it on save would edit the scenario behind the author's back.
+
+        A select can only submit what it offers, so a value missing from the
+        options would be replaced by the first one the moment anything else on
+        the card changed -- a silent edit, and of exactly the kind this card
+        already had one of.
+        """
+        self._declare(store, draft_id, self._card("a_stale", "gone", "vanished"))
+        body = client.get(f"/draft/{draft_id}/inspector/a_stale").text
+
+        controller = self._control(body, "controller")
+        phase = self._control(body, "signal_phase")
+        assert '<option value="gone" selected>' in controller
+        assert "not declared" in controller
+        assert '<option value="vanished" selected>' in phase
+        assert "not declared" in phase
+
+    def test_saving_a_stale_card_does_not_lose_its_names(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The round trip the previous test protects, driven through the form."""
+        self._declare(store, draft_id, self._card("a_stale", "gone", "vanished"))
+
+        client.post(
+            f"/draft/{draft_id}/action/a_stale",
+            data={
+                "title": "",
+                "controller": "gone",
+                "signal_phase": "vanished",
+                "phase": "init",
+                "once": "on",
+            },
+        )
+
+        node = _present(
+            next(
+                (a for a in _document(store, draft_id).actions if a.id == "a_stale"),
+                None,
+            ),
+            "the stale card",
+        )
+        assert node.params["controller"] == "gone"
+        assert node.params["signal_phase"] == "vanished"
+        assert node.phase == "init"

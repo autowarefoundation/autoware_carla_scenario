@@ -96,6 +96,13 @@ FieldKind = Literal[
     # which is what lets "after NPC1 finished cutting in" be a fact the document
     # states rather than something the canvas infers from card positions.
     "action",
+    # Names a controller, or one of its phases, that the document declares under
+    # `map.traffic_signal_controllers`.  Both behave as plain text everywhere
+    # except the inspector, which offers the declared names instead of a box to
+    # retype them into: they are the document's own vocabulary, so a typo is a
+    # mistake the editor can decline to let anyone make.
+    "signal_controller",
+    "signal_phase",
     "int_list",
     "int_list_or_ref",
 ]
@@ -1085,7 +1092,7 @@ register_action_spec(
             FieldSpec(
                 name="controller",
                 label="Controller",
-                kind="text",
+                kind="signal_controller",
                 default="",
                 help=(
                     "A controller this scenario declares under "
@@ -1098,7 +1105,7 @@ register_action_spec(
             FieldSpec(
                 name="signal_phase",
                 label="Signal phase",
-                kind="text",
+                kind="signal_phase",
                 default="",
                 help=(
                     "Which of that controller's phases to show.  The cycle "
@@ -2099,7 +2106,7 @@ register_condition_spec(
             FieldSpec(
                 name="controller",
                 label="Controller",
-                kind="text",
+                kind="signal_controller",
                 default="",
                 help=(
                     "A controller this scenario declares under "
@@ -2109,7 +2116,7 @@ register_condition_spec(
             FieldSpec(
                 name="signal_phase",
                 label="Signal phase",
-                kind="text",
+                kind="signal_phase",
                 default="",
                 help=(
                     "Passes while that phase is the one showing.  Read off the "

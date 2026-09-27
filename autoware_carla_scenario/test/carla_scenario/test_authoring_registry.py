@@ -271,6 +271,25 @@ class TestSelectFieldDefaults:
         assert {"road_id", "lane_id"} <= opendrive_fields
         assert "lanelet_id" not in opendrive_fields
 
+    def test_the_junction_cards_name_a_declaration_rather_than_free_text(
+        self,
+    ) -> None:
+        """Both fields hold a name the document already declares.
+
+        A text box there is a second way to spell something the document has
+        spelled once, and the only feedback on getting it wrong is a validation
+        error after the fact.  Kept as a test rather than a convention because
+        the two kinds are easy to lose in a later edit of the spec.
+        """
+        wanted = {"controller": "signal_controller", "signal_phase": "signal_phase"}
+        for kind, spec in (
+            ("action", registry.get_action_spec("traffic_signal_controller")),
+            ("condition", registry.get_condition_spec("traffic_signal_controller")),
+        ):
+            assert spec is not None, kind
+            kinds = {f.name: f.kind for f in spec.fields}
+            assert kinds == wanted, f"{kind} card: {kinds}"
+
     def test_no_card_param_collides_with_the_inspectors_own_fields(self) -> None:
         """A card param may not take a name the inspector already posts.
 
