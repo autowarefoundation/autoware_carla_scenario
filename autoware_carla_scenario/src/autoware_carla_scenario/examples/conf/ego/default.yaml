@@ -14,5 +14,11 @@ ego:
   # enumerates one target key per run, and it is the spawn.
   goal_lanelet_id: null
   goal_s: 0.0
+  # Lanelets the route must pass through, in order, on the way to that goal.
+  # Empty leaves the way there to Autoware, which plans the shortest one -- the
+  # right answer when any way there will do, and the wrong one when the run is a
+  # particular drive: a scenario rendered from a recorded run leaves the
+  # rendered world as soon as the route takes a shortcut the recording did not.
+  waypoint_lanelet_ids: []
   # Which entity drives the ego: autopilot | autoware | carla_driver
   entity: autopilot

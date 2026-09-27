@@ -315,6 +315,28 @@ def test_lifecycle_configures_and_reaches_ready() -> None:
     assert bridge.calls.count("configure") == 1
 
 
+def test_a_bridge_with_the_two_argument_configure_still_works() -> None:
+    """A mission without waypoints is configured the way it was before them.
+
+    ``AutowareBridge`` is exported; an implementation written against
+    ``configure(initial_pose, goal)`` must keep working for every run that
+    names no waypoints.
+    """
+
+    class _LegacyBridge(FakeAutowareBridge):
+        def configure(self, initial_pose, goal):  # type: ignore[override]
+            super().configure(initial_pose, goal)
+
+    bridge = _LegacyBridge()
+    world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+    entity = _make_entity(bridge=bridge)
+    entity.spawn(world, config=None)  # type: ignore[arg-type]
+
+    entity.on_scenario_start(world)
+
+    assert bridge.configured_goal == _GOAL
+
+
 def test_on_scenario_start_before_spawn_raises() -> None:
     entity = _make_entity()
     world = _FakeWorld([])

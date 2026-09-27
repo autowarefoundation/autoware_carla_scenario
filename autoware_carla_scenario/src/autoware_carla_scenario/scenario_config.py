@@ -27,7 +27,7 @@ it is cheap and safe from any environment.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List
 
 from omegaconf import MISSING
 
@@ -166,6 +166,15 @@ class EgoVehicleConfig:
 
     #: Longitudinal offset along the goal lanelet centerline.
     goal_s: float = 0.0
+
+    #: Lanelets the route must pass through, in order, on the way to the goal.
+    #: Empty leaves the way there to whatever plans the route -- for Autoware,
+    #: the shortest one.  A scenario whose point is the road it takes rather
+    #: than where it ends up names them: a drive rendered from a recorded run,
+    #: say, where the shortest route leaves the rendered world.  A scenario that
+    #: already lists its route lanelets can hand them over in ``setup()`` with
+    #: ``derive_waypoints_from_route()`` rather than repeating them here.
+    waypoint_lanelet_ids: List[int] = field(default_factory=list)
 
     #: Which ego entity drives the vehicle.
     #:
