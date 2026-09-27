@@ -29,10 +29,15 @@ class TrafficSignalControllerAction(BaseAction):
     its controller drives, so applying it puts the whole junction into a known
     state at once.
 
-    The phases themselves are declared on the map (``map.traffic_signal_
-    controllers`` in the document), not here, because a junction's cycle is a
-    property of the road network -- which is where OpenSCENARIO keeps it too.
-    This action only says *which* of them to show, by name.
+    The phases themselves are declared in the document, under
+    ``map.traffic_signal_controllers``, not here: this action only says *which*
+    of them to show, by name.  They are the scenario's own -- a test of an ego
+    creeping into a long amber and a test of the same crossing on a short cycle
+    are two scenarios on one road.  What the *map* contributes is
+    ``map.signal_groups``: which signals move together and which movements
+    cross.  OpenSCENARIO splits it the same way, keeping its controllers under
+    ``RoadNetwork/TrafficSignals``, a section of the scenario file rather than
+    of the map.
 
     The cycle carries on from the phase this jumps to.  A junction forced green
     does not therefore stay green: that would be a second decision, and a
@@ -40,7 +45,8 @@ class TrafficSignalControllerAction(BaseAction):
     enough, or by declaring a controller with one phase.
 
     Args:
-        controller: Name of the controller, as declared on the map.
+        controller: Name of the controller, as declared in the document under
+            ``map.traffic_signal_controllers``.
         phase: Name of the phase to show.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.
@@ -68,7 +74,7 @@ class TrafficSignalControllerAction(BaseAction):
         if controller is None:
             logger.warning(
                 "TrafficSignalControllerAction [%s]: no controller named '%s' "
-                "is running; the map declares none by that name",
+                "is running; this scenario declares none by that name",
                 self.label,
                 self._controller,
             )

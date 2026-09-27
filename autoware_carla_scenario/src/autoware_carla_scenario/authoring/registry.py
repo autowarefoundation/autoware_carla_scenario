@@ -1080,9 +1080,11 @@ register_action_spec(
                 kind="text",
                 default="",
                 help=(
-                    "A controller declared on the map.  Its phases, and how "
-                    "long each holds, are declared there too -- a junction's "
-                    "cycle belongs to the road rather than to one scenario."
+                    "A controller this scenario declares under "
+                    "map.traffic_signal_controllers.  Its phases, and how long "
+                    "each holds, are declared there too -- the timing is this "
+                    "scenario's, while map.signal_groups says which signals "
+                    "move together."
                 ),
             ),
             FieldSpec(
@@ -2087,7 +2089,10 @@ register_condition_spec(
                 label="Controller",
                 kind="text",
                 default="",
-                help="A controller declared on the map.",
+                help=(
+                    "A controller this scenario declares under "
+                    "map.traffic_signal_controllers."
+                ),
             ),
             FieldSpec(
                 name="phase",

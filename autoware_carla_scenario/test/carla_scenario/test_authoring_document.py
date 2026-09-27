@@ -822,12 +822,12 @@ class TestSignalControllerValidation:
             for i in validate_document(self._with_controllers(controller)).errors
         )
 
-    def test_a_reference_to_a_controller_this_map_lacks_is_an_error(self) -> None:
+    def test_a_reference_to_a_controller_this_scenario_lacks_is_an_error(self) -> None:
         controller = self._crossing()
         controller.reference = "nonesuch"
         controller.delay_seconds = 3.0
         assert any(
-            "which this map does not declare" in i.message
+            "which this scenario does not declare" in i.message
             for i in validate_document(self._with_controllers(controller)).errors
         )
 

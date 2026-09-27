@@ -1167,7 +1167,7 @@ def _check_signal_reference_targets(
             out.error(
                 f"map.traffic_signal_controllers[{index}].reference",
                 f"Signal controller {controller.name!r} is offset from "
-                f"{reference!r}, which this map does not declare.",
+                f"{reference!r}, which this scenario does not declare.",
             )
 
 
@@ -1212,8 +1212,8 @@ def _check_signal_uses(
         if controller is None:
             out.error(
                 f"{path}.controller",
-                f"No signal controller named {controller_name!r} is declared on "
-                "this map."
+                f"No signal controller named {controller_name!r} is declared "
+                "under map.traffic_signal_controllers."
                 if controller_name
                 else "This card needs the name of a signal controller.",
                 node.id,

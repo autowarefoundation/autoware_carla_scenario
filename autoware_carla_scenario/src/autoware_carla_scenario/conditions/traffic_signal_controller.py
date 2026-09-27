@@ -33,7 +33,8 @@ class TrafficSignalControllerCondition(BaseCondition):
     the same statement.
 
     Args:
-        controller: Name of the controller, as declared on the map.
+        controller: Name of the controller, as declared in the document under
+            ``map.traffic_signal_controllers``.
         phase: Name of the phase to wait for.
         label: Human-readable identifier for this condition.
     """
@@ -53,9 +54,9 @@ class TrafficSignalControllerCondition(BaseCondition):
         ``None`` covers three situations, and they are logged differently
         because only one of them is the scenario's own answer:
 
-        * **No such controller.**  A setup problem -- a mistyped name, or a map
-          that declares no controllers -- warned once, because a condition that
-          never fires for a whole run should say why.
+        * **No such controller.**  A setup problem -- a mistyped name, or a
+          document that declares no controllers -- warned once, because a
+          condition that never fires for a whole run should say why.
         * **The cycle has not started.**  True for the first ticks of a
           controller that waits on another one's delay.  Silent: it is about to
           change by itself.
@@ -74,7 +75,8 @@ class TrafficSignalControllerCondition(BaseCondition):
                 logger.warning(
                     "TrafficSignalControllerCondition [%s]: no controller "
                     "named '%s' is running, so this condition cannot fire. "
-                    "Check the name against the map's declared controllers.",
+                    "Check the name against the document's declared "
+                    "controllers.",
                     self.label,
                     self._controller,
                 )
