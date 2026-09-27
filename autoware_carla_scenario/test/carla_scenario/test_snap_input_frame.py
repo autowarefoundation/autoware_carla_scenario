@@ -14,9 +14,9 @@ cannot see that, because the bug is in the wiring and not in the snap, which is
 why these tests watch the wiring instead.
 
 The ``OpenDrivePose`` is still derived where its lane metadata is genuinely
-wanted -- the lane-change target lane, a route condition's road id, the
-lateral-retry base -- so "derives one" is not the thing under test here.
-"Snaps one" is.
+wanted -- the lane-change target lane, a route condition's road id -- and for
+the ego it is read off the snapped position, so "derives one" is not the thing
+under test here. "Snaps one" is.
 """
 
 from __future__ import annotations
@@ -119,6 +119,27 @@ class TestTheEgoSpawn:
         assert returned == od
         assert scenario.ego_config.od_pose == od
 
+    def test_the_lane_metadata_is_read_off_where_the_ego_was_placed(
+        self, _snapped_poses: List[Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Converted from the Lanelet2 pose instead, the lane could be the one
+        across the reference line, while EntityLanePositionCondition reads the
+        lane off the actor's CARLA position -- and a lane-change target derived
+        from it could then never match."""
+        converted: List[Any] = []
+
+        def _to_opendrive(pose):
+            converted.append(pose)
+            return OpenDrivePose(road_id="7", lane_id=-1, s=8.0, t=0.0)
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.scenario_base.to_opendrive", _to_opendrive
+        )
+
+        self._run()
+
+        assert converted == [_SNAPPED]
+
 
 class TestTheAutowareGoal:
     """A goal Autoware routes to is a Lanelet2 pose on Autoware's own map."""
@@ -207,3 +228,52 @@ def _called_name(call: ast.Call) -> str:
     if isinstance(func, ast.Attribute):
         return func.attr
     return ""
+
+
+class TestTheSpawnRetry:
+    """An occupied spawn is retried around where the first attempt was made."""
+
+    def test_the_retries_offset_the_resolved_transform_not_a_re_snap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Re-snapping the OpenDRIVE pose would move the retries back to the
+        OpenDRIVE lane -- on a map where it disagrees with the Lanelet2 one,
+        possibly the opposing lane -- before offsetting them."""
+        from autoware_carla_scenario.entity._spawn import spawn_vehicle_actor
+
+        def _no_snap(*_args, **_kwargs):
+            raise AssertionError("the retry must not re-snap od_pose")
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.snap.snap_to_carla_road", _no_snap
+        )
+        tried: List[Any] = []
+        actor = MagicMock()
+
+        def _try_spawn(_bp, transform):
+            tried.append(transform)
+            return actor if len(tried) > 1 else None  # the first spot is taken
+
+        world = MagicMock()
+        blueprint = MagicMock(id="vehicle.mini.cooper")
+        world.get_blueprint_library.return_value.filter.return_value = [blueprint]
+        world.try_spawn_actor.side_effect = _try_spawn
+        placed = carla.Transform(
+            carla.Location(x=100.0, y=200.0, z=1.0), carla.Rotation(yaw=0.0)
+        )
+
+        spawned = spawn_vehicle_actor(
+            world,
+            "vehicle.mini.cooper",
+            "npc",
+            SpawnTransform(placed),
+            od_pose=OpenDrivePose(road_id="7", lane_id=1, s=8.0, t=0.0),
+            spawn_retry_max_count=1,
+            spawn_retry_t_step=0.5,
+            spawn_retry_z_step=0.0,
+        )
+
+        assert spawned is actor
+        retry = tried[1].location
+        # Half a metre across the placed transform's heading, nowhere else.
+        assert (retry.x, retry.y) == pytest.approx((100.0, 200.5))

@@ -330,7 +330,8 @@ class DeclarativeScenario(BaseScenario):
 
         pose = Lanelet2Pose(lanelet_id=entity.spawn.lanelet_id, s=entity.spawn.s.value)
         # Snapped as the Lanelet2 pose it was authored as; the OpenDRIVE pose is
-        # carried on to the entity only as the lateral-retry base.
+        # carried on to the entity only to enable the spawn retries (which
+        # offset the snapped transform, not this pose).
         od_pose = to_opendrive(pose)
         snapped = snap_to_carla_road(
             pose, world, ground_projection=self._ground_projection
