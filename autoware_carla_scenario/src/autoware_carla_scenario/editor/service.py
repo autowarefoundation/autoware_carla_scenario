@@ -29,6 +29,7 @@ from ..authoring.models import (
     Entity,
     GoalSpec,
     LaneletSlot,
+    MapRef,
     ScenarioDocument,
     SpawnSpec,
     as_action_phase,
@@ -54,6 +55,7 @@ from ..maps import (
     ensure_xodr,
     list_maps,
     pin_source,
+    resolve_directory,
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
@@ -275,10 +277,20 @@ class EditorService:
             document.timeout_seconds = _as_float(
                 form["timeout_seconds"], "Timeout", document.timeout_seconds
             )
-        for attribute in ("group", "name", "source", "xodr_path", "lanelet2_path"):
+        before = document.map.model_copy()
+        for attribute in (
+            "group",
+            "name",
+            "source",
+            "directory",
+            "xodr_path",
+            "lanelet2_path",
+        ):
             key = f"map_{attribute}"
             if key in form:
                 setattr(document.map, attribute, str(form[key]).strip() or None)
+        if document.map.directory and document.map.directory != before.directory:
+            self._adopt_directory(document, before)
         if document.map.source:
             # Normalise whatever was pasted -- a browser URL, most likely --
             # into the canonical form, so the field shows what will be stored
@@ -313,6 +325,28 @@ class EditorService:
         """Return the map repositories the library offers before anyone types one."""
         return KNOWN_REPOSITORIES
 
+    @staticmethod
+    def _adopt_directory(document: ScenarioDocument, before: MapRef) -> None:
+        """Make a newly named map directory the map *document* resolves to.
+
+        The same rule :meth:`use_map` follows for a source: the new map
+        supersedes the files the document named before, so a file path the
+        form sent back unchanged is cleared rather than left to keep resolving
+        to the old map.  One typed in alongside the directory is an override
+        and stays.  The CARLA map name is taken from the directory, as it is
+        from a downloaded map, unless it was edited in the same submission.
+        """
+        if document.map.lanelet2_path == before.lanelet2_path:
+            document.map.lanelet2_path = None
+        if document.map.xodr_path == before.xodr_path:
+            document.map.xodr_path = None
+        if document.map.name == before.name and document.map.directory:
+            try:
+                document.map.name = resolve_directory(document.map.directory).name
+            except MapResolutionError:
+                # Not a map (yet); the inspector says so where it would be drawn.
+                logger.debug("Map directory not resolvable", exc_info=True)
+
     def use_map(self, document: ScenarioDocument, uri: str) -> None:
         """Point *document* at the map *uri* names, and download it.
 
@@ -325,8 +359,10 @@ class EditorService:
             EditorError: If the map could not be fetched.
         """
         document.map.source = self._canonical_source(uri)
-        # A source supersedes whatever files the document named before it;
-        # leaving them would silently keep resolving to the old map.
+        # A source supersedes whatever map the document named before it --
+        # files or a local directory, which would otherwise win over it --
+        # and leaving them would silently keep resolving to the old map.
+        document.map.directory = None
         document.map.lanelet2_path = None
         document.map.xodr_path = None
         self.fetch_map(document)
@@ -348,8 +384,10 @@ class EditorService:
 
         # The directory name is the CARLA world name -- that is the convention
         # a published Autoware map follows -- so taking it saves the one piece
-        # of the map config a source cannot otherwise supply.
-        document.map.name = resolved.name
+        # of the map config a source cannot otherwise supply.  Not while a
+        # local directory is the map in use: the name is that map's.
+        if not document.map.directory:
+            document.map.name = resolved.name
         where = "already on disk" if resolved.provisioned else "cached"
         commit = f" at {resolved.commit[:10]}" if resolved.commit else ""
         return f"{resolved.name} {where}{commit}."
@@ -384,14 +422,24 @@ class EditorService:
             EditorError: If the map is not downloaded yet, or CARLA could not
                 be reached.
         """
-        source = self._require_source(
-            document,
-            "OpenDRIVE is fetched for a map named by a source. This scenario "
-            "names its files directly, so set the .xodr path.",
-        )
         with _map_errors():
+            # The map in use, which is the local directory when one is set:
+            # resolving the source instead would file this map's OpenDRIVE in
+            # the source map's cache, where that map would later pick it up.
+            resolved = (
+                resolve_directory(document.map.directory)
+                if document.map.directory
+                else resolve_map(
+                    self._require_source(
+                        document,
+                        "OpenDRIVE is fetched for a map named by a source or a "
+                        "directory. This scenario names its files directly, so "
+                        "set the .xodr path.",
+                    )
+                )
+            )
             path = ensure_xodr(
-                resolve_map(source),
+                resolved,
                 map_name=document.map.name or None,
                 host=host,
                 port=port,

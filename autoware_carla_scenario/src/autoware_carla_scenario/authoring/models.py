@@ -613,11 +613,15 @@ class MapRef(_Node):
     the framework's ``map.source`` takes -- so a scenario authored against a
     published HD map exports to a package that finds the same map on any
     machine, rather than to one that names a file only this machine has.
+
+    ``directory`` names a map directory on this machine instead, read in place
+    -- the framework's ``map.directory``.
     """
 
     group: str = "nishishinjuku"
     name: str = "NishishinjukuMap"
     source: Optional[str] = None
+    directory: Optional[str] = None
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     no_3d_model_lanelet_ids: list[int] = Field(default_factory=list)

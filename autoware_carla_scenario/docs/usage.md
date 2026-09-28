@@ -93,6 +93,9 @@ uv run scenario scenario=intersection_passing/straight map=town10hd_opt
 # Any repository, any revision
 uv run scenario map=town10hd_opt \
   map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'
+
+# A map directory on this machine, read in place
+uv run scenario map=town10hd_opt map.directory=/path/to/autoware_maps/Town10HD_Opt
 ```
 
 See [HD Maps from a Git Repository](maps.md).
@@ -254,6 +257,8 @@ Controls ground projection (ray casting) and spawn retry behavior:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `map.name` | str | **required** | CARLA map name (e.g., `NishishinjukuMap`) |
+| `map.source` | str \| null | `null` | Git repository holding the HD map (see [maps.md](maps.md)) |
+| `map.directory` | str \| null | `null` | Local map directory, read in place. Wins over `map.source` |
 | `map.xodr_path` | str \| null | `null` | Path to custom OpenDRIVE file. If `null`, loads built-in CARLA map by name |
 | `map.lanelet2_path` | str \| null | `null` | Path to Lanelet2 .osm file (required for lanelet-based spawn) |
 | `map.no_3d_model_lanelet_ids` | list[int] | `[]` | Lanelet IDs to exclude from sweeps (no ground geometry) |

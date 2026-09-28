@@ -45,9 +45,20 @@
     <p class="ed-help">Selected as <code>map={{ document.map.group }}</code> when running.</p>
   </div>
   <div class="ed-field">
+    <label class="ed-label">Map directory <span class="unit">(local)</span></label>
+    <input type="text" name="map_directory" class="ed-input mono" style="font-size:11.5px"
+           value="{{ document.map.directory or '' }}"
+           placeholder="/path/to/autoware_maps/Town10HD_Opt">
+    <p class="ed-help">
+      A map on this machine, read in place: its <code>.osm</code>,
+      <code>map_projector_info.yaml</code> and any <code>.xodr</code>.
+      Takes precedence over the source above.
+    </p>
+  </div>
+  <div class="ed-field">
     <label class="ed-label">
       Lanelet2 file (.osm)
-      {% if document.map.source %}<span class="unit">override</span>{% endif %}
+      {% if document.map.source or document.map.directory %}<span class="unit">override</span>{% endif %}
     </label>
     <input type="text" name="map_lanelet2_path" class="ed-input mono" style="font-size:11.5px"
            value="{{ document.map.lanelet2_path or '' }}"
@@ -56,14 +67,14 @@
   <div class="ed-field">
     <label class="ed-label">
       OpenDRIVE file (.xodr)
-      {% if document.map.source %}<span class="unit">override</span>{% endif %}
+      {% if document.map.source or document.map.directory %}<span class="unit">override</span>{% endif %}
     </label>
     <input type="text" name="map_xodr_path" class="ed-input mono" style="font-size:11.5px"
            value="{{ document.map.xodr_path or '' }}"
            placeholder="{{ map_status.xodr_path or '' }}">
     <p class="ed-help">
-      {% if document.map.source %}
-        Both are resolved from the source above; set one here only to override it.
+      {% if document.map.source or document.map.directory %}
+        Both are resolved from the map above; set one here only to override it.
       {% else %}
         Both are needed for the spawn preview and for a sweep.
       {% endif %}

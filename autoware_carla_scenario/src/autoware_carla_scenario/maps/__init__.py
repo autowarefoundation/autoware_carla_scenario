@@ -18,6 +18,9 @@ used as it sits::
     )
     hd_map.lanelet2_path  # -> .../autoware_maps/Town10HD_Opt/lanelet2_map.osm
 
+A map that is on this machine but in no repository is read in place with
+:func:`resolve_directory` -- ``map.directory`` in a config.
+
 Nothing here imports CARLA or Lanelet2, so the editor can use it.
 """
 
@@ -32,6 +35,7 @@ from .resolver import (
     ResolvedMap,
     cached_map,
     pin_source,
+    resolve_directory,
     resolve_map,
 )
 from .source import MapSource, MapSourceError
@@ -54,6 +58,7 @@ __all__ = [
     "list_maps",
     "map_root",
     "pin_source",
+    "resolve_directory",
     "resolve_map",
     "resolve_map_paths",
 ]
