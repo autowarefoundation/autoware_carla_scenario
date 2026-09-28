@@ -173,6 +173,36 @@ hd_map.commit          # -> the revision it is at
 `autoware_carla_scenario.maps` imports neither CARLA nor Lanelet2, so it is safe
 to use from any process.
 
+### From a local directory
+
+A map that is on this machine but in no repository -- a copy handed over on a
+USB stick, a map still being edited -- is named by its directory:
+
+```bash
+uv run scenario map=town10hd_opt map.directory=/path/to/autoware_maps/Town10HD_Opt
+```
+
+The directory is read exactly as a map directory in a repository is: its `.osm`
+(`lanelet2_map.osm` when there are several), `map_projector_info.yaml`, and any
+`.xodr` it ships. It may name the `.osm` itself to pick one out of several.
+Nothing is cloned and no revision is recorded, so such a map cannot be pinned.
+
+`map.directory` wins over `map.source`, which is what lets a run be pointed at a
+local copy without first clearing the source its map group selects.
+`map.xodr_path` and `map.lanelet2_path` still win over both.
+
+An OpenDRIVE taken from CARLA for it is cached under
+`.derived/local/<name>-<hash>` in the map root rather than written into the
+directory, which may well be read-only.
+
+```python
+from autoware_carla_scenario.maps import resolve_directory
+
+hd_map = resolve_directory("~/maps/Town10HD_Opt")
+hd_map.lanelet2_path   # -> ~/maps/Town10HD_Opt/lanelet2_map.osm
+hd_map.local           # -> True
+```
+
 ## In the editor
 
 **Map library** in the header browses a repository and lists every map in it.
@@ -182,6 +212,12 @@ that scenario's map.
 The Scenario inspector carries the same thing per scenario: the source, whether
 it is downloaded and whether it is pinned, and buttons to download, refresh, pin
 and fetch OpenDRIVE.
+
+Its **Map directory** field is `map.directory`. Setting one clears the Lanelet2
+and OpenDRIVE file fields unless they were edited in the same change, and takes
+the CARLA map name from the directory. The editor only serves a map from inside
+`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set), so a directory
+elsewhere has to be added there to be previewed.
 
 ## Troubleshooting
 

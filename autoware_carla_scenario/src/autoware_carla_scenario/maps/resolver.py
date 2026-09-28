@@ -20,16 +20,24 @@ it names right now -- :meth:`~...maps.cache.GitMapCache.at_tip` -- so a ref
 means what it says instead of meaning "whatever this machine cloned first", and
 the checkout it lands in is immutable.  :func:`cached_map` cannot ask, because
 it runs on every editor render, so it follows the note that resolve left behind.
+
+A map that is on this machine and in no repository at all -- a directory a
+colleague copied over, a map still being edited -- is read by
+:func:`resolve_directory`.  It goes through the same file discovery as a
+checkout, so the ``.osm``, ``map_projector_info.yaml`` and any ``.xodr`` are
+found the same way, but no git command runs and no revision is recorded.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .cache import CachedRepo, GitMapCache, is_lfs_pointer
+from .cache import DERIVED_SUBDIR, CachedRepo, GitMapCache, is_lfs_pointer
 from .source import MapSource
 
 logger = logging.getLogger(__name__)
@@ -40,6 +48,7 @@ __all__ = [
     "ResolvedMap",
     "cached_map",
     "pin_source",
+    "resolve_directory",
     "resolve_map",
 ]
 
@@ -51,6 +60,14 @@ MAP_FILE_PATTERNS = ("*.osm", "*.xodr", "*.yaml", "*.yml")
 #: What Autoware names a Lanelet2 map, preferred when a directory holds several.
 PREFERRED_LANELET2_NAME = "lanelet2_map.osm"
 
+#: Where artefacts derived from a local map directory are kept, under the
+#: map root's derived directory.  Apart from the repository-relative paths
+#: beside it, so a local directory never shares a cache entry with a published
+#: map that happens to have the same name.
+LOCAL_DERIVED_SUBDIR = "local"
+
+_SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
 
 class MapResolutionError(RuntimeError):
     """A map source was cloned but does not hold a usable map."""
@@ -58,10 +75,11 @@ class MapResolutionError(RuntimeError):
 
 @dataclass(frozen=True)
 class ResolvedMap:
-    """One remote map, as local paths.
+    """One map, as local paths.
 
     Attributes:
-        source: The source that was resolved.
+        source: The source that was resolved, or ``None`` for a map read
+            straight out of a local directory by :func:`resolve_directory`.
         name: What to call the map -- its directory name, e.g. ``Town10HD_Opt``.
         directory: The map directory inside the checkout.
         lanelet2_path: The Lanelet2 ``.osm``.
@@ -77,7 +95,7 @@ class ResolvedMap:
             Autoware's own setup -- rather than cloned by this framework.
     """
 
-    source: MapSource
+    source: Optional[MapSource]
     name: str
     directory: Path
     lanelet2_path: Path
@@ -95,6 +113,11 @@ class ResolvedMap:
         editor disagreed, one would cache a file the other failed to find.
         """
         return self.derived / f"{name or self.name}.xodr"
+
+    @property
+    def local(self) -> bool:
+        """Whether this map was read from a local directory, not a source."""
+        return self.source is None
 
 
 def _include_patterns(path: str) -> tuple[str, ...]:
@@ -122,25 +145,35 @@ def _is_map_file(directory: Path, candidate: Path) -> bool:
     return real.is_file() and (real == root or root in real.parents)
 
 
-def _find_lanelet2(directory: Path, source: MapSource) -> Path:
+def _find_lanelet2(
+    directory: Path, *, named: str = "", label: str = "", where: str = ""
+) -> Path:
     """Return the Lanelet2 map in *directory*.
+
+    Args:
+        directory: The map directory.
+        named: The ``.osm`` the caller asked for by name, preferred when it is
+            there.
+        label: What to call the map in an error -- its source URI, or its
+            directory.
+        where: Which directory to name in an error, when *label* does not.
 
     Raises:
         MapResolutionError: If there is no ``.osm`` that belongs to the map, or
             more than one and none of them is named the way Autoware names it.
     """
-    if source.path.endswith(".osm"):
-        named = directory / Path(source.path).name
-        if _is_map_file(directory, named):
-            return named
+    label = label or str(directory)
+    if named.endswith(".osm"):
+        candidate = directory / Path(named).name
+        if _is_map_file(directory, candidate):
+            return candidate
 
     candidates = sorted(
         p for p in directory.glob("*.osm") if _is_map_file(directory, p)
     )
     if not candidates:
-        raise MapResolutionError(
-            f"{source.uri} has no Lanelet2 (.osm) file in {source.path or '/'}."
-        )
+        suffix = f" in {where}" if where else ""
+        raise MapResolutionError(f"{label} has no Lanelet2 (.osm) file{suffix}.")
     if len(candidates) == 1:
         return candidates[0]
     preferred = directory / PREFERRED_LANELET2_NAME
@@ -148,8 +181,15 @@ def _find_lanelet2(directory: Path, source: MapSource) -> Path:
         return preferred
     names = ", ".join(p.name for p in candidates)
     raise MapResolutionError(
-        f"{source.uri} holds several Lanelet2 files ({names}) and none is named "
+        f"{label} holds several Lanelet2 files ({names}) and none is named "
         f"{PREFERRED_LANELET2_NAME}. Point the source at one of them."
+    )
+
+
+def _lanelet2_of(directory: Path, source: MapSource) -> Path:
+    """Return the Lanelet2 map *source* names in *directory*."""
+    return _find_lanelet2(
+        directory, named=source.path, label=source.uri, where=source.path or "/"
     )
 
 
@@ -229,6 +269,58 @@ def resolve_map(
     return _describe(parsed, directory, derived, commit=repo.commit)
 
 
+def resolve_directory(
+    directory: "str | Path", *, cache: Optional[GitMapCache] = None
+) -> ResolvedMap:
+    """Return the map held in the local *directory*, touching no network.
+
+    The directory is read exactly as a checked-out map directory is: its
+    ``.osm`` (``lanelet2_map.osm`` when there are several), its
+    ``map_projector_info.yaml`` and any ``.xodr`` it ships.  *directory* may
+    also name the ``.osm`` itself, which picks that file out of a directory
+    holding several.
+
+    An OpenDRIVE fetched from CARLA for this map is kept under the map root
+    rather than written into *directory*, which is the user's and may well be
+    read-only.  The entry is named after the directory's absolute path, so two
+    directories that share a name never share an OpenDRIVE.
+
+    Args:
+        directory: The map directory, or the ``.osm`` inside it.  ``~`` is
+            expanded and a relative path is taken from the working directory.
+        cache: The map root to keep derived artefacts in.  Defaults to the
+            shared one.
+
+    Raises:
+        MapResolutionError: If *directory* does not exist or holds no Lanelet2
+            map.
+    """
+    path = Path(directory).expanduser().absolute()
+    named = ""
+    if path.suffix.lower() == ".osm":
+        # A file named outright is the one meant; falling back to another
+        # .osm beside it would run a typo against the wrong map.
+        if not path.is_file():
+            raise MapResolutionError(f"Lanelet2 map {path} does not exist.")
+        named = path.name
+        path = path.parent
+    if not path.is_dir():
+        raise MapResolutionError(f"Map directory {path} does not exist.")
+
+    store = cache or GitMapCache()
+    digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:10]
+    slug = _SLUG_UNSAFE.sub("-", path.name).strip("-").lower() or "root"
+    derived = store.root / DERIVED_SUBDIR / LOCAL_DERIVED_SUBDIR / f"{slug}-{digest}"
+
+    lanelet2_path = _find_lanelet2(path, named=named)
+    if is_lfs_pointer(lanelet2_path):
+        raise MapResolutionError(
+            f"{lanelet2_path} is a git-lfs pointer, not a map. Run "
+            "`git lfs pull` in the repository it was copied from."
+        )
+    return _describe(None, path, derived, lanelet2_path=lanelet2_path)
+
+
 def _peek_ref(store: GitMapCache, source: MapSource) -> Optional[CachedRepo]:
     """Return the cache entry holding *source*'s ref, without fetching anything.
 
@@ -285,7 +377,7 @@ def cached_map(
         return None
 
     try:
-        lanelet2_path = _find_lanelet2(directory, parsed)
+        lanelet2_path = _lanelet2_of(directory, parsed)
     except MapResolutionError:
         return None
     if is_lfs_pointer(lanelet2_path):
@@ -349,7 +441,7 @@ def _in_worktree(repo: CachedRepo, directory_path: str) -> Path:
 
 
 def _describe(
-    source: MapSource,
+    source: Optional[MapSource],
     directory: Path,
     derived: Path,
     *,
@@ -362,13 +454,19 @@ def _describe(
     *lanelet2_path* lets a caller that has already found the ``.osm`` say so,
     rather than have the directory scanned for it twice.
     """
+    if lanelet2_path is None:
+        lanelet2_path = (
+            _find_lanelet2(directory)
+            if source is None
+            else _lanelet2_of(directory, source)
+        )
     projector_info = directory / "map_projector_info.yaml"
     xodr_path, xodr_is_derived = _find_xodr(directory, derived)
     return ResolvedMap(
         source=source,
         name=directory.name,
         directory=directory,
-        lanelet2_path=lanelet2_path or _find_lanelet2(directory, source),
+        lanelet2_path=lanelet2_path,
         xodr_path=xodr_path,
         projector_info_path=projector_info if projector_info.is_file() else None,
         derived=derived,

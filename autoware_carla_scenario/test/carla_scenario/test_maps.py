@@ -30,6 +30,7 @@ from autoware_carla_scenario.maps import (
     list_maps,
     map_root,
     pin_source,
+    resolve_directory,
     resolve_map,
     resolve_map_paths,
 )
@@ -524,6 +525,278 @@ class TestResolveMapPaths:
         assert town_a.install_xodr is None
         assert town_a.opendrive_path is not None
         assert town_a.opendrive_path.name == "TownA.xodr"
+
+
+# ---------------------------------------------------------------------------
+# A local map directory
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def local_map(tmp_path: Path) -> Path:
+    """A map directory on this machine, in no git repository."""
+    directory = tmp_path / "somewhere" / "TownL"
+    directory.mkdir(parents=True)
+    (directory / "lanelet2_map.osm").write_text(_OSM)
+    (directory / "map_projector_info.yaml").write_text("projector_type: Local\n")
+    (directory / "pointcloud_map.pcd").write_text("not read\n")
+    return directory
+
+
+class TestResolveDirectory:
+    """``map.directory``: a map read in place, with no repository behind it."""
+
+    def test_finds_the_map_files_the_way_a_checkout_is_searched(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        resolved = resolve_directory(local_map, cache=cache)
+
+        assert resolved.local and resolved.source is None
+        assert resolved.name == "TownL"
+        assert resolved.lanelet2_path == local_map / "lanelet2_map.osm"
+        assert resolved.projector_info_path == local_map / "map_projector_info.yaml"
+        assert resolved.xodr_path is None
+        assert resolved.commit == "" and not resolved.provisioned
+
+    def test_runs_no_git_command(
+        self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _git_calls(monkeypatch)
+        resolve_directory(local_map, cache=cache)
+        assert calls == []
+
+    def test_a_shipped_opendrive_is_found_and_is_not_derived(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        (local_map / "TownL.xodr").write_text("<OpenDRIVE/>")
+        resolved = resolve_directory(local_map, cache=cache)
+        assert resolved.xodr_path == local_map / "TownL.xodr"
+        assert not resolved.xodr_is_derived
+
+    def test_accepts_the_osm_itself(self, local_map: Path, cache: GitMapCache) -> None:
+        (local_map / "other.osm").write_text(_OSM)
+        resolved = resolve_directory(local_map / "other.osm", cache=cache)
+        assert resolved.directory == local_map
+        assert resolved.lanelet2_path == local_map / "other.osm"
+
+    def test_a_named_osm_that_is_missing_is_an_error_not_a_fallback(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        with pytest.raises(MapResolutionError, match="wrong.osm does not exist"):
+            resolve_directory(local_map / "wrong.osm", cache=cache)
+
+    def test_expands_the_home_directory(
+        self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(local_map.parent))
+        resolved = resolve_directory("~/TownL", cache=cache)
+        assert resolved.lanelet2_path == local_map / "lanelet2_map.osm"
+
+    def test_a_missing_directory_is_reported(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        with pytest.raises(MapResolutionError, match="does not exist"):
+            resolve_directory(tmp_path / "nowhere", cache=cache)
+
+    def test_a_directory_with_no_map_is_reported(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        with pytest.raises(MapResolutionError, match=r"no Lanelet2 \(\.osm\)"):
+            resolve_directory(tmp_path, cache=cache)
+
+    def test_an_unpulled_lfs_pointer_is_reported(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        (local_map / "lanelet2_map.osm").write_text(
+            "version https://git-lfs.github.com/spec/v1\n"
+            "oid sha256:" + "0" * 64 + "\nsize 123\n"
+        )
+        with pytest.raises(MapResolutionError, match="git-lfs pointer"):
+            resolve_directory(local_map, cache=cache)
+
+    def test_a_derived_opendrive_goes_to_the_map_root_not_the_directory(
+        self,
+        local_map: Path,
+        cache: GitMapCache,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        asset = tmp_path / "TownL.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_asset_env_var("TownL"), str(asset))
+
+        written = ensure_xodr(
+            resolve_directory(local_map, cache=cache), allow_server=False
+        )
+
+        assert cache.root in written.parents
+        assert not any(local_map.glob("*.xodr"))
+        # Read back on the next resolve, as a derived file.
+        again = resolve_directory(local_map, cache=cache)
+        assert again.xodr_path == written and again.xodr_is_derived
+
+    def test_two_directories_with_one_name_do_not_share_an_opendrive(
+        self, local_map: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        twin = tmp_path / "elsewhere" / "TownL"
+        twin.mkdir(parents=True)
+        (twin / "lanelet2_map.osm").write_text(_OSM)
+        assert (
+            resolve_directory(local_map, cache=cache).derived
+            != resolve_directory(twin, cache=cache).derived
+        )
+
+    def test_a_config_names_it_as_map_directory(
+        self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        paths = resolve_map_paths({"directory": str(local_map)})
+
+        assert paths.name == "TownL"
+        assert paths.lanelet2_path == local_map / "lanelet2_map.osm"
+        assert paths.resolved is not None and paths.resolved.local
+        assert not paths.from_source
+        # No OpenDRIVE shipped, so a run writes one from the loaded world.
+        assert paths.install_xodr is None
+        assert paths.opendrive_path is not None
+        assert cache.root in paths.opendrive_path.parents
+
+    def test_it_wins_over_a_source_and_fetches_nothing(
+        self,
+        local_map: Path,
+        origin_repo: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        calls = _git_calls(monkeypatch)
+        paths = resolve_map_paths(
+            {"source": _uri(origin_repo), "directory": str(local_map)}
+        )
+        assert paths.lanelet2_path == local_map / "lanelet2_map.osm"
+        assert calls == []
+
+    def test_explicit_paths_still_override_it(
+        self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        paths = resolve_map_paths(
+            {
+                "directory": str(local_map),
+                "lanelet2_path": "/tmp/other.osm",
+                "xodr_path": "/tmp/other.xodr",
+                "name": "Town10HD_Opt",
+            }
+        )
+        assert paths.name == "Town10HD_Opt"
+        assert paths.lanelet2_path == Path("/tmp/other.osm")
+        assert paths.install_xodr == Path("/tmp/other.xodr")
+
+    def test_an_unusable_directory_is_an_error_for_a_run(
+        self, tmp_path: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        with pytest.raises(MapResolutionError):
+            resolve_map_paths({"directory": str(tmp_path / "nowhere")})
+
+    def test_the_editor_stores_it_and_exports_it(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        local_map: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from autoware_carla_scenario.authoring.hydra_config import (
+            _map_overrides,
+        )
+        from autoware_carla_scenario.editor import map_preview
+
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(local_map.parent))
+        draft_id = _new_draft(editor)
+        editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        )
+
+        document = _stored(drafts, draft_id)
+        assert document.map.directory == str(local_map)
+        # The starter's Nishishinjuku files are superseded, as they are by a
+        # source, and the CARLA map name is the directory's.
+        assert document.map.lanelet2_path is None
+        assert document.map.xodr_path is None
+        assert document.map.name == "TownL"
+        assert map_preview.lanelet2_source(document) == (local_map / "lanelet2_map.osm")
+        overrides = _map_overrides(document)
+        assert overrides["directory"] == str(local_map)
+        # Its own map, so the selected group's exclusion list is not inherited.
+        assert overrides["no_3d_model_lanelet_ids"] == []
+
+    def test_a_file_typed_alongside_it_in_the_editor_is_kept(
+        self, editor: "TestClient", drafts: "DraftStore", local_map: Path
+    ) -> None:
+        draft_id = _new_draft(editor)
+        editor.post(
+            f"/draft/{draft_id}/scenario",
+            data={
+                "map_directory": str(local_map),
+                "map_xodr_path": "/maps/TownL.xodr",
+                "map_name": "Town10HD_Opt",
+            },
+        )
+        document = _stored(drafts, draft_id)
+        assert document.map.xodr_path == "/maps/TownL.xodr"
+        assert document.map.name == "Town10HD_Opt"
+        assert document.map.lanelet2_path is None
+
+    def test_choosing_a_library_map_clears_the_directory(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        local_map: Path,
+        origin_repo: Path,
+    ) -> None:
+        draft_id = _new_draft(editor)
+        editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        )
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+
+        document = _stored(drafts, draft_id)
+        assert document.map.directory is None
+        assert resolve_map_paths(document.map).name == "TownA"
+        assert document.map.name == "TownA"
+
+    def test_opendrive_is_fetched_for_the_directory_in_use_not_the_source(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        local_map: Path,
+        origin_repo: Path,
+        cache: GitMapCache,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        asset = tmp_path / "TownL.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_asset_env_var("TownL"), str(asset))
+
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+        editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        )
+        editor.post(
+            f"/draft/{draft_id}/map/opendrive",
+            data={"carla_host": "127.0.0.1", "carla_port": "1"},
+        )
+
+        local = resolve_directory(local_map, cache=cache)
+        assert local.xodr_path is not None and local.xodr_is_derived
+        # Nothing filed under the source map, which would pick it up later.
+        source_map = resolve_map(_uri(origin_repo), cache=cache)
+        assert source_map.xodr_path is None
+        # And the local map keeps its own name through a re-check of the source.
+        editor.post(f"/draft/{draft_id}/map/fetch")
+        assert _stored(drafts, draft_id).map.name == "TownL"
 
 
 # ---------------------------------------------------------------------------

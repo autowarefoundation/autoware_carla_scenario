@@ -156,7 +156,8 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
     ``no_3d_model_lanelet_ids``, which sweep constraints reference through
     ``${map.no_3d_model_lanelet_ids}``.
 
-    A document that names its own map by ``source`` is the exception: the group
+    A document that names its own map by ``source`` or ``directory`` is the
+    exception: the group
     a run selects then describes a *different* map, and inheriting that map's
     exclusion list would hand this scenario a set of lanelet ids that mean
     nothing on the map it actually runs on.  So the list is written out even
@@ -168,11 +169,13 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
         overrides["name"] = map_ref.name
     if map_ref.source:
         overrides["source"] = map_ref.source
+    if map_ref.directory:
+        overrides["directory"] = map_ref.directory
     if map_ref.xodr_path:
         overrides["xodr_path"] = map_ref.xodr_path
     if map_ref.lanelet2_path:
         overrides["lanelet2_path"] = map_ref.lanelet2_path
-    if map_ref.no_3d_model_lanelet_ids or map_ref.source:
+    if map_ref.no_3d_model_lanelet_ids or map_ref.source or map_ref.directory:
         overrides["no_3d_model_lanelet_ids"] = list(map_ref.no_3d_model_lanelet_ids)
     return overrides
 

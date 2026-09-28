@@ -48,14 +48,11 @@ class AutowareBridgeConfig:
         timeout_s: Per-RPC timeout in seconds.
         ready_timeout_ticks: Maximum world ticks to wait for Autoware to become
             ready before the scenario fails.  At 20 Hz, ``1200`` is ~60 s.
-        attach_timeout: Seconds to wait for the interface node to spawn the ego
-            actor before :meth:`AutowareEgoEntity.spawn` raises.
     """
 
     address: str = "localhost:50052"
     timeout_s: float = 60.0
     ready_timeout_ticks: int = 1200
-    attach_timeout: float = 30.0
 
 
 @dataclass(frozen=True)

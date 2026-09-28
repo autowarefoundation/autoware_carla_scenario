@@ -27,14 +27,8 @@ from hydra.types import HydraContext
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from .bindings import Binding, parse_binding
-from .constraints import (
-    Constraint,
-    create_routing_graph,
-    find_matching_lanelets,
-    parse_constraint,
-)
 from ..maps import resolve_map_paths
+from .expand import expand_sweep
 from .map_loader import load_map
 
 logger = logging.getLogger(__name__)
@@ -222,7 +216,8 @@ class LaneletConstraintSweeper(Sweeper):
         # -- 1. Resolve map paths ------------------------------------------
         # A map named by `map.source` is cloned (or found already downloaded)
         # here, so a sweep runs against a published HD map without anyone
-        # having to name a local file for it first.
+        # having to name a local file for it first; `map.directory` names a
+        # map on this machine and is read in place.
         paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
 
         # -- 2. Load the Lanelet2 map (lightweight) ------------------------
@@ -241,64 +236,12 @@ class LaneletConstraintSweeper(Sweeper):
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
 
-        constraints_cfg = sweep_dict.get("constraints", {})
-        if not constraints_cfg:
-            raise ValueError("sweep.constraints is empty; nothing to sweep.")
-
-        # Constraints are keyed by the target parameter (e.g. ego.spawn_lanelet_id).
-        # Each value is a list of constraint dicts.
-        all_constraints: list[Constraint] = []
-        constraint_target_key: str | None = None
-        for target_key, constraint_list in constraints_cfg.items():
-            constraint_target_key = target_key
-            for c_cfg in constraint_list:
-                all_constraints.append(parse_constraint(c_cfg))
-
-        if not all_constraints or constraint_target_key is None:
-            raise ValueError("No valid constraints found in sweep.constraints.")
-
-        # -- 4. Build routing graph (once) and find matching lanelets --------
-        routing_graph = create_routing_graph(lanelet_map)
-        matched_ids = find_matching_lanelets(
-            all_constraints, lanelet_map, routing_graph
-        )
-        if not matched_ids:
-            logger.warning("No lanelets match the given constraints. Nothing to sweep.")
-            return []
-
-        # -- 5. Parse bindings ---------------------------------------------
-        bindings_cfg = sweep_dict.get("bindings", {})
-        bindings: list[Binding] = []
-        for target_key, b_cfg in bindings_cfg.items():
-            bindings.append(parse_binding(target_key, b_cfg))
-
-        # -- 6. Build override batches -------------------------------------
-        batches: list[tuple[str, ...]] = []
-        for lid in matched_ids:
-            overrides: list[str] = [f"{constraint_target_key}={lid}"]
-            for binding in bindings:
-                try:
-                    result = binding.resolve(lid, lanelet_map, routing_graph)
-                    overrides.append(f"{binding.target_key}={result.value}")
-                    if result.lanelet_id_override is not None:
-                        overrides[0] = (
-                            f"{constraint_target_key}={result.lanelet_id_override}"
-                        )
-                except Exception:
-                    logger.warning(
-                        "Binding %s failed for lanelet %d; skipping this lanelet.",
-                        binding.target_key,
-                        lid,
-                        exc_info=True,
-                    )
-                    break
-            else:
-                # Merge CLI arguments.
-                overrides.extend(arguments)
-                batches.append(tuple(overrides))
-
+        # -- 4-6. Expand: matching lanelets -> one override batch each -----
+        batches: list[tuple[str, ...]] = [
+            tuple(case) for case in expand_sweep(sweep_dict, lanelet_map, arguments)
+        ]
         if not batches:
-            logger.warning("All lanelets were skipped due to binding failures.")
+            logger.warning("Nothing to sweep.")
             return []
 
         logger.info(

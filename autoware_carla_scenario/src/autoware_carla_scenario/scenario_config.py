@@ -103,6 +103,18 @@ class MapConfig:
     #: single file can be overridden without abandoning the source.
     source: str | None = None
 
+    #: Optional local directory holding the HD map, read in place::
+    #:
+    #:     map.directory=/path/to/autoware_maps/Town10HD_Opt
+    #:
+    #: The directory is searched the way a map repository's is: its ``.osm``
+    #: (``lanelet2_map.osm`` when there are several), its
+    #: ``map_projector_info.yaml`` and any ``.xodr`` it ships.  It may also
+    #: name the ``.osm`` itself.  Nothing is cloned and no revision is
+    #: recorded.  It wins over ``source``; ``xodr_path`` and ``lanelet2_path``
+    #: still win over both.
+    directory: str | None = None
+
     #: Optional path to a custom OpenDRIVE file that overwrites the built-in map.
     #:
     #: Leave it unset for a map whose roads CARLA already ships: the OpenDRIVE

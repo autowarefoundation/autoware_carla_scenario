@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .resolver import ResolvedMap, cached_map, resolve_map
+from .resolver import ResolvedMap, cached_map, resolve_directory, resolve_map
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,8 @@ class MapPaths:
         lanelet2_path: The Lanelet2 map, or ``None`` when the config names none.
         xodr_path: The OpenDRIVE file, or ``None`` when it has yet to be taken
             from CARLA -- see :func:`~...maps.opendrive.ensure_xodr`.
-        resolved: The remote map this came from, when ``map.source`` was set.
+        resolved: The map this came from, when ``map.directory`` or
+            ``map.source`` was set.
         projector_type: The projection override the config carries, if any.
         xodr_is_derived: Whether :attr:`xodr_path` was read back out of CARLA
             rather than named by the config or shipped by the repository.
@@ -73,14 +74,14 @@ class MapPaths:
     @property
     def from_source(self) -> bool:
         """Whether these paths came out of a map repository."""
-        return self.resolved is not None
+        return self.resolved is not None and not self.resolved.local
 
     @property
     def derived_xodr(self) -> Optional[Path]:
         """Where an OpenDRIVE fetched from CARLA should be written.
 
-        ``None`` for a map that is not backed by a repository: there is no
-        cache entry to put one in, and such a scenario names its own file.
+        ``None`` for a map named only by file paths: there is no cache entry
+        to put one in, and such a scenario names its own file.
         """
         if self.resolved is None:
             return None
@@ -119,6 +120,12 @@ def resolve_map_paths(
     A config naming neither a source nor any file comes back empty rather than
     raising: a scenario is edited into shape long before it has a map.
 
+    ``map.directory`` names a map on this machine and is read in place -- see
+    :func:`~...maps.resolver.resolve_directory`.  It wins over ``map.source``,
+    so a run can be pointed at a local copy of a map without first clearing
+    the source its map group selects.  ``lanelet2_path`` and ``xodr_path``
+    still win over both.
+
     Args:
         map_config: The ``map`` config group, in any of the shapes
             :func:`_setting` reads.
@@ -129,9 +136,10 @@ def resolve_map_paths(
         refresh: Fetch the map repository again even when it is already cached.
 
     Raises:
-        MapSourceError, MapCacheError, MapResolutionError: If ``map.source`` is
-            set and cannot be resolved.
+        MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
+            or ``map.directory`` is set and cannot be resolved.
     """
+    directory = _setting(map_config, "directory")
     source = _setting(map_config, "source")
     lanelet2 = _setting(map_config, "lanelet2_path")
     xodr = _setting(map_config, "xodr_path")
@@ -139,7 +147,16 @@ def resolve_map_paths(
     projector_type = _setting(map_config, "projector_type")
 
     resolved: Optional[ResolvedMap] = None
-    if source is not None:
+    if directory is not None:
+        if source is not None:
+            logger.info(
+                "map.directory %s takes precedence over map.source %s",
+                directory,
+                source,
+            )
+        resolved = resolve_directory(directory)
+        name = name or resolved.name
+    elif source is not None:
         resolved = (
             resolve_map(source, refresh=refresh)
             if allow_fetch or refresh
