@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from typing import List
+from unittest import mock
 
 import carla
 import pytest
@@ -139,6 +140,23 @@ def _make_entity(bridge=None, **config_kwargs) -> AutowareEgoEntity:
     )
 
 
+def _place(entity: AutowareEgoEntity, world) -> "_FakeActor":
+    """Give *entity* the world's ego, as :meth:`spawn` would.
+
+    The spawn itself needs a CARLA blueprint library; these tests only need the
+    entity to have its actor, so the placement is stubbed and the ego already
+    standing in the fake world is the one returned.
+    """
+    actor = next(
+        a for a in world.get_actors() if a.attributes["role_name"] == str(EGO_ROLE_NAME)
+    )
+    with mock.patch(
+        "autoware_carla_scenario.entity.autoware_entity.spawn_vehicle_actor",
+        return_value=actor,
+    ):
+        return entity.spawn(world, _spawn_config())
+
+
 def _assert_pose_close(actual, expected) -> None:
     """Compare two poses component-wise; the derived one is exact only to float."""
     assert actual is not None
@@ -185,116 +203,65 @@ def test_autoware_entity_placeholder_still_exists() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Attach behaviour
+# Spawn behaviour
 # ---------------------------------------------------------------------------
 
 
-def test_spawn_attaches_to_existing_ego_actor() -> None:
-    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
-    other = _FakeActor(1, "npc1")
-    world = _FakeWorld([other, ego_actor])
+def test_spawn_places_the_ego_where_the_scenario_said(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scenario resolved the spawn pose; the ego goes there, not elsewhere."""
+    spawned = _FakeActor(42, str(EGO_ROLE_NAME))
+    seen: dict = {}
+
+    def _fake_spawn(world, vehicle_type, role_name, spawn_location, **kwargs):
+        seen.update(role_name=role_name, spawn_location=spawn_location)
+        return spawned
+
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.autoware_entity.spawn_vehicle_actor",
+        _fake_spawn,
+    )
     entity = _make_entity()
+    config = _spawn_config()
 
-    attached = entity.spawn(world, config=None)  # type: ignore[arg-type]
+    actor = entity.spawn(_FakeWorld([]), config)  # type: ignore[arg-type]
 
-    assert attached is ego_actor
-    assert entity.actor is ego_actor
+    assert actor is spawned
+    assert entity.actor is spawned
+    assert seen["role_name"] == str(EGO_ROLE_NAME)
+    assert seen["spawn_location"] is config.spawn_location
 
 
-def test_spawn_ticks_a_synchronous_world_until_the_ego_appears(
+def test_destroy_destroys_the_ego_it_spawned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The wait drives the clock, because the interface waits for it to.
-
-    Nothing else ticks the world before the ego is attached, and the interface
-    node will not spawn the ego until it has seen a tick.  A wait that only
-    polls therefore deadlocks.
-    """
+    """The actor is the scenario's, so it does not outlive the run."""
+    spawned = _FakeActor(42, str(EGO_ROLE_NAME))
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.time.sleep", lambda _s: None
+        "autoware_carla_scenario.entity.autoware_entity.spawn_vehicle_actor",
+        lambda *a, **k: spawned,
     )
-    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
-    world = _FakeWorld(
-        [_FakeActor(1, "npc1")],
-        synchronous_mode=True,
-        reveal_after_ticks=3,
-        revealed=ego_actor,
-    )
-    entity = _make_entity(attach_timeout=30.0)
-
-    attached = entity.spawn(world, config=None)  # type: ignore[arg-type]
-
-    assert attached is ego_actor
-    assert world.ticks >= 3
-
-
-def test_spawn_holds_the_other_vehicles_while_it_ticks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A car parked on a slope must not roll away during the attach ticks.
-
-    The scenario's actors are already spawned by then, and the runner only
-    starts holding them after the attach returns.
-    """
-    monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.time.sleep", lambda _s: None
-    )
-    npc = _FakeActor(1, "npc1")
-    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
-    world = _FakeWorld(
-        [npc], synchronous_mode=True, reveal_after_ticks=3, revealed=ego_actor
-    )
-    entity = _make_entity(attach_timeout=30.0)
-
-    entity.spawn(world, config=None)  # type: ignore[arg-type]
-
-    assert npc.controls, "the npc was never held"
-    held = npc.controls[-1]
-    assert held.brake == pytest.approx(1.0)
-    assert held.hand_brake is True
-    assert held.throttle == pytest.approx(0.0)
-
-
-def test_spawn_does_not_tick_an_asynchronous_world(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An async server steps itself; ticking it would race its own stepping."""
-    monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.time.sleep", lambda _s: None
-    )
-    world = _FakeWorld([_FakeActor(1, "npc1")], synchronous_mode=False)
-    entity = _make_entity(attach_timeout=0.2)
-
-    with pytest.raises(RuntimeError, match="No ego actor"):
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
-
-    assert world.ticks == 0
-
-
-def test_spawn_times_out_when_ego_absent() -> None:
-    world = _FakeWorld([_FakeActor(1, "npc1")])
-    entity = _make_entity(attach_timeout=0.0)
-
-    with pytest.raises(RuntimeError, match="No ego actor"):
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
-
-
-def test_destroy_does_not_destroy_actor() -> None:
-    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
-    world = _FakeWorld([ego_actor])
     entity = _make_entity()
-    entity.spawn(world, config=None)  # type: ignore[arg-type]
+    entity.spawn(_FakeWorld([]), _spawn_config())  # type: ignore[arg-type]
 
     entity.destroy()
 
-    # The interface node owns the actor lifecycle; we must not destroy it.
-    assert ego_actor.destroyed is False
+    assert spawned.destroyed is True
     assert entity.actor is None
 
 
-# ---------------------------------------------------------------------------
-# Readiness wait via lifecycle hooks
-# ---------------------------------------------------------------------------
+def test_the_runner_cleans_up_an_ego_this_entity_spawned() -> None:
+    assert AutowareEgoEntity.attaches_to_existing_actor is False
+
+
+def _spawn_config():
+    from autoware_carla_scenario.entity._spawn import SpawnPointIndex
+    from autoware_carla_scenario.scenario_base import EgoConfig
+
+    return EgoConfig(
+        vehicle_type="vehicle.byd.j6gen2", spawn_location=SpawnPointIndex(0)
+    )
 
 
 def test_lifecycle_configures_and_reaches_ready() -> None:
@@ -302,7 +269,7 @@ def test_lifecycle_configures_and_reaches_ready() -> None:
     ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
     world = _FakeWorld([ego_actor])
     entity = _make_entity(bridge=bridge)
-    entity.spawn(world, config=None)  # type: ignore[arg-type]
+    _place(entity, world)
 
     assert not entity.is_initialized
     _drive_to_ready(entity, world)
@@ -330,7 +297,7 @@ def test_a_bridge_with_the_two_argument_configure_still_works() -> None:
     bridge = _LegacyBridge()
     world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
     entity = _make_entity(bridge=bridge)
-    entity.spawn(world, config=None)  # type: ignore[arg-type]
+    _place(entity, world)
 
     entity.on_scenario_start(world)
 
@@ -349,7 +316,7 @@ def test_on_scenario_start_requires_poses() -> None:
     ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
     world = _FakeWorld([ego_actor])
     entity = AutowareEgoEntity(bridge=FakeAutowareBridge())  # no poses
-    entity.spawn(world, config=None)  # type: ignore[arg-type]
+    _place(entity, world)
 
     # The message has to name the way out: the poses come from the scenario's
     # setup(), which is the only place they exist.
@@ -371,7 +338,7 @@ def test_not_ready_in_time_requests_termination() -> None:
     ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
     world = _FakeWorld([ego_actor])
     entity = _make_entity(bridge=bridge, ready_timeout_ticks=3)
-    entity.spawn(world, config=None)  # type: ignore[arg-type]
+    _place(entity, world)
 
     entity.on_scenario_start(world)
     for _ in range(50):
@@ -402,7 +369,7 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
         bridge = FakeAutowareBridge()
         entity = AutowareEgoEntity(bridge=bridge, goal_pose=_GOAL)
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
+        _place(entity, world)
 
         entity.on_scenario_start(world)
 
@@ -415,7 +382,7 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
         bridge = FakeAutowareBridge()
         entity = _make_entity(bridge=bridge)
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
+        _place(entity, world)
 
         entity.on_scenario_start(world)
 
@@ -424,7 +391,7 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
     def test_a_matching_expectation_is_quiet(self, caplog) -> None:
         entity = _make_entity()
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
+        _place(entity, world)
 
         with caplog.at_level("WARNING"):
             entity.on_scenario_start(world)
@@ -438,7 +405,7 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
         entity = _make_entity()
         elsewhere = carla.Transform(carla.Location(x=50.0, y=-2.0, z=0.5))
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), elsewhere)])
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
+        _place(entity, world)
 
         with caplog.at_level("WARNING"):
             entity.on_scenario_start(world)
@@ -451,7 +418,7 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
         entity = _make_entity()
         higher = carla.Transform(carla.Location(x=1.0, y=-2.0, z=2.0))
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), higher)])
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
+        _place(entity, world)
 
         with caplog.at_level("WARNING"):
             entity.on_scenario_start(world)
@@ -485,7 +452,7 @@ class TestRouteTo:
         bridge = FakeAutowareBridge()
         entity = _make_entity(bridge=bridge)
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
-        entity.spawn(world, config=None)  # type: ignore[arg-type]
+        _place(entity, world)
 
         entity.route_to(
             world,
