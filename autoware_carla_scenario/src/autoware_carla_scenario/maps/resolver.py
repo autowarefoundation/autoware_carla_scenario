@@ -298,6 +298,10 @@ def resolve_directory(
     path = Path(directory).expanduser().absolute()
     named = ""
     if path.suffix.lower() == ".osm":
+        # A file named outright is the one meant; falling back to another
+        # .osm beside it would run a typo against the wrong map.
+        if not path.is_file():
+            raise MapResolutionError(f"Lanelet2 map {path} does not exist.")
         named = path.name
         path = path.parent
     if not path.is_dir():

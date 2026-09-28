@@ -579,6 +579,12 @@ class TestResolveDirectory:
         assert resolved.directory == local_map
         assert resolved.lanelet2_path == local_map / "other.osm"
 
+    def test_a_named_osm_that_is_missing_is_an_error_not_a_fallback(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        with pytest.raises(MapResolutionError, match="wrong.osm does not exist"):
+            resolve_directory(local_map / "wrong.osm", cache=cache)
+
     def test_expands_the_home_directory(
         self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -740,6 +746,57 @@ class TestResolveDirectory:
         assert document.map.xodr_path == "/maps/TownL.xodr"
         assert document.map.name == "Town10HD_Opt"
         assert document.map.lanelet2_path is None
+
+    def test_choosing_a_library_map_clears_the_directory(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        local_map: Path,
+        origin_repo: Path,
+    ) -> None:
+        draft_id = _new_draft(editor)
+        editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        )
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+
+        document = _stored(drafts, draft_id)
+        assert document.map.directory is None
+        assert resolve_map_paths(document.map).name == "TownA"
+        assert document.map.name == "TownA"
+
+    def test_opendrive_is_fetched_for_the_directory_in_use_not_the_source(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        local_map: Path,
+        origin_repo: Path,
+        cache: GitMapCache,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        asset = tmp_path / "TownL.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_asset_env_var("TownL"), str(asset))
+
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+        editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        )
+        editor.post(
+            f"/draft/{draft_id}/map/opendrive",
+            data={"carla_host": "127.0.0.1", "carla_port": "1"},
+        )
+
+        local = resolve_directory(local_map, cache=cache)
+        assert local.xodr_path is not None and local.xodr_is_derived
+        # Nothing filed under the source map, which would pick it up later.
+        source_map = resolve_map(_uri(origin_repo), cache=cache)
+        assert source_map.xodr_path is None
+        # And the local map keeps its own name through a re-check of the source.
+        editor.post(f"/draft/{draft_id}/map/fetch")
+        assert _stored(drafts, draft_id).map.name == "TownL"
 
 
 # ---------------------------------------------------------------------------
