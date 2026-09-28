@@ -29,6 +29,7 @@ from ..authoring.models import (
     Entity,
     GoalSpec,
     LaneletSlot,
+    MapRef,
     ScenarioDocument,
     SpawnSpec,
     as_action_phase,
@@ -54,6 +55,7 @@ from ..maps import (
     ensure_xodr,
     list_maps,
     pin_source,
+    resolve_directory,
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
@@ -275,10 +277,20 @@ class EditorService:
             document.timeout_seconds = _as_float(
                 form["timeout_seconds"], "Timeout", document.timeout_seconds
             )
-        for attribute in ("group", "name", "source", "xodr_path", "lanelet2_path"):
+        before = document.map.model_copy()
+        for attribute in (
+            "group",
+            "name",
+            "source",
+            "directory",
+            "xodr_path",
+            "lanelet2_path",
+        ):
             key = f"map_{attribute}"
             if key in form:
                 setattr(document.map, attribute, str(form[key]).strip() or None)
+        if document.map.directory and document.map.directory != before.directory:
+            self._adopt_directory(document, before)
         if document.map.source:
             # Normalise whatever was pasted -- a browser URL, most likely --
             # into the canonical form, so the field shows what will be stored
@@ -312,6 +324,28 @@ class EditorService:
     def map_repositories(self) -> tuple[MapRepository, ...]:
         """Return the map repositories the library offers before anyone types one."""
         return KNOWN_REPOSITORIES
+
+    @staticmethod
+    def _adopt_directory(document: ScenarioDocument, before: MapRef) -> None:
+        """Make a newly named map directory the map *document* resolves to.
+
+        The same rule :meth:`use_map` follows for a source: the new map
+        supersedes the files the document named before, so a file path the
+        form sent back unchanged is cleared rather than left to keep resolving
+        to the old map.  One typed in alongside the directory is an override
+        and stays.  The CARLA map name is taken from the directory, as it is
+        from a downloaded map, unless it was edited in the same submission.
+        """
+        if document.map.lanelet2_path == before.lanelet2_path:
+            document.map.lanelet2_path = None
+        if document.map.xodr_path == before.xodr_path:
+            document.map.xodr_path = None
+        if document.map.name == before.name and document.map.directory:
+            try:
+                document.map.name = resolve_directory(document.map.directory).name
+            except MapResolutionError:
+                # Not a map (yet); the inspector says so where it would be drawn.
+                logger.debug("Map directory not resolvable", exc_info=True)
 
     def use_map(self, document: ScenarioDocument, uri: str) -> None:
         """Point *document* at the map *uri* names, and download it.

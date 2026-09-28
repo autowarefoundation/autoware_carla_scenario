@@ -216,7 +216,8 @@ class LaneletConstraintSweeper(Sweeper):
         # -- 1. Resolve map paths ------------------------------------------
         # A map named by `map.source` is cloned (or found already downloaded)
         # here, so a sweep runs against a published HD map without anyone
-        # having to name a local file for it first.
+        # having to name a local file for it first; `map.directory` names a
+        # map on this machine and is read in place.
         paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
 
         # -- 2. Load the Lanelet2 map (lightweight) ------------------------

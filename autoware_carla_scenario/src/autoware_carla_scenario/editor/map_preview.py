@@ -358,6 +358,11 @@ def missing_map_reason(document: ScenarioDocument) -> str:
     and telling that person to type a path would be telling them to undo the
     thing they did.
     """
+    if document.map.directory:
+        return (
+            "The map directory this scenario names holds no readable Lanelet2 "
+            f"map, or is outside the editor's map roots: {document.map.directory}"
+        )
     if document.map.source:
         return (
             "This scenario's map has not been downloaded yet. Fetch it from "
