@@ -10,26 +10,32 @@ Two entities live here:
   ``autoware_carla_interface`` ROS 2 node) reads CARLA sensors and applies
   control to the ego **directly**, so unlike
   :class:`~autoware_carla_scenario.entity.carla_driver_entity.CarlaDriverEntity`
-  the framework is *not* in the control loop.  This entity **attaches** to the
-  ego actor spawned by the interface node, hands Autoware the scenario's initial
-  pose and goal, and waits for Autoware to become ready.  The whole startup
-  sequence (localization init, routing, engage) is owned by the Autoware side;
-  see :mod:`autoware_carla_scenario.autoware_bridge`.
+  the framework is *not* in the control loop.  This entity **spawns** the ego at
+  the scenario's own spawn pose, hands Autoware the scenario's initial pose and
+  goal, and waits for Autoware to become ready.  The whole startup sequence
+  (localization init, routing, engage) is owned by the Autoware side; see
+  :mod:`autoware_carla_scenario.autoware_bridge`.
+
+  The scenario places the ego because the scenario is what knows where the run
+  starts.  When the interface node placed it instead, the scenario's pose
+  reached it afterwards, as an initial pose it moved the ego onto -- a teleport
+  every other node could observe, and one that left the ego at the interface's
+  own spawn point whenever the pose went missing.  The interface node must
+  therefore be launched to attach to this ego rather than spawn its own.
 
 Tick ownership: the scenario framework remains the tick master; the interface
 node runs as a non-ticking, asynchronous I/O bridge (``sync_mode:=false``).
 
 Role name: the framework identifies the ego by
 :data:`~autoware_carla_scenario.constants.EGO_ROLE_NAME` (``"Ego"``).  Launch
-the interface node with ``ego_vehicle_role_name:=Ego`` so the spawned actor
-matches.
+the interface node with ``ego_vehicle_role_name:=Ego`` so it looks for the
+actor this entity spawns under that name.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
@@ -41,21 +47,13 @@ if TYPE_CHECKING:
     from ..scenario_base import EgoConfig
 
 from ..autoware_bridge.base import AutowareBridgeConfig
-from ..conditions.base import find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.transform import to_map_frame
+from ._spawn import spawn_vehicle_actor
 from .ego import EgoVehicle
 
 logger = logging.getLogger(__name__)
-
-#: Polling interval while waiting for the interface node to spawn the ego actor.
-_ATTACH_POLL_INTERVAL_S: float = 0.5
-
-#: Pause after each tick taken while waiting for the ego to appear.  Matches the
-#: usual ``fixed_delta_seconds``, so the wait advances the world at roughly real
-#: time instead of as fast as the server will step it.
-_ATTACH_TICK_PAUSE_S: float = 0.05
 
 #: How far, horizontally, the ego may be from where the scenario expected it
 #: before that disagreement is worth a warning.  Snapping a spawn onto the road
@@ -81,31 +79,28 @@ class AutowareEntity(EgoVehicle):
 
 
 class AutowareEgoEntity(EgoVehicle):
-    """Ego vehicle spawned by ``autoware_carla_interface`` and driven by Autoware.
+    """Ego vehicle spawned at the scenario's spawn pose and driven by Autoware.
 
     The :class:`ScenarioRunner` reads :attr:`EgoVehicle.use_autopilot` (``False``
     here) and skips ``set_autopilot(True)`` for this actor, leaving it under
     Autoware's control.
 
-    Two things about a run are different because the ego is someone else's:
+    Two things about a run are different because Autoware drives:
 
-    * The actor is not the scenario's to destroy.
-      :attr:`~EgoVehicle.attaches_to_existing_actor` is ``True``, which keeps it
-      (and its sensors) out of the cleanup :class:`ScenarioRunner` does before a
-      run -- otherwise the interface-spawned ego would be destroyed and
-      :meth:`spawn` would only expire at ``attach_timeout``.
+    * The actor is the scenario's, like any other entity's: this entity spawns
+      it and destroys it.  Autoware drives it in between.
     * The scenario cannot be judged until Autoware is driving.  The runner holds
       the scenario clock and its conditions until :attr:`is_initialized`, so a
       condition that is already true near the initial pose -- standing still,
       say -- cannot record a result while Autoware is still localizing.
 
     Pose feedback to the scenario is read directly from the CARLA actor, not the
-    bridge: because :meth:`spawn` attaches this entity's
-    :attr:`~EgoVehicle.actor` by ``role_name``, every existing condition
+    bridge: because :meth:`spawn` leaves this entity's
+    :attr:`~EgoVehicle.actor` set to the ego, every existing condition
     (``EntityLanePositionCondition``,
     ``WaypointCondition``, ``CollisionCondition`` ...) works against the Autoware
     ego exactly as for a TrafficManager or driver ego, via
-    ``find_actor_by_role_name(world, EGO_ROLE_NAME).get_transform()``.
+    ``actor.get_transform()``.
 
     The ``bridge`` is a required keyword argument: the live gRPC transport (the
     server the interface node dials as a client, splatsim-consistent) is a
@@ -126,8 +121,8 @@ class AutowareEgoEntity(EgoVehicle):
     #: Autoware drives; TrafficManager must keep its hands off this actor.
     use_autopilot: bool = False
 
-    #: The interface node spawns the ego and owns its lifecycle.
-    attaches_to_existing_actor: bool = True
+    #: This entity spawns the ego, so it is the scenario's to clean up.
+    attaches_to_existing_actor: bool = False
 
     #: Autoware plans a route from the initial pose to a goal and only then
     #: engages: without one it never reports ready.
@@ -340,88 +335,46 @@ class AutowareEgoEntity(EgoVehicle):
     # ------------------------------------------------------------------
 
     def spawn(self, world: "carla.World", config: "EgoConfig") -> "carla.Actor":
-        """Attach to the ego actor already spawned by the interface node.
+        """Place the ego where the scenario says the run starts.
 
-        This does **not** create a new actor.  It polls the world for an actor
-        whose ``role_name`` matches :data:`EGO_ROLE_NAME` until one appears or
-        :attr:`AutowareBridgeConfig.attach_timeout` elapses.
+        The same :func:`spawn_vehicle_actor` call :class:`EgoVehicle` makes, at
+        the spawn pose ``setup()`` already resolved and wrote into *config* --
+        so the retries and ground projection behave as they do for any other
+        vehicle.  Autoware finds the actor afterwards by its ``role_name``.
 
         Args:
             world: The CARLA world instance.
-            config: Ego configuration (accepted for API compatibility with
-                :class:`EgoVehicle`; the spawn location is owned by the interface
-                node and is not used here).
+            config: Ego configuration; its spawn location is where the ego goes.
 
         Returns:
-            The attached ego vehicle actor.
+            The spawned ego vehicle actor.
 
         Raises:
-            RuntimeError: If no matching ego actor appears within the timeout.
+            RuntimeError: If the ego could not be spawned.
         """
-        del config  # Spawn is owned by the interface node; config is unused.
-
-        deadline = time.monotonic() + self._config.attach_timeout
-        while True:
-            actor = find_actor_by_role_name(world, EGO_ROLE_NAME)
-            if actor is not None:
-                self._vehicle = actor
-                logger.info(
-                    "Attached to Autoware ego actor: id=%d role_name=%s",
-                    actor.id,
-                    EGO_ROLE_NAME,
-                )
-                return actor
-            if time.monotonic() >= deadline:
-                raise RuntimeError(
-                    f"No ego actor with role_name={str(EGO_ROLE_NAME)!r} appeared "
-                    f"within {self._config.attach_timeout:.1f}s. Ensure "
-                    "autoware_carla_interface is running and launched with "
-                    "ego_vehicle_role_name:=Ego."
-                )
-            self._advance_while_waiting(world)
-
-    def _advance_while_waiting(self, world: "carla.World") -> None:
-        """Step the world once while waiting for the interface to spawn the ego.
-
-        The interface node does not spawn the ego until it has seen the world
-        advance: an observed tick is how it tells a scenario world that is being
-        driven from the asynchronous one CARLA starts on.  At this point in the
-        run nothing else drives the clock -- the tick loop only begins once the
-        ego is attached -- so polling without ticking deadlocks, each side
-        waiting for the other.  The symptom is a runner that sits at "Spawning
-        ego vehicle ..." while the interface logs that it is still waiting for
-        the runner to drive its world, and a CARLA with no vehicles in it.
-
-        An asynchronous world advances on its own and ticking it would race the
-        server's own stepping, so there this only waits.
-        """
-        try:
-            synchronous = world.get_settings().synchronous_mode
-        except (AttributeError, RuntimeError):
-            # A world that will not report its settings is one this should not
-            # be stepping; fall back to waiting.
-            synchronous = False
-        if not synchronous:
-            time.sleep(_ATTACH_POLL_INTERVAL_S)
-            return
-        # The scenario's own actors are already spawned by the time the ego is
-        # attached, and the runner does not start holding them until the warm-up
-        # after this returns.  Ticking without the hold would let a car parked on
-        # a slope roll away, changing the layout the scenario was written for
-        # before its clock has started.
-        from ..utils.vehicles import hold_vehicles_still  # noqa: PLC0415
-
-        hold_vehicles_still(world)
-        world.tick()
-        time.sleep(_ATTACH_TICK_PAUSE_S)
+        self._vehicle = spawn_vehicle_actor(
+            world,
+            config.vehicle_type,
+            str(EGO_ROLE_NAME),
+            config.spawn_location,
+            od_pose=config.od_pose,
+            spawn_retry_max_count=config.spawn_retry_max_count,
+            spawn_retry_t_step=config.spawn_retry_t_step,
+            spawn_retry_z_step=config.spawn_retry_z_step,
+            ground_projection=config.ground_projection,
+        )
+        logger.info(
+            "Spawned the Autoware ego: id=%d role_name=%s",
+            self._vehicle.id,
+            EGO_ROLE_NAME,
+        )
+        return self._vehicle
 
     def destroy(self) -> None:
-        """Detach from the ego actor without destroying it.
-
-        The interface node owns the ego actor's lifecycle, so this only clears
-        the local reference; it never calls ``actor.destroy()``.
-        """
-        self._vehicle = None
+        """Destroy the ego actor this entity spawned."""
+        if self._vehicle is not None:
+            self._vehicle.destroy()
+            self._vehicle = None
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (driven by ScenarioRunner)
