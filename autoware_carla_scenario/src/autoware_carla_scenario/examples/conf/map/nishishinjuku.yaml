@@ -6,6 +6,10 @@
 map:
   name: NishishinjukuMap
   xodr_path: ${oc.env:NISHISHINJUKU_XODR_PATH,autoware_lanelet2_to_opendrive/test/data/nishishinjuku_carla.xodr}
+  # NishishinjukuMap's CARLA assets ship without a matching OpenDRIVE, so this
+  # map is one of the few that does want its road network installed into the
+  # simulator before the world is loaded. Off everywhere it is not asked for.
+  overwrite_xodr: true
   lanelet2_path: ${oc.env:NISHISHINJUKU_LANELET2_PATH,autoware_lanelet2_to_opendrive/test/data/nishishinjuku.osm}
   # Lanelet IDs to exclude from scenario sweeps (e.g. lanelets without
   # a matching 3D model in CARLA that cause spawn or rendering failures).
