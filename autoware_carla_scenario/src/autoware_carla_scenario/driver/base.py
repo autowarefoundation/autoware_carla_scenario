@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -128,7 +128,13 @@ class DriverClientConfig:
     """
 
     send_ground_truth: bool = False
-    """Whether to also submit the recorded ground-truth trajectory."""
+    """Whether to also call ``submit_recording_ground_truth`` on every route update.
+
+    CARLA has no recording, so the reference sent is the route itself: its waypoints
+    in the rig frame, headed along the path and spaced ``policy_timestep_s`` apart in
+    time.  This is the recorded-trajectory channel, unrelated to the CARLA ground
+    truth in ``renderer_data`` (see :attr:`send_renderer_data`).
+    """
 
     send_renderer_data: bool = True
     """Whether to send CARLA ground truth in ``DriveRequest.renderer_data``.
@@ -229,7 +235,8 @@ class BaseEgoDriverClient(ABC):
     1. :meth:`start_session` once, after the ego actor exists.
     2. :meth:`submit_route` once the route is known, then on every policy step
        :meth:`submit_image_observation` / :meth:`submit_egomotion_observation`
-       followed by :meth:`drive`.
+       (and, when enabled, :meth:`submit_recording_ground_truth`) followed by
+       :meth:`drive`.
     3. :meth:`close_session` during teardown.
 
     Args:
@@ -285,8 +292,29 @@ class BaseEgoDriverClient(ABC):
         ...
 
     @abstractmethod
-    def submit_egomotion_observation(self, observation: EgoObservation) -> None:
-        """Send the ego's estimated pose and dynamic state."""
+    def submit_egomotion_observation(
+        self, observations: Sequence[EgoObservation]
+    ) -> None:
+        """Send the ego's estimated poses and dynamic states since the last step.
+
+        Args:
+            observations: One entry per simulation tick since the previous call, in
+                strictly increasing time order.  The upstream runtime sends every
+                tick, not only the newest, so a policy that builds an ego-history
+                feature sees the intermediate poses.
+        """
+        ...
+
+    @abstractmethod
+    def submit_recording_ground_truth(
+        self, timestamp_us: int, trajectory_in_rig: Trajectory
+    ) -> None:
+        """Send the reference trajectory the ego is expected to follow.
+
+        Args:
+            timestamp_us: Simulation time the trajectory is valid at.
+            trajectory_in_rig: Reference poses in the rig frame at *timestamp_us*.
+        """
         ...
 
     @abstractmethod

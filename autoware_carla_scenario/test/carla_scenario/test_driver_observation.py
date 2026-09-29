@@ -19,6 +19,7 @@ from autoware_carla_scenario.driver.observation import (
     ego_observation,
     encode_frame_jpeg,
     rear_axle_offset,
+    route_reference_trajectory,
     route_waypoints_in_rig,
     to_local_pose,
 )
@@ -254,3 +255,31 @@ def test_camera_extrinsics_are_an_orthonormal_rotation() -> None:
     assert float(np.linalg.det(rotation)) == pytest.approx(1.0, abs=1e-9)
     # The reflection is applied to both the rotation and the translation.
     assert isinstance(pose, Pose)
+
+
+# ---------------------------------------------------------------------------
+# Reference trajectory
+# ---------------------------------------------------------------------------
+
+
+def test_the_reference_trajectory_heads_along_the_route() -> None:
+    waypoints = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0]])
+
+    reference = route_reference_trajectory(waypoints, 1_000, 100_000)
+
+    assert reference.timestamps_us == [1_000, 101_000, 201_000]
+    assert np.allclose(reference.positions, waypoints)
+    yaws = [pose.yaw for pose in reference.poses]
+    # The last pose keeps the heading of the segment leading into it.
+    assert yaws == pytest.approx([0.0, math.pi / 2, math.pi / 2])
+
+
+def test_a_single_waypoint_faces_forward() -> None:
+    reference = route_reference_trajectory(np.array([[1.0, 2.0, 0.0]]), 0, 100_000)
+
+    assert len(reference) == 1
+    assert reference.poses[0].yaw == pytest.approx(0.0)
+
+
+def test_an_empty_route_gives_an_empty_reference() -> None:
+    assert len(route_reference_trajectory(np.zeros((0, 3)), 0, 100_000)) == 0
