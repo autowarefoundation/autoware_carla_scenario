@@ -526,6 +526,14 @@ class TestResolveMapPaths:
         assert town_a.opendrive_path is not None
         assert town_a.opendrive_path.name == "TownA.xodr"
 
+    def test_the_opendrive_is_not_installed_into_carla_unless_asked(self) -> None:
+        config = {"lanelet2_path": "a.osm", "xodr_path": "a.xodr", "name": "TownA"}
+
+        assert resolve_map_paths(config).overwrite_xodr is False
+        assert resolve_map_paths({**config, "overwrite_xodr": True}).overwrite_xodr
+        off = resolve_map_paths({**config, "overwrite_xodr": False})
+        assert off.overwrite_xodr is False
+
 
 # ---------------------------------------------------------------------------
 # A local map directory

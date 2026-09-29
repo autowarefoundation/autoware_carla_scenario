@@ -138,7 +138,7 @@ sequenceDiagram
     SQ->>CSM: start()
     Note over CSM: Reuse existing server<br/>or launch new process
     SQ->>SR: new ScenarioRunner(server, ...)
-    SQ->>SR: load_map_by_name() or<br/>load_map_by_overwriting_xodr()
+    SQ->>SR: load_map_by_name(), or<br/>load_map_by_overwriting_xodr()<br/>when map.overwrite_xodr is on
     SQ->>SR: Initialize MapManager<br/>(Lanelet2 + OpenDRIVE)
 
     CLI->>SQ: run_all()
@@ -984,7 +984,7 @@ graph LR
 | Variable | Required | Default | Used by | Description |
 |----------|----------|---------|---------|-------------|
 | **`CARLA_EXECUTABLE`** | Yes (if launching server) | — | `CarlaServerManager` | Absolute path to the CARLA UE5 executable (`CarlaUE5.sh`). Required to launch a new CARLA server. When a server is already running and `reuse_if_running=True`, this variable is not needed. Also used as a gate for pytest: tests are skipped when this variable is unset. |
-| **`NISHISHINJUKU_MAP_PATH`** | Yes (if using xodr overwrite) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
+| **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `autoware_lanelet2_to_opendrive/test/data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |
 | **`NISHISHINJUKU_LANELET2_PATH`** | No | `autoware_lanelet2_to_opendrive/test/data/nishishinjuku.osm` | Map config YAML (`${oc.env:...}`) | Path to the Lanelet2 `.osm` file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation. |
 | **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. |
@@ -994,7 +994,12 @@ graph LR
 
 #### Dynamic Map Path Variables
 
-`ScenarioRunner.load_map_by_overwriting_xodr()` derives the environment variable name from the CARLA map name using the `_map_name_to_env_var()` function:
+`ScenarioRunner.load_map_by_overwriting_xodr()` runs only when the map config sets
+`overwrite_xodr: true` (or `ScenarioQueue(overwrite_xodr=True)` is passed directly).
+It is off by default: a map cooked for CARLA already ships the OpenDRIVE its assets
+were built from, and replacing that puts the road network and the meshes out of step.
+When it is on, the method derives the destination environment variable name from the
+CARLA map name using the `_map_name_to_env_var()` function:
 
 | Map Name | Derived Variable |
 |----------|-----------------|

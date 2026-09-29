@@ -48,6 +48,14 @@ def _setting(map_config: Any, key: str) -> Optional[str]:
     return text or None
 
 
+def _flag(map_config: Any, key: str) -> bool:
+    """Read one boolean ``map`` setting, defaulting to off when it is absent."""
+    text = _setting(map_config, key)
+    if text is None:
+        return False
+    return text.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class MapPaths:
     """Where a scenario's map files are, once the config has been resolved.
@@ -62,6 +70,8 @@ class MapPaths:
         projector_type: The projection override the config carries, if any.
         xodr_is_derived: Whether :attr:`xodr_path` was read back out of CARLA
             rather than named by the config or shipped by the repository.
+        overwrite_xodr: Whether :attr:`install_xodr` may replace the road
+            network CARLA ships.  Off unless ``map.overwrite_xodr`` asks for it.
     """
 
     name: str = ""
@@ -70,6 +80,7 @@ class MapPaths:
     resolved: Optional[ResolvedMap] = None
     projector_type: Optional[str] = None
     xodr_is_derived: bool = False
+    overwrite_xodr: bool = False
 
     @property
     def from_source(self) -> bool:
@@ -89,11 +100,12 @@ class MapPaths:
 
     @property
     def install_xodr(self) -> Optional[Path]:
-        """The OpenDRIVE that has to be written into the CARLA installation.
+        """The OpenDRIVE the run reads, and installs when asked to.
 
-        A map describing roads CARLA does not ship has to replace the
-        simulator's own road network before the world is loaded.  One read back
-        *from* CARLA never does.
+        A map describing roads CARLA does not ship can replace the simulator's
+        own road network before the world is loaded, but only when
+        ``map.overwrite_xodr`` says so -- see :attr:`overwrite_xodr`.  One read
+        back *from* CARLA is never a candidate.
         """
         return None if self.xodr_is_derived else self.xodr_path
 
@@ -182,4 +194,5 @@ def resolve_map_paths(
         xodr_is_derived=(
             not xodr and resolved is not None and resolved.xodr_is_derived
         ),
+        overwrite_xodr=_flag(map_config, "overwrite_xodr"),
     )

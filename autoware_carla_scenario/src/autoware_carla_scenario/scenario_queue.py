@@ -57,6 +57,7 @@ class ScenarioQueue:
         server: Optional[CarlaServerManager] = None,
         *,
         xodr_path: Optional[Path] = None,
+        overwrite_xodr: bool = False,
         opendrive_path: Optional[Path] = None,
         lanelet2_path: Optional[Path] = None,
         map_name: Optional[str] = None,
@@ -78,10 +79,17 @@ class ScenarioQueue:
             server: An externally-managed :class:`CarlaServerManager`.  When
                 provided the queue borrows it (does not start/stop it).  When
                 *None* a new manager is created and owned by this queue.
-            xodr_path: OpenDRIVE map file path (optional).  Must be used
-                together with *map_name*: the file at the
-                ``<MAP_NAME_PATH>`` env var is replaced with *xodr_path*,
-                then the map is loaded by name (retains full CARLA assets).
+            xodr_path: OpenDRIVE map file path (optional).  Read for the
+                coordinate transforms; it is written into the CARLA
+                installation only when *overwrite_xodr* is set.
+            overwrite_xodr: Whether to replace the simulator's own road network
+                with *xodr_path* before the world is loaded.  Off by default:
+                a map cooked for CARLA already carries the OpenDRIVE its assets
+                were built from, and overwriting that silently puts the geometry
+                and the meshes out of step.  Turn it on only for a map whose
+                roads CARLA does not ship, and then *map_name* is required too:
+                the install target is derived from it via the
+                ``<MAP_NAME_PATH>`` env var.
             opendrive_path: Where to read OpenDRIVE from *without* installing
                 it into CARLA -- for a map whose roads the simulator already
                 ships, such as an Autoware map published for a CARLA town.  The
@@ -130,6 +138,7 @@ class ScenarioQueue:
             self._owns_server = True
 
         self._xodr_path = xodr_path
+        self._overwrite_xodr = overwrite_xodr
         self._opendrive_path = opendrive_path
         self._lanelet2_path = lanelet2_path
         self._map_name = map_name
@@ -270,13 +279,14 @@ class ScenarioQueue:
             max_tick_rate_hz=self._max_tick_rate_hz,
             traffic_backend=self._traffic_backend,
         )
-        if self._xodr_path is not None and self._map_name is None:
-            raise ValueError(
-                "xodr_path requires map_name: standalone OpenDRIVE mode is not "
-                "supported. Provide map_name together with xodr_path to use "
-                "overwrite mode (retains full CARLA assets)."
-            )
-        if self._xodr_path is not None and self._map_name is not None:
+        if self._overwrite_xodr:
+            if self._xodr_path is None or self._map_name is None:
+                raise ValueError(
+                    "overwrite_xodr requires both xodr_path and map_name: the "
+                    "source is xodr_path and the install target is derived from "
+                    "map_name. Leave overwrite_xodr off to load the map by name "
+                    "and keep the OpenDRIVE CARLA ships."
+                )
             self._runner.load_map_by_overwriting_xodr(self._xodr_path, self._map_name)
         elif self._map_name is not None:
             self._runner.load_map_by_name(self._map_name)
