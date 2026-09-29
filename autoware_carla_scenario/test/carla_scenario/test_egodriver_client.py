@@ -40,6 +40,7 @@ class _StubPolicy(egodriver_pb2_grpc.EgodriverServiceServicer):
         self.images: List[egodriver_pb2.RolloutCameraImage] = []
         self.egomotion: List[egodriver_pb2.RolloutEgoTrajectory] = []
         self.routes: List[egodriver_pb2.RouteRequest] = []
+        self.ground_truths: List[egodriver_pb2.GroundTruthRequest] = []
         self.drives: List[egodriver_pb2.DriveRequest] = []
         self.closed: List[str] = []
         self._terminate = terminate
@@ -65,6 +66,10 @@ class _StubPolicy(egodriver_pb2_grpc.EgodriverServiceServicer):
 
     def submit_route(self, request, context):  # noqa: ANN001, D102
         self.routes.append(request)
+        return common_pb2.Empty()
+
+    def submit_recording_ground_truth(self, request, context):  # noqa: ANN001, D102
+        self.ground_truths.append(request)
         return common_pb2.Empty()
 
     def drive(self, request, context):  # noqa: ANN001, D102
@@ -254,7 +259,7 @@ def test_submit_egomotion_observation(policy: _StubPolicy) -> None:
     client = _client(policy)
     try:
         client.start_session("session-1", "scene")
-        client.submit_egomotion_observation(_observation(42))
+        client.submit_egomotion_observation([_observation(42)])
     finally:
         client.close_session()
 
@@ -269,6 +274,59 @@ def test_submit_egomotion_observation(policy: _StubPolicy) -> None:
 
     assert len(message.dynamic_states) == 1
     assert message.dynamic_states[0].linear_velocity.x == pytest.approx(5.0)
+
+
+def test_egomotion_history_goes_out_as_one_trajectory(policy: _StubPolicy) -> None:
+    """Every tick since the last step rides in one message, one state per pose."""
+    client = _client(policy)
+    try:
+        client.start_session("session-1", "scene")
+        client.submit_egomotion_observation(
+            [_observation(0), _observation(50_000), _observation(100_000)]
+        )
+    finally:
+        client.close_session()
+
+    assert len(policy.egomotion) == 1
+    message = policy.egomotion[0]
+    assert [pose.timestamp_us for pose in message.trajectory.poses] == [
+        0,
+        50_000,
+        100_000,
+    ]
+    assert len(message.dynamic_states) == 3
+
+
+def test_an_empty_egomotion_history_is_not_sent(policy: _StubPolicy) -> None:
+    client = _client(policy)
+    try:
+        client.start_session("session-1", "scene")
+        client.submit_egomotion_observation([])
+    finally:
+        client.close_session()
+
+    assert policy.egomotion == []
+
+
+def test_submit_recording_ground_truth(policy: _StubPolicy) -> None:
+    reference = Trajectory(
+        [1_000, 101_000],
+        [Pose.from_xyz_yaw(1.0, 0.0, 0.0, 0.0), Pose.from_xyz_yaw(3.0, 0.0, 0.0, 0.0)],
+    )
+    client = _client(policy)
+    try:
+        client.start_session("session-1", "scene")
+        client.submit_recording_ground_truth(1_000, reference)
+    finally:
+        client.close_session()
+
+    assert len(policy.ground_truths) == 1
+    message = policy.ground_truths[0]
+    assert message.session_uuid == "session-1"
+    assert message.ground_truth.timestamp_us == 1_000
+    restored = Trajectory.from_proto(message.ground_truth.trajectory)
+    assert restored.timestamps_us == [1_000, 101_000]
+    assert np.allclose(restored.positions, [[1.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
 
 
 # ---------------------------------------------------------------------------

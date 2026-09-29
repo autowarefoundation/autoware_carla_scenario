@@ -23,7 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .base import EgoObservation
-from .geometry import Pose
+from .geometry import Pose, Trajectory
 
 if TYPE_CHECKING:
     import carla
@@ -36,6 +36,7 @@ __all__ = [
     "encode_frame_jpeg",
     "ego_observation",
     "rear_axle_offset",
+    "route_reference_trajectory",
     "route_waypoints_in_rig",
     "to_local_pose",
     "to_local_vector",
@@ -272,3 +273,35 @@ def route_waypoints_in_rig(
     if not points:
         return np.zeros((0, 3))
     return ego_pose.inverse().transform_points(np.stack(points))
+
+
+def route_reference_trajectory(
+    waypoints_in_rig: NDArray[np.float64], start_us: int, step_us: int
+) -> Trajectory:
+    """Return the route as a timed reference trajectory, for ``GroundTruth``.
+
+    CARLA has no recorded drive to replay, so the route stands in for one: each
+    waypoint becomes a pose headed along the path (the last one keeps the heading of
+    the segment before it), and consecutive poses are *step_us* apart.
+
+    Args:
+        waypoints_in_rig: ``(N, 3)`` route waypoints in the rig frame.
+        start_us: Timestamp of the first pose.
+        step_us: Time between consecutive poses; must be positive.
+
+    Returns:
+        A trajectory in the rig frame, empty when *waypoints_in_rig* is.
+    """
+    points = np.asarray(waypoints_in_rig, dtype=np.float64).reshape(-1, 3)
+    if len(points) == 0:
+        return Trajectory.empty()
+    deltas = np.diff(points[:, :2], axis=0)
+    yaws = np.arctan2(deltas[:, 1], deltas[:, 0]) if len(deltas) else np.zeros(1)
+    yaws = np.append(yaws, yaws[-1])[: len(points)]
+    return Trajectory(
+        [start_us + index * step_us for index in range(len(points))],
+        [
+            Pose.from_xyz_yaw(point[0], point[1], point[2], float(yaw))
+            for point, yaw in zip(points, yaws)
+        ],
+    )

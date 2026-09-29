@@ -12,7 +12,7 @@ compatible with an upstream alpasim driver as well; see
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 import grpc
 import numpy as np
@@ -200,22 +200,46 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             timeout=self._config.timeout_s,
         )
 
-    def submit_egomotion_observation(self, observation: EgoObservation) -> None:
-        """Send the ego's estimated pose and dynamic state for one instant."""
+    def submit_egomotion_observation(
+        self, observations: Sequence[EgoObservation]
+    ) -> None:
+        """Send the ego's estimated poses and dynamic states since the last step."""
+        if not observations:
+            return
         stub = self._require_session()
         trajectory = Trajectory(
-            [observation.timestamp_us], [observation.pose]
+            [observation.timestamp_us for observation in observations],
+            [observation.pose for observation in observations],
         ).to_proto()
-        state = common_pb2.DynamicState(
-            linear_velocity=_vec3(observation.linear_velocity),
-            angular_velocity=_vec3(observation.angular_velocity),
-            linear_acceleration=_vec3(observation.linear_acceleration),
-        )
+        states = [
+            common_pb2.DynamicState(
+                linear_velocity=_vec3(observation.linear_velocity),
+                angular_velocity=_vec3(observation.angular_velocity),
+                linear_acceleration=_vec3(observation.linear_acceleration),
+            )
+            for observation in observations
+        ]
         stub.submit_egomotion_observation(
             egodriver_pb2.RolloutEgoTrajectory(
                 session_uuid=self._session_uuid,
                 trajectory=trajectory,
-                dynamic_states=[state],
+                dynamic_states=states,
+            ),
+            timeout=self._config.timeout_s,
+        )
+
+    def submit_recording_ground_truth(
+        self, timestamp_us: int, trajectory_in_rig: Trajectory
+    ) -> None:
+        """Send the reference trajectory, in the rig frame."""
+        stub = self._require_session()
+        stub.submit_recording_ground_truth(
+            egodriver_pb2.GroundTruthRequest(
+                session_uuid=self._session_uuid,
+                ground_truth=egodriver_pb2.GroundTruth(
+                    timestamp_us=timestamp_us,
+                    trajectory=trajectory_in_rig.to_proto(),
+                ),
             ),
             timeout=self._config.timeout_s,
         )

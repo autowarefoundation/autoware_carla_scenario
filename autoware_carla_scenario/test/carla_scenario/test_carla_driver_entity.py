@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -40,7 +40,8 @@ class _FakeDriverClient(BaseEgoDriverClient):
         self.started: List[Tuple[str, str]] = []
         self.routes: List[np.ndarray] = []
         self.images: List[Tuple[str, bytes]] = []
-        self.observations: List[EgoObservation] = []
+        self.egomotion: List[List[EgoObservation]] = []
+        self.ground_truths: List[Tuple[int, Trajectory]] = []
         self.drives: List[Tuple[int, int]] = []
         self.renderer_payloads: List[bytes] = []
         self.closed = 0
@@ -61,8 +62,15 @@ class _FakeDriverClient(BaseEgoDriverClient):
     ) -> None:
         self.images.append((logical_id, image_bytes))
 
-    def submit_egomotion_observation(self, observation: EgoObservation) -> None:
-        self.observations.append(observation)
+    def submit_egomotion_observation(
+        self, observations: Sequence[EgoObservation]
+    ) -> None:
+        self.egomotion.append(list(observations))
+
+    def submit_recording_ground_truth(
+        self, timestamp_us: int, trajectory_in_rig: Trajectory
+    ) -> None:
+        self.ground_truths.append((timestamp_us, trajectory_in_rig))
 
     def drive(
         self,
@@ -319,8 +327,51 @@ def test_observations_accompany_every_policy_step() -> None:
     for tick in range(4):
         entity.on_tick(world, tick * _TICK_S)
 
-    assert len(client.observations) == len(client.drives) == 2
-    assert client.observations[0].timestamp_us == 50_000
+    assert len(client.egomotion) == len(client.drives) == 2
+    assert client.egomotion[0][-1].timestamp_us == 50_000
+
+
+def test_egomotion_carries_every_tick_since_the_last_step() -> None:
+    """Like the upstream runtime, the history holds the ticks between policy steps."""
+    entity, client = _entity(policy_timestep_s=0.1)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+
+    for tick in range(4):
+        entity.on_tick(world, tick * _TICK_S)
+
+    timestamps = [
+        [observation.timestamp_us for observation in batch]
+        for batch in client.egomotion
+    ]
+    # The first step also carries the state at session start; each later one starts
+    # right after the previous step, so no tick is sent twice or skipped.
+    assert timestamps == [[0, 50_000], [100_000, 150_000]]
+
+
+def test_the_reference_trajectory_is_off_by_default() -> None:
+    entity, client = _entity(policy_timestep_s=0.05)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    entity.on_tick(world, 0.0)
+
+    assert client.ground_truths == []
+
+
+def test_the_route_goes_out_as_the_reference_trajectory() -> None:
+    entity, client = _entity(send_ground_truth=True, policy_timestep_s=0.05)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    entity.on_tick(world, 0.0)
+
+    # Sent alongside every route: once at session start, once per policy step.
+    assert len(client.ground_truths) == len(client.routes) == 2
+    timestamp_us, reference = client.ground_truths[-1]
+    assert timestamp_us == 50_000
+    assert np.allclose(reference.positions, client.routes[-1])
+    assert reference.timestamps_us[:3] == [50_000, 100_000, 150_000]
+    # The route runs straight ahead, so every pose faces forward.
+    assert all(pose.yaw == pytest.approx(0.0, abs=1e-9) for pose in reference.poses)
 
 
 def test_ticks_before_the_session_opens_do_nothing() -> None:

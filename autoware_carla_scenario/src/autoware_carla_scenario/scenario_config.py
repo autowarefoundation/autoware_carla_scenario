@@ -296,7 +296,8 @@ class DriverConfig:
     #: ``null`` derives it from the vehicle's wheel physics.
     rear_axle_offset_m: float | None = None
 
-    #: Whether to also submit the recorded ground-truth trajectory.
+    #: Whether to also submit the route as the reference ("recorded")
+    #: ground-truth trajectory via ``submit_recording_ground_truth``.
     send_ground_truth: bool = False
 
     #: Whether to send CARLA ground truth (traffic light, other vehicles, speed

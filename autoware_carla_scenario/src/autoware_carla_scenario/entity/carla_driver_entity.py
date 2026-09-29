@@ -29,6 +29,7 @@ from ..driver.observation import (
     ego_observation,
     encode_frame_jpeg,
     rear_axle_offset,
+    route_reference_trajectory,
     route_waypoints_in_rig,
 )
 from .ego import EgoVehicle
@@ -85,6 +86,9 @@ class CarlaDriverEntity(EgoVehicle):
         self._plan: Trajectory = Trajectory.empty()
         self._sim_time_us: int = 0
         self._last_policy_time_us: Optional[int] = None
+        #: Every tick's ego state since the last policy step, sent as one egomotion
+        #: history -- as the upstream runtime does -- rather than only the newest.
+        self._pending_egomotion: List[EgoObservation] = []
         self._rear_axle_offset_m: float = 0.0
         self._termination_requested: bool = False
         self._session_open: bool = False
@@ -193,7 +197,9 @@ class CarlaDriverEntity(EgoVehicle):
         self._client.start_session(session_uuid, str(self._map.name))
         self._session_open = True
 
-        self._submit_route(actor, self._ego_observation(actor))
+        observation = self._ego_observation(actor)
+        self._pending_egomotion = [observation]
+        self._submit_route(actor, observation)
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Advance the driver loop by one simulation tick.
@@ -210,6 +216,7 @@ class CarlaDriverEntity(EgoVehicle):
         # The actor does not move within a tick, so one observation serves both the
         # policy step and the controller.
         observation = self._ego_observation(actor)
+        self._pending_egomotion.append(observation)
 
         if self._is_policy_step():
             self._run_policy_step(actor, observation)
@@ -235,6 +242,7 @@ class CarlaDriverEntity(EgoVehicle):
             except Exception:  # noqa: BLE001 - teardown must not raise
                 logger.warning("Failed to destroy camera %s", logical_id, exc_info=True)
         self._cameras = []
+        self._pending_egomotion = []
         self._map = None
         self._renderer = None
 
@@ -267,7 +275,8 @@ class CarlaDriverEntity(EgoVehicle):
 
         The route is a rolling window: it is re-sent on every policy step so the policy
         always sees ``route_horizon_m`` of road ahead, rather than running off the end of
-        a route computed once at spawn.
+        a route computed once at spawn.  With ``send_ground_truth`` it also goes out as
+        the reference trajectory, CARLA having no recorded drive to offer instead.
         """
         if self._map is None:
             return
@@ -279,6 +288,15 @@ class CarlaDriverEntity(EgoVehicle):
             resolution_m=self._config.route_resolution_m,
         )
         self._client.submit_route(self._sim_time_us, waypoints)
+        if self._config.send_ground_truth and len(waypoints):
+            self._client.submit_recording_ground_truth(
+                self._sim_time_us,
+                route_reference_trajectory(
+                    waypoints,
+                    self._sim_time_us,
+                    int(round(self._config.policy_timestep_s * _US_PER_S)),
+                ),
+            )
 
     def _is_policy_step(self) -> bool:
         """Whether this tick should query the policy."""
@@ -293,7 +311,8 @@ class CarlaDriverEntity(EgoVehicle):
         """Submit observations, ask the policy to plan, and cache the result."""
         self._submit_camera_frames()
         self._submit_route(actor, observation)
-        self._client.submit_egomotion_observation(observation)
+        self._client.submit_egomotion_observation(self._pending_egomotion)
+        self._pending_egomotion = []
 
         query_us = self._sim_time_us + int(
             round(self._config.policy_timestep_s * _US_PER_S)

@@ -37,8 +37,9 @@ flowchart LR
 
 Each simulation tick, `CarlaDriverEntity` tracks the most recent plan and applies a
 control. Every `driver.policy_timestep_s` it also submits fresh observations — camera
-frames, the ego's pose and dynamic state, and a route window rolled forward from the
-ego's current position — and asks the policy to re-plan. Between policy steps the cached
+frames, the ego's pose and dynamic state at every tick since the previous step (the
+egomotion history the upstream runtime sends), and a route window rolled forward from
+the ego's current position — and asks the policy to re-plan. Between policy steps the cached
 plan keeps being tracked, which is how a policy slower than the simulation stays usable.
 
 ## Running a scenario against a policy
@@ -235,9 +236,10 @@ See `autoware_carla_scenario/proto/README.md` for the full provenance.
 ## Limitations
 
 * Only RGB cameras are streamed. Lidar is not wired up.
-* `submit_recording_ground_truth` is not called; `send_ground_truth` is accepted but not
-  acted on. This is the *recorded* trajectory channel, unrelated to the CARLA ground
-  truth in `renderer_data`, which is sent.
+* CARLA has no recorded drive, so with `send_ground_truth: true` the reference sent
+  through `submit_recording_ground_truth` is the route itself: its waypoints, headed
+  along the path and spaced `policy_timestep_s` apart. This is the *recorded*
+  trajectory channel, unrelated to the CARLA ground truth in `renderer_data`.
 * The route is a lane-following walk of CARLA's road graph, taking the first
   continuation at each fork. It is a rolling window, re-sent on every policy step so the
   horizon stays ahead of the vehicle, but it is not a global plan: the ego will not turn
