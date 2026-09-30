@@ -6,6 +6,7 @@ from .lane_change import LaneChangeAction, LaneChangeDirection
 from .routing import RoutingAction
 from .set_speed import SetSpeedAction
 from .traffic_signal import TrafficLightTarget, TrafficSignalAction
+from .traffic_signal_controller import TrafficSignalControllerAction
 from .turn import TurnAction, TurnDirection
 from .walk_straight import WalkStraightAction
 
@@ -19,6 +20,7 @@ __all__ = [
     "TickTiming",
     "TrafficLightTarget",
     "TrafficSignalAction",
+    "TrafficSignalControllerAction",
     "TurnAction",
     "TurnDirection",
     "WalkStraightAction",

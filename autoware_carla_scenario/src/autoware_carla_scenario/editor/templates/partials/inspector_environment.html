@@ -1,0 +1,20 @@
+{% import "partials/icons.html" as ic %}
+{# The Environment track's own inspector.
+
+   What this holds is the part of the world no actor performs -- today, the
+   junctions.  It is reached from the track's head rather than from the
+   scenario, because that head is where the canvas says the state at t=0 is,
+   and a junction's movements and cycle are exactly that: standing
+   configuration, running underneath the storyboard rather than inside it.
+
+   The cards that *jump* a junction to a phase still live on the track itself,
+   to the right of the seam, because those are things the scenario does at a
+   moment. #}
+<p class="ed-kicker">Environment</p>
+<h3 class="ed-heading">The world</h3>
+<p class="ed-help" style="margin-bottom:14px">
+  What runs underneath the storyboard, performed by no vehicle. Cards on this
+  track act on it at a moment; what is declared here is true from the start.
+</p>
+
+{% include "partials/signals.html" %}

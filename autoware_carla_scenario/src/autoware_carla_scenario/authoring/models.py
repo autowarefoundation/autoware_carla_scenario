@@ -54,6 +54,11 @@ __all__ = [
     "LaneletSlot",
     "MapRef",
     "ScenarioDocument",
+    "SIGNAL_STATE_NAMES",
+    "SignalControllerRef",
+    "SignalGroupRef",
+    "SignalPhaseRef",
+    "SignalStateRef",
     "SpawnMode",
     "SpawnSpec",
     "SValue",
@@ -601,6 +606,122 @@ class UiLayout(_Node):
 # ---------------------------------------------------------------------------
 
 
+#: The signal states a phase may name.
+#:
+#: Mirrors :data:`autoware_carla_scenario.signals.STATE_NAMES`, which holds the
+#: same words with their CARLA members attached; the pair is pinned by a test,
+#: because this package must not import CARLA and the runtime must not import
+#: this one.  Lower case because a scenario document should not be spelling a
+#: simulator's enum members.
+SIGNAL_STATE_NAMES: tuple[str, ...] = ("green", "yellow", "red", "off", "unknown")
+
+
+class SignalGroupRef(_Node):
+    """Signals that move together, named once for every phase that drives them.
+
+    This is the part of a junction that really does belong to the map.  Which
+    signals change as one, and which movements may not both be let through, are
+    facts about the road: every scenario on it inherits the same ones.  A
+    junction's *timings* are not -- two scenarios on the same crossing may
+    legitimately want different ones, which is why the phases themselves stay
+    per-scenario.
+
+    Naming the group rather than its members is also what keeps a phase table
+    writable.  One approach of three lanes is three regulatory elements, and
+    nishishinjuku declares 164 of them; a phase that had to list each one would
+    be copied wrong long before it was copied twice.
+
+    Attributes:
+        name: What a phase calls this group.  Unique within the map.
+        lanelet2_regulatory_element_ids: The signals it drives, by the same
+            Lanelet2 regulatory element id every other signal primitive takes.
+        conflicts_with: Groups whose movements cross this one's, so no phase may
+            let both through at once.  Read symmetrically -- declaring it on
+            either side is enough -- because a crossing is not directional.
+    """
+
+    name: str
+    lanelet2_regulatory_element_ids: list[int] = Field(default_factory=list)
+    conflicts_with: list[str] = Field(default_factory=list)
+
+
+class SignalStateRef(_Node):
+    """What one signal, or one group of them, shows for the duration of a phase.
+
+    Exactly one of *group* and *lanelet2_regulatory_element_id* names the
+    subject.  A group is the normal way to write this: it is the movement the
+    phase is actually about, and the map already says which lights carry it.  A
+    bare id stays available for the case a group cannot express -- among them a
+    junction the scenario deliberately puts into a state the map calls
+    conflicting, which is a legitimate thing to test and which naming groups
+    would refuse.
+
+    Attributes:
+        group: A :class:`SignalGroupRef` declared on the map, by name.
+        lanelet2_regulatory_element_id: One signal, named by the Lanelet2
+            regulatory element it belongs to -- the same id every other signal
+            primitive here takes.
+        state: ``green``, ``yellow``, ``red``, ``off`` or ``unknown``.
+    """
+
+    group: Optional[str] = None
+    lanelet2_regulatory_element_id: Optional[int] = None
+    state: str = "red"
+
+
+class SignalPhaseRef(_Node):
+    """One step of a junction's cycle.
+
+    A phase states every signal its controller drives, not only the ones that
+    change.  That is what makes it a phase rather than a set of edits: applying
+    it puts the junction into a known whole, so no earlier phase can leave a
+    light behind in a state nobody wrote.
+
+    Attributes:
+        name: What the scenario calls this phase; unique within its controller.
+        duration_seconds: How long it holds before the cycle moves on.
+        states: The signals and their states.
+    """
+
+    name: str
+    duration_seconds: float = 10.0
+    states: list[SignalStateRef] = Field(default_factory=list)
+
+
+class SignalControllerRef(_Node):
+    """A junction's cycle: its phases, their durations, and their order.
+
+    Declared per scenario, not per map.  What a junction *is* -- which signals
+    move together, which movements conflict -- is map data, and lives in
+    :class:`SignalGroupRef`.  What it *does* is a choice the scenario makes: a
+    test of an ego creeping into a long amber and a test of the same crossing
+    running a short cycle are two scenarios on one road, and forcing them to
+    share a timing would make the second a change to the first.
+
+    OpenSCENARIO reads the same way: ``RoadNetwork/TrafficSignals`` holds the
+    controllers, and ``RoadNetwork`` is a section of the *scenario* file, beside
+    the ``LogicFile`` that names the map rather than inside it.
+    ``scenario_simulator_v2`` builds its ``TrafficSignalController`` from that
+    scenario XML too.
+
+    A phase named in an action or a condition refers to this.
+
+    Attributes:
+        name: What the scenario calls this controller.
+        phases: The cycle, in order.  Walked in a loop, each phase for its own
+            duration.
+        delay_seconds: How long after *reference* starts its first phase this
+            one starts.  Requires *reference*.
+        reference: Another controller this one is offset from, which is how a
+            green wave along a corridor is written.
+    """
+
+    name: str
+    phases: list[SignalPhaseRef] = Field(default_factory=list)
+    delay_seconds: float = 0.0
+    reference: Optional[str] = None
+
+
 class MapRef(_Node):
     """The map the scenario runs on.
 
@@ -625,6 +746,14 @@ class MapRef(_Node):
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     no_3d_model_lanelet_ids: list[int] = Field(default_factory=list)
+    #: Which signals move together on this road, and which movements conflict.
+    #: Map data: the same on every scenario that runs here.
+    signal_groups: list[SignalGroupRef] = Field(default_factory=list)
+    #: The junction timings *this* scenario runs.  Kept beside the groups rather
+    #: than in the storyboard because a controller is not something the
+    #: storyboard does -- it runs underneath it -- but it is this scenario's to
+    #: choose; see :class:`SignalControllerRef`.
+    traffic_signal_controllers: list[SignalControllerRef] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

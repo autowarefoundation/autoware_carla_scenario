@@ -271,6 +271,50 @@ class TestSelectFieldDefaults:
         assert {"road_id", "lane_id"} <= opendrive_fields
         assert "lanelet_id" not in opendrive_fields
 
+    def test_the_junction_cards_name_a_declaration_rather_than_free_text(
+        self,
+    ) -> None:
+        """Both fields hold a name the document already declares.
+
+        A text box there is a second way to spell something the document has
+        spelled once, and the only feedback on getting it wrong is a validation
+        error after the fact.  Kept as a test rather than a convention because
+        the two kinds are easy to lose in a later edit of the spec.
+        """
+        wanted = {"controller": "signal_controller", "signal_phase": "signal_phase"}
+        for kind, spec in (
+            ("action", registry.get_action_spec("traffic_signal_controller")),
+            ("condition", registry.get_condition_spec("traffic_signal_controller")),
+        ):
+            assert spec is not None, kind
+            kinds = {f.name: f.kind for f in spec.fields}
+            assert kinds == wanted, f"{kind} card: {kinds}"
+
+    def test_no_card_param_collides_with_the_inspectors_own_fields(self) -> None:
+        """A card param may not take a name the inspector already posts.
+
+        The action inspector renders a card's fields and its own -- title,
+        actor, the tick phase, once -- into one flat form namespace, so a card
+        param sharing one of those names becomes a second input of that name.
+        Nothing raises: the form is a multidict, the node-level read takes the
+        first value and the params take the last, so the two fields quietly
+        swap contents and the author sees a value they never typed.
+
+        `traffic_signal_controller` hit exactly that with a param called
+        `phase`, and is why its document-side name is `signal_phase` with an
+        argmap back to the constructor's `phase`.
+        """
+        reserved = {"title", "actor", "phase", "once"}
+        offenders = {
+            spec.type_id: sorted({f.name for f in spec.fields} & reserved)
+            for spec in registry.action_specs()
+            if {f.name for f in spec.fields} & reserved
+        }
+        assert not offenders, (
+            "These action cards name a param the inspector already posts; "
+            f"rename the param and map it back with argmap: {offenders}"
+        )
+
     def test_every_lanelet2_id_is_picked_off_the_map(self) -> None:
         """Nothing that names a Lanelet2 primitive may be a plain text box.
 

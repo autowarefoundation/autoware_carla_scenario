@@ -19,6 +19,9 @@
   {% if selected_kind == 'scenario' %}
     {% include "partials/inspector_scenario.html" %}
 
+  {% elif selected_kind == 'environment' %}
+    {% include "partials/inspector_environment.html" %}
+
   {% elif selected_kind == 'entity' %}
     {% include "partials/inspector_entity.html" %}
 

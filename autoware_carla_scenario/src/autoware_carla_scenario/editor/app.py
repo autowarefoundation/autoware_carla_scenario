@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..authoring import registry
+from ..authoring.models import SIGNAL_STATE_NAMES
 from ..authoring.persistence import DraftStore, default_draft_dir
 from .service import EditorError, EditorService, condition_actions
 
@@ -173,6 +174,9 @@ def create_app(
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,
         phase_help=registry.PHASE_HELP,
+        # The colours a phase may set, from the one list the runtime and the
+        # validator both hold to.
+        signal_state_names=SIGNAL_STATE_NAMES,
     )
 
     application.state.templates = templates

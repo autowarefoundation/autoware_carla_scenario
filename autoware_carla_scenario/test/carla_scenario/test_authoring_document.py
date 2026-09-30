@@ -21,6 +21,10 @@ from autoware_carla_scenario.authoring.models import (
     ConstraintNode,
     Entity,
     ScenarioDocument,
+    SignalControllerRef,
+    SignalGroupRef,
+    SignalPhaseRef,
+    SignalStateRef,
     SpawnSpec,
 )
 from autoware_carla_scenario.authoring.persistence import (
@@ -709,3 +713,535 @@ class TestInitTakesNoCondition:
 
         report = validate_document(document)
         assert [i for i in report.errors if "initialization phase" in i.message]
+
+
+class TestSignalControllerValidation:
+    """The phase table's own rules.
+
+    A phase table is the one part of a scenario whose mistakes are invisible at
+    runtime -- a misspelt phase name leaves the junction cycling normally and
+    the scenario waiting for something that never comes -- so the names are
+    checked against each other while the document is being written.
+    """
+
+    @staticmethod
+    def _with_controllers(*controllers: SignalControllerRef) -> ScenarioDocument:
+        document = new_document()
+        document.map.traffic_signal_controllers = list(controllers)
+        return document
+
+    @staticmethod
+    def _crossing(name: str = "crossing") -> SignalControllerRef:
+        return SignalControllerRef(
+            name=name,
+            phases=[
+                SignalPhaseRef(
+                    name="ns_green",
+                    duration_seconds=5.0,
+                    states=[
+                        SignalStateRef(
+                            lanelet2_regulatory_element_id=1001, state="green"
+                        )
+                    ],
+                ),
+                SignalPhaseRef(
+                    name="ns_amber",
+                    duration_seconds=2.0,
+                    states=[
+                        SignalStateRef(
+                            lanelet2_regulatory_element_id=1001, state="yellow"
+                        )
+                    ],
+                ),
+            ],
+        )
+
+    def test_a_declared_cycle_is_valid(self) -> None:
+        report = validate_document(self._with_controllers(self._crossing()))
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_two_controllers_of_the_same_name_is_an_error(self) -> None:
+        document = self._with_controllers(self._crossing(), self._crossing())
+        assert any(
+            "Duplicate signal controller name" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_a_controller_with_no_phases_is_an_error(self) -> None:
+        document = self._with_controllers(SignalControllerRef(name="empty"))
+        assert any(
+            "declares no phases" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_two_phases_of_the_same_name_is_an_error(self) -> None:
+        """An action naming it could not say which one it meant."""
+        controller = self._crossing()
+        controller.phases[1].name = "ns_green"
+        assert any(
+            "two phases named" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_a_negative_duration_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.phases[0].duration_seconds = -1.0
+        assert any(
+            "duration cannot be negative" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_an_unknown_state_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.phases[0].states[0].state = "chartreuse"
+        assert any(
+            "Unknown signal state" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_the_older_cards_spelling_of_a_colour_is_accepted(self) -> None:
+        """``Green`` is how the single-signal card spells it."""
+        controller = self._crossing()
+        controller.phases[0].states[0].state = "Green"
+        assert validate_document(self._with_controllers(controller)).ok
+
+    def test_a_phase_that_sets_nothing_is_only_a_warning(self) -> None:
+        """Spending time without touching a light is odd but legitimate."""
+        controller = self._crossing()
+        controller.phases[0].states = []
+        report = validate_document(self._with_controllers(controller))
+        assert report.ok
+        assert any("only spends time" in i.message for i in report.warnings)
+
+    def test_a_delay_with_nothing_to_measure_from_is_an_error(self) -> None:
+        """Not a controller that starts late: one whose offset silently is not."""
+        controller = self._crossing()
+        controller.delay_seconds = 3.0
+        assert any(
+            "no reference controller" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_a_reference_to_a_controller_this_scenario_lacks_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.reference = "nonesuch"
+        controller.delay_seconds = 3.0
+        assert any(
+            "which this scenario does not declare" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_a_controller_offset_from_itself_is_an_error(self) -> None:
+        controller = self._crossing()
+        controller.reference = controller.name
+        assert any(
+            "offset from itself" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    def test_controllers_offset_from_each_other_in_a_loop_is_an_error(self) -> None:
+        """None of them could ever start, and nothing at runtime would say so."""
+        first = self._crossing("first")
+        first.reference = "second"
+        second = self._crossing("second")
+        second.reference = "first"
+        assert any(
+            "in a loop" in i.message
+            for i in validate_document(self._with_controllers(first, second)).errors
+        )
+
+    def test_a_chain_of_offsets_is_fine(self) -> None:
+        first = self._crossing("first")
+        second = self._crossing("second")
+        second.reference = "first"
+        second.delay_seconds = 3.0
+        third = self._crossing("third")
+        third.reference = "second"
+        third.delay_seconds = 3.0
+        report = validate_document(self._with_controllers(first, second, third))
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_an_action_naming_an_undeclared_controller_is_an_error(self) -> None:
+        document = self._with_controllers(self._crossing())
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "nonesuch", "signal_phase": "ns_green"},
+            )
+        )
+        assert any(
+            "No signal controller named" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_an_action_naming_a_phase_the_controller_lacks_is_an_error(self) -> None:
+        document = self._with_controllers(self._crossing())
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing", "signal_phase": "ew_green"},
+            )
+        )
+        report = validate_document(document)
+        assert any("has no phase named" in i.message for i in report.errors)
+        # The phases it does have are named, since that is the next question.
+        assert any("'ns_amber'" in i.message for i in report.errors)
+
+    def test_a_condition_nested_in_a_trigger_is_checked_too(self) -> None:
+        """A phase name is just as wrong wherever it is written."""
+        document = self._with_controllers(self._crossing())
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing", "signal_phase": "ns_green"},
+                trigger=ConditionNode(
+                    type="all",
+                    children=[
+                        ConditionNode(
+                            type="traffic_signal_controller",
+                            params={
+                                "controller": "crossing",
+                                "signal_phase": "nonesuch",
+                            },
+                        ),
+                        ConditionNode(
+                            type="traffic_signal_controller",
+                            params={
+                                "controller": "crossing",
+                                "signal_phase": "ns_amber",
+                            },
+                        ),
+                    ],
+                ),
+            )
+        )
+        errors = [
+            i
+            for i in validate_document(document).errors
+            if "no phase named" in i.message
+        ]
+        assert len(errors) == 1
+        assert "nonesuch" in errors[0].message
+
+    def test_an_assertion_naming_a_good_phase_is_valid(self) -> None:
+        document = self._with_controllers(self._crossing())
+        document.assertions.pass_conditions = [
+            ConditionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing", "signal_phase": "ns_amber"},
+            )
+        ]
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+
+class TestSignalGroupValidation:
+    """The map's half: which signals move together, and which movements cross.
+
+    A phase table addressed by group is the only version of this that can be
+    checked rather than trusted.  The rule that matters is the last one here --
+    two crossing movements let through at once is the state issue #50 named, and
+    nothing could catch it while a phase was a list of regulatory element ids.
+    """
+
+    @staticmethod
+    def _document(
+        groups: list[SignalGroupRef], *phases: SignalPhaseRef
+    ) -> ScenarioDocument:
+        document = new_document()
+        document.map.signal_groups = groups
+        document.map.traffic_signal_controllers = [
+            SignalControllerRef(name="crossing", phases=list(phases))
+        ]
+        return document
+
+    @staticmethod
+    def _crossing_groups() -> list[SignalGroupRef]:
+        """North-south over two lanes, east-west over one, the two crossing."""
+        return [
+            SignalGroupRef(
+                name="ns",
+                lanelet2_regulatory_element_ids=[1001, 1003],
+                conflicts_with=["ew"],
+            ),
+            SignalGroupRef(name="ew", lanelet2_regulatory_element_ids=[1002]),
+        ]
+
+    @staticmethod
+    def _phase(name: str, **states: str) -> SignalPhaseRef:
+        return SignalPhaseRef(
+            name=name,
+            duration_seconds=5.0,
+            states=[
+                SignalStateRef(group=group, state=state)
+                for group, state in states.items()
+            ],
+        )
+
+    @staticmethod
+    def _messages(document: ScenarioDocument) -> list[str]:
+        return [i.message for i in validate_document(document).errors]
+
+    # -- the whole thing, written the way it is meant to be ----------------
+
+    def test_a_group_addressed_cycle_is_valid(self) -> None:
+        document = self._document(
+            self._crossing_groups(),
+            self._phase("ns_green", ns="green", ew="red"),
+            self._phase("ns_amber", ns="yellow", ew="red"),
+            self._phase("all_red", ns="red", ew="red"),
+            self._phase("ew_green", ns="red", ew="green"),
+        )
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    # -- the groups themselves ---------------------------------------------
+
+    def test_a_nameless_group_is_an_error(self) -> None:
+        document = self._document(
+            [SignalGroupRef(name="  ", lanelet2_regulatory_element_ids=[1001])]
+        )
+        assert any("A signal group needs a name" in m for m in self._messages(document))
+
+    def test_two_groups_of_the_same_name_is_an_error(self) -> None:
+        document = self._document(
+            [
+                SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001]),
+                SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1003]),
+            ]
+        )
+        assert any("Duplicate signal group name" in m for m in self._messages(document))
+
+    def test_a_group_that_drives_nothing_is_an_error(self) -> None:
+        document = self._document([SignalGroupRef(name="ns")])
+        assert any("drives no signal" in m for m in self._messages(document))
+
+    def test_one_signal_in_two_groups_is_an_error(self) -> None:
+        """A light shows one colour, so a phase naming both would not say which."""
+        document = self._document(
+            [
+                SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001]),
+                SignalGroupRef(name="ew", lanelet2_regulatory_element_ids=[1001]),
+            ]
+        )
+        assert any(
+            "is in both signal group 'ns' and 'ew'" in m
+            for m in self._messages(document)
+        )
+
+    def test_a_repeated_signal_within_one_group_is_only_a_warning(self) -> None:
+        document = self._document(
+            [SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001, 1001])]
+        )
+        report = validate_document(document)
+        assert any(
+            "names the same regulatory element more than once" in i.message
+            for i in report.warnings
+        )
+
+    def test_a_group_that_conflicts_with_itself_is_an_error(self) -> None:
+        document = self._document(
+            [
+                SignalGroupRef(
+                    name="ns",
+                    lanelet2_regulatory_element_ids=[1001],
+                    conflicts_with=["ns"],
+                )
+            ]
+        )
+        assert any("conflicts with itself" in m for m in self._messages(document))
+
+    def test_a_conflict_with_an_undeclared_group_is_an_error(self) -> None:
+        document = self._document(
+            [
+                SignalGroupRef(
+                    name="ns",
+                    lanelet2_regulatory_element_ids=[1001],
+                    conflicts_with=["nowhere"],
+                )
+            ]
+        )
+        assert any(
+            "conflicts with 'nowhere', which this map does not declare" in m
+            for m in self._messages(document)
+        )
+
+    # -- how a phase names its subject -------------------------------------
+
+    def test_a_phase_naming_an_undeclared_group_is_an_error(self) -> None:
+        document = self._document(
+            self._crossing_groups(), self._phase("p", nowhere="green")
+        )
+        assert any(
+            "which map.signal_groups does not declare" in m
+            for m in self._messages(document)
+        )
+
+    def test_a_state_naming_neither_a_group_nor_an_element_is_an_error(self) -> None:
+        document = self._document(
+            self._crossing_groups(),
+            SignalPhaseRef(
+                name="p", duration_seconds=5.0, states=[SignalStateRef(state="red")]
+            ),
+        )
+        assert any("names no signal" in m for m in self._messages(document))
+
+    def test_a_state_naming_both_is_an_error(self) -> None:
+        """Refused rather than resolved: a precedence rule nobody would know."""
+        document = self._document(
+            self._crossing_groups(),
+            SignalPhaseRef(
+                name="p",
+                duration_seconds=5.0,
+                states=[
+                    SignalStateRef(
+                        group="ns", lanelet2_regulatory_element_id=1001, state="green"
+                    )
+                ],
+            ),
+        )
+        assert any("names both signal group" in m for m in self._messages(document))
+
+    def test_setting_the_same_group_twice_in_one_phase_is_an_error(self) -> None:
+        document = self._document(
+            self._crossing_groups(),
+            SignalPhaseRef(
+                name="p",
+                duration_seconds=5.0,
+                states=[
+                    SignalStateRef(group="ns", state="green"),
+                    SignalStateRef(group="ns", state="red"),
+                ],
+            ),
+        )
+        assert any(
+            "sets signal group 'ns' twice" in m for m in self._messages(document)
+        )
+
+    def test_setting_the_same_element_twice_in_one_phase_is_an_error(self) -> None:
+        document = self._document(
+            self._crossing_groups(),
+            SignalPhaseRef(
+                name="p",
+                duration_seconds=5.0,
+                states=[
+                    SignalStateRef(lanelet2_regulatory_element_id=7, state="green"),
+                    SignalStateRef(lanelet2_regulatory_element_id=7, state="red"),
+                ],
+            ),
+        )
+        assert any(
+            "sets regulatory element 7 twice" in m for m in self._messages(document)
+        )
+
+    def test_overriding_one_light_out_of_a_group_is_only_a_warning(self) -> None:
+        """Legitimate, but it only works in the order it is written."""
+        document = self._document(
+            self._crossing_groups(),
+            SignalPhaseRef(
+                name="p",
+                duration_seconds=5.0,
+                states=[
+                    SignalStateRef(group="ns", state="green"),
+                    SignalStateRef(lanelet2_regulatory_element_id=1003, state="red"),
+                ],
+            ),
+        )
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+        assert any(
+            "whichever is written last is what the light shows" in i.message
+            for i in report.warnings
+        )
+
+    # -- the rule the grouping exists for ----------------------------------
+
+    def test_two_crossing_movements_both_green_is_an_error(self) -> None:
+        document = self._document(
+            self._crossing_groups(), self._phase("both", ns="green", ew="green")
+        )
+        assert any(
+            "the map declares their movements as crossing" in m
+            for m in self._messages(document)
+        )
+
+    def test_amber_against_a_crossing_green_is_an_error(self) -> None:
+        """Amber is permissive: the junction still has vehicles in it."""
+        document = self._document(
+            self._crossing_groups(), self._phase("overlap", ns="yellow", ew="green")
+        )
+        assert any(
+            "the map declares their movements as crossing" in m
+            for m in self._messages(document)
+        )
+
+    def test_the_conflict_is_read_symmetrically(self) -> None:
+        """Declaring a crossing on one side says everything there is to say."""
+        groups = [
+            SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001]),
+            SignalGroupRef(
+                name="ew",
+                lanelet2_regulatory_element_ids=[1002],
+                conflicts_with=["ns"],
+            ),
+        ]
+        document = self._document(groups, self._phase("both", ns="green", ew="green"))
+        assert any(
+            "the map declares their movements as crossing" in m
+            for m in self._messages(document)
+        )
+
+    def test_the_conflict_is_reported_once_per_pair(self) -> None:
+        document = self._document(
+            self._crossing_groups(), self._phase("both", ns="green", ew="green")
+        )
+        assert (
+            len([m for m in self._messages(document) if "movements as crossing" in m])
+            == 1
+        )
+
+    def test_a_red_against_a_crossing_green_is_fine(self) -> None:
+        document = self._document(
+            self._crossing_groups(), self._phase("ns_green", ns="green", ew="red")
+        )
+        assert validate_document(document).ok
+
+    def test_naming_the_elements_directly_escapes_the_conflict_rule(self) -> None:
+        """A junction in an impossible state is a legitimate thing to test.
+
+        Naming a group is how an author invokes the map's statement about that
+        movement, this rule included; naming the elements says the scenario is
+        driving individual lights and means it.
+        """
+        document = self._document(
+            self._crossing_groups(),
+            SignalPhaseRef(
+                name="broken",
+                duration_seconds=5.0,
+                states=[
+                    SignalStateRef(lanelet2_regulatory_element_id=1001, state="green"),
+                    SignalStateRef(lanelet2_regulatory_element_id=1002, state="green"),
+                ],
+            ),
+        )
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_a_document_that_declares_no_groups_still_validates(self) -> None:
+        """Every phase table written before groups existed keeps working."""
+        document = self._document(
+            [],
+            SignalPhaseRef(
+                name="ns_green",
+                duration_seconds=5.0,
+                states=[
+                    SignalStateRef(lanelet2_regulatory_element_id=1001, state="green")
+                ],
+            ),
+        )
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_a_group_name_on_a_map_with_none_says_so(self) -> None:
+        document = self._document([], self._phase("p", ns="green"))
+        assert any("This map declares none" in m for m in self._messages(document))

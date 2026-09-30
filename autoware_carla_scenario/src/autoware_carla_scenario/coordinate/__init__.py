@@ -24,6 +24,7 @@ from .poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .snap import GroundProjectionConfig, snap_to_carla_road
 from .traffic_light import (
     find_nearest_traffic_light,
+    find_traffic_lights_for_lanelet2_id,
     get_signal_ids_for_controller,
     lanelet2_traffic_light_id_to_opendrive_controller_id,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "MapManager",
     "frame_of",
     "find_nearest_traffic_light",
+    "find_traffic_lights_for_lanelet2_id",
     "get_signal_ids_for_controller",
     "get_stop_line_linestrings",
     "get_stop_line_linestrings_with_following",

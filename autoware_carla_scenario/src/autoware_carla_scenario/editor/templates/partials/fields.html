@@ -5,7 +5,7 @@
    type, so registering a new action / condition / constraint in Python gives it
    a working inspector with no change to this file. #}
 
-{% macro control(spec, value, document, prefix='', draft=none) %}
+{% macro control(spec, value, document, prefix='', draft=none, params={}) %}
   {%- set name = prefix ~ spec.name -%}
   {%- set current = spec.default if value is none else value -%}
   {% if spec.kind == 'bool' %}
@@ -47,6 +47,50 @@
           {{ action_label(other, document) }}
         </option>
       {% endfor %}
+    </select>
+  {% elif spec.kind == 'signal_controller' %}
+    {# The document already says which junctions it runs.  Offering them beats a
+       text box whose only feedback is a validation error after the fact. #}
+    {%- set declared = document.map.traffic_signal_controllers -%}
+    {%- set names = [] -%}
+    {%- for controller in declared %}{% set _ = names.append(controller.name) %}{% endfor -%}
+    <select name="{{ name }}" class="ed-input">
+      <option value="" {% if not current %}selected{% endif %}>— choose —</option>
+      {% for controller in declared %}
+        <option value="{{ controller.name }}" {% if current == controller.name %}selected{% endif %}>
+          {{ controller.name }} — {{ controller.phases|length }} phase{{ '' if controller.phases|length == 1 else 's' }}
+        </option>
+      {% endfor %}
+      {# A name this document no longer declares is kept rather than dropped:
+         losing it on save would edit the scenario behind the author's back, and
+         the validator already says what is wrong with it. #}
+      {% if current and current not in names %}
+        <option value="{{ current }}" selected>{{ current }} — not declared</option>
+      {% endif %}
+    </select>
+  {% elif spec.kind == 'signal_phase' %}
+    {# Scoped to the controller the card names, because a phase only means
+       anything inside one.  The form re-renders on change, so choosing a
+       controller refills this list. #}
+    {%- set chosen = params.get('controller') -%}
+    {%- set declared = document.map.traffic_signal_controllers -%}
+    {%- set scoped = declared|selectattr('name', 'equalto', chosen)|list if chosen else declared -%}
+    {%- set names = [] -%}
+    {%- for controller in scoped %}{% for phase in controller.phases %}{% set _ = names.append(phase.name) %}{% endfor %}{% endfor -%}
+    <select name="{{ name }}" class="ed-input">
+      <option value="" {% if not current %}selected{% endif %}>— choose —</option>
+      {% for controller in scoped %}
+        <optgroup label="{{ controller.name }}">
+          {% for phase in controller.phases %}
+            <option value="{{ phase.name }}" {% if current == phase.name %}selected{% endif %}>
+              {{ phase.name }} — {{ phase.duration_seconds }} s
+            </option>
+          {% endfor %}
+        </optgroup>
+      {% endfor %}
+      {% if current and current not in names %}
+        <option value="{{ current }}" selected>{{ current }} — not declared</option>
+      {% endif %}
     </select>
   {% elif spec.kind in ('int_list', 'int_list_or_ref') %}
     <input type="text" name="{{ name }}" class="ed-input mono"
@@ -190,7 +234,7 @@
         {{ spec.label }}{% if spec.unit %} <span class="unit">({{ spec.unit }})</span>{% endif %}
       </label>
     {% endif %}
-    {{ control(spec, value, document, prefix, draft) }}
+    {{ control(spec, value, document, prefix, draft, params) }}
     {% if spec.help and spec.kind != 'bool' %}<p class="ed-help">{{ spec.help }}</p>{% endif %}
   </div>
 {% endmacro %}

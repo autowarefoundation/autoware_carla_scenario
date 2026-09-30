@@ -18,7 +18,7 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Sequence, get_args
 
 from ..authoring.models import (
     ActionNode,
@@ -306,6 +306,256 @@ class EditorService:
             document.map.no_3d_model_lanelet_ids = (
                 parsed if isinstance(parsed, list) else []
             )
+
+    # ------------------------------------------------------------------
+    # Traffic signals
+    # ------------------------------------------------------------------
+    #
+    # Groups and controllers are addressed by their index in the document's
+    # list, not by name.  A name is the obvious key and the wrong one: it is
+    # editable in the same form, and a document mid-edit may legitimately hold
+    # two groups called the same thing for as long as it takes to rename the
+    # second.  Every mutation re-renders the panel, so an index is never stale
+    # by the time the next one is posted.
+
+    @staticmethod
+    def _signal_group(document: ScenarioDocument, index: int) -> Any:
+        groups = document.map.signal_groups
+        if not 0 <= index < len(groups):
+            raise EditorError("That signal group is no longer there.")
+        return groups[index]
+
+    @staticmethod
+    def _signal_controller(document: ScenarioDocument, index: int) -> Any:
+        controllers = document.map.traffic_signal_controllers
+        if not 0 <= index < len(controllers):
+            raise EditorError("That signal controller is no longer there.")
+        return controllers[index]
+
+    @staticmethod
+    def _signal_phase(document: ScenarioDocument, index: int, phase_index: int) -> Any:
+        controller = EditorService._signal_controller(document, index)
+        if not 0 <= phase_index < len(controller.phases):
+            raise EditorError("That phase is no longer there.")
+        return controller.phases[phase_index]
+
+    def add_signal_group(self, document: ScenarioDocument) -> None:
+        """Declare one more movement on this map."""
+        from ..authoring.models import SignalGroupRef  # noqa: PLC0415
+
+        document.map.signal_groups.append(
+            SignalGroupRef(name=_unused_name("group", _signal_group_names(document)))
+        )
+
+    def update_signal_group(
+        self, document: ScenarioDocument, index: int, form: Mapping[str, Any]
+    ) -> None:
+        """Apply one signal group's form.
+
+        A rename carries: every phase state naming the old name is rewritten,
+        as is every ``conflicts_with`` entry pointing at it.  Leaving them to
+        the validator would turn a rename into a screenful of errors about
+        edits nobody made.
+        """
+        from .forms import parse_int_list  # noqa: PLC0415
+
+        group = self._signal_group(document, index)
+        if "name" in form:
+            new_name = str(form["name"]).strip()
+            if new_name and new_name != group.name:
+                self._rename_signal_group(document, group.name, new_name)
+                group.name = new_name
+        if "lanelet2_regulatory_element_ids" in form:
+            parsed = parse_int_list(form["lanelet2_regulatory_element_ids"])
+            group.lanelet2_regulatory_element_ids = (
+                parsed if isinstance(parsed, list) else []
+            )
+        if "conflicts_with" in form:
+            names = set(_signal_group_names(document)) - {group.name}
+            chosen = form["conflicts_with"]
+            values = chosen if isinstance(chosen, list) else [chosen]
+            group.conflicts_with = [
+                str(value) for value in values if str(value) in names
+            ]
+
+    @staticmethod
+    def _rename_signal_group(document: ScenarioDocument, old: str, new: str) -> None:
+        """Point every reference to *old* at *new*."""
+        for other in document.map.signal_groups:
+            other.conflicts_with = [
+                new if name == old else name for name in other.conflicts_with
+            ]
+        for controller in document.map.traffic_signal_controllers:
+            for phase in controller.phases:
+                for state in phase.states:
+                    if state.group == old:
+                        state.group = new
+
+    def delete_signal_group(self, document: ScenarioDocument, index: int) -> None:
+        """Remove a group, and every phase state and conflict naming it.
+
+        The states go with it because a state whose group is gone sets nothing:
+        leaving them behind would be a phase that reads as driving a movement
+        this map no longer has.
+        """
+        group = self._signal_group(document, index)
+        name = group.name
+        document.map.signal_groups.pop(index)
+        for other in document.map.signal_groups:
+            other.conflicts_with = [n for n in other.conflicts_with if n != name]
+        for controller in document.map.traffic_signal_controllers:
+            for phase in controller.phases:
+                phase.states = [s for s in phase.states if s.group != name]
+
+    def add_signal_controller(self, document: ScenarioDocument) -> None:
+        """Declare one more junction cycle, with a phase to start from.
+
+        A controller with no phases is a validation error the moment it exists,
+        so it is born with one rather than with a complaint attached.
+        """
+        from ..authoring.models import (  # noqa: PLC0415
+            SignalControllerRef,
+            SignalPhaseRef,
+        )
+
+        names = [c.name for c in document.map.traffic_signal_controllers]
+        controller = SignalControllerRef(
+            name=_unused_name("junction", names),
+            phases=[SignalPhaseRef(name="phase_1")],
+        )
+        _fill_phase_states(document, controller.phases[0])
+        document.map.traffic_signal_controllers.append(controller)
+
+    def update_signal_controller(
+        self, document: ScenarioDocument, index: int, form: Mapping[str, Any]
+    ) -> None:
+        """Apply one controller's own form -- its name and its offset."""
+        controller = self._signal_controller(document, index)
+        if "name" in form:
+            new_name = str(form["name"]).strip()
+            if new_name and new_name != controller.name:
+                old = controller.name
+                for other in document.map.traffic_signal_controllers:
+                    if other.reference == old:
+                        other.reference = new_name
+                for path, node in _signal_controller_uses(document):
+                    if str(node.params.get("controller") or "") == old:
+                        node.params["controller"] = new_name
+                controller.name = new_name
+        if "reference" in form:
+            reference = str(form["reference"]).strip()
+            controller.reference = reference or None
+        if "delay_seconds" in form:
+            controller.delay_seconds = _as_float(
+                form["delay_seconds"], "Start delay", controller.delay_seconds
+            )
+        if not controller.reference:
+            # A delay measures from a reference; without one it is a number
+            # that does nothing, and keeping it would be a validation error
+            # about a field the author had just cleared.
+            controller.delay_seconds = 0.0
+
+    def delete_signal_controller(self, document: ScenarioDocument, index: int) -> None:
+        """Remove a controller, and drop the offsets that measured from it."""
+        controller = self._signal_controller(document, index)
+        name = controller.name
+        document.map.traffic_signal_controllers.pop(index)
+        for other in document.map.traffic_signal_controllers:
+            if other.reference == name:
+                other.reference = None
+                other.delay_seconds = 0.0
+
+    def add_signal_phase(self, document: ScenarioDocument, index: int) -> None:
+        """Add a step to a cycle, already naming every group it drives."""
+        from ..authoring.models import SignalPhaseRef  # noqa: PLC0415
+
+        controller = self._signal_controller(document, index)
+        phase = SignalPhaseRef(
+            name=_unused_name("phase", [p.name for p in controller.phases])
+        )
+        _fill_phase_states(document, phase)
+        controller.phases.append(phase)
+
+    def update_signal_phase(
+        self,
+        document: ScenarioDocument,
+        index: int,
+        phase_index: int,
+        form: Mapping[str, Any],
+    ) -> None:
+        """Apply one phase's form: its name, its duration, and its colours.
+
+        The colours arrive one per declared group, under ``state_<group>``.
+        States naming a bare regulatory element are left exactly as they are:
+        they are the escape hatch for a junction the groups cannot describe,
+        they are written by hand, and a form that does not show them must not
+        be able to delete them either.
+        """
+        from ..authoring.models import SignalStateRef  # noqa: PLC0415
+
+        controller = self._signal_controller(document, index)
+        phase = self._signal_phase(document, index, phase_index)
+
+        if "name" in form:
+            new_name = str(form["name"]).strip()
+            if new_name and new_name != phase.name:
+                old = phase.name
+                for path, node in _signal_controller_uses(document):
+                    if (
+                        str(node.params.get("controller") or "") == controller.name
+                        and str(node.params.get("signal_phase") or "") == old
+                    ):
+                        node.params["signal_phase"] = new_name
+                phase.name = new_name
+        if "duration_seconds" in form:
+            phase.duration_seconds = _as_float(
+                form["duration_seconds"], "Duration", phase.duration_seconds
+            )
+
+        kept = [state for state in phase.states if not state.group]
+        by_group = {state.group: state for state in phase.states if state.group}
+        rebuilt: list[Any] = []
+        for group in document.map.signal_groups:
+            key = f"state_{group.name}"
+            if key in form:
+                colour = str(form[key]).strip().lower()
+            else:
+                existing = by_group.get(group.name)
+                colour = existing.state if existing is not None else "red"
+            rebuilt.append(SignalStateRef(group=group.name, state=colour))
+        phase.states = rebuilt + kept
+
+    def delete_signal_phase(
+        self, document: ScenarioDocument, index: int, phase_index: int
+    ) -> None:
+        """Remove one step of a cycle, and any card that named it."""
+        controller = self._signal_controller(document, index)
+        phase = self._signal_phase(document, index, phase_index)
+        name = phase.name
+        controller.phases.pop(phase_index)
+        for path, node in _signal_controller_uses(document):
+            if (
+                str(node.params.get("controller") or "") == controller.name
+                and str(node.params.get("signal_phase") or "") == name
+            ):
+                node.params["signal_phase"] = ""
+
+    def move_signal_phase(
+        self, document: ScenarioDocument, index: int, phase_index: int, delta: int
+    ) -> None:
+        """Shift a phase along its cycle.
+
+        Order is semantics here, unlike the canvas's own move: a cycle is
+        walked in the order it is written, so this is what puts the amber
+        between the two greens.
+        """
+        controller = self._signal_controller(document, index)
+        self._signal_phase(document, index, phase_index)
+        target = phase_index + delta
+        if not 0 <= target < len(controller.phases):
+            return
+        phases = controller.phases
+        phases[phase_index], phases[target] = phases[target], phases[phase_index]
 
     # ------------------------------------------------------------------
     # Maps
@@ -973,6 +1223,69 @@ def _parse(fields: Any, form: Mapping[str, Any], prefix: str = "") -> dict[str, 
         return parse_params(present, stripped)
     except ValueError as exc:
         raise EditorError(str(exc)) from exc
+
+
+def _signal_group_names(document: ScenarioDocument) -> "list[str]":
+    """Every declared group name, in declaration order."""
+    return [group.name for group in document.map.signal_groups]
+
+
+def _unused_name(stem: str, taken: "Sequence[str]") -> str:
+    """Return ``stem_1``, ``stem_2``... -- the first one not already in use.
+
+    A new row needs a name it can be referred to by before anyone has typed
+    one, and two rows sharing a name is a validation error the author did not
+    make.
+    """
+    existing = set(taken)
+    index = 1
+    while f"{stem}_{index}" in existing:
+        index += 1
+    return f"{stem}_{index}"
+
+
+def _fill_phase_states(document: ScenarioDocument, phase: Any) -> None:
+    """Give *phase* one state per declared group, all red.
+
+    A phase states every group its controller drives, which is what makes
+    applying it put the junction into a known whole.  Starting from all-red
+    means a half-filled cycle is a junction stopped rather than one letting
+    two crossing movements through.
+    """
+    from ..authoring.models import SignalStateRef  # noqa: PLC0415
+
+    phase.states = [
+        SignalStateRef(group=name, state="red")
+        for name in _signal_group_names(document)
+    ]
+
+
+def _signal_controller_uses(document: ScenarioDocument) -> "list[tuple[str, Any]]":
+    """Every action and condition of the junction type, wherever it is written.
+
+    The same walk the validator does, for the same reason: a rename has to
+    reach a card whether it sits in a trigger, a nested composition or an
+    assertion.
+    """
+    found: "list[tuple[str, Any]]" = []
+
+    def walk(path: str, node: Any) -> None:
+        if node.type == "traffic_signal_controller":
+            found.append((path, node))
+        for index, child in enumerate(node.children):
+            walk(f"{path}.children[{index}]", child)
+
+    for index, action in enumerate(document.actions):
+        path = f"actions[{index}]"
+        if action.type == "traffic_signal_controller":
+            found.append((path, action))
+        if action.trigger is not None:
+            walk(f"{path}.trigger", action.trigger)
+    for index, condition in enumerate(document.assertions.pass_conditions):
+        walk(f"assertions.pass[{index}]", condition)
+    for index, condition in enumerate(document.assertions.fail_conditions):
+        walk(f"assertions.fail[{index}]", condition)
+    return found
 
 
 def _as_float(raw: Any, label: str, fallback: float) -> float:

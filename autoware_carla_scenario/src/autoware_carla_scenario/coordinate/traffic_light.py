@@ -82,3 +82,35 @@ def get_signal_ids_for_controller(controller_id: int) -> list[str]:
     Reads the road network :class:`MapManager` has loaded.
     """
     return _signal_ids_of(MapManager.get_instance().road_network, controller_id)
+
+
+def find_traffic_lights_for_lanelet2_id(
+    world: "carla.World", lanelet2_tl_id: int
+) -> "list[carla.Actor]":
+    """Return the CARLA traffic lights a Lanelet2 regulatory element names.
+
+    The Lanelet2 id resolves to an OpenDRIVE controller and thence to the
+    signal ids the controller drives, which is the same two-step hop
+    :class:`~autoware_carla_scenario.conditions.TrafficSignalCondition` and
+    :class:`~autoware_carla_scenario.actions.TrafficSignalAction` already make.
+    It is here rather than in either of them so that a third caller does not
+    make it a third time and get it subtly different.
+
+    Args:
+        world: The CARLA world.
+        lanelet2_tl_id: Lanelet2 regulatory element id.
+
+    Returns:
+        The matching light actors, empty when the id resolves to nothing.
+    """
+    controller_id = lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id)
+    if controller_id is None:
+        return []
+    signal_ids = set(get_signal_ids_for_controller(controller_id))
+    if not signal_ids:
+        return []
+    return [
+        actor
+        for actor in world.get_actors().filter("traffic.traffic_light*")
+        if actor.get_opendrive_id() in signal_ids
+    ]

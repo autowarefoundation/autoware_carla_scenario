@@ -1373,7 +1373,11 @@ class TestEnvironmentTrack:
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
         assert offers["ego"] == {"lane_change", "routing", "set_speed", "turn"}
-        assert offers[""] == {"environment", "traffic_signal"}
+        assert offers[""] == {
+            "environment",
+            "traffic_signal",
+            "traffic_signal_controller",
+        }
 
     def test_a_pedestrian_track_offers_walking_and_nothing_else(
         self, client: TestClient, draft_id: str
@@ -1670,3 +1674,607 @@ class TestScenarioMap:
         # projection of the .osm, which could disagree with the drawing.
         assert "focusOn(id)" in script
         assert "getView()" in script
+
+
+class TestJunctionCardsOfferWhatTheDocumentDeclares:
+    """The two junction fields are pickers, not text boxes.
+
+    A controller name and a phase name are the document's own vocabulary: it
+    already says which junctions it runs and what each one's phases are called.
+    Making the author retype them is what the validator's "no controller named"
+    and "has no phase named" errors exist to catch, and an error after the fact
+    is a worse answer than a list of the right names.
+    """
+
+    @staticmethod
+    def _declare(store: DraftStore, draft_id: str, *extra: Any) -> None:
+        """Give the draft two junctions, plus any extra nodes passed."""
+        from autoware_carla_scenario.authoring.models import (
+            SignalControllerRef,
+            SignalPhaseRef,
+        )
+
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers = [
+            SignalControllerRef(
+                name="crossing",
+                phases=[
+                    SignalPhaseRef(name="ns_green", duration_seconds=20.0),
+                    SignalPhaseRef(name="ns_amber", duration_seconds=3.0),
+                ],
+            ),
+            SignalControllerRef(
+                name="next_junction",
+                phases=[SignalPhaseRef(name="ew_green", duration_seconds=15.0)],
+            ),
+        ]
+        draft.document.actions.extend(extra)
+        store.save(draft)
+
+    @staticmethod
+    def _card(node_id: str, controller: str, phase: str) -> Any:
+        from autoware_carla_scenario.authoring.models import ActionNode
+
+        return ActionNode(
+            id=node_id,
+            type="traffic_signal_controller",
+            actor=None,
+            params={"controller": controller, "signal_phase": phase},
+        )
+
+    @staticmethod
+    def _control(body: str, name: str) -> str:
+        return body.split(f'name="{name}"')[1].split("</select>")[0]
+
+    def test_the_controller_field_lists_the_declared_controllers(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._declare(store, draft_id, self._card("a_junction", "crossing", "ns_amber"))
+        body = client.get(f"/draft/{draft_id}/inspector/a_junction").text
+        control = self._control(body, "controller")
+
+        assert '<option value="crossing" selected>' in control
+        assert '<option value="next_junction" >' in control
+
+    def test_the_phase_field_offers_only_that_controllers_phases(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A phase means nothing outside the junction that declares it."""
+        self._declare(store, draft_id, self._card("a_junction", "crossing", "ns_amber"))
+        control = self._control(
+            client.get(f"/draft/{draft_id}/inspector/a_junction").text, "signal_phase"
+        )
+
+        assert '<optgroup label="crossing">' in control
+        assert 'value="ns_green"' in control
+        assert 'value="ns_amber"' in control
+        # Declared by the *other* junction, so it is not on offer here.
+        assert 'value="ew_green"' not in control
+
+    def test_the_phase_durations_are_shown_beside_the_names(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """How long a phase holds is the thing being chosen between."""
+        self._declare(store, draft_id, self._card("a_junction", "crossing", "ns_amber"))
+        control = self._control(
+            client.get(f"/draft/{draft_id}/inspector/a_junction").text, "signal_phase"
+        )
+        assert "20.0 s" in control
+        assert "3.0 s" in control
+
+    def test_a_name_the_document_no_longer_declares_is_kept(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Dropping it on save would edit the scenario behind the author's back.
+
+        A select can only submit what it offers, so a value missing from the
+        options would be replaced by the first one the moment anything else on
+        the card changed -- a silent edit, and of exactly the kind this card
+        already had one of.
+        """
+        self._declare(store, draft_id, self._card("a_stale", "gone", "vanished"))
+        body = client.get(f"/draft/{draft_id}/inspector/a_stale").text
+
+        controller = self._control(body, "controller")
+        phase = self._control(body, "signal_phase")
+        assert '<option value="gone" selected>' in controller
+        assert "not declared" in controller
+        assert '<option value="vanished" selected>' in phase
+        assert "not declared" in phase
+
+    def test_saving_a_stale_card_does_not_lose_its_names(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The round trip the previous test protects, driven through the form."""
+        self._declare(store, draft_id, self._card("a_stale", "gone", "vanished"))
+
+        client.post(
+            f"/draft/{draft_id}/action/a_stale",
+            data={
+                "title": "",
+                "controller": "gone",
+                "signal_phase": "vanished",
+                "phase": "init",
+                "once": "on",
+            },
+        )
+
+        node = _present(
+            next(
+                (a for a in _document(store, draft_id).actions if a.id == "a_stale"),
+                None,
+            ),
+            "the stale card",
+        )
+        assert node.params["controller"] == "gone"
+        assert node.params["signal_phase"] == "vanished"
+        assert node.phase == "init"
+
+
+class TestTheJunctionEditor:
+    """Declaring a junction without leaving the editor.
+
+    The phase table used to be YAML-only, which made the two junction cards
+    pickers for names nothing in the editor could create. These routes are the
+    other half: the movements a map has, and the cycle this scenario runs on
+    them.
+
+    Most of what is tested here is what a rename or a delete has to drag with
+    it. A phase state names a group, a card names a controller and a phase, an
+    offset names another controller -- and every one of those is a string, so
+    an edit that does not carry is a document that validates as a screenful of
+    errors about edits nobody made.
+    """
+
+    @staticmethod
+    def _groups(client: TestClient, draft_id: str, *names: str) -> None:
+        for index, name in enumerate(names):
+            client.post(f"/draft/{draft_id}/signal-group")
+            client.post(
+                f"/draft/{draft_id}/signal-group/{index}",
+                data={
+                    "name": name,
+                    "lanelet2_regulatory_element_ids": f"{1330 + index}",
+                },
+            )
+
+    @staticmethod
+    def _map(store: DraftStore, draft_id: str) -> Any:
+        return _document(store, draft_id).map
+
+    # -- reached from the Environment track --------------------------------
+
+    def test_the_environment_track_opens_the_junction_editor(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """The head column is where the canvas says the state at t=0 is.
+
+        A junction's movements and cycle are exactly that, so the track's own
+        head is the way in -- not a section of the scenario, which is where
+        they were first put and where nothing pointed at them.
+        """
+        canvas = client.get(f"/draft/{draft_id}/canvas").text
+        head = canvas.split('data-object-id="environment"')[0].rsplit("<div", 1)[1]
+
+        assert "is-static" not in head
+        assert f'hx-get="/draft/{draft_id}/inspector/environment"' in canvas
+
+    def test_the_environment_inspector_is_the_junction_editor(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        assert "Signal groups" in body
+        assert "Controllers" in body
+
+    def test_the_scenario_inspector_no_longer_holds_it(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """One home. Two ways in would be two things to keep in step."""
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert "Signal groups" not in body
+
+    def test_the_track_head_counts_the_junctions(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """A track that says "nothing to place" hides what is declared on it."""
+        assert "no junctions yet" in client.get(f"/draft/{draft_id}/canvas").text
+
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        canvas = client.get(f"/draft/{draft_id}/canvas").text
+        chip = canvas.split('data-object-id="environment"')[1].split("ed-spawn-chip")[1]
+        assert "1 junction" in chip
+        assert "2 movements" in chip
+
+    def test_an_edit_leaves_the_junction_editor_open(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """Otherwise every change throws the author back to the scenario."""
+        response = client.post(f"/draft/{draft_id}/signal-group")
+        assert 'data-selected="environment"' in response.text
+
+    # -- signal groups -----------------------------------------------------
+
+    def test_a_new_group_is_born_with_a_free_name(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Two rows sharing a name is an error the author did not make."""
+        client.post(f"/draft/{draft_id}/signal-group")
+        client.post(f"/draft/{draft_id}/signal-group")
+
+        assert [g.name for g in self._map(store, draft_id).signal_groups] == [
+            "group_1",
+            "group_2",
+        ]
+
+    def test_renaming_a_group_carries_into_the_phases_that_set_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "north_south", "lanelet2_regulatory_element_ids": "1330"},
+        )
+
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        assert [state.group for state in phase.states] == ["north_south", "ew"]
+
+    def test_renaming_a_group_carries_into_the_conflicts_naming_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "north_south", "lanelet2_regulatory_element_ids": "1330"},
+        )
+
+        groups = self._map(store, draft_id).signal_groups
+        assert groups[1].conflicts_with == ["north_south"]
+
+    def test_a_conflict_reads_the_same_from_either_side(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Declared on one side, ticked on both: a crossing is not directional."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        first = body.split('name="conflicts_with" value="ew"')[1].split(">")[0]
+        assert "checked" in first
+
+    def test_deleting_a_group_takes_its_phase_states_with_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A state whose group is gone sets nothing, and reads as if it did."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        client.post(f"/draft/{draft_id}/signal-group/0/delete")
+
+        document_map = self._map(store, draft_id)
+        assert [g.name for g in document_map.signal_groups] == ["ew"]
+        phase = document_map.traffic_signal_controllers[0].phases[0]
+        assert [state.group for state in phase.states] == ["ew"]
+
+    # -- controllers and phases -------------------------------------------
+
+    def test_a_new_controller_arrives_runnable(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A controller with no phases is an error the moment it exists."""
+        self._groups(client, draft_id, "ns", "ew")
+
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        controller = self._map(store, draft_id).traffic_signal_controllers[0]
+        assert len(controller.phases) == 1
+        assert [s.group for s in controller.phases[0].states] == ["ns", "ew"]
+        # All red: a half-filled cycle is a junction stopped, not one letting
+        # two crossing movements through.
+        assert {s.state for s in controller.phases[0].states} == {"red"}
+
+    def test_a_new_phase_names_every_group(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+
+        phases = self._map(store, draft_id).traffic_signal_controllers[0].phases
+        assert len(phases) == 2
+        assert [s.group for s in phases[1].states] == ["ns", "ew"]
+
+    def test_a_phase_form_sets_the_colours(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0",
+            data={
+                "name": "ns_amber",
+                "duration_seconds": "3",
+                "state_ns": "yellow",
+                "state_ew": "red",
+            },
+        )
+
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        assert phase.name == "ns_amber"
+        assert phase.duration_seconds == 3.0
+        assert {s.group: s.state for s in phase.states} == {"ns": "yellow", "ew": "red"}
+
+    def test_a_state_named_by_element_id_survives_the_form(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The escape hatch is hand-written, and this form does not show it.
+
+        A form that cannot display something must not be able to delete it
+        either -- that is how an author loses work they cannot see.
+        """
+        from autoware_carla_scenario.authoring.models import SignalStateRef
+
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        draft = _draft(store, draft_id)
+        phase = draft.document.map.traffic_signal_controllers[0].phases[0]
+        phase.states.append(
+            SignalStateRef(lanelet2_regulatory_element_id=9999, state="off")
+        )
+        store.save(draft)
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0",
+            data={"name": "ns_green", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        by_id = [s for s in phase.states if s.group is None]
+        assert [(s.lanelet2_regulatory_element_id, s.state) for s in by_id] == [
+            (9999, "off")
+        ]
+
+    def test_moving_a_phase_reorders_the_cycle(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Order is semantics here: it is what puts the amber between greens."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        for name in ("second", "third"):
+            client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+            phases = self._map(store, draft_id).traffic_signal_controllers[0].phases
+            client.post(
+                f"/draft/{draft_id}/signal-controller/0/phase/{len(phases) - 1}",
+                data={"name": name, "duration_seconds": "5", "state_ns": "red"},
+            )
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/2/move", data={"delta": "-1"}
+        )
+
+        phases = self._map(store, draft_id).traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1", "third", "second"]
+
+    def test_moving_past_the_end_is_a_no_op(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0/move", data={"delta": "-1"}
+        )
+
+        phases = self._map(store, draft_id).traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1"]
+
+    # -- what a rename or a delete drags with it ---------------------------
+
+    @staticmethod
+    def _card(client: TestClient, store: DraftStore, draft_id: str) -> Any:
+        """Add a Set Junction Phase card pointed at the first cycle."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "traffic_signal_controller", "phase": "init"},
+        )
+        node = next(
+            a
+            for a in _document(store, draft_id).actions
+            if a.type == "traffic_signal_controller"
+        )
+        client.post(
+            f"/draft/{draft_id}/action/{node.id}",
+            data={
+                "title": "",
+                "controller": "junction_1",
+                "signal_phase": "phase_1",
+                "phase": "init",
+                "once": "on",
+            },
+        )
+        return node.id
+
+    def test_renaming_a_controller_carries_into_the_cards_naming_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0", data={"name": "crossing"})
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["controller"] == "crossing"
+
+    def test_renaming_a_phase_carries_into_the_cards_naming_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0",
+            data={"name": "ns_green", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["signal_phase"] == "ns_green"
+
+    def test_deleting_a_phase_clears_the_cards_that_named_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Left alone it would point at a phase the cycle no longer has."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase/0/delete")
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["signal_phase"] == ""
+
+    def test_deleting_a_controller_drops_the_offsets_that_measured_from_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A delay with nothing to measure from is an error, not a late start."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1",
+            data={
+                "name": "junction_2",
+                "reference": "junction_1",
+                "delay_seconds": "8",
+            },
+        )
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/delete")
+
+        remaining = self._map(store, draft_id).traffic_signal_controllers
+        assert len(remaining) == 1
+        assert remaining[0].reference is None
+        assert remaining[0].delay_seconds == 0.0
+
+    def test_clearing_a_reference_clears_its_delay(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1",
+            data={
+                "name": "junction_2",
+                "reference": "junction_1",
+                "delay_seconds": "8",
+            },
+        )
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1",
+            data={"name": "junction_2", "reference": "", "delay_seconds": "8"},
+        )
+
+        controller = self._map(store, draft_id).traffic_signal_controllers[1]
+        assert controller.reference is None
+        assert controller.delay_seconds == 0.0
+
+    def test_a_row_that_is_gone_says_so_instead_of_crashing(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Indices are addresses here, and a stale one must not be a 500."""
+        response = client.post(f"/draft/{draft_id}/signal-group/99/delete")
+        assert response.status_code == 200
+        assert "no longer there" in response.text
+
+    def test_a_junction_built_through_the_routes_validates(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The whole point: a cycle authored in the editor is a runnable one."""
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0",
+            data={
+                "name": "ns_green",
+                "duration_seconds": "20",
+                "state_ns": "green",
+                "state_ew": "red",
+            },
+        )
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/1",
+            data={
+                "name": "ns_amber",
+                "duration_seconds": "3",
+                "state_ns": "yellow",
+                "state_ew": "red",
+            },
+        )
+
+        report = validate_document(_document(store, draft_id))
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+    def test_the_conflict_rule_fires_on_a_cycle_built_here(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The editor can express the mistake; the validator still catches it."""
+        from autoware_carla_scenario.authoring.validator import validate_document
+
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0",
+            data={
+                "name": "both",
+                "duration_seconds": "5",
+                "state_ns": "green",
+                "state_ew": "green",
+            },
+        )
+
+        report = validate_document(_document(store, draft_id))
+        assert any("movements as crossing" in i.message for i in report.errors)

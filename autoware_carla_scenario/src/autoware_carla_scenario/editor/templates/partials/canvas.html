@@ -257,7 +257,15 @@
        vehicle's lane claimed a relationship the run does not have; and a track
        that is always here is where you go to add one. #}
     <div class="ed-lane ed-lane-env" style="--lane-hue: var(--env)">
-      <div class="ed-lane-head is-static">
+      {# Selectable like an actor's head, and for the same reason: this column
+         is the state at t=0, and the environment has one -- its junctions --
+         even though nothing is placed on the map for it. #}
+      {%- set junctions = document.map.traffic_signal_controllers -%}
+      {%- set movements = document.map.signal_groups -%}
+      <div class="ed-lane-head {% if selected == 'environment' %}is-selected{% endif %}"
+           tabindex="0" role="button" data-object-id="environment"
+           hx-get="/draft/{{ draft.id }}/inspector/environment"
+           hx-target="#inspector" hx-swap="innerHTML">
         <div class="ed-actor">
           <span class="ed-avatar" style="background:var(--env)">{{ ic.icon('globe', 13) }}</span>
           <span>
@@ -265,7 +273,14 @@
             <span class="ed-actor-role">the world</span>
           </span>
         </div>
-        <div class="ed-spawn-chip is-none">nothing to place</div>
+        {% if junctions %}
+          <div class="ed-spawn-chip">
+            {{ junctions|length }} junction{{ '' if junctions|length == 1 else 's' }}
+            <span class="ed-derived">{{ movements|length }} movement{{ '' if movements|length == 1 else 's' }}</span>
+          </div>
+        {% else %}
+          <div class="ed-spawn-chip is-none">no junctions yet</div>
+        {% endif %}
       </div>
       {{ init_cell(document.init_actions(none), draft, selected, document, '', true) }}
       <div class="ed-lane-track">

@@ -96,6 +96,13 @@ FieldKind = Literal[
     # which is what lets "after NPC1 finished cutting in" be a fact the document
     # states rather than something the canvas infers from card positions.
     "action",
+    # Names a controller, or one of its phases, that the document declares under
+    # `map.traffic_signal_controllers`.  Both behave as plain text everywhere
+    # except the inspector, which offers the declared names instead of a box to
+    # retype them into: they are the document's own vocabulary, so a typo is a
+    # mistake the editor can decline to let anyone make.
+    "signal_controller",
+    "signal_phase",
     "int_list",
     "int_list_or_ref",
 ]
@@ -1063,6 +1070,60 @@ register_action_spec(
 # Built-in conditions -- compositions
 # ---------------------------------------------------------------------------
 
+register_action_spec(
+    ActionSpec(
+        type_id="traffic_signal_controller",
+        title="Set Junction Phase",
+        category="Environment",
+        builder="build_traffic_signal_controller_action",
+        target="..actions:TrafficSignalControllerAction",
+        scope="environment",
+        visual_kind="instant",
+        default_phase="init",
+        # Named `signal_phase` in the document, `phase` on the class.  The
+        # action inspector posts its own `phase` field -- the tick phase every
+        # action has -- into the same flat form namespace, so a card param
+        # called `phase` is a second input of that name: the tick phase would
+        # land in the params and the signal phase would be offered to
+        # `as_action_phase`, which rejects it silently.  The constructor has no
+        # such clash, so only the document-side name moves.
+        argmap=(("signal_phase", "phase"),),
+        fields=(
+            FieldSpec(
+                name="controller",
+                label="Controller",
+                kind="signal_controller",
+                default="",
+                help=(
+                    "A controller this scenario declares under "
+                    "map.traffic_signal_controllers.  Its phases, and how long "
+                    "each holds, are declared there too -- the timing is this "
+                    "scenario's, while map.signal_groups says which signals "
+                    "move together."
+                ),
+            ),
+            FieldSpec(
+                name="signal_phase",
+                label="Signal phase",
+                kind="signal_phase",
+                default="",
+                help=(
+                    "Which of that controller's phases to show.  The cycle "
+                    "carries on from it, so this starts the junction at a "
+                    "point rather than holding it there.  Not the tick phase "
+                    "below, which is when this card runs."
+                ),
+            ),
+        ),
+        description=(
+            "Jump a junction's controller to one of the phases this scenario "
+            "declares.  A phase names every signal the controller drives, so "
+            "the junction goes to a consistent state rather than one light at "
+            "a time."
+        ),
+    )
+)
+
 register_condition_spec(
     ConditionSpec(
         type_id="all",
@@ -2021,6 +2082,50 @@ register_condition_spec(
             ),
         ),
         description="A traffic light is in the expected state.",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="traffic_signal_controller",
+        title="Junction phase",
+        category="World",
+        builder="build_traffic_signal_controller_condition",
+        target="..conditions:TrafficSignalControllerCondition",
+        visual=ConditionVisual(
+            metric="Junction phase",
+            target="controller",
+            target_prefix="Controller",
+            value="signal_phase",
+            value_label="shows",
+        ),
+        # Spelled the same way as the action's, so one word means one thing
+        # across the pair; see the note there for why it is not just `phase`.
+        argmap=(("signal_phase", "phase"),),
+        fields=(
+            FieldSpec(
+                name="controller",
+                label="Controller",
+                kind="signal_controller",
+                default="",
+                help=(
+                    "A controller this scenario declares under "
+                    "map.traffic_signal_controllers."
+                ),
+            ),
+            FieldSpec(
+                name="signal_phase",
+                label="Signal phase",
+                kind="signal_phase",
+                default="",
+                help=(
+                    "Passes while that phase is the one showing.  Read off the "
+                    'controller rather than off the lights, so it means "this '
+                    'phase is running" and not "something set these colours".'
+                ),
+            ),
+        ),
+        description=("The junction's controller is showing a named phase."),
     )
 )
 
