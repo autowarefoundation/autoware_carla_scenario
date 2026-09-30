@@ -667,6 +667,54 @@ class TestPositionIsJudgedInTheFrameItWasGivenIn:
         assert elsewhere.check(wrong, elapsed=1.5) is None
 
 
+class TestAStopMarginReachesAsFarAsItReaches:
+    """A margin longer than the next lanelet carries on into the ones after it."""
+
+    def test_the_margin_walks_on_through_short_lanelets(self) -> None:
+        # 1 -> 2 (3 m) -> 3 (3 m) -> 4, and 1 <- 0 (10 m); 3 also loops back to 2.
+        lengths = {0: 10.0, 1: 20.0, 2: 3.0, 3: 3.0, 4: 50.0}
+        following = {1: [2], 2: [3], 3: [4, 2], 4: []}
+        previous = {1: [0], 0: []}
+        stretches: list[tuple[int, float, float]] = []
+
+        def record(entity, lanelet_id, lo, hi, *, label):  # type: ignore[no-untyped-def]
+            stretches.append((lanelet_id, lo, hi))
+            return EntityLanePositionCondition(
+                entity, OpenDrivePose(road_id="0", lane_id=-1, s=0.0), label=label
+            )
+
+        with patch.object(
+            TemporaryStopCondition,
+            "_get_lanelet_length",
+            side_effect=lengths.__getitem__,
+        ), patch.object(
+            TemporaryStopCondition,
+            "_find_linked_lanelets",
+            side_effect=lambda lid, d: (following if d == "following" else previous)[
+                lid
+            ],
+        ), patch.object(
+            TemporaryStopCondition,
+            "_make_lanelet_segment_condition",
+            side_effect=record,
+        ):
+            TemporaryStopCondition(
+                "ego",
+                stop_positions=[Lanelet2Pose(lanelet_id=1, s=18.0)],
+                s_margin=10.0,
+                label="stop",
+            )
+        # Past the end: 8 m, of which lanelet 2 holds 3, lanelet 3 the next 3
+        # and lanelet 4 the last 2 -- and the loop back to 2 is not walked again.
+        # Before the start nothing runs over: 18 - 10 is still on lanelet 1.
+        assert stretches == [
+            (1, 8.0, 20.0),
+            (2, 0.0, 3.0),
+            (3, 0.0, 3.0),
+            (4, 0.0, 2.0),
+        ]
+
+
 class TestAStopOnALaneletSpillsOntoTheLaneletsAroundIt:
     """What runs past a lanelet's end is taken from the lanelet after it."""
 

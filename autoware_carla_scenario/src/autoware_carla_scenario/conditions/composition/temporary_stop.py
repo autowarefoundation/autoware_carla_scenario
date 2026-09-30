@@ -234,9 +234,10 @@ class TemporaryStopCondition(CompositionCondition):
         """The Lanelet2 counterpart of :meth:`_build_position_conditions`.
 
         ``[s - s_margin, s + s_margin]`` on the lanelet, in its own ``s``; what
-        runs past its start is taken from the end of each lanelet before it,
-        and what runs past its end from the start of each lanelet after it
-        (the routing graph's previous and following lanelets).
+        runs past its start is taken from the end of the lanelets before it,
+        and what runs past its end from the start of the lanelets after it
+        (the routing graph's previous and following lanelets, as far as the
+        margin reaches).
         """
         length = cls._get_lanelet_length(pose.lanelet_id)
         s_min = pose.s - s_margin
@@ -258,28 +259,65 @@ class TemporaryStopCondition(CompositionCondition):
             min(length, s_max),
             length,
         )
+        visited = {pose.lanelet_id}
         if s_min < 0:
-            overflow = -s_min
-            for previous in cls._find_linked_lanelets(pose.lanelet_id, "previous"):
-                previous_length = cls._get_lanelet_length(previous)
-                lo, hi = max(0.0, previous_length - overflow), previous_length
-                conditions.append(
-                    cls._make_lanelet_segment_condition(
-                        entity_name, previous, lo, hi, label=label
-                    )
-                )
-                logger.info("  + previous lanelet=%d s=[%.1f, %.1f]", previous, lo, hi)
+            conditions += cls._spill_onto_lanelets(
+                entity_name, pose.lanelet_id, -s_min, "previous", visited, label=label
+            )
         if s_max > length:
-            overflow = s_max - length
-            for following in cls._find_linked_lanelets(pose.lanelet_id, "following"):
-                lo, hi = 0.0, min(overflow, cls._get_lanelet_length(following))
-                conditions.append(
-                    cls._make_lanelet_segment_condition(
-                        entity_name, following, lo, hi, label=label
-                    )
+            conditions += cls._spill_onto_lanelets(
+                entity_name,
+                pose.lanelet_id,
+                s_max - length,
+                "following",
+                visited,
+                label=label,
+            )
+        return conditions
+
+    @classmethod
+    def _spill_onto_lanelets(
+        cls,
+        entity_name: Union[EntityRole, str],
+        lanelet_id: int,
+        overflow: float,
+        direction: str,
+        visited: set[int],
+        *,
+        label: str,
+    ) -> list[EntityLanePositionCondition]:
+        """The stretch of *overflow* metres beyond *lanelet_id* in *direction*.
+
+        A lanelet map cuts a road into lanelets, often short ones, so a margin
+        can reach past the next lanelet into the one after it: each lanelet
+        takes what it can hold and passes the rest on, along every branch, until
+        nothing is left.  *visited* keeps a loop in the graph from being walked
+        round forever.
+        """
+        conditions: list[EntityLanePositionCondition] = []
+        for linked in cls._find_linked_lanelets(lanelet_id, direction):
+            if linked in visited:
+                continue
+            visited.add(linked)
+            linked_length = cls._get_lanelet_length(linked)
+            if direction == "previous":
+                lo, hi = max(0.0, linked_length - overflow), linked_length
+            else:
+                lo, hi = 0.0, min(overflow, linked_length)
+            conditions.append(
+                cls._make_lanelet_segment_condition(
+                    entity_name, linked, lo, hi, label=label
                 )
-                logger.info(
-                    "  + following lanelet=%d s=[%.1f, %.1f]", following, lo, hi
+            )
+            logger.info("  + %s lanelet=%d s=[%.1f, %.1f]", direction, linked, lo, hi)
+            if overflow > linked_length:
+                conditions += cls._spill_onto_lanelets(
+                    entity_name,
+                    linked,
+                    overflow - linked_length,
+                    direction,
+                    visited,
+                    label=label,
                 )
         return conditions
 
