@@ -5,8 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.poses import AnyPose, CarlaWorldPose, OpenDrivePose
-from ...coordinate.transform import project_onto_road, to_opendrive
+from ...coordinate.poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from ...coordinate.transform import (
+    on_lanelet,
+    project_onto_lanelet,
+    project_onto_road,
+    to_opendrive,
+)
 from ...entity_role import EntityRole
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ScalarComparisonRule
@@ -21,13 +26,22 @@ _VALID_FIELDS = frozenset({"s", "t"})
 
 
 class EntityLanePositionCondition(CompositionCondition):
-    """Pass condition that triggers when a named entity is on a specified OpenDRIVE road and lane.
+    """Pass condition that triggers when a named entity is on a specified lane.
 
-    On every call to :meth:`check`, the entity's CARLA world position is converted
-    to an :class:`OpenDrivePose` using the coordinate transformation system.  The
-    condition triggers when the resulting ``road_id`` and ``lane_id`` match the
-    specified values, and all optional comparison *rules* on ``s`` / ``t`` are
-    satisfied.
+    The lane, and the ``s`` / ``t`` its comparison *rules* bound, are read in the
+    frame the position was given in:
+
+    * A :class:`Lanelet2Pose` names a lanelet.  The entity has to be within that
+      lanelet's bounds, and ``s`` / ``t`` are the lanelet's own -- ``s`` from its
+      start along its direction of travel, ``t`` positive to the left of it.
+      This is not the OpenDRIVE road's ``s`` whenever the lanelet runs against
+      the road's reference line (every lane with a positive id does) or starts
+      partway along it: a stretch written as lanelet ``s`` 75-95 on such a lane
+      used to be checked as road ``s`` 75-95, at the other end of the lane.
+    * An :class:`OpenDrivePose` or a :class:`CarlaWorldPose` names an OpenDRIVE
+      road and lane.  The entity's position is converted to an
+      :class:`OpenDrivePose`, the condition matches on its ``road_id`` and
+      ``lane_id``, and ``s`` / ``t`` are the road's, along its reference line.
 
     The lane is named by a *position* in whichever frame the author thinks in.
     A scenario is written in Lanelet2 -- that is the map an author reads and the
@@ -82,6 +96,11 @@ class EntityLanePositionCondition(CompositionCondition):
         super().__init__(entity_name=entity_name, label=label)
         self._road_id = address.road_id
         self._lane_id: Optional[int] = address.lane_id
+        # The frame the author addressed the lane in, which is the frame its
+        # rules' s and t are in: a lanelet's own, or the OpenDRIVE road's.
+        self._lanelet_id: Optional[int] = (
+            position.lanelet_id if isinstance(position, Lanelet2Pose) else None
+        )
         self._rules: list[ScalarComparisonRule] = rules or []
 
         for rule in self._rules:
@@ -134,6 +153,8 @@ class EntityLanePositionCondition(CompositionCondition):
         details = super().get_details()
         details.update(
             {
+                "frame": "lanelet2" if self._lanelet_id is not None else "opendrive",
+                "lanelet_id": self._lanelet_id,
                 "road_id": self._road_id,
                 "lane_id": self._lane_id,
                 "rules": [r.to_dict() for r in self._rules],
@@ -162,6 +183,9 @@ class EntityLanePositionCondition(CompositionCondition):
 
         loc = entity.get_location()
         carla_pose = CarlaWorldPose(x=loc.x, y=loc.y, z=loc.z)
+
+        if self._lanelet_id is not None:
+            return self._check_on_lanelet(carla_pose, elapsed)
 
         # Always use to_opendrive() first — it finds the nearest road and
         # therefore acts as the authoritative "is the entity on this road?" check.
@@ -238,3 +262,52 @@ class EntityLanePositionCondition(CompositionCondition):
             message=msg,
             elapsed_seconds=elapsed,
         )
+
+    def _check_on_lanelet(
+        self, carla_pose: CarlaWorldPose, elapsed: float
+    ) -> Optional[ScenarioResult]:
+        """The Lanelet2 half of :meth:`_check`: on the lanelet, in its frame."""
+        assert self._lanelet_id is not None
+        if not on_lanelet(carla_pose, self._lanelet_id):
+            logger.debug(
+                "EntityLanePositionCondition: '%s' not on lanelet %d at "
+                "(%.1f, %.1f, %.1f) t=%.2fs",
+                self._entity_name,
+                self._lanelet_id,
+                carla_pose.x,
+                carla_pose.y,
+                carla_pose.z,
+                elapsed,
+            )
+            return None
+
+        ll2_pose = project_onto_lanelet(carla_pose, self._lanelet_id)
+        field_values = {"s": ll2_pose.s, "t": ll2_pose.t}
+        for rule in self._rules:
+            actual = field_values[rule.field]
+            if not rule.satisfied(actual):
+                logger.debug(
+                    "EntityLanePositionCondition: '%s' rule %s %s %.3f "
+                    "not satisfied on lanelet %d (actual %.3f) at t=%.2fs",
+                    self._entity_name,
+                    rule.field,
+                    rule.rule.name,
+                    rule.value,
+                    self._lanelet_id,
+                    actual,
+                    elapsed,
+                )
+                return None
+
+        msg = (
+            f"Entity '{self._entity_name}' is on lanelet {self._lanelet_id}"
+            f" (s={ll2_pose.s:.2f}, t={ll2_pose.t:.2f}) at {elapsed:.2f}s"
+        )
+        logger.info(
+            "EntityLanePositionCondition: MATCHED — '%s' on lanelet %d (s=%.2f, t=%.2f)",
+            self._entity_name,
+            self._lanelet_id,
+            ll2_pose.s,
+            ll2_pose.t,
+        )
+        return ScenarioResult(passed=True, message=msg, elapsed_seconds=elapsed)

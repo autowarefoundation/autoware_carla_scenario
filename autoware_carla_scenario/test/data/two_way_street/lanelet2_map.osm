@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<osm version="0.6" upload="false" generator="lanelet2">
+  <node id="1000" visible="true" version="1" lat="35.68003154487" lon="139.69">
+    <tag k="local_x" v="0.000000" />
+    <tag k="local_y" v="3.500000" />
+  </node>
+  <node id="1001" visible="true" version="1" lat="35.6800315398" lon="139.69110464894">
+    <tag k="local_x" v="100.000000" />
+    <tag k="local_y" v="3.500000" />
+  </node>
+  <node id="1002" visible="true" version="1" lat="35.68" lon="139.69">
+    <tag k="local_x" v="0.000000" />
+    <tag k="local_y" v="0.000000" />
+  </node>
+  <node id="1003" visible="true" version="1" lat="35.67999999493" lon="139.6911046485">
+    <tag k="local_x" v="100.000000" />
+    <tag k="local_y" v="0.000000" />
+  </node>
+  <node id="1004" visible="true" version="1" lat="35.67996845513" lon="139.69">
+    <tag k="local_x" v="0.000000" />
+    <tag k="local_y" v="-3.500000" />
+  </node>
+  <node id="1005" visible="true" version="1" lat="35.67996845007" lon="139.69110464807">
+    <tag k="local_x" v="100.000000" />
+    <tag k="local_y" v="-3.500000" />
+  </node>
+  <node id="1006" visible="true" version="1" lat="35.67998422757" lon="139.69">
+    <tag k="local_x" v="0.000000" />
+    <tag k="local_y" v="-1.750000" />
+  </node>
+  <node id="1007" visible="true" version="1" lat="35.6799842225" lon="139.69110464829">
+    <tag k="local_x" v="100.000000" />
+    <tag k="local_y" v="-1.750000" />
+  </node>
+  <node id="1008" visible="true" version="1" lat="35.68001576737" lon="139.69110464872">
+    <tag k="local_x" v="100.000000" />
+    <tag k="local_y" v="1.750000" />
+  </node>
+  <node id="1009" visible="true" version="1" lat="35.68001577243" lon="139.69">
+    <tag k="local_x" v="0.000000" />
+    <tag k="local_y" v="1.750000" />
+  </node>
+  <way id="1001000" visible="true" version="1">
+    <nd ref="1000" />
+    <nd ref="1001" />
+    <tag k="color" v="white" />
+    <tag k="subtype" v="solid" />
+    <tag k="type" v="line_thin" />
+  </way>
+  <way id="1001001" visible="true" version="1">
+    <nd ref="1002" />
+    <nd ref="1003" />
+    <tag k="color" v="white" />
+    <tag k="subtype" v="solid" />
+    <tag k="type" v="line_thin" />
+  </way>
+  <way id="1001002" visible="true" version="1">
+    <nd ref="1004" />
+    <nd ref="1005" />
+    <tag k="color" v="white" />
+    <tag k="subtype" v="solid" />
+    <tag k="type" v="line_thin" />
+  </way>
+  <way id="1001004" visible="true" version="1">
+    <nd ref="1006" />
+    <nd ref="1007" />
+    <tag k="type" v="centerline" />
+  </way>
+  <way id="1001006" visible="true" version="1">
+    <nd ref="1008" />
+    <nd ref="1009" />
+    <tag k="type" v="centerline" />
+  </way>
+  <relation id="1001003" visible="true" version="1">
+    <member type="way" ref="1001001" role="left" />
+    <member type="way" ref="1001002" role="right" />
+    <member type="way" ref="1001004" role="centerline" />
+    <tag k="location" v="urban" />
+    <tag k="one_way" v="yes" />
+    <tag k="participant:vehicle" v="yes" />
+    <tag k="subtype" v="road" />
+    <tag k="type" v="lanelet" />
+  </relation>
+  <relation id="1001005" visible="true" version="1">
+    <member type="way" ref="1001001" role="left" />
+    <member type="way" ref="1001000" role="right" />
+    <member type="way" ref="1001006" role="centerline" />
+    <tag k="location" v="urban" />
+    <tag k="one_way" v="yes" />
+    <tag k="participant:vehicle" v="yes" />
+    <tag k="subtype" v="road" />
+    <tag k="type" v="lanelet" />
+  </relation>
+</osm>

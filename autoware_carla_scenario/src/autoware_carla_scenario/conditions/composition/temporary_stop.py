@@ -1,9 +1,11 @@
 """Temporary stop condition for detecting standstill at specified positions.
 
-When the margin around a stop position extends beyond an OpenDRIVE road
-boundary, additional :class:`EntityLanePositionCondition` instances are
-created for the predecessor/successor roads and combined via
-:class:`OrCondition`.
+A stop position is matched in the frame it was given in.  One given as a
+lanelet is a stretch of that lanelet, in its own ``s``; one given in OpenDRIVE
+(or as a CARLA world position) is a stretch of the OpenDRIVE road, in the road's
+``s``.  When the margin around it runs past the end of the lanelet or road,
+additional :class:`EntityLanePositionCondition` instances are created for the
+lanelets or roads before and after it and combined via :class:`OrCondition`.
 """
 
 from __future__ import annotations
@@ -14,8 +16,8 @@ from typing import TYPE_CHECKING, Optional, Sequence, Union
 import numpy as np
 
 from ...coordinate.map_manager import MapManager
-from ...coordinate.poses import AnyPose, OpenDrivePose
-from ...coordinate.transform import to_opendrive
+from ...coordinate.poses import AnyPose, Lanelet2Pose, OpenDrivePose
+from ...coordinate.transform import lanelet_length, to_opendrive
 from ..and_condition import AndCondition
 from ..base import BaseCondition, ScenarioResult
 from ..comparison import ComparisonRule, ScalarComparisonRule
@@ -50,10 +52,14 @@ class TemporaryStopCondition(CompositionCondition):
 
     Args:
         entity_name: The ``role_name`` attribute of the actor to track.
-        stop_positions: One or more poses where a stop is expected.
-            Each pose is converted to :class:`OpenDrivePose` for road/s matching.
+        stop_positions: One or more poses where a stop is expected.  A
+            :class:`Lanelet2Pose` is matched on its lanelet, in the lanelet's own
+            ``s`` (from its start along its direction of travel); any other pose
+            is converted to an :class:`OpenDrivePose` and matched on its road,
+            in the road's ``s``, in any lane.
         s_margin: Arc-length margin (m) around each stop position.
-            The entity must be within ``[s - s_margin, s + s_margin]``.
+            The entity must be within ``[s - s_margin, s + s_margin]``, in the
+            frame of the position.
         speed_threshold: Maximum speed (m/s) considered as stopped.
         stop_duration: Minimum consecutive seconds the entity must remain
             stopped at the position.
@@ -84,12 +90,18 @@ class TemporaryStopCondition(CompositionCondition):
 
         persistent_conditions: list[PersistentCondition] = []
         for pose in stop_positions:
-            od_pose = to_opendrive(pose)
-
-            # Build position conditions spanning multiple roads if needed
-            position_conds = self._build_position_conditions(
-                entity_name, od_pose, s_margin, label=label
-            )
+            # In the frame the position was given in: a lanelet is a lane, with
+            # an s of its own that runs the other way from the road's on every
+            # lane against the road's reference line.
+            if isinstance(pose, Lanelet2Pose):
+                position_conds = self._build_lanelet_conditions(
+                    entity_name, pose, s_margin, label=label
+                )
+            else:
+                # Build position conditions spanning multiple roads if needed
+                position_conds = self._build_position_conditions(
+                    entity_name, to_opendrive(pose), s_margin, label=label
+                )
             if len(position_conds) == 1:
                 position_cond: BaseCondition = position_conds[0]
             else:
@@ -209,6 +221,118 @@ class TemporaryStopCondition(CompositionCondition):
                 )
 
         return conditions
+
+    @classmethod
+    def _build_lanelet_conditions(
+        cls,
+        entity_name: Union[EntityRole, str],
+        pose: Lanelet2Pose,
+        s_margin: float,
+        *,
+        label: str,
+    ) -> list[EntityLanePositionCondition]:
+        """The Lanelet2 counterpart of :meth:`_build_position_conditions`.
+
+        ``[s - s_margin, s + s_margin]`` on the lanelet, in its own ``s``; what
+        runs past its start is taken from the end of each lanelet before it,
+        and what runs past its end from the start of each lanelet after it
+        (the routing graph's previous and following lanelets).
+        """
+        length = cls._get_lanelet_length(pose.lanelet_id)
+        s_min = pose.s - s_margin
+        s_max = pose.s + s_margin
+
+        conditions = [
+            cls._make_lanelet_segment_condition(
+                entity_name,
+                pose.lanelet_id,
+                max(0.0, s_min),
+                min(length, s_max),
+                label=label,
+            )
+        ]
+        logger.info(
+            "Position condition: lanelet=%d s=[%.1f, %.1f] (length=%.1f)",
+            pose.lanelet_id,
+            max(0.0, s_min),
+            min(length, s_max),
+            length,
+        )
+        if s_min < 0:
+            overflow = -s_min
+            for previous in cls._find_linked_lanelets(pose.lanelet_id, "previous"):
+                previous_length = cls._get_lanelet_length(previous)
+                lo, hi = max(0.0, previous_length - overflow), previous_length
+                conditions.append(
+                    cls._make_lanelet_segment_condition(
+                        entity_name, previous, lo, hi, label=label
+                    )
+                )
+                logger.info("  + previous lanelet=%d s=[%.1f, %.1f]", previous, lo, hi)
+        if s_max > length:
+            overflow = s_max - length
+            for following in cls._find_linked_lanelets(pose.lanelet_id, "following"):
+                lo, hi = 0.0, min(overflow, cls._get_lanelet_length(following))
+                conditions.append(
+                    cls._make_lanelet_segment_condition(
+                        entity_name, following, lo, hi, label=label
+                    )
+                )
+                logger.info(
+                    "  + following lanelet=%d s=[%.1f, %.1f]", following, lo, hi
+                )
+        return conditions
+
+    @staticmethod
+    def _make_lanelet_segment_condition(
+        entity_name: Union[EntityRole, str],
+        lanelet_id: int,
+        s_lo: float,
+        s_hi: float,
+        *,
+        label: str,
+    ) -> EntityLanePositionCondition:
+        """Create an EntityLanePositionCondition for a stretch of one lanelet."""
+        return EntityLanePositionCondition(
+            entity_name,
+            Lanelet2Pose(lanelet_id=lanelet_id, s=0.0),
+            rules=[
+                ScalarComparisonRule(
+                    field="s",
+                    rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
+                    value=s_lo,
+                ),
+                ScalarComparisonRule(
+                    field="s",
+                    rule=ComparisonRule.LESS_THAN_OR_EQUAL,
+                    value=s_hi,
+                ),
+            ],
+            label=label,
+        )
+
+    @staticmethod
+    def _get_lanelet_length(lanelet_id: int) -> float:
+        """The length of a lanelet's centerline."""
+        return lanelet_length(lanelet_id)
+
+    @staticmethod
+    def _find_linked_lanelets(lanelet_id: int, direction: str) -> list[int]:
+        """The lanelets the routing graph puts before or after *lanelet_id*.
+
+        Args:
+            lanelet_id: The lanelet to query.
+            direction: ``"previous"`` or ``"following"``.
+        """
+        mm = MapManager.get_instance()
+        lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+        graph = mm.routing_graph
+        linked = (
+            graph.previous(lanelet)
+            if direction == "previous"
+            else graph.following(lanelet)
+        )
+        return [other.id for other in linked]
 
     @staticmethod
     def _make_road_segment_condition(

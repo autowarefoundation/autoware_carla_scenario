@@ -93,6 +93,71 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     )
 
 
+def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
+    """Project a CARLA world position onto a specific lanelet's centerline.
+
+    The Lanelet2 counterpart of :func:`project_onto_road`: where
+    :func:`to_lanelet2` finds the *nearest* lanelet, this measures against the
+    one named, so a condition that addresses a lanelet reads ``s`` and ``t`` in
+    that lanelet's own frame -- ``s`` from its start along its direction of
+    travel, ``t`` positive to the left of it -- whichever way the OpenDRIVE road
+    it lies on is drawn.  ``s`` is exact along the centerline (not snapped to a
+    vertex) and clamped to the lanelet.
+
+    Args:
+        pose: The CARLA world pose to project.
+        lanelet_id: The lanelet to project onto.
+
+    Returns:
+        A :class:`Lanelet2Pose` on *lanelet_id*.
+    """
+    mm = MapManager.get_instance()
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    x, y, heading = _carla_to_lanelet2_frame(pose)
+    centerline = lanelet2.geometry.to2D(lanelet.centerline)
+    arc = lanelet2.geometry.toArcCoordinates(
+        centerline, lanelet2.core.BasicPoint2d(x, y)
+    )
+    length = float(lanelet2.geometry.length(centerline))
+    s = min(max(float(arc.length), 0.0), length)
+    points = np.array([(p.x, p.y) for p in lanelet.centerline])
+    heading_cl = _heading_at_s(points, _compute_arc_lengths_2d(points), s)
+    return Lanelet2Pose(
+        lanelet_id=lanelet_id,
+        s=s,
+        t=float(arc.distance),
+        heading=_normalize_angle(heading - heading_cl),
+    )
+
+
+def on_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> bool:
+    """Whether a CARLA world position lies within a lanelet's bounds.
+
+    The membership test for an address given as a lanelet.  It is asked of the
+    lanelet itself rather than answered by "the nearest lanelet is this one",
+    which a point in a junction -- where lanelets overlap -- would answer for
+    only one of them.
+    """
+    mm = MapManager.get_instance()
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    x, y, _heading = _carla_to_lanelet2_frame(pose)
+    return bool(lanelet2.geometry.inside(lanelet, lanelet2.core.BasicPoint2d(x, y)))
+
+
+def lanelet_length(lanelet_id: int) -> float:
+    """The length of a lanelet's centerline, in metres."""
+    mm = MapManager.get_instance()
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
+
+
+def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> tuple[float, float, float]:
+    """A CARLA pose's ``(x, y, heading)`` in the Lanelet2 map's frame."""
+    mm = MapManager.get_instance()
+    offset_x, offset_y = mm.mgrs_offset
+    return pose.x + offset_x, -pose.y + offset_y, -math.radians(pose.yaw)
+
+
 def to_carla_location(pose: Union[AnyPose, "carla.Location"]) -> "carla.Location":
     """Convert any pose type to a ``carla.Location``.
 

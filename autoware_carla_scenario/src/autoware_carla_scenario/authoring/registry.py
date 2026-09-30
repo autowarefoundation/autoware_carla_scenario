@@ -581,7 +581,16 @@ def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
     Both position conditions accept the same stretch, so they share one
     definition -- separate copies could disagree on a unit or on whether a
     bound is required while ``build_*_condition`` reads them through one path.
+
+    What they differ in is the frame, and the help says which: a lanelet's
+    ``s`` runs along its direction of travel, a road's along its reference
+    line, and on a lane against that line the two run opposite ways.
     """
+    direction = (
+        "its direction of travel"
+        if noun == "lanelet"
+        else "its reference line, whichever way its lanes run"
+    )
     return (
         FieldSpec(
             name="s_min",
@@ -591,8 +600,8 @@ def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
             required=False,
             unit="m",
             help=(
-                f"Along the {noun} from its start.  Leave both empty to accept "
-                "the whole length."
+                f"Along the {noun} from its start, following {direction}.  "
+                "Leave both empty to accept the whole length."
             ),
         ),
         FieldSpec(
@@ -610,7 +619,7 @@ def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
             default=None,
             required=False,
             unit="m",
-            help=f"Across the {noun}. Positive is left of the road direction.",
+            help=f"Across the {noun}. Positive is left of {direction}.",
         ),
         FieldSpec(
             name="t_max",
@@ -1762,13 +1771,13 @@ register_condition_spec(
                 kind="lanelet",
                 default=0,
                 help=(
-                    "Resolved to its OpenDRIVE road *and lane* at scenario "
-                    "setup. A lanelet already names one lane, so there is "
-                    "nothing further to pin -- use Position (OpenDRIVE) to "
-                    "address a road directly."
+                    "The lanelet the entity has to be on, and the frame its "
+                    "s and t are read in. A lanelet already names one lane, so "
+                    "there is nothing further to pin -- use Position (OpenDRIVE) "
+                    "to address a road directly."
                 ),
             ),
-            *_extent_fields("lane"),
+            *_extent_fields("lanelet"),
         ),
         description=(
             "The entity is on the lane a Lanelet2 lanelet describes, optionally "
