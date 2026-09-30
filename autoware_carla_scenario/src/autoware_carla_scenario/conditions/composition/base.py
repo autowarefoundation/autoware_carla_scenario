@@ -31,8 +31,9 @@ class DistanceCoordinateSystem(Enum):
             direction belonging to the subject.  The default, so a document
             written before this existed keeps its meaning.
         LANE: The distance *along the road*, which is the gap a driver would
-            describe.  Follows the chain of connected roads between the two,
-            and has no answer once a junction stands between them -- see
+            describe.  Follows the chain of connected roads between the two, a
+            junction's connecting roads included; where several chains reach
+            the target the shortest answers -- see
             :mod:`autoware_carla_scenario.coordinate.lane_distance`.  Needs a
             loaded map.
 
