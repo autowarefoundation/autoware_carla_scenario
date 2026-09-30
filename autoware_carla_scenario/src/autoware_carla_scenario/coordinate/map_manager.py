@@ -78,6 +78,7 @@ class MapManager:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._lanelet_map = None
+            cls._instance._routing_graph = None
             cls._instance._road_network = None
             cls._instance._geo_origin = None
             cls._instance._mgrs_offset = None
@@ -225,6 +226,24 @@ class MapManager:
                 "MapManager is not initialized. Call initialize() first."
             )
         return self._lanelet_map
+
+    @property
+    def routing_graph(self):  # type: ignore[return]
+        """A Lanelet2 routing graph of the loaded map, built on first use.
+
+        What a condition addressed by lanelet walks to reach the lanelets
+        before and after one; built once, since building it reads the whole map.
+        """
+        if self._routing_graph is None:
+            import lanelet2.routing
+            import lanelet2.traffic_rules
+
+            rules = lanelet2.traffic_rules.create(
+                lanelet2.traffic_rules.Locations.Germany,
+                lanelet2.traffic_rules.Participants.Vehicle,
+            )
+            self._routing_graph = lanelet2.routing.RoutingGraph(self.lanelet_map, rules)
+        return self._routing_graph
 
     @property
     def road_network(self) -> RoadNetwork:

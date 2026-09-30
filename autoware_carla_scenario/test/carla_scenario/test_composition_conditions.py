@@ -19,6 +19,10 @@ from autoware_carla_scenario import (
     StandstillCondition,
     TemporaryStopCondition,
 )
+from autoware_carla_scenario.conditions.comparison import (
+    ComparisonRule,
+    ScalarComparisonRule,
+)
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import (
     CarlaWorldPose,
@@ -411,14 +415,25 @@ class TestTemporaryStopCondition:
         assert isinstance(cond._child, OrCondition)
 
     @patch("autoware_carla_scenario.conditions.composition.temporary_stop.to_opendrive")
-    def test_lanelet2_pose_converted(self, mock_to_od: MagicMock) -> None:
-        """Lanelet2Pose is converted via to_opendrive()."""
-        mock_to_od.return_value = OpenDrivePose(road_id="5", lane_id=-1, s=30.0)
+    def test_lanelet2_pose_stays_in_its_own_frame(self, mock_to_od: MagicMock) -> None:
+        """A Lanelet2Pose is matched on its lanelet, not converted to a road.
+
+        Its s is the lanelet's own, which on a lane against the road's reference
+        line runs the other way from the road's -- so converting it to a road
+        and taking a window of road s put the window at the wrong end.
+        """
         ll2 = Lanelet2Pose(lanelet_id=100, s=10.0, t=0.0)
-        cond = TemporaryStopCondition(
-            "ego", stop_positions=[ll2], label="test_temp_stop"
+        segment = EntityLanePositionCondition(
+            "ego", OpenDrivePose(road_id="5", lane_id=-1, s=0.0), label="seg"
         )
-        mock_to_od.assert_called_once_with(ll2)
+        with patch.object(
+            TemporaryStopCondition, "_build_lanelet_conditions", return_value=[segment]
+        ) as build:
+            cond = TemporaryStopCondition(
+                "ego", stop_positions=[ll2], s_margin=3.0, label="test_temp_stop"
+            )
+        build.assert_called_once_with("ego", ll2, 3.0, label="test_temp_stop")
+        mock_to_od.assert_not_called()
         assert isinstance(cond._child, PersistentCondition)
 
     @patch("autoware_carla_scenario.conditions.composition.temporary_stop.to_opendrive")
@@ -475,6 +490,7 @@ class TestEntityLanePositionAddress:
         # Release lanelet2/pyxodr objects explicitly during teardown so they are
         # destroyed while the C++ runtime is still in a valid state, not during
         # Python interpreter shutdown (which can trigger std::terminate).
+        mm._routing_graph = None
         mm._lanelet_map = None
         mm._road_network = None
         mm._geo_origin = None
@@ -506,6 +522,230 @@ class TestEntityLanePositionAddress:
         details = condition.get_details()
         assert details["road_id"] == "80"
         assert details["lane_id"] is None
+
+
+#: A straight 100 m street, one lane each way, generated with roadgen (see its
+#: generate.py): the backward lane runs against the road's reference line.
+TWO_WAY = Path(__file__).resolve().parents[1] / "data" / "two_way_street"
+
+
+def _load_map(xodr: Path, osm: Path) -> Generator[None, None, None]:
+    MapManager.reset()
+    mm = MapManager.get_instance()
+    mm.initialize(xodr, osm)
+    yield
+    # Release lanelet2/pyxodr objects while the C++ runtime is still valid.
+    mm._routing_graph = None
+    mm._lanelet_map = None
+    mm._road_network = None
+    mm._geo_origin = None
+    mm._mgrs_offset = None
+    MapManager.reset()
+
+
+def _within(field: str, lo: float, hi: float) -> list[ScalarComparisonRule]:
+    return [
+        ScalarComparisonRule(
+            field=field, rule=ComparisonRule.GREATER_THAN_OR_EQUAL, value=lo
+        ),
+        ScalarComparisonRule(
+            field=field, rule=ComparisonRule.LESS_THAN_OR_EQUAL, value=hi
+        ),
+    ]
+
+
+def _world_at(pose: Lanelet2Pose, *, speed: float | None = None) -> MagicMock:
+    from autoware_carla_scenario.coordinate import to_carla_world
+
+    where = to_carla_world(pose)
+    kwargs = {} if speed is None else {"vx": speed}
+    return _make_world_with_actor("ego", where.x, where.y, where.z, **kwargs)
+
+
+class TestPositionIsJudgedInTheFrameItWasGivenIn:
+    """A lanelet's s and t are the lanelet's; a road's are the road's.
+
+    On the two-way street the backward lanelet runs against the road's
+    reference line: 10 m into the lanelet is road s 90.  A stretch written in
+    lanelet s used to be compared with road s, so it matched at the other end
+    of the lane -- which is how a scenario "stopped at the goal" 60 m short.
+    """
+
+    FORWARD = 1001003  # road 0, lane -1: along the reference line
+    BACKWARD = 1001005  # road 0, lane 1: against it
+
+    @pytest.fixture(scope="class")
+    def loaded_map(self) -> Generator[None, None, None]:
+        yield from _load_map(
+            TWO_WAY / "two_way_street.xodr", TWO_WAY / "lanelet2_map.osm"
+        )
+
+    def test_a_lanelet_stretch_is_read_in_lanelet_s(self, loaded_map: None) -> None:
+        from autoware_carla_scenario.coordinate import to_carla_world, to_opendrive
+
+        near_start = Lanelet2Pose(lanelet_id=self.BACKWARD, s=10.0)
+        # The premise: the lanelet runs against the road, so its start is the
+        # road's far end.
+        assert to_opendrive(to_carla_world(near_start)).s == pytest.approx(
+            90.0, abs=0.5
+        )
+
+        condition = EntityLanePositionCondition(
+            "ego",
+            Lanelet2Pose(lanelet_id=self.BACKWARD, s=0.0),
+            _within("s", 5.0, 15.0),
+            label="near_start",
+        )
+        assert condition.get_details()["frame"] == "lanelet2"
+        result = condition.check(_world_at(near_start), elapsed=1.0)
+        assert result is not None and result.passed
+        assert f"lanelet {self.BACKWARD}" in result.message
+        # Road s 5-15 is lanelet s 85-95: the other end of the lane, where the
+        # stretch used to be found.
+        far_end = Lanelet2Pose(lanelet_id=self.BACKWARD, s=90.0)
+        assert condition.check(_world_at(far_end), elapsed=1.0) is None
+
+    def test_the_lane_beside_it_is_not_the_lanelet(self, loaded_map: None) -> None:
+        condition = EntityLanePositionCondition(
+            "ego", Lanelet2Pose(lanelet_id=self.BACKWARD, s=0.0), label="lane"
+        )
+        beside = Lanelet2Pose(lanelet_id=self.FORWARD, s=50.0)
+        assert condition.check(_world_at(beside), elapsed=1.0) is None
+        here = Lanelet2Pose(lanelet_id=self.BACKWARD, s=50.0)
+        assert condition.check(_world_at(here), elapsed=1.0) is not None
+
+    def test_lanelet_t_is_left_of_the_lanelets_direction(
+        self, loaded_map: None
+    ) -> None:
+        condition = EntityLanePositionCondition(
+            "ego",
+            Lanelet2Pose(lanelet_id=self.BACKWARD, s=0.0),
+            _within("t", 0.5, 1.5),
+            label="left",
+        )
+        left = Lanelet2Pose(lanelet_id=self.BACKWARD, s=30.0, t=1.0)
+        right = Lanelet2Pose(lanelet_id=self.BACKWARD, s=30.0, t=-1.0)
+        assert condition.check(_world_at(left), elapsed=1.0) is not None
+        assert condition.check(_world_at(right), elapsed=1.0) is None
+
+    def test_a_road_stretch_is_still_read_in_road_s(self, loaded_map: None) -> None:
+        # The same place, addressed by road and lane: road s 90 is in [85, 95].
+        condition = EntityLanePositionCondition(
+            "ego",
+            OpenDrivePose(road_id="0", lane_id=1, s=0.0),
+            _within("s", 85.0, 95.0),
+            label="road",
+        )
+        assert condition.get_details()["frame"] == "opendrive"
+        near_start = Lanelet2Pose(lanelet_id=self.BACKWARD, s=10.0)
+        result = condition.check(_world_at(near_start), elapsed=1.0)
+        assert result is not None and "road '0'" in result.message
+
+    def test_a_stop_on_a_lanelet_is_found_in_lanelet_s(self, loaded_map: None) -> None:
+        condition = TemporaryStopCondition(
+            "ego",
+            stop_positions=[Lanelet2Pose(lanelet_id=self.BACKWARD, s=10.0)],
+            s_margin=5.0,
+            stop_duration=1.0,
+            label="stop",
+        )
+        # Standing still 10 m into the lanelet, for longer than the duration.
+        there = _world_at(Lanelet2Pose(lanelet_id=self.BACKWARD, s=10.0), speed=0.0)
+        condition.check(there, elapsed=0.0)
+        result = condition.check(there, elapsed=1.5)
+        assert result is not None and result.passed
+        # Standing still at road s 10 -- lanelet s 90 -- is not the stop.
+        elsewhere = TemporaryStopCondition(
+            "ego",
+            stop_positions=[Lanelet2Pose(lanelet_id=self.BACKWARD, s=10.0)],
+            s_margin=5.0,
+            stop_duration=1.0,
+            label="stop",
+        )
+        wrong = _world_at(Lanelet2Pose(lanelet_id=self.BACKWARD, s=90.0), speed=0.0)
+        elsewhere.check(wrong, elapsed=0.0)
+        assert elsewhere.check(wrong, elapsed=1.5) is None
+
+
+class TestAStopMarginReachesAsFarAsItReaches:
+    """A margin longer than the next lanelet carries on into the ones after it."""
+
+    def test_the_margin_walks_on_through_short_lanelets(self) -> None:
+        # 1 -> 2 (3 m) -> 3 (3 m) -> 4, and 1 <- 0 (10 m); 3 also loops back to 2.
+        lengths = {0: 10.0, 1: 20.0, 2: 3.0, 3: 3.0, 4: 50.0}
+        following = {1: [2], 2: [3], 3: [4, 2], 4: []}
+        previous = {1: [0], 0: []}
+        stretches: list[tuple[int, float, float]] = []
+
+        def record(entity, lanelet_id, lo, hi, *, label):  # type: ignore[no-untyped-def]
+            stretches.append((lanelet_id, lo, hi))
+            return EntityLanePositionCondition(
+                entity, OpenDrivePose(road_id="0", lane_id=-1, s=0.0), label=label
+            )
+
+        with patch.object(
+            TemporaryStopCondition,
+            "_get_lanelet_length",
+            side_effect=lengths.__getitem__,
+        ), patch.object(
+            TemporaryStopCondition,
+            "_find_linked_lanelets",
+            side_effect=lambda lid, d: (following if d == "following" else previous)[
+                lid
+            ],
+        ), patch.object(
+            TemporaryStopCondition,
+            "_make_lanelet_segment_condition",
+            side_effect=record,
+        ):
+            TemporaryStopCondition(
+                "ego",
+                stop_positions=[Lanelet2Pose(lanelet_id=1, s=18.0)],
+                s_margin=10.0,
+                label="stop",
+            )
+        # Past the end: 8 m, of which lanelet 2 holds 3, lanelet 3 the next 3
+        # and lanelet 4 the last 2 -- and the loop back to 2 is not walked again.
+        # Before the start nothing runs over: 18 - 10 is still on lanelet 1.
+        assert stretches == [
+            (1, 8.0, 20.0),
+            (2, 0.0, 3.0),
+            (3, 0.0, 3.0),
+            (4, 0.0, 2.0),
+        ]
+
+
+class TestAStopOnALaneletSpillsOntoTheLaneletsAroundIt:
+    """What runs past a lanelet's end is taken from the lanelet after it."""
+
+    @pytest.fixture(scope="class")
+    def loaded_map(self) -> Generator[None, None, None]:
+        yield from _load_map(XODR_PATH, OSM_PATH)
+
+    def test_past_the_end_is_the_following_lanelet(self, loaded_map: None) -> None:
+        from autoware_carla_scenario.coordinate import lanelet_length
+
+        # On this map lanelet 183 is followed by 187.
+        condition = TemporaryStopCondition(
+            "ego",
+            stop_positions=[Lanelet2Pose(lanelet_id=183, s=lanelet_length(183))],
+            s_margin=5.0,
+            label="stop",
+        )
+        watched: list[tuple[object, object]] = []
+
+        def walk(node: object) -> None:
+            if isinstance(node, dict):
+                if "frame" in node:
+                    watched.append((node["frame"], node["lanelet_id"]))
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(condition.to_summary_dict())
+        assert sorted(watched) == [("lanelet2", 183), ("lanelet2", 187)]
 
 
 class TestAnOpenDriveAddressNeedsNoMap:
