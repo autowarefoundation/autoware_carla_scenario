@@ -716,10 +716,11 @@ It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |
 
-Both workspace projects are declared because the framework imports the
-converter at module scope (`coordinate.road_lanelet_mapping`) without declaring
-it as a dependency -- inside the workspace it is always installed alongside, so
-the omission only shows up in a package that depends on the framework alone.
+The converter is declared next to the framework because it is not published to
+an index: the package has to say where it comes from. It is pinned to exactly
+the revision installed alongside the framework -- the commit `uv.lock` resolved
+from its git repository -- so the package runs on the converter the framework
+was tested with.
 
 A **branch is never emitted** -- `main`, `master` and `HEAD` all move, so a
 package pinned to one stops being the package that was tested as soon as
@@ -752,7 +753,7 @@ wheelhouse:
   python: '3.12.10'
 autoware_carla_scenario:
   source: git
-  repository: https://github.com/tier4/autoware_lanelet2_to_opendrive
+  repository: https://github.com/hakuturu583/autoware_carla_scenario
   commit: 0123456789abcdef0123456789abcdef01234567
   subdirectory: autoware_carla_scenario
   extras: [carla]

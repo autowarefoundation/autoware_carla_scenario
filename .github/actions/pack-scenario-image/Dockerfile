@@ -81,11 +81,13 @@ ARG SLIM=true
 # lives in venv-layer.sh alone; build args reach that script as environment.
 ARG LAYER_MTIME
 
-# `strip` comes from binutils. Installed before anything volatile is copied in
-# so the apt layer caches across every rebuild; the stage is discarded, so
-# installing it even when SLIM is off costs the image nothing.
+# `strip` comes from binutils. `git` is there for the converter, which the lock
+# pins to a commit of its own repository rather than to an index, so layer 2
+# clones it. Installed before anything volatile is copied in so the apt layer
+# caches across every rebuild; the stage is discarded, so installing either
+# costs the image nothing.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends binutils \
+    && apt-get install -y --no-install-recommends binutils ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /usr/local/bin/uv
@@ -223,7 +225,7 @@ ENV PATH=/opt/venv/bin:$PATH \
 
 LABEL org.opencontainers.image.title="autoware_carla_scenario scenario package" \
       org.opencontainers.image.description="A generated scenario package with a pinned CARLA client" \
-      org.opencontainers.image.source="https://github.com/tier4/autoware_lanelet2_to_opendrive" \
+      org.opencontainers.image.source="https://github.com/hakuturu583/autoware_carla_scenario" \
       io.autoware.carla-scenario.carla-version="${CARLA_VERSION}"
 
 USER scenario

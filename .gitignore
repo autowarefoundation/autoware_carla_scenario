@@ -1,0 +1,38 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Artifacts
+*.xodr
+# Generated with roadgen, which CI does not have -- see its generate.py.
+!autoware_carla_scenario/test/data/two_way_street/two_way_street.xodr
+*processed.osm
+
+# pytest-testmon
+.testmondata*
+
+# Hydra output
+outputs/
+multirun/
+
+# MkDocs build output
+site/
+
+# Lanelet2-to-OpenDRIVE mapping cache (auto-generated next to .xodr)
+*.mapping.json
+
+# Scenario output
+scenario_outputs
+
+# Scenario Editor working directories. An exported package is meant to be
+# committed -- to its own repository, not to this one -- so the default export
+# destination is ignored here rather than tracked by accident.
+scenario_drafts/
+scenario_packages/

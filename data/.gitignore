@@ -1,0 +1,5 @@
+# Cache file for lanelet2 => OpenDRIVE conversion
+*.mapping.json
+
+# Generated OpenDRIVE files (built from .osm by the converter)
+nishishinjuku_carla.xodr

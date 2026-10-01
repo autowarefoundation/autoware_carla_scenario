@@ -2,7 +2,7 @@
 
 A CARLA scenario testing framework for [Autoware](https://www.autoware.org/). Drives an Autoware ego vehicle through configurable scenarios in the [CARLA simulator](https://carla.org/), evaluates pass/fail conditions tick-by-tick, and produces JSON results plus replayed video.
 
-This package is a workspace member of [`autoware_lanelet2_to_opendrive`](../README.md) and is typically run against OpenDRIVE maps produced by the sibling `convert` CLI.
+It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive), which uv installs from its git repository as a dependency (see `[tool.uv.sources]` in `pyproject.toml`).
 
 ## Features
 
@@ -23,7 +23,7 @@ This package is a workspace member of [`autoware_lanelet2_to_opendrive`](../READ
 Python 3.10 to 3.12 (`>=3.10,<3.13`; the ceiling is CARLA's bindings, which ship no wheel above cp312). Install via the workspace root:
 
 ```bash
-# From the repository root — installs the workspace without the optional CARLA bindings
+# From the repository root — installs the package without the optional CARLA bindings
 uv sync --dev
 ```
 

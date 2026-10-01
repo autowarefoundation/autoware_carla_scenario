@@ -15,8 +15,8 @@ This guide is for developers who want to contribute to the `autoware-carla-scena
 
 1. **Fork and clone the repository**:
 ```bash
-git clone https://github.com/YOUR_USERNAME/autoware_lanelet2_to_opendrive.git
-cd autoware_lanelet2_to_opendrive
+git clone https://github.com/YOUR_USERNAME/autoware_carla_scenario.git
+cd autoware_carla_scenario
 ```
 
 2. **Create a virtual environment and install dependencies**:
@@ -102,7 +102,7 @@ This project follows the same coding standards as the parent repository:
 - **Type checking**: `mypy --ignore-missing-imports` over both `src/` and `test/`
 
 The full pre-commit configuration lives in
-[`.pre-commit-config.yaml`](https://github.com/tier4/autoware_lanelet2_to_opendrive/blob/master/.pre-commit-config.yaml)
+[`.pre-commit-config.yaml`](https://github.com/hakuturu583/autoware_carla_scenario/blob/master/.pre-commit-config.yaml)
 at the repository root and runs the following hooks:
 
 - `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `check-toml`,

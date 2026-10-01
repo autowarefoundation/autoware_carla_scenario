@@ -1,0 +1,259 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      bump_type: ${{ steps.pr-labels.outputs.bump_type }}
+      new_version: ${{ steps.bump-version.outputs.new_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # GH_PAT is required so that `git push origin master` (version-bump
+          # commit) and `git push origin v<version>` (release tag) can satisfy
+          # the master branch ruleset. The default GITHUB_TOKEN identity
+          # (github-actions[bot]) is not in the ruleset's bypass list, so
+          # direct pushes to master are rejected with GH013.
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Setup base environment
+        uses: ./.github/actions/setup-env
+        with:
+          install-dev-deps: "false"
+
+      - name: Get merged PR labels
+        id: pr-labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha
+            });
+
+            // Find the merged PR
+            const mergedPR = prs.find(pr => pr.merged_at !== null);
+
+            if (!mergedPR) {
+              console.log('No merged PR found for this commit');
+              core.setOutput('bump_type', 'none');
+              return;
+            }
+
+            console.log(`Found merged PR #${mergedPR.number}`);
+
+            const labels = mergedPR.labels.map(label => label.name);
+            console.log(`PR labels: ${labels.join(', ')}`);
+
+            // Store PR information
+            core.setOutput('pr_number', mergedPR.number);
+            core.setOutput('pr_title', mergedPR.title);
+            core.setOutput('pr_url', mergedPR.html_url);
+            core.setOutput('pr_author', mergedPR.user.login);
+
+            // Check for version bump labels
+            let bumpType = 'none';
+            if (labels.includes('bump major')) {
+              bumpType = 'major';
+            } else if (labels.includes('bump minor')) {
+              bumpType = 'minor';
+            } else if (labels.includes('bump patch')) {
+              bumpType = 'patch';
+            }
+
+            core.setOutput('bump_type', bumpType);
+
+      - name: Bump version
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        id: bump-version
+        run: |
+          bump_type="${{ steps.pr-labels.outputs.bump_type }}"
+
+          # Extract current version from autoware_carla_scenario/pyproject.toml
+          current_version=$(grep '^version = ' autoware_carla_scenario/pyproject.toml | sed 's/version = "\(.*\)"/\1/' || true)
+
+          # Validate version extraction
+          if [ -z "$current_version" ]; then
+            echo "ERROR: Could not extract version from pyproject.toml"
+            exit 1
+          fi
+
+          echo "Current version: $current_version"
+
+          # Parse version components
+          IFS='.' read -r major minor patch <<< "$current_version"
+
+          # Bump version based on label
+          case "$bump_type" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          new_version="${major}.${minor}.${patch}"
+          echo "New version: $new_version"
+
+          # Update autoware_carla_scenario/pyproject.toml
+          sed -i "s/^version = \".*\"/version = \"$new_version\"/" autoware_carla_scenario/pyproject.toml
+
+          # Keep uv.lock in sync with the bumped version. The editable package
+          # entry in uv.lock records the version, so bumping pyproject.toml
+          # without re-locking leaves uv.lock stale and makes every subsequent
+          # non-frozen uv command (uv lock / uv sync / uv pip install) rewrite
+          # the lockfile. `uv lock` keeps every other pin as it is, including
+          # the converter's git commit.
+          uv lock
+
+          # Set outputs
+          echo "new_version=${new_version}" >> "$GITHUB_OUTPUT"
+          echo "bump_type=${bump_type}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git add autoware_carla_scenario/pyproject.toml uv.lock
+          git commit -m "chore: bump version to ${{ steps.bump-version.outputs.new_version }}"
+          git push origin master
+
+      - name: Create Git tag
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        run: |
+          git tag "v${{ steps.bump-version.outputs.new_version }}"
+          git push origin "v${{ steps.bump-version.outputs.new_version }}"
+
+      - name: Create GitHub Release
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        id: create-release
+        uses: actions/github-script@v7
+        env:
+          NEW_VERSION: ${{ steps.bump-version.outputs.new_version }}
+          BUMP_TYPE: ${{ steps.bump-version.outputs.bump_type }}
+          PR_NUMBER: ${{ steps.pr-labels.outputs.pr_number }}
+          PR_TITLE: ${{ steps.pr-labels.outputs.pr_title }}
+          PR_URL: ${{ steps.pr-labels.outputs.pr_url }}
+          PR_AUTHOR: ${{ steps.pr-labels.outputs.pr_author }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const newVersion = process.env.NEW_VERSION;
+            const bumpType = process.env.BUMP_TYPE;
+            const prNumber = process.env.PR_NUMBER;
+            const prTitle = process.env.PR_TITLE;
+            const prUrl = process.env.PR_URL;
+            const prAuthor = process.env.PR_AUTHOR;
+
+            // Create release body with PR link
+            const releaseBody = [
+              `## What's Changed`,
+              ``,
+              `- ${prTitle} (#${prNumber}) by @${prAuthor}`,
+              ``,
+              `**Full Changelog**: ${prUrl}`,
+              ``,
+              `---`,
+              ``,
+              `This release was created by automated workflow (bump ${bumpType}).`
+            ].join('\n');
+
+            const { data: release } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${newVersion}`,
+              name: `Release v${newVersion}`,
+              body: releaseBody,
+              draft: false,
+              prerelease: false
+            });
+
+            console.log(`Created release: ${release.html_url}`);
+            core.setOutput('release_id', release.id);
+            core.setOutput('upload_url', release.upload_url);
+
+      - name: Setup full environment
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        uses: ./.github/actions/setup-env
+        with:
+          install-dev-deps: "true"
+          carla-extra: "carla"
+
+      - name: Build carla-scenario documentation with PDF
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        uses: ./.github/actions/build-docs
+        with:
+          package-dir: autoware_carla_scenario
+          version: ${{ steps.bump-version.outputs.new_version }}
+          enable-pdf: "true"
+          pdf-output-path: carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.pdf
+
+      - name: Create documentation archive
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        run: |
+          cd autoware_carla_scenario/site
+          zip -r ../../carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.zip .
+          cd ../..
+
+      - name: Upload carla-scenario HTML documentation to release
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: ./carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.zip
+          asset_name: carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload carla-scenario PDF documentation to release
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: ./carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.pdf
+          asset_name: carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.pdf
+          asset_content_type: application/pdf
+
+      - name: Deploy to GitHub Pages with mike
+        if: steps.pr-labels.outputs.bump_type != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Fetch gh-pages branch
+          git fetch origin gh-pages --depth=1 || true
+
+          uv run mike deploy --push --update-aliases --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.bump-version.outputs.new_version }} latest
+
+          # Set latest as default version
+          uv run mike set-default --push --config-file autoware_carla_scenario/mkdocs.yml latest
+
+      - name: No version bump needed
+        if: steps.pr-labels.outputs.bump_type == 'none'
+        run: |
+          echo "No version bump label found. Skipping release."

@@ -13,11 +13,11 @@ authors = [
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "pyxodr>=0.1.0",
-    # The sibling workspace member, imported at runtime:
+    # The converter, imported at runtime:
     # `coordinate.road_lanelet_mapping` re-exports its road/lanelet mapping
-    # types and `coordinate.map_manager` loads a mapping with them. A workspace
-    # install puts it on `sys.path` whether or not it is declared, so leaving it
-    # out only shows up off the workspace -- most visibly in the wheelhouse
+    # types and `coordinate.map_manager` loads a mapping with them. It used to
+    # be a sibling workspace member, which put it on `sys.path` whether or not
+    # it was declared, so leaving it out only showed up in the wheelhouse
     # `authoring.wheelhouse` exports, where the resolver never sees the package,
     # its wheel is not downloaded, and the scenario runner started from that
     # venv dies with `ModuleNotFoundError`.
@@ -65,9 +65,11 @@ conflicts = [
 ]
 
 [tool.uv.sources]
-# Resolve the sibling from the workspace: it is not published to an index, so
-# without this uv would go looking for it on PyPI and fail.
-autoware-lanelet2-to-opendrive = { workspace = true }
+# The converter lives in its own repository and is not published to an index,
+# so without this uv would go looking for it on PyPI and fail. The lockfile pins
+# the commit this resolves to; `uv lock --upgrade-package
+# autoware-lanelet2-to-opendrive` moves it forward.
+autoware-lanelet2-to-opendrive = { git = "https://github.com/hakuturu583/autoware_lanelet2_to_opendrive", subdirectory = "autoware_lanelet2_to_opendrive", branch = "master" }
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]

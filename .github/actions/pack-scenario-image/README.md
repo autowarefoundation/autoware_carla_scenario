@@ -10,7 +10,7 @@ meant to be referenced from other repositories:
 ```yaml
 - uses: actions/checkout@v4
 
-- uses: tier4/autoware_lanelet2_to_opendrive/.github/actions/pack-scenario-image@main
+- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
   with:
     scenario-package-path: my_scenario_package
     image: ghcr.io/my-org/my-scenario

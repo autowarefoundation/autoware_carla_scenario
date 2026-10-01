@@ -1,0 +1,103 @@
+name: Setup Environment
+description: >
+  Common CI environment setup: Python, uv, an optional 'uv sync --dev', and
+  optional pre-commit execution. Every dependency installs from a wheel, so
+  there is no apt step and no compiler in the loop.
+
+inputs:
+  python-version:
+    description: Python version to set up
+    required: false
+    # Matches the repository's .python-version, so a job that does not care
+    # which interpreter it runs on gets the one contributors develop against.
+    # The 'test' job overrides it per matrix entry to cover the whole range.
+    default: "3.12"
+  install-dev-deps:
+    description: Run 'uv sync --dev' to install Python dependencies
+    required: false
+    default: "true"
+  run-precommit:
+    description: Run 'pre-commit run --all-files' (no 'install' — CI never commits)
+    required: false
+    default: "false"
+  precommit-continue-on-error:
+    description: Continue even if pre-commit fails (uses '|| true')
+    required: false
+    default: "false"
+  carla-extra:
+    description: "uv extra for CARLA version selection (e.g. 'carla' for 0.10.0, 'carla-0-9-16' for 0.9.16)"
+    required: false
+    default: ""
+  sync-dev-group:
+    description: >
+      Include the dev dependency group in 'uv sync'. Set to "false" for a job
+      that only runs a console script -- the group carries mkdocs, weasyprint,
+      mypy and the rest of the tooling, none of which such a job touches.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Point uv at that interpreter
+      shell: bash
+      run: echo "UV_PYTHON=${{ inputs.python-version }}" >> "${GITHUB_ENV}"
+      # setup-python only puts an interpreter on PATH; uv does not look there.
+      # It reads the repository's .python-version, so without this every job
+      # ran on that one version and a matrix over interpreters tested nothing.
+      #
+      # It has to be the environment rather than 'uv sync --python': a later
+      # bare 'uv run' re-resolves against .python-version and would rebuild
+      # the environment at the wrong version, silently. Putting it in the job
+      # environment covers every uv invocation -- sync, run, build -- and an
+      # explicit '--python' still wins where a step needs a different one.
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+        # Only enable the uv cache when we are actually going to populate it.
+        # When 'install-dev-deps' is "false" (e.g. release.yml's early
+        # 'Setup base environment' step on a no-bump-label push), 'uv sync'
+        # never runs, the cache dir stays empty, and setup-uv@v4's post-step
+        # save fails the job with 'Cache path ... does not exist on disk'.
+        enable-cache: ${{ inputs.install-dev-deps }}
+        cache-dependency-glob: "**/uv.lock"
+        # setup-uv keys the cache on the lockfile hash and nothing else, so
+        # without this every job in a matrix computes the same key: one save
+        # wins and the rest restore a cache full of another interpreter's
+        # wheels, then re-download most of the closure. uv's cache is per wheel
+        # tag, so the interpreter is the part that has to be in the key.
+        cache-suffix: ${{ inputs.python-version }}-${{ inputs.carla-extra }}
+
+    - name: Install Python dependencies
+      if: inputs.install-dev-deps == 'true'
+      shell: bash
+      env:
+        CARLA_EXTRA: ${{ inputs.carla-extra }}
+        SYNC_DEV_GROUP: ${{ inputs.sync-dev-group }}
+      run: |
+        set -euo pipefail
+        args=()
+        if [ "${SYNC_DEV_GROUP}" = "true" ]; then
+          args+=(--dev)
+        fi
+        if [ -n "${CARLA_EXTRA}" ]; then
+          args+=(--extra "${CARLA_EXTRA}")
+        fi
+        uv sync ${args[@]+"${args[@]}"}
+
+    - name: Run pre-commit hooks
+      if: inputs.run-precommit == 'true' && inputs.precommit-continue-on-error == 'false'
+      shell: bash
+      run: uv run pre-commit run --all-files
+
+    - name: Run pre-commit hooks (continue on error)
+      if: inputs.run-precommit == 'true' && inputs.precommit-continue-on-error == 'true'
+      shell: bash
+      run: uv run pre-commit run --all-files || true

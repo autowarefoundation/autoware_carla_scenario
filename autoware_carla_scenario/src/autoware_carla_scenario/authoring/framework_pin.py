@@ -17,13 +17,16 @@ prevent.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 __all__ = [
     "CONVERTER_DISTRIBUTION",
@@ -38,15 +41,10 @@ __all__ = [
 DISTRIBUTION = "autoware-carla-scenario"
 
 #: The converter the framework imports at module scope
-#: (``coordinate.road_lanelet_mapping``) without declaring it as a dependency:
-#: inside the workspace it is always installed alongside, so the omission only
-#: shows up in a package that depends on the framework alone.  An exported
-#: Scenario Package therefore pins both, the same way.
+#: (``coordinate.road_lanelet_mapping``).  It lives in its own repository, so an
+#: exported Scenario Package pins it explicitly, to exactly the revision that is
+#: installed alongside the framework.
 CONVERTER_DISTRIBUTION = "autoware-lanelet2-to-opendrive"
-
-#: Where each project sits inside the repository.
-FRAMEWORK_SUBDIRECTORY = "autoware_carla_scenario"
-CONVERTER_SUBDIRECTORY = "autoware_lanelet2_to_opendrive"
 
 #: Overrides pin resolution with an exact released version.
 VERSION_ENV = "SCENARIO_EXPORT_FRAMEWORK_VERSION"
@@ -144,39 +142,66 @@ class Pin:
     def companion(self) -> "Pin":
         """Return the matching pin for :data:`CONVERTER_DISTRIBUTION`.
 
-        Pinned the same way as the framework -- same release, same commit, or
-        the sibling checkout -- so the two halves of the workspace can never
-        drift apart in an exported package.  Extras are not carried across:
-        they belong to the distribution that declares them.
+        The converter lives in its own repository, so it cannot share the
+        framework's commit.  It is pinned to exactly what is installed next to
+        the framework -- the revision the lockfile resolved and the test suite
+        ran against -- as recorded in its PEP 610 ``direct_url.json``:
+
+        * a version pin of the framework pins the converter's installed
+          version too;
+        * a converter installed from a git repository is pinned to that
+          repository and commit;
+        * a converter installed from a local directory is pinned by path,
+          which only a development export should ever end up with;
+        * a converter installed from an index is pinned to its exact version.
+
+        Extras are not carried across: they belong to the distribution that
+        declares them.
         """
-        if self.kind == "git":
-            return replace(
-                self,
-                distribution=CONVERTER_DISTRIBUTION,
-                subdirectory=CONVERTER_SUBDIRECTORY,
-                version=_installed_version(CONVERTER_DISTRIBUTION),
-                extras=(),
-                warnings=(),
-            )
-        if self.kind == "path":
-            sibling = (
-                str(Path(self.path).parent / CONVERTER_SUBDIRECTORY)
-                if self.path
-                else None
-            )
-            return replace(
-                self,
-                distribution=CONVERTER_DISTRIBUTION,
-                path=sibling,
-                version=_installed_version(CONVERTER_DISTRIBUTION),
-                extras=(),
-                warnings=(),
-            )
-        return Pin(
-            distribution=CONVERTER_DISTRIBUTION,
-            kind="version",
-            version=_installed_version(CONVERTER_DISTRIBUTION),
+        version = _installed_version(CONVERTER_DISTRIBUTION)
+        exact = Pin(
+            distribution=CONVERTER_DISTRIBUTION, kind="version", version=version
         )
+        if self.kind == "version":
+            return exact
+
+        origin = _installed_direct_url(CONVERTER_DISTRIBUTION)
+        if origin is None:
+            return exact
+
+        url = origin.get("url", "")
+        vcs_info = origin.get("vcs_info")
+        if isinstance(vcs_info, dict) and vcs_info.get("vcs") == "git":
+            commit = vcs_info.get("commit_id")
+            if isinstance(commit, str) and _SHA_PATTERN.match(commit):
+                return Pin(
+                    distribution=CONVERTER_DISTRIBUTION,
+                    kind="git",
+                    repository=normalize_repository_url(url),
+                    commit=commit,
+                    subdirectory=origin.get("subdirectory") or None,
+                    version=version,
+                )
+            return exact
+
+        if url.startswith("file://"):
+            path = url2pathname(urlparse(url).path)
+            warnings: tuple[str, ...] = ()
+            if self.kind != "path":
+                warnings = (
+                    f"{CONVERTER_DISTRIBUTION} is installed from the local "
+                    f"directory {path}, so the exported package depends on it "
+                    "by path and will not resolve on another machine. Install "
+                    "it from its git repository before sharing the package.",
+                )
+            return Pin(
+                distribution=CONVERTER_DISTRIBUTION,
+                kind="path",
+                path=path,
+                version=version,
+                warnings=warnings,
+            )
+        return exact
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +270,26 @@ def _installed_version(distribution: str = DISTRIBUTION) -> Optional[str]:
         return metadata.version(distribution)
     except metadata.PackageNotFoundError:  # pragma: no cover - always installed
         return None
+
+
+def _installed_direct_url(distribution: str) -> Optional[dict[str, Any]]:
+    """Return the PEP 610 ``direct_url.json`` of *distribution*, or ``None``.
+
+    ``None`` means it was installed from an index (or is not installed at all).
+    """
+    from importlib import metadata  # noqa: PLC0415
+
+    try:
+        text = metadata.distribution(distribution).read_text("direct_url.json")
+    except metadata.PackageNotFoundError:
+        return None
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _resolve_git_pin(source_root: Path) -> Optional[Pin]:

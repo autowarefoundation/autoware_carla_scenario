@@ -181,22 +181,82 @@ class TestFrameworkPin:
         assert pin.requirement() == f"{DISTRIBUTION}==1.2.3"
         assert pin.uv_source() is None
 
-    def test_the_companion_pin_matches_the_frameworks_kind(self) -> None:
-        pin = Pin(
-            kind="git",
-            repository="https://example.invalid/r",
-            commit="a" * 40,
-            subdirectory="autoware_carla_scenario",
-        )
-        companion = pin.companion()
-        assert companion.distribution == CONVERTER_DISTRIBUTION
-        assert companion.kind == "git"
-        assert companion.commit == pin.commit
-        assert companion.subdirectory == "autoware_lanelet2_to_opendrive"
+    @pytest.fixture
+    def converter_origin(self, monkeypatch: pytest.MonkeyPatch):
+        """Stand in for the converter's PEP 610 record."""
+        from autoware_carla_scenario.authoring import framework_pin
 
-    def test_the_companion_of_a_path_pin_is_the_sibling_checkout(self) -> None:
-        pin = Pin(kind="path", path="/w/autoware_carla_scenario")
-        assert pin.companion().path == "/w/autoware_lanelet2_to_opendrive"
+        def install(origin: Any) -> None:
+            monkeypatch.setattr(
+                framework_pin, "_installed_direct_url", lambda _name: origin
+            )
+            monkeypatch.setattr(
+                framework_pin,
+                "_installed_version",
+                lambda _name=DISTRIBUTION: "2.62.0",
+            )
+
+        return install
+
+    _GIT_PIN = Pin(
+        kind="git",
+        repository="https://example.invalid/r",
+        commit="a" * 40,
+        subdirectory="autoware_carla_scenario",
+    )
+
+    def test_a_converter_installed_from_git_is_pinned_to_its_commit(
+        self, converter_origin
+    ) -> None:
+        converter_origin(
+            {
+                "url": "https://example.invalid/converter.git",
+                "vcs_info": {"vcs": "git", "commit_id": "b" * 40},
+                "subdirectory": "autoware_lanelet2_to_opendrive",
+            }
+        )
+        for pin in (self._GIT_PIN, Pin(kind="path", path="/w/framework")):
+            companion = pin.companion()
+            assert companion.distribution == CONVERTER_DISTRIBUTION
+            assert companion.kind == "git"
+            assert companion.repository == "https://example.invalid/converter"
+            assert companion.commit == "b" * 40
+            assert companion.subdirectory == "autoware_lanelet2_to_opendrive"
+            assert companion.reproducible
+
+    def test_a_converter_installed_from_a_directory_is_pinned_by_path(
+        self, converter_origin
+    ) -> None:
+        converter_origin({"url": "file:///w/converter", "dir_info": {"editable": True}})
+        dev = Pin(kind="path", path="/w/framework").companion()
+        assert dev.kind == "path"
+        assert dev.path == "/w/converter"
+        assert not dev.warnings
+        # A portable export can not carry a local path silently.
+        portable = self._GIT_PIN.companion()
+        assert portable.kind == "path"
+        assert portable.warnings
+
+    def test_a_converter_from_an_index_is_pinned_to_its_version(
+        self, converter_origin
+    ) -> None:
+        converter_origin(None)
+        companion = self._GIT_PIN.companion()
+        assert companion.kind == "version"
+        assert companion.requirement() == f"{CONVERTER_DISTRIBUTION}==2.62.0"
+
+    def test_a_version_pin_pins_the_converter_version_too(
+        self, converter_origin
+    ) -> None:
+        converter_origin(
+            {
+                "url": "https://example.invalid/converter",
+                "vcs_info": {"vcs": "git", "commit_id": "b" * 40},
+            }
+        )
+        companion = Pin(kind="version", version="1.2.3").companion()
+        assert companion.kind == "version"
+        assert companion.version == "2.62.0"
 
     def test_a_path_pin_is_not_reproducible(self) -> None:
         assert not Pin(kind="path", path="/tmp/x").reproducible
@@ -277,9 +337,8 @@ class TestGeneratedPackage:
     ) -> None:
         """Transitive dependencies belong in uv.lock, not in the manifest.
 
-        Both workspace projects are declared, though: the framework imports the
-        converter at module scope without declaring it, so a package that named
-        only the framework could not import it.
+        The converter is declared next to the framework, though: it is not on
+        an index, so the package has to say where it comes from.
         """
         data = tomllib.loads((package / "pyproject.toml").read_text())
         declared = {
@@ -288,19 +347,23 @@ class TestGeneratedPackage:
         assert declared == {DISTRIBUTION, CONVERTER_DISTRIBUTION}
         assert data["project"]["requires-python"]
 
-    def test_both_projects_are_pinned_the_same_way(self, package: Path) -> None:
-        """The two halves of the workspace must not drift apart."""
+    def test_the_converter_is_pinned_to_the_installed_revision(
+        self, package: Path
+    ) -> None:
+        """The package must run on the converter the framework was tested with."""
+        from autoware_carla_scenario.authoring.framework_pin import (
+            _installed_direct_url,
+        )
+
         data = tomllib.loads((package / "pyproject.toml").read_text())
-        sources = data["tool"]["uv"]["sources"]
-        framework = sources[DISTRIBUTION]
-        converter = sources[CONVERTER_DISTRIBUTION]
-        assert set(framework) == set(converter)
-        if "git" in framework:
-            assert framework["git"] == converter["git"]
-            assert framework["rev"] == converter["rev"]
-            assert framework["subdirectory"] != converter["subdirectory"]
+        converter = data["tool"]["uv"]["sources"][CONVERTER_DISTRIBUTION]
+        origin = _installed_direct_url(CONVERTER_DISTRIBUTION) or {}
+        vcs_info = origin.get("vcs_info")
+        if vcs_info:
+            assert converter["rev"] == vcs_info["commit_id"]
+            assert "branch" not in converter
         else:
-            assert framework["path"] != converter["path"]
+            assert "path" in converter
 
     def test_the_package_is_its_own_pytest_rootdir(self, package: Path) -> None:
         """pytest searches upwards, so an unpacked package would inherit config.

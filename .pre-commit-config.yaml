@@ -1,0 +1,71 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      # The vendored alpasim protos are copied verbatim from upstream (see
+      # autoware_carla_scenario/proto/README.md) and the modules under _proto/ are
+      # protoc output checked byte-for-byte by test_proto_generated.py. Reformatting
+      # either would break that guarantee.
+      - id: trailing-whitespace
+        exclude: '^autoware_carla_scenario/(proto/|src/autoware_carla_scenario/driver/_proto/)'
+      - id: end-of-file-fixer
+        exclude: '^autoware_carla_scenario/(proto/|src/autoware_carla_scenario/driver/_proto/)'
+      - id: check-yaml
+        exclude: 'mkdocs\.yml$'
+      - id: check-added-large-files
+        exclude: '\.(osm|xodr|png|whl)$'
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: debug-statements
+      - id: mixed-line-ending
+
+  # - repo: https://github.com/psf/black
+  #   rev: 24.10.0
+  #   hooks:
+  #     - id: black
+  #       language_version: python3.10
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        args:
+          - --ignore-missing-imports
+          - autoware_carla_scenario/src
+          - autoware_carla_scenario/test
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      # Not `always_run`: running the suite on every commit meant a one-line
+      # docs fix paid for minutes of end-to-end conversion and wheelhouse
+      # builds. `files` scopes it to the changes that can actually break it:
+      # the package itself, `pyproject.toml` and `uv.lock` (which move every
+      # dependency, the converter included), the fixture map under `data/`, and
+      # `carla_wheels/` -- `carla_wheels()` reads that directory, and a test
+      # asserts its interpreter tags cover the declared `requires-python`.
+      #
+      # It leaves out `slow` like CI's fast job does (CI runs them in their own
+      # job): the one export self-check that builds a wheelhouse took ~10 of a
+      # commit's ~10 minutes, the other ~1300 tests seconds.
+      #
+      # `pass_filenames: false` because pytest is given the test directory
+      # rather than the changed files: a change anywhere in the package can
+      # break any of its tests, not just a test file that happens to have been
+      # edited.
+      - id: pytest-carla
+        name: pytest (autoware_carla_scenario)
+        entry: uv run pytest --no-testmon -m "not integration and not slow" autoware_carla_scenario/test
+        language: system
+        pass_filenames: false
+        files: '^(autoware_carla_scenario/|data/|carla_wheels/|pyproject\.toml$|uv\.lock$)'

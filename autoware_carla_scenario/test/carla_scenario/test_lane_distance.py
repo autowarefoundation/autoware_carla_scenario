@@ -39,13 +39,8 @@ from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, OpenDrivePose
 from autoware_carla_scenario.coordinate.transform import to_carla_world
 
-#: The converter's fixture map, which both packages' tests share.
-_CONVERTER_TEST_DATA = (
-    Path(__file__).resolve().parents[3]
-    / "autoware_lanelet2_to_opendrive"
-    / "test"
-    / "data"
-)
+#: The nishishinjuku fixture map, kept at the repository root.
+_CONVERTER_TEST_DATA = Path(__file__).resolve().parents[3] / "data"
 XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
 OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
 

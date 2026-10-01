@@ -1,18 +1,20 @@
-"""A workspace sibling this package imports has to be declared as a dependency.
+"""The converter this package imports has to be declared, and found.
 
-``uv sync`` installs every member of the workspace, so a sibling lands on
-``sys.path`` whether or not anything asked for it.  Development, the test suite
-and an editable install therefore all pass while the manifest says nothing --
-and the omission only surfaces once the package is resolved on its own.  That is
-what ``authoring.wheelhouse`` does: it resolves the lockfile into wheels, an
-undeclared sibling is not in the resolution, its wheel is never downloaded, and
-the scenario runner started from the resulting venv dies on
+The converter used to be a sibling workspace member, and ``uv sync`` installs
+every member of a workspace, so it landed on ``sys.path`` whether or not
+anything asked for it.  The omission only surfaced once the package was
+resolved on its own -- which is what ``authoring.wheelhouse`` does: it resolves
+the lockfile into wheels, an undeclared dependency is not in the resolution,
+its wheel is never downloaded, and the scenario runner started from the
+resulting venv dies on
 
     from autoware_lanelet2_to_opendrive.road_lanelet_geo_mapping import (
     ModuleNotFoundError: No module named 'autoware_lanelet2_to_opendrive'
 
-The members are read from the workspace root rather than listed here, so a
-sibling added later is covered without touching this file.
+It now lives in its own repository and is not published to an index, so it
+also needs a ``[tool.uv.sources]`` entry telling uv where to fetch it from.
+Any workspace members added later are covered the same way: they are read from
+the workspace root rather than listed here.
 """
 
 from __future__ import annotations
@@ -44,6 +46,11 @@ def _canonical(name: str) -> str:
 
 def _manifest(directory: Path) -> dict:
     return tomllib.loads((directory / "pyproject.toml").read_text())
+
+
+#: Projects this package imports that live in a repository of their own, by
+#: top-level module.  Neither is on an index, so each needs a git source.
+_EXTERNAL = {"autoware_lanelet2_to_opendrive": "autoware-lanelet2-to-opendrive"}
 
 
 def _siblings() -> dict[str, str]:
@@ -105,12 +112,18 @@ def _imported_top_level_modules() -> dict[str, set[Path]]:
     return found
 
 
-@pytest.mark.parametrize("module", sorted(_siblings()))
-def test_an_imported_sibling_is_a_declared_dependency(module: str) -> None:
+def _first_party() -> dict[str, str]:
+    return {**_siblings(), **_EXTERNAL}
+
+
+@pytest.mark.parametrize("module", sorted(_first_party()))
+def test_an_imported_first_party_project_is_a_declared_dependency(
+    module: str,
+) -> None:
     importers = _imported_top_level_modules().get(module)
     if not importers:
         pytest.skip(f"{module} is not imported by this package")
-    distribution = _siblings()[module]
+    distribution = _first_party()[module]
     assert _canonical(distribution) in _declared(), (
         f"{module} is imported by {sorted(map(str, importers))} but "
         f"{distribution} is not in this package's dependencies -- a wheelhouse "
@@ -133,3 +146,20 @@ def test_a_declared_sibling_resolves_from_the_workspace(module: str) -> None:
     assert all(
         value.get("workspace") is True for value in matching.values()
     ), f"{distribution} must resolve with {{ workspace = true }}, got {matching}"
+
+
+@pytest.mark.parametrize("module", sorted(_EXTERNAL))
+def test_a_declared_external_project_resolves_from_git(module: str) -> None:
+    """Nothing publishes the converter to an index, so uv fetches it from git."""
+    distribution = _EXTERNAL[module]
+    assert module not in _siblings(), f"{module} is a workspace member again"
+    matching = {
+        name: value
+        for name, value in _sources().items()
+        if _canonical(name) == _canonical(distribution)
+    }
+    assert matching, f"{distribution} has no [tool.uv.sources] entry"
+    for value in matching.values():
+        assert str(value.get("git", "")).startswith(
+            "https://"
+        ), f"{distribution} must resolve from its git repository, got {value}"

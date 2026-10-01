@@ -39,9 +39,7 @@ for _var in (
     os.environ.pop(_var, None)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_CONVERTER_TEST_DATA = (
-    _PROJECT_ROOT / "autoware_lanelet2_to_opendrive" / "test" / "data"
-)
+_CONVERTER_TEST_DATA = _PROJECT_ROOT / "data"
 _XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
 _OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
 

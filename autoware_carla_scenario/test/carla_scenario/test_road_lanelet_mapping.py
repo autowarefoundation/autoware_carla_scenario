@@ -31,12 +31,7 @@ from autoware_lanelet2_to_opendrive.road_lanelet_geo_mapping import (
 )
 
 DATA_DIR = Path(__file__).parent / "data"
-_CONVERTER_TEST_DATA = (
-    Path(__file__).resolve().parents[3]
-    / "autoware_lanelet2_to_opendrive"
-    / "test"
-    / "data"
-)
+_CONVERTER_TEST_DATA = Path(__file__).resolve().parents[3] / "data"
 XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
 OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
 

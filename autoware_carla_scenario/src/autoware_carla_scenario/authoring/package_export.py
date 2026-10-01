@@ -217,9 +217,8 @@ def _pins(pin: Pin) -> list[Pin]:
     The framework declares the converter as a dependency, so an exported
     package gets it either way.  It is still pinned explicitly, because the
     declared lower bound says nothing about *where* the converter comes from:
-    the framework is usually pinned to a commit or a local checkout, and the
-    converter has to come from the same one or the two halves of the workspace
-    drift apart under the package.
+    it is not published to an index, and the package has to run on the same
+    converter revision the framework was tested with.
     """
     return [pin, pin.companion()]
 
@@ -724,7 +723,7 @@ def export_package(
     except PinResolutionError as exc:
         raise PackageExportError(str(exc)) from exc
 
-    warnings = list(pin.warnings)
+    warnings = [w for each in _pins(pin) for w in each.warnings]
     warnings.extend(f"{i.path}: {i.message}" for i in report.warnings)
 
     uv_version = _uv_version() if pin_uv_version else None

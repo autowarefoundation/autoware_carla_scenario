@@ -37,8 +37,8 @@ _DEFAULT_GOAL_LANELET_ID = 141
 _DEFAULT_MAP = MapRef(
     group="nishishinjuku",
     name="NishishinjukuMap",
-    xodr_path=("autoware_lanelet2_to_opendrive/test/data/nishishinjuku_carla.xodr"),
-    lanelet2_path="autoware_lanelet2_to_opendrive/test/data/nishishinjuku.osm",
+    xodr_path=("data/nishishinjuku_carla.xodr"),
+    lanelet2_path="data/nishishinjuku.osm",
 )
 
 

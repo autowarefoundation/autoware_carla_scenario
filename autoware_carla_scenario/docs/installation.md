@@ -49,16 +49,19 @@ For more options, see the [official uv documentation](https://docs.astral.sh/uv/
 
 ## Installing the Package
 
-This package is part of a workspace that also contains
-`autoware_lanelet2_to_opendrive`. Both are installed together.
+The converter it builds on, `autoware_lanelet2_to_opendrive`, lives in
+[its own repository](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive)
+and is not published to an index; `uv sync` fetches it from git at the commit
+recorded in `uv.lock`, so `git` has to be on `PATH`. Move it forward with
+`uv lock --upgrade-package autoware-lanelet2-to-opendrive`.
 
 ### For Developers (Editable Installation)
 
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/tier4/autoware_lanelet2_to_opendrive.git
-    cd autoware_lanelet2_to_opendrive
+    git clone https://github.com/hakuturu583/autoware_carla_scenario.git
+    cd autoware_carla_scenario
     ```
 
 2. Sync dependencies from the lock file (uses CARLA `0.10.0` by default):
@@ -115,8 +118,8 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `pytest>=9.0.1`
 - `python-dotenv>=1.2.2`
 - `simple-lanelet2>=1.1.2` — the Lanelet2 binding, plus the Autoware
-  regulatory-element extensions, as a single wheel (see the note in
-  `autoware_lanelet2_to_opendrive/pyproject.toml`)
+  regulatory-element extensions, as a single wheel
+- `autoware-lanelet2-to-opendrive` — the converter, from its git repository
 - `tqdm>=4.67.1`
 - `hydra-core>=1.3.2`, `omegaconf>=2.3.0`
 - `fastapi>=0.115.0`, `uvicorn[standard]>=0.34.0`, `jinja2>=3.1.0` —
@@ -134,7 +137,7 @@ Ensure that:
 
 1. You're using a supported Python (see [Python Version](#python-version)).
 2. The package was installed in your active environment (`uv sync` from
-   the workspace root, or a fresh `uv venv` followed by `uv sync`).
+   the repository root, or a fresh `uv venv` followed by `uv sync`).
 3. If you see `ImportError: ... lanelet2 ...`, a `lanelet2` distribution
    from PyPI may be shadowing the one `simple-lanelet2` provides. Reset
    the environment with `rm -rf .venv && uv sync --dev`.

@@ -38,8 +38,8 @@ This package provides a framework for creating and running automated scenario te
 
 ## Project Information
 
-- **Repository**: [tier4/autoware_lanelet2_to_opendrive](https://github.com/tier4/autoware_lanelet2_to_opendrive)
-- **Release Notes**: [View all releases on GitHub](https://github.com/tier4/autoware_lanelet2_to_opendrive/releases)
+- **Repository**: [hakuturu583/autoware_carla_scenario](https://github.com/hakuturu583/autoware_carla_scenario)
+- **Release Notes**: [View all releases on GitHub](https://github.com/hakuturu583/autoware_carla_scenario/releases)
 - **License**: Check the repository for license information
 - **Python Version**: 3.10 - 3.12 (`>=3.10,<3.13`; the ceiling is CARLA's bindings, which publish no wheel above cp312)
 
@@ -48,5 +48,5 @@ This package provides a framework for creating and running automated scenario te
 If you encounter any issues or have questions:
 
 1. Check the documentation sections above
-2. Search existing [GitHub Issues](https://github.com/tier4/autoware_lanelet2_to_opendrive/issues)
+2. Search existing [GitHub Issues](https://github.com/hakuturu583/autoware_carla_scenario/issues)
 3. Create a new issue if your problem hasn't been reported
