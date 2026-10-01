@@ -214,9 +214,12 @@ def _render_source_entry(pin: Pin) -> str:
 def _pins(pin: Pin) -> list[Pin]:
     """Return every distribution the exported package must pin.
 
-    The framework imports the converter at module scope without declaring it,
-    so a package that depended on the framework alone would fail to import it.
-    Both are pinned the same way rather than leaving the second to chance.
+    The framework declares the converter as a dependency, so an exported
+    package gets it either way.  It is still pinned explicitly, because the
+    declared lower bound says nothing about *where* the converter comes from:
+    the framework is usually pinned to a commit or a local checkout, and the
+    converter has to come from the same one or the two halves of the workspace
+    drift apart under the package.
     """
     return [pin, pin.companion()]
 
