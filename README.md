@@ -66,3 +66,16 @@ uv lock --upgrade-package autoware-lanelet2-to-opendrive
 uv run pytest -n auto -o addopts= -m "not slow"   # what CI's fast job runs
 uv run pre-commit run --all-files                 # what CI's lint job runs
 ```
+
+## Releases
+
+Releases are cut by `.github/workflows/release.yml` when a pull request is
+merged into `master` with exactly one version bump label (`bump patch`,
+`bump minor` or `bump major`). The workflow bumps `version` in
+`autoware_carla_scenario/pyproject.toml`, re-locks, tags `v<version>`, creates
+the GitHub Release with the documentation attached, and deploys the docs to
+GitHub Pages. A merge without a label releases nothing.
+
+The version line continues from `autoware_lanelet2_to_opendrive`, where this
+package started: it was split out at 2.62.0, so the first release here is
+2.62.1. The workflow pushes with the `GH_PAT` repository secret.
