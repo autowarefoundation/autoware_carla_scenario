@@ -426,6 +426,71 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
         assert "where the scenario expected it" not in caplog.text
 
 
+class TestTheMissionIsHandedOverAtBaseLink:
+    """Autoware's poses are base_link's -- the rear axle -- not the actor's centre."""
+
+    @staticmethod
+    def _behind(pose: BridgePose, distance: float) -> tuple[float, float]:
+        yaw = 2.0 * math.atan2(pose.rotation.z, pose.rotation.w)
+        return (
+            pose.position.x - distance * math.cos(yaw),
+            pose.position.y - distance * math.sin(yaw),
+        )
+
+    def test_the_initial_pose_and_goal_move_back_to_the_rear_axle(self) -> None:
+        # Handed over at the centre, localization started half a wheelbase ahead
+        # of the car; NDT settled metres off, and the ego steered off the road.
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge, base_link_offset_m=-1.425)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+
+        entity.on_scenario_start(world)
+
+        for got, given in (
+            (bridge.configured_initial_pose, _INITIAL),
+            (bridge.configured_goal, _GOAL),
+        ):
+            assert got is not None
+            assert (got.position.x, got.position.y) == pytest.approx(
+                self._behind(given, 1.425)
+            )
+            assert got.position.z == pytest.approx(given.position.z)
+            assert got.rotation == given.rotation
+
+    def test_waypoints_move_with_the_goal(self) -> None:
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge, base_link_offset_m=-1.0)
+        waypoint = BridgePose.from_yaw(x=5.0, y=5.0, z=0.0, yaw=math.pi / 2)
+        entity.set_mission(_INITIAL, _GOAL, [waypoint])
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+
+        entity.on_scenario_start(world)
+
+        (got,) = bridge.configured_waypoints
+        assert (got.position.x, got.position.y) == pytest.approx((5.0, 4.0))
+
+    def test_the_offset_is_derived_from_the_vehicle_by_default(self) -> None:
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+
+        with mock.patch(
+            "autoware_carla_scenario.driver.observation.rear_axle_offset",
+            return_value=-2.0,
+        ) as derive:
+            entity.on_scenario_start(world)
+
+        derive.assert_called_once_with(entity.actor, None)
+        goal = bridge.configured_goal
+        assert goal is not None
+        assert (goal.position.x, goal.position.y) == pytest.approx(
+            self._behind(_GOAL, 2.0)
+        )
+
+
 class TestRouteTo:
     """Delivering a destination to Autoware is the entity's job, not the action's.
 

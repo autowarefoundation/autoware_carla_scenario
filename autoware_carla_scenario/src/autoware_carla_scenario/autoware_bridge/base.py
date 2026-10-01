@@ -36,6 +36,7 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -48,11 +49,20 @@ class AutowareBridgeConfig:
         timeout_s: Per-RPC timeout in seconds.
         ready_timeout_ticks: Maximum world ticks to wait for Autoware to become
             ready before the scenario fails.  At 20 Hz, ``1200`` is ~60 s.
+        base_link_offset_m: Signed offset along the ego's forward axis from the
+            CARLA actor's origin to Autoware's ``base_link`` (the rear axle), in
+            metres -- negative, as the axle is behind the vehicle's centre.  The
+            initial pose and the goal Autoware is handed are moved by it.
+            ``None`` derives it from the vehicle (see
+            :func:`~autoware_carla_scenario.driver.observation.rear_axle_offset`);
+            set it to the half wheelbase Autoware's vehicle model uses when the
+            two must agree to the centimetre.
     """
 
     address: str = "localhost:50052"
     timeout_s: float = 60.0
     ready_timeout_ticks: int = 1200
+    base_link_offset_m: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +174,30 @@ class BridgePose:
         return cls(
             Vector3(x, y, z),
             Quaternion(w=math.cos(half), x=0.0, y=0.0, z=math.sin(half)),
+        )
+
+    def moved_forward(self, distance: float) -> "BridgePose":
+        """The same orientation, *distance* metres along its own forward (+X) axis.
+
+        Forward is the body X axis, pitch included, so a pose on a ramp moves
+        along the ramp rather than into it.  A negative *distance* moves back.
+        """
+        if distance == 0.0:
+            return self
+        q = self.rotation
+        forward = (
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+            2.0 * (q.x * q.y + q.w * q.z),
+            2.0 * (q.x * q.z - q.w * q.y),
+        )
+        p = self.position
+        return BridgePose(
+            Vector3(
+                p.x + distance * forward[0],
+                p.y + distance * forward[1],
+                p.z + distance * forward[2],
+            ),
+            q,
         )
 
 

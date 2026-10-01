@@ -132,6 +132,16 @@ def test_implausible_wheel_positions_fall_back(
     assert "implausible" in caplog.text
 
 
+def test_carla_0_10_wheels_fall_back_to_the_bounding_box() -> None:
+    """CARLA 0.10 calls the wheel position ``location`` and leaves it at zero."""
+    actor = _actor(_transform())
+    wheel = SimpleNamespace(location=SimpleNamespace(x=0.0, y=0.0, z=0.0))
+    actor.get_physics_control.return_value = SimpleNamespace(wheels=[wheel] * 4)
+    actor.bounding_box.extent.x = 2.446
+
+    assert rear_axle_offset(actor) == pytest.approx(-1.223)
+
+
 def test_unreadable_geometry_yields_zero() -> None:
     actor = MagicMock()
     actor.get_physics_control.side_effect = RuntimeError("no physics")
