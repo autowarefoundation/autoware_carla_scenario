@@ -483,68 +483,6 @@ This formatting requirement is integrated into the commit workflow described in 
 
 **Step 2 is mandatory and must never be skipped.**
 
-### Automated Formatting in GitHub Actions
-
-**IMPORTANT**: The `.github/workflows/claude.yml` workflow includes automatic formatting as a safety net.
-
-#### How It Works
-
-When Claude Code GitHub Actions runs:
-
-1. **Setup Phase**:
-   - Checkout repository with full git history
-   - Install Python, uv, system dependencies
-   - Install project dependencies with `uv sync --dev`
-   - Install pre-commit hooks with `uv run pre-commit install`
-
-2. **Claude Code Execution**:
-   - Claude Code runs with write permissions (`contents: write`, `pull-requests: write`)
-   - Claude Code should follow CLAUDE.md guidelines and format code before committing
-   - Creates commits and pushes to branch
-
-3. **Auto-format Safety Net** (runs after Claude Code):
-   - Runs `uv run pre-commit run --all-files` on all code
-   - Detects if any files were modified by formatters
-   - If changes detected:
-     - Stages changes with `git add -u`
-     - Commits with message: `"style: auto-format code with ruff-format"`
-     - Pushes to the same branch
-   - If no changes: Reports success, no action needed
-
-4. **Summary**:
-   - GitHub Actions summary shows whether formatting was needed
-   - Provides transparency on what was done
-
-#### Permissions
-
-The workflow has these permissions:
-- `contents: write` - Allows committing formatting changes
-- `pull-requests: write` - Allows creating/updating PRs
-- `actions: read` - Allows reading CI results
-
-#### Benefits
-
-- ✅ **Safety net**: Even if Claude Code misses formatting, it's automatically fixed
-- ✅ **CI/CD compliance**: Ensures all code passes `lint-and-format` checks
-- ✅ **Zero manual intervention**: Fully automated formatting pipeline
-- ✅ **Transparent**: GitHub Actions summary shows what was done
-- ✅ **Best practices**: Follows the same workflow as local development
-
-#### Configuration File
-
-The automated formatting is configured in:
-- **Workflow**: `.github/workflows/claude.yml`
-- **Pre-commit config**: `.pre-commit-config.yaml`
-- **Project config**: `pyproject.toml` (for ruff settings)
-
-#### What This Means for Claude Code
-
-When Claude Code runs in GitHub Actions:
-1. **Primary responsibility**: Claude Code should still format code before committing (following CLAUDE.md guidelines)
-2. **Backup protection**: If formatting is missed, the workflow automatically fixes it
-3. **No manual fixes needed**: Users don't need to manually fix formatting issues in PRs created by Claude Code
-4. **Clean history**: Formatting commits are clearly marked and attributed
-
 ## Link Checker
 
 **IMPORTANT**: This project uses automated link checking to ensure all URLs in documentation and code remain valid.
