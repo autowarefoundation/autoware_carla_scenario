@@ -135,14 +135,24 @@ def rear_axle_offset(actor: "carla.Actor", override: Optional[float] = None) -> 
         # blueprint without wheel data is not an error worth aborting a scenario for.
         wheels = []
 
-    if len(wheels) >= 4:
+    # CARLA 0.9.x names a wheel's position ``position`` and reports it in world
+    # coordinates and centimetres. CARLA 0.10 names it ``location`` and leaves it at
+    # zero, which says nothing about where the axle is: the bounding box below is
+    # all there is then.
+    rear_points = [
+        point
+        for w in wheels[2:4]
+        if (point := getattr(w, "position", None) or getattr(w, "location", None))
+        is not None
+    ]
+    if (
+        len(wheels) >= 4
+        and all((point.x, point.y, point.z) != (0.0, 0.0, 0.0) for point in rear_points)
+        and len(rear_points) == 2
+    ):
         transform = actor.get_transform()
-        rear = wheels[2:4]
-        # CARLA 0.10 reports wheel positions relative to the actor in metres; 0.9.x
-        # reports them in world coordinates and centimetres.  Try the 0.9.x reading
-        # first and fall through to the plausibility check below.
         world_cm = np.array(
-            [[w.position.x, w.position.y, w.position.z] for w in rear], dtype=np.float64
+            [[point.x, point.y, point.z] for point in rear_points], dtype=np.float64
         )
         local = (
             to_local_pose(transform)

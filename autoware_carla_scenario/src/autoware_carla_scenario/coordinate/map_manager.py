@@ -49,6 +49,21 @@ from .road_lanelet_mapping import RoadLaneletMapping
 logger = logging.getLogger(__name__)
 
 
+def _road_z(carla_map: Any, location: Any) -> float:
+    """The height of the road under *location*, or its own where there is none.
+
+    The waypoint CARLA projects *location* onto lies on the road surface its
+    OpenDRIVE describes, whatever height the location itself was put at.
+    """
+    try:
+        waypoint = carla_map.get_waypoint(location, project_to_road=True)
+    except (AttributeError, RuntimeError, TypeError):
+        waypoint = None
+    if waypoint is None:
+        return float(location.z)
+    return float(waypoint.transform.location.z)
+
+
 class MapManager:
     """Singleton that holds one LaneletMap and one RoadNetwork instance.
 
@@ -363,6 +378,12 @@ class MapManager:
     def _z_offset_from_spawn_points(self, carla_world: Any) -> Optional[float]:
         """Average ``lanelet2_z − carla_z`` over all CARLA spawn points.
 
+        A spawn point is where a vehicle is dropped from, not the road under
+        it: CARLA's own maps put them half a metre up, a map cooked from
+        roadgen four metres.  The road's height there is what the Lanelet2
+        centerline is compared with, so it is read off the road the point
+        stands on.
+
         Returns ``None`` when no usable spawn points are found so the caller
         can fall back to the reference-line method.
         """
@@ -373,7 +394,8 @@ class MapManager:
         assert self._lanelet_map is not None
         assert self._mgrs_offset is not None
 
-        spawn_points = carla_world.get_map().get_spawn_points()
+        carla_map = carla_world.get_map()
+        spawn_points = carla_map.get_spawn_points()
         if not spawn_points:
             return None
 
@@ -408,7 +430,7 @@ class MapManager:
                     best_d2 = d2
                     ll2_z = pt.z
 
-            offsets.append(ll2_z - sp.location.z)
+            offsets.append(ll2_z - _road_z(carla_map, sp.location))
 
         if not offsets:
             return None

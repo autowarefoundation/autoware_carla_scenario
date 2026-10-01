@@ -407,7 +407,28 @@ class AutowareEgoEntity(EgoVehicle):
                 "where poses snapped onto the live map exist, or pass it to the "
                 "constructor."
             )
-        initial_pose = self._resolve_initial_pose()
+        # The scenario's poses are where the *actor* is or is to be -- its origin,
+        # the vehicle's centre -- while Autoware localizes and plans for
+        # ``base_link``, the rear axle.  Handed over unmoved, localization starts
+        # half a wheelbase ahead of where the sensors say the car is, and NDT,
+        # with little but a flat road to align against while standing still,
+        # settles metres off: the ego then steers for the lane it thinks it has
+        # left.  The goal moves with it, so the actor still stops at the goal.
+        offset = self._base_link_offset()
+        initial_pose = self._resolve_initial_pose().moved_forward(offset)
+        goal_pose = self._goal_pose.moved_forward(offset)
+        waypoint_poses = tuple(
+            pose.moved_forward(offset) for pose in self._waypoint_poses
+        )
+        logger.info(
+            "Autoware's base_link is %.3f m along the ego from its origin; "
+            "initial pose (%.2f, %.2f), goal (%.2f, %.2f) in the map frame",
+            offset,
+            initial_pose.position.x,
+            initial_pose.position.y,
+            goal_pose.position.x,
+            goal_pose.position.y,
+        )
         # The transport is brought up here rather than at construction: a batch
         # of scenarios is built before the first one runs, and two bridges
         # cannot hold the same address at once.
@@ -415,19 +436,27 @@ class AutowareEgoEntity(EgoVehicle):
         # Waypoints only when there are some, so a bridge implementing the
         # two-argument configure() it was written against keeps working for
         # every mission that names none.
-        if self._waypoint_poses:
-            self._bridge.configure(initial_pose, self._goal_pose, self._waypoint_poses)
+        if waypoint_poses:
+            self._bridge.configure(initial_pose, goal_pose, waypoint_poses)
         else:
-            self._bridge.configure(initial_pose, self._goal_pose)
+            self._bridge.configure(initial_pose, goal_pose)
         self._configured = True
+
+    def _base_link_offset(self) -> float:
+        """Metres along the ego from the actor's origin to Autoware's ``base_link``."""
+        from ..driver.observation import rear_axle_offset  # noqa: PLC0415
+
+        assert self.actor is not None  # noqa: S101 - checked by the caller
+        return rear_axle_offset(self.actor, self._config.base_link_offset_m)
 
     def _resolve_initial_pose(self) -> "BridgePose":
         """Return the pose to initialize localization at, checked against the ego.
 
         The scenario's pose wins when it has one: it is a spawn snapped onto the
-        road surface, which is what ``base_link`` means, while the actor's
+        road surface, the height ``base_link`` is at, while the actor's
         transform is the actor's own origin -- a metre and a half above the road
-        on some vehicles.  What the actor is good for is saying whether the ego
+        on some vehicles.  Both are the vehicle's centre along its length; the
+        caller moves the result back to the rear axle.  What the actor is good for is saying whether the ego
         is *where the scenario thinks*, which is a different question and the one
         that goes wrong silently.
 
