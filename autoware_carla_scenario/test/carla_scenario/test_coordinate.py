@@ -507,3 +507,60 @@ class TestToMapFrame:
         flat = to_map_frame(CarlaWorldPose(x=0.0, y=0.0, z=0.0))
         tilted = to_map_frame(CarlaWorldPose(x=0.0, y=0.0, z=0.0, pitch=10.0, roll=5.0))
         assert tilted.rotation != flat.rotation
+
+
+# ---------------------------------------------------------------------------
+# TestZOffsetFromSpawnPoints
+# ---------------------------------------------------------------------------
+
+
+class TestZOffsetFromSpawnPoints:
+    """The offset compares the Lanelet2 centerline with the road, not the spawn."""
+
+    @staticmethod
+    def _world(map_manager, road_below_lanelet2: float, spawn_above_road: float):
+        from types import SimpleNamespace
+
+        ox, oy = map_manager.mgrs_offset
+        points = [
+            ll.centerline[0]
+            for _, ll in zip(range(20), map_manager.lanelet_map.laneletLayer)
+        ]
+        spawns = [
+            SimpleNamespace(
+                location=SimpleNamespace(
+                    x=pt.x - ox,
+                    y=-(pt.y - oy),
+                    z=pt.z - road_below_lanelet2 + spawn_above_road,
+                )
+            )
+            for pt in points
+        ]
+
+        class _Map:
+            def get_spawn_points(self):
+                return spawns
+
+            def get_waypoint(self, location, project_to_road=True):
+                road = SimpleNamespace(z=location.z - spawn_above_road)
+                return SimpleNamespace(transform=SimpleNamespace(location=road))
+
+        return SimpleNamespace(get_map=_Map)
+
+    def test_a_spawn_point_held_above_the_road_does_not_shift_the_offset(
+        self, map_manager
+    ):
+        # roadgen's cooked maps hold spawn points 4 m up: read as the road, they
+        # put every pose handed to Autoware 4 m under it, and NDT, starting
+        # there, settled where the ground it sees matches nothing in the map.
+        world = self._world(map_manager, road_below_lanelet2=0.5, spawn_above_road=4.0)
+        assert map_manager._z_offset_from_spawn_points(world) == pytest.approx(
+            0.5, abs=0.05
+        )
+
+    def test_without_a_road_the_spawn_point_is_used(self, map_manager):
+        world = self._world(map_manager, road_below_lanelet2=0.0, spawn_above_road=0.0)
+        world.get_map().__class__.get_waypoint = lambda self, *a, **k: None
+        assert map_manager._z_offset_from_spawn_points(world) == pytest.approx(
+            0.0, abs=0.05
+        )
