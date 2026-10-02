@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 #: roads -- and the tie is broken by which road the point starts.
 _SEAM_TOLERANCE = 1e-3
 
+#: How many lanelets nearest in plan view are weighed against the pose's
+#: elevation, to tell stacked lanelets apart.
+_STACKED_CANDIDATES = 8
+
 
 # ---------------------------------------------------------------------------
 # Public API (overloaded)
@@ -464,9 +468,11 @@ def _carla_to_opendrive_bruteforce(
         # alone already puts a point further out than the best road so far.
         if best is not None and overshoot > best[0] + _SEAM_TOLERANCE:
             continue
+        # The lanes stack from the lane offset line, not the reference line.
+        t_lane = t - _lane_offset_at_s(road, s)
         outside = math.hypot(
             overshoot,
-            max(0.0, abs(t) - _side_width(road, s, t >= 0.0)),
+            max(0.0, abs(t_lane) - _side_width(road, s, t_lane >= 0.0)),
         )
         candidate = (
             outside,
@@ -572,11 +578,24 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
     ll2_heading = -math.radians(pose.yaw)
 
     query = lanelet2.core.BasicPoint2d(ll2_x, ll2_y)
-    results = lanelet2.geometry.findNearest(mm.lanelet_map.laneletLayer, query, 1)
-    lanelet = results[0][1]
-
-    points = [(p.x, p.y, p.z) for p in lanelet.centerline]
-    s, t, heading_cl = _project_to_centerline(points, ll2_x, ll2_y)
+    results = lanelet2.geometry.findNearest(
+        mm.lanelet_map.laneletLayer, query, _STACKED_CANDIDATES
+    )
+    # Lanelets stacked over one another -- an overpass and the road beneath
+    # it -- are all as near in plan view, so the pose's elevation picks one.
+    nearest = results[0][0]
+    ll2_z = pose.z + mm.z_offset
+    best: Optional[tuple[float, Any, float, float, float]] = None
+    for distance, candidate in results:
+        if distance > nearest + _SEAM_TOLERANCE:
+            break
+        points = [(p.x, p.y, p.z) for p in candidate.centerline]
+        s, t, heading_cl = _project_to_centerline(points, ll2_x, ll2_y)
+        dz = abs(_interpolate_at_s(points, s)[2] - ll2_z)
+        if best is None or dz < best[0]:
+            best = (dz, candidate, s, t, heading_cl)
+    assert best is not None
+    _dz, lanelet, s, t, heading_cl = best
     heading_diff = _normalize_angle(ll2_heading - heading_cl)
 
     return Lanelet2Pose(lanelet_id=lanelet.id, s=s, t=t, heading=heading_diff)
@@ -708,13 +727,34 @@ def _lane_width_at_ds(lane, ds: float) -> float:
         else:
             break
 
-    s_offset = float(active.attrib.get("sOffset", 0.0))
-    a = float(active.attrib["a"])
-    b = float(active.attrib["b"])
-    c = float(active.attrib["c"])
-    d = float(active.attrib["d"])
-    local = ds - s_offset
-    return a + b * local + c * local**2 + d * local**3
+    return _cubic(active, ds - float(active.attrib.get("sOffset", 0.0)))
+
+
+def _cubic(elem, ds: float) -> float:
+    """Evaluate an OpenDRIVE ``a + b·ds + c·ds² + d·ds³`` record at *ds*."""
+    a = float(elem.attrib["a"])
+    b = float(elem.attrib["b"])
+    c = float(elem.attrib["c"])
+    d = float(elem.attrib["d"])
+    return a + b * ds + c * ds**2 + d * ds**3
+
+
+def _lane_offset_at_s(road, s: float) -> float:
+    """The road's ``<laneOffset>`` at *s*: how far (m) its lanes sit left of
+    the reference line.  Zero when the road declares none.
+    """
+    lanes_xml = road.road_xml.find("lanes")
+    if lanes_xml is None:
+        return 0.0
+    active = None
+    for elem in lanes_xml.findall("laneOffset"):
+        if float(elem.attrib.get("s", 0.0)) <= s:
+            active = elem
+        else:
+            break
+    if active is None:
+        return 0.0
+    return _cubic(active, s - float(active.attrib.get("s", 0.0)))
 
 
 def _find_lane_section_at_s(road, s: float):
@@ -787,11 +827,15 @@ def _find_lane_at_t(road, s: float, t: float) -> int:
     given that lane.  With Lanelet2 and OpenDRIVE kept as separate frames this
     is what tells two neighbouring lanes of one road apart.
 
+    *t* is measured from the reference line; the lanes stack from the lane
+    offset line, ``<laneOffset>`` to its left.
+
     Returns 0 if no lane sections are found.
     """
-    edges = _lane_edges(road, s, t >= 0.0)
+    t_lane = t - _lane_offset_at_s(road, s)
+    edges = _lane_edges(road, s, t_lane >= 0.0)
     for lane_id, outer in edges:
-        if abs(t) < outer:
+        if abs(t_lane) < outer:
             return lane_id
     return edges[-1][0] if edges else 0
 
