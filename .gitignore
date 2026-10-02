@@ -13,6 +13,9 @@ wheels/
 *.xodr
 # Generated with roadgen, which CI does not have -- see its generate.py.
 !autoware_carla_scenario/test/data/two_way_street/two_way_street.xodr
+# Generated once with the autoware_lanelet2_to_opendrive `convert` CLI from
+# nishishinjuku.osm; committed so neither the tests nor the package need it.
+!data/nishishinjuku_carla.xodr
 *processed.osm
 
 # pytest-testmon
@@ -24,9 +27,6 @@ multirun/
 
 # MkDocs build output
 site/
-
-# Lanelet2-to-OpenDRIVE mapping cache (auto-generated next to .xodr)
-*.mapping.json
 
 # Scenario output
 scenario_outputs

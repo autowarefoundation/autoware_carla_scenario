@@ -214,13 +214,10 @@ def _render_source_entry(pin: Pin) -> str:
 def _pins(pin: Pin) -> list[Pin]:
     """Return every distribution the exported package must pin.
 
-    The framework declares the converter as a dependency, so an exported
-    package gets it either way.  It is still pinned explicitly, because the
-    declared lower bound says nothing about *where* the converter comes from:
-    it is not published to an index, and the package has to run on the same
-    converter revision the framework was tested with.
+    Only the framework: everything else it needs is a dependency it declares,
+    resolved from an index (or the vendored CARLA wheels) and locked by uv.
     """
-    return [pin, pin.companion()]
+    return [pin]
 
 
 def _pin_note(pin: Pin) -> str:

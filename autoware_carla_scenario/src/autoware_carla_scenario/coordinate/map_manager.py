@@ -44,7 +44,6 @@ from pyxodr.road_objects.network import RoadNetwork
 from .projection import _parse_geo_reference, map_origin, resolve_projector
 
 __all__ = ["MapManager", "_parse_geo_reference"]
-from .road_lanelet_mapping import RoadLaneletMapping
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +85,6 @@ class MapManager:
     _geo_origin: Optional[tuple[float, float, float]]
     _mgrs_offset: Optional[tuple[float, float]]
     _z_offset: Optional[float]
-    _road_lanelet_mapping: Optional[RoadLaneletMapping]
     _carla_map: Optional[Any]
 
     def __new__(cls) -> "MapManager":
@@ -98,7 +96,6 @@ class MapManager:
             cls._instance._geo_origin = None
             cls._instance._mgrs_offset = None
             cls._instance._z_offset = None
-            cls._instance._road_lanelet_mapping = None
             cls._instance._carla_map = None
         return cls._instance
 
@@ -201,29 +198,6 @@ class MapManager:
         # across the map and lets us convert z between the two systems.
         self._z_offset = self._compute_z_offset(carla_world)
 
-        # Build lanelet -> (road_id, lane_id) mapping for direct conversion.
-        try:
-            from .road_lanelet_mapping import load_or_build_mapping  # noqa: PLC0415
-            from autoware_lanelet2_to_opendrive.road_lanelet_geo_mapping import (
-                parse_roads_from_xodr,
-            )
-
-            parsed_roads = parse_roads_from_xodr(xodr_path)
-            self._road_lanelet_mapping = load_or_build_mapping(
-                xodr_path=xodr_path,
-                osm_path=lanelet2_path,
-                lanelet_map=self.lanelet_map,
-                roads=parsed_roads,
-                mgrs_offset=self._mgrs_offset,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to build lanelet-to-road mapping; "
-                "direct Lanelet2 -> OpenDRIVE conversion unavailable",
-                exc_info=True,
-            )
-            self._road_lanelet_mapping = None
-
         # Build carla.Map for waypoint-based road/lane lookups (optional).
         self._build_carla_map(
             xodr_path.read_text(encoding="utf-8"), xodr_path.stem, carla_world
@@ -292,11 +266,6 @@ class MapManager:
                 "MapManager is not initialized. Call initialize() first."
             )
         return self._mgrs_offset
-
-    @property
-    def road_lanelet_mapping(self) -> Optional[RoadLaneletMapping]:
-        """The lanelet -> (road_id, lane_id) mapping, or ``None`` if unavailable."""
-        return self._road_lanelet_mapping
 
     @property
     def carla_map(self) -> Optional[Any]:

@@ -71,7 +71,6 @@ root `pyproject.toml` workspace:
 ```toml
 [tool.uv.workspace]
 members = [
-    "autoware_lanelet2_to_opendrive",
     "autoware_carla_scenario",
     "examples/scenario_package_template",
 ]

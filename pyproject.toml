@@ -9,7 +9,6 @@ members = [
 [dependency-groups]
 dev = [
     "black>=25.11.0",
-    "filelock>=3.13.0",
     # Regenerates the vendored alpasim protobuf modules; must stay on the protobuf 4.x
     # line so the generated code matches the pinned runtime.
     "grpcio-tools>=1.60,<1.63",

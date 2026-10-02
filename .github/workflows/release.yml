@@ -122,8 +122,7 @@ jobs:
           # entry in uv.lock records the version, so bumping pyproject.toml
           # without re-locking leaves uv.lock stale and makes every subsequent
           # non-frozen uv command (uv lock / uv sync / uv pip install) rewrite
-          # the lockfile. `uv lock` keeps every other pin as it is, including
-          # the converter's git commit.
+          # the lockfile. `uv lock` keeps every other pin as it is.
           uv lock
 
           # Set outputs

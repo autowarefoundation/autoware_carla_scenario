@@ -54,7 +54,6 @@ class _MapManager:
     mgrs_offset = (0.0, 0.0)
     z_offset = 0.0
     carla_map = None
-    road_lanelet_mapping = None
 
     @classmethod
     def get_instance(cls):
