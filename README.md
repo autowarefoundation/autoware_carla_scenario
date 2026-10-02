@@ -68,6 +68,13 @@ merged into `master` with exactly one version bump label (`bump patch`,
 the GitHub Release with the documentation attached, and deploys the docs to
 GitHub Pages. A merge without a label releases nothing.
 
+If a labelled merge bumped the version but a later step failed, run the
+workflow by hand from `master` (Actions → Release → Run workflow). A manual run
+releases the version already in `pyproject.toml` without bumping it, and
+reuses any tag, Release or asset the failed run already created. Do not
+re-run the failed push run: it would bump a second time from the old merge
+commit.
+
 The version line continues from `autoware_lanelet2_to_opendrive`, where this
 package started: it was split out at 2.62.0, so the first release here is
 2.62.1. The workflow pushes with the `GH_PAT` repository secret.
