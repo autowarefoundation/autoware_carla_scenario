@@ -4,22 +4,23 @@ on:
   push:
     branches:
       - master
-  # Releases the version already in autoware_carla_scenario/pyproject.toml,
-  # without bumping it. For when a labelled merge bumped the version but a
-  # later step failed (the tag push, the Release, the docs) -- re-running that
-  # push run would bump a second time from the old merge commit. Every step
-  # below is safe to repeat: an existing tag, Release or asset is reused.
+  # Finishes the release of a version a labelled merge already bumped to, for
+  # when a later step failed (the tag push, the Release, the docs) --
+  # re-running that push run would bump a second time from the old merge
+  # commit. It builds from that version's tag, or else from its
+  # "chore: bump version to X" commit on master, never from master's HEAD, so
+  # a merge that landed since cannot leak into it. Every step below is safe to
+  # repeat: an existing tag, Release or asset is reused.
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to finish releasing, e.g. 2.63.0
+        required: true
+        type: string
 
 permissions:
   contents: write
   pull-requests: read
-
-# The version-bump commit is itself a push to master and starts another run;
-# queue it behind this one instead of racing it.
-concurrency:
-  group: release
-  cancel-in-progress: false
 
 jobs:
   release:
@@ -160,33 +161,71 @@ jobs:
           EVENT: ${{ github.event_name }}
           BUMP_TYPE: ${{ steps.pr-labels.outputs.bump_type }}
           BUMPED: ${{ steps.bump-version.outputs.new_version }}
+          REQUESTED: ${{ inputs.version }}
         run: |
+          read_version() {
+            git show "$1:autoware_carla_scenario/pyproject.toml" \
+              | sed -n 's/^version = "\(.*\)"/\1/p'
+          }
+
           if [ "${EVENT}" = "workflow_dispatch" ]; then
-            version=$(grep '^version = ' autoware_carla_scenario/pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+            version="${REQUESTED#v}"
+            if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "ERROR: '${REQUESTED}' is not a version like 2.63.0"
+              exit 1
+            fi
+            git fetch --tags --quiet origin
+            if git rev-parse --verify --quiet "refs/tags/v${version}" > /dev/null; then
+              sha=$(git rev-list -n 1 "v${version}")
+            else
+              sha=$(git log origin/master -1 --format=%H \
+                --grep="^chore: bump version to ${version//./\\.}\$")
+            fi
+            if [ -z "${sha}" ]; then
+              echo "ERROR: no v${version} tag and no 'chore: bump version to ${version}' commit on master"
+              exit 1
+            fi
+            if [ "$(read_version "${sha}")" != "${version}" ]; then
+              echo "ERROR: ${sha} does not carry version ${version}"
+              exit 1
+            fi
+            # Build the docs from the release commit, not from master.
+            git checkout --quiet --detach "${sha}"
           elif [ "${BUMP_TYPE}" != "none" ]; then
             version="${BUMPED}"
+            sha=$(git rev-parse HEAD)
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ -z "${version}" ]; then
-            echo "ERROR: Could not determine the version to release"
-            exit 1
+
+          # Only the version master is at becomes "latest": finishing an older
+          # release must not move the latest Release or the latest docs back.
+          if [ "$(read_version origin/master)" = "${version}" ]; then
+            latest=true
+          else
+            latest=false
           fi
-          echo "Releasing v${version}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "release=true" >> "$GITHUB_OUTPUT"
+
+          echo "Releasing v${version} from ${sha} (latest: ${latest})"
+          {
+            echo "version=${version}"
+            echo "sha=${sha}"
+            echo "latest=${latest}"
+            echo "release=true"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Git tag
         if: steps.version.outputs.release == 'true'
         env:
           TAG: v${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null; then
             echo "${TAG} already exists; not moving it."
             exit 0
           fi
-          git tag "${TAG}"
+          git tag "${TAG}" "${SHA}"
           git push origin "${TAG}"
 
       - name: Create GitHub Release
@@ -194,6 +233,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           NEW_VERSION: ${{ steps.version.outputs.version }}
+          LATEST: ${{ steps.version.outputs.latest }}
           BUMP_TYPE: ${{ steps.pr-labels.outputs.bump_type }}
           PR_NUMBER: ${{ steps.pr-labels.outputs.pr_number }}
           PR_TITLE: ${{ steps.pr-labels.outputs.pr_title }}
@@ -240,6 +280,7 @@ jobs:
               name: `Release ${tag}`,
               body: releaseBody,
               generate_release_notes: !fromPR,
+              make_latest: process.env.LATEST === 'true' ? 'true' : 'false',
               draft: false,
               prerelease: false,
             });
@@ -288,10 +329,15 @@ jobs:
           # Fetch gh-pages branch
           git fetch origin gh-pages --depth=1 || true
 
-          uv run mike deploy --push --update-aliases --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }} latest
+          if [ "${{ steps.version.outputs.latest }}" = "true" ]; then
+            uv run mike deploy --push --update-aliases --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }} latest
 
-          # Set latest as default version
-          uv run mike set-default --push --config-file autoware_carla_scenario/mkdocs.yml latest
+            # Set latest as default version
+            uv run mike set-default --push --config-file autoware_carla_scenario/mkdocs.yml latest
+          else
+            # An older release: publish its docs without moving "latest".
+            uv run mike deploy --push --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }}
+          fi
 
       - name: No version bump needed
         if: steps.version.outputs.release != 'true'
