@@ -4,6 +4,19 @@ on:
   push:
     branches:
       - master
+  # Finishes the release of a version a labelled merge already bumped to, for
+  # when a later step failed (the tag push, the Release, the docs) --
+  # re-running that push run would bump a second time from the old merge
+  # commit. It builds from that version's tag, or else from its
+  # "chore: bump version to X" commit on master, never from master's HEAD, so
+  # a merge that landed since cannot leak into it. Every step below is safe to
+  # repeat: an existing tag, Release or asset is reused.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to finish releasing, e.g. 2.63.0
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,9 +25,11 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # A manual release only ever comes from master.
+    if: github.event_name == 'push' || github.ref == 'refs/heads/master'
     outputs:
       bump_type: ${{ steps.pr-labels.outputs.bump_type }}
-      new_version: ${{ steps.bump-version.outputs.new_version }}
+      new_version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,6 +48,7 @@ jobs:
           install-dev-deps: "false"
 
       - name: Get merged PR labels
+        if: github.event_name == 'push'
         id: pr-labels
         uses: actions/github-script@v7
         with:
@@ -77,7 +93,7 @@ jobs:
             core.setOutput('bump_type', bumpType);
 
       - name: Bump version
-        if: steps.pr-labels.outputs.bump_type != 'none'
+        if: github.event_name == 'push' && steps.pr-labels.outputs.bump_type != 'none'
         id: bump-version
         run: |
           bump_type="${{ steps.pr-labels.outputs.bump_type }}"
@@ -130,7 +146,7 @@ jobs:
           echo "bump_type=${bump_type}" >> "$GITHUB_OUTPUT"
 
       - name: Commit version bump
-        if: steps.pr-labels.outputs.bump_type != 'none'
+        if: github.event_name == 'push' && steps.pr-labels.outputs.bump_type != 'none'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -139,19 +155,86 @@ jobs:
           git commit -m "chore: bump version to ${{ steps.bump-version.outputs.new_version }}"
           git push origin master
 
-      - name: Create Git tag
-        if: steps.pr-labels.outputs.bump_type != 'none'
+      - name: Resolve the version to release
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          BUMP_TYPE: ${{ steps.pr-labels.outputs.bump_type }}
+          BUMPED: ${{ steps.bump-version.outputs.new_version }}
+          REQUESTED: ${{ inputs.version }}
         run: |
-          git tag "v${{ steps.bump-version.outputs.new_version }}"
-          git push origin "v${{ steps.bump-version.outputs.new_version }}"
+          read_version() {
+            git show "$1:autoware_carla_scenario/pyproject.toml" \
+              | sed -n 's/^version = "\(.*\)"/\1/p'
+          }
+
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            version="${REQUESTED#v}"
+            if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "ERROR: '${REQUESTED}' is not a version like 2.63.0"
+              exit 1
+            fi
+            git fetch --tags --quiet origin
+            if git rev-parse --verify --quiet "refs/tags/v${version}" > /dev/null; then
+              sha=$(git rev-list -n 1 "v${version}")
+            else
+              sha=$(git log origin/master -1 --format=%H \
+                --grep="^chore: bump version to ${version//./\\.}\$")
+            fi
+            if [ -z "${sha}" ]; then
+              echo "ERROR: no v${version} tag and no 'chore: bump version to ${version}' commit on master"
+              exit 1
+            fi
+            if [ "$(read_version "${sha}")" != "${version}" ]; then
+              echo "ERROR: ${sha} does not carry version ${version}"
+              exit 1
+            fi
+            # Build the docs from the release commit, not from master.
+            git checkout --quiet --detach "${sha}"
+          elif [ "${BUMP_TYPE}" != "none" ]; then
+            version="${BUMPED}"
+            sha=$(git rev-parse HEAD)
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Only the version master is at becomes "latest": finishing an older
+          # release must not move the latest Release or the latest docs back.
+          if [ "$(read_version origin/master)" = "${version}" ]; then
+            latest=true
+          else
+            latest=false
+          fi
+
+          echo "Releasing v${version} from ${sha} (latest: ${latest})"
+          {
+            echo "version=${version}"
+            echo "sha=${sha}"
+            echo "latest=${latest}"
+            echo "release=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create Git tag
+        if: steps.version.outputs.release == 'true'
+        env:
+          TAG: v${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null; then
+            echo "${TAG} already exists; not moving it."
+            exit 0
+          fi
+          git tag "${TAG}" "${SHA}"
+          git push origin "${TAG}"
 
       - name: Create GitHub Release
-        if: steps.pr-labels.outputs.bump_type != 'none'
-        id: create-release
+        if: steps.version.outputs.release == 'true'
         uses: actions/github-script@v7
         env:
-          NEW_VERSION: ${{ steps.bump-version.outputs.new_version }}
-          BUMP_TYPE: ${{ steps.bump-version.outputs.bump_type }}
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          BUMP_TYPE: ${{ steps.pr-labels.outputs.bump_type }}
           PR_NUMBER: ${{ steps.pr-labels.outputs.pr_number }}
           PR_TITLE: ${{ steps.pr-labels.outputs.pr_title }}
           PR_URL: ${{ steps.pr-labels.outputs.pr_url }}
@@ -159,87 +242,86 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const newVersion = process.env.NEW_VERSION;
-            const bumpType = process.env.BUMP_TYPE;
-            const prNumber = process.env.PR_NUMBER;
-            const prTitle = process.env.PR_TITLE;
-            const prUrl = process.env.PR_URL;
-            const prAuthor = process.env.PR_AUTHOR;
+            const tag = `v${process.env.NEW_VERSION}`;
 
-            // Create release body with PR link
-            const releaseBody = [
-              `## What's Changed`,
-              ``,
-              `- ${prTitle} (#${prNumber}) by @${prAuthor}`,
-              ``,
-              `**Full Changelog**: ${prUrl}`,
-              ``,
-              `---`,
-              ``,
-              `This release was created by automated workflow (bump ${bumpType}).`
-            ].join('\n');
+            try {
+              const { data: existing } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              console.log(`Release already exists: ${existing.html_url}`);
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+            // A labelled merge links its PR; a manual release lets GitHub list
+            // what changed since the previous tag.
+            const fromPR = Boolean(process.env.PR_NUMBER);
+            const releaseBody = fromPR
+              ? [
+                  `## What's Changed`,
+                  ``,
+                  `- ${process.env.PR_TITLE} (#${process.env.PR_NUMBER}) by @${process.env.PR_AUTHOR}`,
+                  ``,
+                  `**Full Changelog**: ${process.env.PR_URL}`,
+                  ``,
+                  `---`,
+                  ``,
+                  `This release was created by automated workflow (bump ${process.env.BUMP_TYPE}).`,
+                ].join('\n')
+              : 'This release was created by a manual run of the release workflow.';
 
             const { data: release } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: `v${newVersion}`,
-              name: `Release v${newVersion}`,
+              tag_name: tag,
+              name: `Release ${tag}`,
               body: releaseBody,
+              generate_release_notes: !fromPR,
+              make_latest: process.env.LATEST === 'true' ? 'true' : 'false',
               draft: false,
-              prerelease: false
+              prerelease: false,
             });
-
             console.log(`Created release: ${release.html_url}`);
-            core.setOutput('release_id', release.id);
-            core.setOutput('upload_url', release.upload_url);
 
       - name: Setup full environment
-        if: steps.pr-labels.outputs.bump_type != 'none'
+        if: steps.version.outputs.release == 'true'
         uses: ./.github/actions/setup-env
         with:
           install-dev-deps: "true"
           carla-extra: "carla"
 
       - name: Build carla-scenario documentation with PDF
-        if: steps.pr-labels.outputs.bump_type != 'none'
+        if: steps.version.outputs.release == 'true'
         uses: ./.github/actions/build-docs
         with:
           package-dir: autoware_carla_scenario
-          version: ${{ steps.bump-version.outputs.new_version }}
+          version: ${{ steps.version.outputs.version }}
           enable-pdf: "true"
-          pdf-output-path: carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.pdf
+          pdf-output-path: carla-scenario-documentation-v${{ steps.version.outputs.version }}.pdf
 
       - name: Create documentation archive
-        if: steps.pr-labels.outputs.bump_type != 'none'
+        if: steps.version.outputs.release == 'true'
         run: |
           cd autoware_carla_scenario/site
-          zip -r ../../carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.zip .
+          zip -r ../../carla-scenario-documentation-v${{ steps.version.outputs.version }}.zip .
           cd ../..
 
-      - name: Upload carla-scenario HTML documentation to release
-        if: steps.pr-labels.outputs.bump_type != 'none'
-        uses: actions/upload-release-asset@v1
+      - name: Upload documentation to release
+        if: steps.version.outputs.release == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create-release.outputs.upload_url }}
-          asset_path: ./carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.zip
-          asset_name: carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.zip
-          asset_content_type: application/zip
-
-      - name: Upload carla-scenario PDF documentation to release
-        if: steps.pr-labels.outputs.bump_type != 'none'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create-release.outputs.upload_url }}
-          asset_path: ./carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.pdf
-          asset_name: carla-scenario-documentation-v${{ steps.bump-version.outputs.new_version }}.pdf
-          asset_content_type: application/pdf
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        # --clobber replaces an asset a previous attempt already uploaded.
+        run: |
+          gh release upload "v${VERSION}" --clobber \
+            "carla-scenario-documentation-v${VERSION}.zip" \
+            "carla-scenario-documentation-v${VERSION}.pdf"
 
       - name: Deploy to GitHub Pages with mike
-        if: steps.pr-labels.outputs.bump_type != 'none'
+        if: steps.version.outputs.release == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -247,12 +329,17 @@ jobs:
           # Fetch gh-pages branch
           git fetch origin gh-pages --depth=1 || true
 
-          uv run mike deploy --push --update-aliases --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.bump-version.outputs.new_version }} latest
+          if [ "${{ steps.version.outputs.latest }}" = "true" ]; then
+            uv run mike deploy --push --update-aliases --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }} latest
 
-          # Set latest as default version
-          uv run mike set-default --push --config-file autoware_carla_scenario/mkdocs.yml latest
+            # Set latest as default version
+            uv run mike set-default --push --config-file autoware_carla_scenario/mkdocs.yml latest
+          else
+            # An older release: publish its docs without moving "latest".
+            uv run mike deploy --push --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }}
+          fi
 
       - name: No version bump needed
-        if: steps.pr-labels.outputs.bump_type == 'none'
+        if: steps.version.outputs.release != 'true'
         run: |
           echo "No version bump label found. Skipping release."
