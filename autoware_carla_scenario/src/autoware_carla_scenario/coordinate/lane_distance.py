@@ -28,7 +28,7 @@ under 50 m -- so a leader at an ordinary following distance is usually on the
 *next* road, not the one behind it.  Measuring within a single road would
 answer "no measurement" to most of the following scenarios this coordinate
 system exists for, which is exactly the silent never-fires it exists to
-remove.  The links are read off the OpenDRIVE the converter already emits, so
+remove.  The links are read off the OpenDRIVE map itself, so
 this needs no routing graph.
 
 A **junction** is measured too, and said so.  Its connecting roads are ordinary

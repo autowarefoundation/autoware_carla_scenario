@@ -51,7 +51,7 @@ repos:
       # docs fix paid for minutes of end-to-end conversion and wheelhouse
       # builds. `files` scopes it to the changes that can actually break it:
       # the package itself, `pyproject.toml` and `uv.lock` (which move every
-      # dependency, the converter included), the fixture map under `data/`, and
+      # dependency), the fixture map under `data/`, and
       # `carla_wheels/` -- `carla_wheels()` reads that directory, and a test
       # asserts its interpreter tags cover the declared `requires-python`.
       #

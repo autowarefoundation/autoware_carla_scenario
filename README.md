@@ -7,11 +7,13 @@ pass/fail conditions, and records video/JSON results. It ships a FastAPI viewer
 for browsing runs and a FastAPI editor for authoring scenarios and exporting
 them as reproducible packages.
 
-The maps come from
+The maps are typically produced by
 [`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive),
 which converts Lanelet2 `.osm` maps to OpenDRIVE. This framework used to live in
-that repository as a second workspace member; it now depends on the converter
-as an ordinary package, fetched from git at the commit pinned in `uv.lock`.
+that repository as a second workspace member, but it does not depend on the
+converter: a Lanelet2 map and an OpenDRIVE map are loaded side by side as two
+independent coordinate systems, related only through CARLA world coordinates.
+Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 
 ## Repository layout
 
@@ -37,28 +39,18 @@ uv sync --dev --extra carla            # CARLA 0.10.0 (default, UE5)
 uv sync --dev --extra carla-0-9-16     # CARLA 0.9.16 (legacy, UE4)
 ```
 
-Run a scenario against the bundled nishishinjuku map (convert it first with the
-converter's `convert` CLI, which `uv sync` installs):
+Run a scenario against the bundled nishishinjuku map. Its OpenDRIVE file,
+`data/nishishinjuku_carla.xodr`, is committed next to the Lanelet2 one; it was
+generated once with the converter's `convert` CLI, which this repository does
+not install:
 
 ```bash
-uv run convert map=nishishinjuku target=carla \
-  input_map_path=data/nishishinjuku.osm \
-  output_map_path=data/nishishinjuku_carla.xodr
 uv run scenario scenario=intersection_passing/straight map=nishishinjuku
 ```
 
 See [`autoware_carla_scenario/README.md`](autoware_carla_scenario/README.md) and
 the documentation under [`autoware_carla_scenario/docs/`](autoware_carla_scenario/docs/)
 for the full guide.
-
-## Updating the converter
-
-The converter is pinned to a commit in `uv.lock`. To move it to the latest
-`master` of its repository:
-
-```bash
-uv lock --upgrade-package autoware-lanelet2-to-opendrive
-```
 
 ## Development
 

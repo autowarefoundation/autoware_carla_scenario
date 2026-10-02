@@ -81,9 +81,8 @@ ARG SLIM=true
 # lives in venv-layer.sh alone; build args reach that script as environment.
 ARG LAYER_MTIME
 
-# `strip` comes from binutils. `git` is there for the converter, which the lock
-# pins to a commit of its own repository rather than to an index, so layer 2
-# clones it. Installed before anything volatile is copied in so the apt layer
+# `strip` comes from binutils. `git` is there for a framework the lock pins to
+# a commit of its repository rather than to an index, which uv has to clone. Installed before anything volatile is copied in so the apt layer
 # caches across every rebuild; the stage is discarded, so installing either
 # costs the image nothing.
 RUN apt-get update \

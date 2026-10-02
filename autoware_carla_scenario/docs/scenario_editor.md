@@ -634,7 +634,6 @@ cut_in-wheelhouse.zip
 `-- cut_in_scenario_wheelhouse/
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-    |-- autoware_lanelet2_to_opendrive-*.whl
     |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl  # not published to any index
     |-- ... every transitive dependency, ~70 wheels
     |-- requirements.txt                           # the whole set, pinned
@@ -710,17 +709,10 @@ It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
 | What | Pinned by |
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA |
-| `autoware-lanelet2-to-opendrive` | the same way as the framework |
 | `carla` | the client extra in use: vendored from the repository when that client is on no index (0.10.0), resolved from PyPI when it is (0.9.16) |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |
-
-The converter is declared next to the framework because it is not published to
-an index: the package has to say where it comes from. It is pinned to exactly
-the revision installed alongside the framework -- the commit `uv.lock` resolved
-from its git repository -- so the package runs on the converter the framework
-was tested with.
 
 A **branch is never emitted** -- `main`, `master` and `HEAD` all move, so a
 package pinned to one stops being the package that was tested as soon as

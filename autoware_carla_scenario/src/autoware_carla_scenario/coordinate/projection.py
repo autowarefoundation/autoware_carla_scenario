@@ -27,8 +27,12 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-# autoware_lanelet2_extension_python must be imported before lanelet2 to register
-# Autoware-specific regulatory elements (road_marking, detection_area, etc.)
+# autoware_lanelet2_extension_python must be imported before lanelet2.  Its
+# `regulatory_elements` module is what registers the Autoware-specific ones
+# (road_marking, detection_area, ...) with the Lanelet2 parser -- without it an
+# Autoware map fails to load.  Every loader in this package goes through this
+# module, so importing it here covers all of them.
+import autoware_lanelet2_extension_python.regulatory_elements  # noqa: F401
 from autoware_lanelet2_extension_python.projection import (
     MGRSProjector,
     TransverseMercatorProjector,

@@ -211,18 +211,6 @@ def _render_source_entry(pin: Pin) -> str:
     return ", ".join(parts)
 
 
-def _pins(pin: Pin) -> list[Pin]:
-    """Return every distribution the exported package must pin.
-
-    The framework declares the converter as a dependency, so an exported
-    package gets it either way.  It is still pinned explicitly, because the
-    declared lower bound says nothing about *where* the converter comes from:
-    it is not published to an index, and the package has to run on the same
-    converter revision the framework was tested with.
-    """
-    return [pin, pin.companion()]
-
-
 def _pin_note(pin: Pin) -> str:
     """Return the comment written above the framework dependency."""
     if pin.kind == "version":
@@ -302,7 +290,8 @@ def _write_package_tree(
     package_name = names["package_name"]
     scenario_id = names["scenario_id"]
     generated_at = utc_timestamp()
-    pins = _pins(pin)
+    # The template takes a list; the framework is the only pinned distribution.
+    pins = [pin]
     sources = [(p.distribution, _render_source_entry(p)) for p in pins]
 
     context: dict[str, Any] = {
@@ -433,7 +422,7 @@ def _build_manifest(
             else None
         ),
         "autoware_carla_scenario": pin.manifest(),
-        "dependencies": {p.distribution: p.manifest() for p in _pins(pin)},
+        "dependencies": {pin.distribution: pin.manifest()},
         "generated_by": {
             "editor_version": _editor_version(),
             "generated_at": utc_timestamp(),
@@ -723,7 +712,7 @@ def export_package(
     except PinResolutionError as exc:
         raise PackageExportError(str(exc)) from exc
 
-    warnings = [w for each in _pins(pin) for w in each.warnings]
+    warnings = list(pin.warnings)
     warnings.extend(f"{i.path}: {i.message}" for i in report.warnings)
 
     uv_version = _uv_version() if pin_uv_version else None

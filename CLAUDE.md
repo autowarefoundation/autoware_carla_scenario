@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository holds `autoware_carla_scenario`, a CARLA scenario-testing framework for Autoware. It was split out of [`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive), the Lanelet2-to-OpenDRIVE converter it builds on, which is now an ordinary dependency fetched from git (see `[tool.uv.sources]` in `autoware_carla_scenario/pyproject.toml`; the commit is pinned in `uv.lock`). The project uses the modern Python packaging tool `uv` for dependency management and builds.
+This repository holds `autoware_carla_scenario`, a CARLA scenario-testing framework for Autoware. It was split out of [`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive), the Lanelet2-to-OpenDRIVE converter, but does not depend on it: Lanelet2 and OpenDRIVE maps are loaded as two independent coordinate systems, related only through CARLA world coordinates. Nothing in the package may import the converter (`test_workspace_dependencies.py` checks this). The project uses the modern Python packaging tool `uv` for dependency management and builds.
 
 ## Development Environment Setup
 
@@ -39,7 +39,7 @@ uv venv
 ### Why
 
 Every dependency, including the Lanelet2 Python API, installs from a prebuilt
-wheel, except the converter, which uv builds from its git repository. `lanelet2` and `autoware_lanelet2_extension_python` come from
+wheel. `lanelet2` and `autoware_lanelet2_extension_python` come from
 [`simple-lanelet2`](https://github.com/hakuturu583/simple_lanelet2), which
 replaced `lanelet2-python-api-for-autoware` — that one was built from source
 against the system Boost, which is why the repository used to need a pinned
@@ -65,9 +65,8 @@ change end-to-end:
 
 1. Run `uv sync --dev` once, then `uv run pytest -n auto`. No apt packages, no
    Docker, no compiler.
-2. Prefer a targeted `uv run pytest <file>` while iterating — the end-to-end
-   tests that shell out to `convert` on the nishishinjuku fixture
-   (`data/nishishinjuku.osm`) take minutes.
+2. Prefer a targeted `uv run pytest <file>` while iterating — the `slow`
+   tests that build a wheelhouse take minutes.
 3. Static checks (`ruff`, `ruff-format`, `mypy --ignore-missing-imports`) are
    still the fastest signal and should be used first.
 
@@ -216,7 +215,7 @@ If pre-commit hooks fail:
   - `test/` - pytest suite
   - `docs/`, `mkdocs.yml` - Documentation
 - `carla_wheels/` - Vendored CARLA client wheels (`[tool.uv] find-links`)
-- `data/` - The nishishinjuku fixture map shared by the tests and the example configs
+- `data/` - The nishishinjuku fixture map (Lanelet2 `.osm` and its committed OpenDRIVE `.xodr`) shared by the tests and the example configs
 - `examples/scenario_package_template/` - A standalone scenario package to copy
 - `.github/actions/pack-scenario-image/` - Composite action that packs a scenario package into an image
 - `pyproject.toml` - Workspace root: dev dependencies and tool configuration
@@ -224,10 +223,6 @@ If pre-commit hooks fail:
 
 ## Dependencies
 
-- **autoware-lanelet2-to-opendrive** - The converter, from
-  https://github.com/hakuturu583/autoware_lanelet2_to_opendrive (git source,
-  pinned in `uv.lock`; move it with
-  `uv lock --upgrade-package autoware-lanelet2-to-opendrive`)
 - **simple-lanelet2** (>=1.1.2) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
 - Python 3.10 through 3.12. `autoware_carla_scenario` declares

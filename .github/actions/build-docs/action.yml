@@ -5,7 +5,7 @@ description: >
 
 inputs:
   package-dir:
-    description: Package directory containing mkdocs.yml (e.g., autoware_lanelet2_to_opendrive)
+    description: Package directory containing mkdocs.yml (e.g., autoware_carla_scenario)
     required: true
   config-file:
     description: MkDocs config file name relative to package-dir (e.g., mkdocs.ci.yml or mkdocs.yml)

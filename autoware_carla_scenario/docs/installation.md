@@ -49,11 +49,11 @@ For more options, see the [official uv documentation](https://docs.astral.sh/uv/
 
 ## Installing the Package
 
-The converter it builds on, `autoware_lanelet2_to_opendrive`, lives in
-[its own repository](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive)
-and is not published to an index; `uv sync` fetches it from git at the commit
-recorded in `uv.lock`, so `git` has to be on `PATH`. Move it forward with
-`uv lock --upgrade-package autoware-lanelet2-to-opendrive`.
+The framework does not depend on
+[`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive),
+the converter that typically produces its OpenDRIVE maps: a Lanelet2 map and an
+OpenDRIVE map are loaded as two independent coordinate systems. Install the
+converter separately when you need to generate a map.
 
 ### For Developers (Editable Installation)
 
@@ -119,7 +119,6 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `python-dotenv>=1.2.2`
 - `simple-lanelet2>=1.1.2` — the Lanelet2 binding, plus the Autoware
   regulatory-element extensions, as a single wheel
-- `autoware-lanelet2-to-opendrive` — the converter, from its git repository
 - `tqdm>=4.67.1`
 - `hydra-core>=1.3.2`, `omegaconf>=2.3.0`
 - `fastapi>=0.115.0`, `uvicorn[standard]>=0.34.0`, `jinja2>=3.1.0` —

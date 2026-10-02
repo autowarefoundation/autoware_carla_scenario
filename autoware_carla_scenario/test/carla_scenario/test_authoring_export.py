@@ -26,7 +26,6 @@ else:  # pragma: no cover - only taken on 3.10
     import tomli as tomllib
 
 from autoware_carla_scenario.authoring.framework_pin import (
-    CONVERTER_DISTRIBUTION,
     DISTRIBUTION,
     Pin,
     PinResolutionError,
@@ -181,83 +180,6 @@ class TestFrameworkPin:
         assert pin.requirement() == f"{DISTRIBUTION}==1.2.3"
         assert pin.uv_source() is None
 
-    @pytest.fixture
-    def converter_origin(self, monkeypatch: pytest.MonkeyPatch):
-        """Stand in for the converter's PEP 610 record."""
-        from autoware_carla_scenario.authoring import framework_pin
-
-        def install(origin: Any) -> None:
-            monkeypatch.setattr(
-                framework_pin, "_installed_direct_url", lambda _name: origin
-            )
-            monkeypatch.setattr(
-                framework_pin,
-                "_installed_version",
-                lambda _name=DISTRIBUTION: "2.62.0",
-            )
-
-        return install
-
-    _GIT_PIN = Pin(
-        kind="git",
-        repository="https://example.invalid/r",
-        commit="a" * 40,
-        subdirectory="autoware_carla_scenario",
-    )
-
-    def test_a_converter_installed_from_git_is_pinned_to_its_commit(
-        self, converter_origin
-    ) -> None:
-        converter_origin(
-            {
-                "url": "https://example.invalid/converter.git",
-                "vcs_info": {"vcs": "git", "commit_id": "b" * 40},
-                "subdirectory": "autoware_lanelet2_to_opendrive",
-            }
-        )
-        for pin in (self._GIT_PIN, Pin(kind="path", path="/w/framework")):
-            companion = pin.companion()
-            assert companion.distribution == CONVERTER_DISTRIBUTION
-            assert companion.kind == "git"
-            assert companion.repository == "https://example.invalid/converter"
-            assert companion.commit == "b" * 40
-            assert companion.subdirectory == "autoware_lanelet2_to_opendrive"
-            assert companion.reproducible
-
-    def test_a_converter_installed_from_a_directory_is_pinned_by_path(
-        self, converter_origin
-    ) -> None:
-        converter_origin({"url": "file:///w/converter", "dir_info": {"editable": True}})
-        dev = Pin(kind="path", path="/w/framework").companion()
-        assert dev.kind == "path"
-        assert dev.path == "/w/converter"
-        assert not dev.warnings
-        # A portable export can not carry a local path silently.
-        portable = self._GIT_PIN.companion()
-        assert portable.kind == "path"
-        assert portable.warnings
-
-    def test_a_converter_from_an_index_is_pinned_to_its_version(
-        self, converter_origin
-    ) -> None:
-        converter_origin(None)
-        companion = self._GIT_PIN.companion()
-        assert companion.kind == "version"
-        assert companion.requirement() == f"{CONVERTER_DISTRIBUTION}==2.62.0"
-
-    def test_a_version_pin_pins_the_converter_version_too(
-        self, converter_origin
-    ) -> None:
-        converter_origin(
-            {
-                "url": "https://example.invalid/converter",
-                "vcs_info": {"vcs": "git", "commit_id": "b" * 40},
-            }
-        )
-        companion = Pin(kind="version", version="1.2.3").companion()
-        assert companion.kind == "version"
-        assert companion.version == "2.62.0"
-
     def test_a_path_pin_is_not_reproducible(self) -> None:
         assert not Pin(kind="path", path="/tmp/x").reproducible
         assert Pin(kind="version", version="1.0").reproducible
@@ -335,35 +257,13 @@ class TestGeneratedPackage:
     def test_pyproject_declares_the_workspace_and_nothing_transitive(
         self, package: Path
     ) -> None:
-        """Transitive dependencies belong in uv.lock, not in the manifest.
-
-        The converter is declared next to the framework, though: it is not on
-        an index, so the package has to say where it comes from.
-        """
+        """Transitive dependencies belong in uv.lock, not in the manifest."""
         data = tomllib.loads((package / "pyproject.toml").read_text())
         declared = {
             requirement.split("[")[0] for requirement in data["project"]["dependencies"]
         }
-        assert declared == {DISTRIBUTION, CONVERTER_DISTRIBUTION}
+        assert declared == {DISTRIBUTION}
         assert data["project"]["requires-python"]
-
-    def test_the_converter_is_pinned_to_the_installed_revision(
-        self, package: Path
-    ) -> None:
-        """The package must run on the converter the framework was tested with."""
-        from autoware_carla_scenario.authoring.framework_pin import (
-            _installed_direct_url,
-        )
-
-        data = tomllib.loads((package / "pyproject.toml").read_text())
-        converter = data["tool"]["uv"]["sources"][CONVERTER_DISTRIBUTION]
-        origin = _installed_direct_url(CONVERTER_DISTRIBUTION) or {}
-        vcs_info = origin.get("vcs_info")
-        if vcs_info:
-            assert converter["rev"] == vcs_info["commit_id"]
-            assert "branch" not in converter
-        else:
-            assert "path" in converter
 
     def test_the_package_is_its_own_pytest_rootdir(self, package: Path) -> None:
         """pytest searches upwards, so an unpacked package would inherit config.
@@ -645,7 +545,7 @@ class TestShippedRequirements:
                 "#subdirectory=autoware_carla_scenario",
                 "    # via cut-in-scenario",
                 # uv writes a path source as a bare URL, name and all omitted.
-                "file:///somewhere/local/autoware_lanelet2_to_opendrive",
+                "file:///somewhere/local/local_helper",
                 "colorama==0.4.6 ; sys_platform == 'win32'",
                 "unbuilt @ git+https://example.com/nope",
             ]
@@ -655,12 +555,12 @@ class TestShippedRequirements:
             (
                 "annotated_types-0.8.0-py3-none-any.whl",
                 "autoware_carla_scenario-0.1.0-py3-none-any.whl",
-                "autoware_lanelet2_to_opendrive-2.62.0-py3-none-any.whl",
+                "local_helper-2.62.0-py3-none-any.whl",
             ),
         ).splitlines()
 
         assert f"{DISTRIBUTION}[carla]==0.1.0" in rewritten
-        assert f"{CONVERTER_DISTRIBUTION}==2.62.0" in rewritten
+        assert "local-helper==2.62.0" in rewritten
         assert not any(line.startswith("file:") for line in rewritten)
         # Markers travel; comments and unbuilt requirements are left alone.
         assert "colorama==0.4.6 ; sys_platform == 'win32'" in rewritten
@@ -845,12 +745,11 @@ class TestExportSelfCheck:
         wheelhouse = result.wheelhouse
         assert wheelhouse is not None, result.log
         assert wheelhouse.root.is_dir()
-        # The scenario's own wheel, the framework, the converter and the client
-        # -- the four that are not on any index between them.
+        # The scenario's own wheel, the framework and the client -- the three
+        # that are not on any index between them.
         names = " ".join(wheelhouse.wheels)
         assert "cut_in_scenario-" in names
         assert "autoware_carla_scenario-" in names
-        assert "autoware_lanelet2_to_opendrive-" in names
         if carla_wheels():
             assert "carla-" in names
         assert (wheelhouse.root / "requirements.txt").is_file()

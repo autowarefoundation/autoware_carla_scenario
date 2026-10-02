@@ -576,13 +576,12 @@ class TestPositionIsJudgedInTheFrameItWasGivenIn:
         )
 
     def test_each_lanelet_is_addressed_as_its_own_lane(self, loaded_map: None) -> None:
-        """The converter's mapping puts each side of a two-way road on its side."""
-        mapping = MapManager.get_instance().road_lanelet_mapping
-        assert mapping is not None
-        assert mapping.lanelet_to_road_and_lane == {
-            self.FORWARD: (0, -1),
-            self.BACKWARD: (0, 1),
-        }
+        """Each side of a two-way road lands on its own lane of the road."""
+        from autoware_carla_scenario.coordinate import to_opendrive
+
+        for lanelet_id, lane in ((self.FORWARD, (0, -1)), (self.BACKWARD, (0, 1))):
+            pose = to_opendrive(Lanelet2Pose(lanelet_id=lanelet_id, s=50.0))
+            assert (int(pose.road_id), pose.lane_id) == lane
 
     def test_a_lanelet_stretch_is_read_in_lanelet_s(self, loaded_map: None) -> None:
         from autoware_carla_scenario.coordinate import to_carla_world, to_opendrive

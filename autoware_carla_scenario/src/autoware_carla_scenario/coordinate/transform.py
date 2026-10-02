@@ -1,9 +1,9 @@
 """6-direction mutual conversion between Lanelet2, OpenDRIVE, and CARLA world coordinates.
 
-When a lanelet-to-road mapping is available (see :mod:`.road_lanelet_mapping`),
-Lanelet2 -> OpenDRIVE conversion uses a direct path that avoids the O(n) road
-search and the unnecessary CARLA y-flip.  The indirect path through CARLA world
-coordinates is kept as a fallback.
+Lanelet2 and OpenDRIVE are treated as two independent coordinate systems that
+share nothing but the world they describe: a pose moves between them through
+CARLA world coordinates, so no lanelet-to-road correspondence -- and nothing
+from the converter that produced the OpenDRIVE -- is needed.
 
 Coordinate systems
 ------------------
@@ -48,6 +48,15 @@ from .poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 
 logger = logging.getLogger(__name__)
 
+#: How much nearer than the best road so far (m) another one has to be to win.
+#: Within it the two are the same distance away -- the seam between connected
+#: roads -- and the tie is broken by which road the point starts.
+_SEAM_TOLERANCE = 1e-3
+
+#: How many lanelets nearest in plan view are weighed against the pose's
+#: elevation, to tell stacked lanelets apart.
+_STACKED_CANDIDATES = 8
+
 
 # ---------------------------------------------------------------------------
 # Public API (overloaded)
@@ -71,22 +80,14 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     road = mm.road_network.road_ids_to_object[road_id]
     ref_line: np.ndarray = road.reference_line
 
-    od_x = pose.x
-    od_y = -pose.y
     od_heading = -math.radians(pose.yaw)
-
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
-    diffs = ref_line - np.array([od_x, od_y])
-    nearest_idx = int(np.argmin(np.linalg.norm(diffs, axis=1)))
-
-    s = float(arc_lengths[nearest_idx])
-    heading_ref = _heading_at_s(ref_line, arc_lengths, s)
-    t = _signed_perp_distance(od_x, od_y, ref_line, nearest_idx, heading_ref)
-    lane_id = _find_lane_at_t(road, s, t)
+    _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
+        ref_line, np.array([pose.x, -pose.y])
+    )
 
     return OpenDrivePose(
         road_id=road_id,
-        lane_id=lane_id,
+        lane_id=_find_lane_at_t(road, s, t),
         s=s,
         t=t,
         heading=_normalize_angle(od_heading - heading_ref),
@@ -205,18 +206,13 @@ def to_opendrive(pose: AnyPose) -> OpenDrivePose:
     saying so here means a caller does not have to special-case it and, more
     to the point, does not need a loaded map to pass one through.
 
-    When a lanelet-to-road mapping is available, Lanelet2 -> OpenDRIVE uses a
-    direct path (no CARLA y-flip, no O(n) road search).  Falls back to the
-    indirect path through CARLA world coordinates otherwise.
+    A :class:`Lanelet2Pose` goes through CARLA world coordinates.
     """
     if isinstance(pose, OpenDrivePose):
         return pose
     if isinstance(pose, CarlaWorldPose):
         return _carla_to_opendrive(pose)
     if isinstance(pose, Lanelet2Pose):
-        direct = _lanelet2_to_opendrive_direct(pose)
-        if direct is not None:
-            return direct
         return _carla_to_opendrive(_lanelet2_to_carla(pose))
     raise TypeError(f"Unsupported pose type: {type(pose)}")
 
@@ -232,16 +228,11 @@ def to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose: ...
 def to_lanelet2(pose: Union[OpenDrivePose, CarlaWorldPose]) -> Lanelet2Pose:
     """Convert an OpenDrivePose or CarlaWorldPose to a Lanelet2Pose.
 
-    When a road-lanelet mapping is available, OpenDRIVE → Lanelet2 uses a
-    direct path (XODR + mgrs_offset, no CARLA y-flip).  Falls back to the
-    indirect path through CARLA world coordinates otherwise.
+    An :class:`OpenDrivePose` goes through CARLA world coordinates.
     """
     if isinstance(pose, CarlaWorldPose):
         return _carla_to_lanelet2(pose)
     if isinstance(pose, OpenDrivePose):
-        direct = _opendrive_to_lanelet2_direct(pose)
-        if direct is not None:
-            return direct
         return _carla_to_lanelet2(_opendrive_to_carla(pose))
     raise TypeError(f"Unsupported pose type: {type(pose)}")
 
@@ -289,135 +280,6 @@ def to_map_frame(pose: AnyPose) -> "BridgePose":
         pitch=-math.radians(carla_pose.pitch),
         yaw=-math.radians(carla_pose.yaw),
     )
-
-
-# ---------------------------------------------------------------------------
-# Direct: Lanelet2Pose → OpenDrivePose (no CARLA intermediate)
-# ---------------------------------------------------------------------------
-
-
-def _lanelet2_to_opendrive_direct(pose: Lanelet2Pose) -> Optional[OpenDrivePose]:
-    """Convert a Lanelet2 pose directly to OpenDRIVE using the cached mapping.
-
-    Returns ``None`` when the mapping is unavailable or the lanelet is not
-    in the mapping, signalling the caller should fall back to the indirect
-    path through CARLA world coordinates.
-    """
-    mm = MapManager.get_instance()
-    mapping = mm.road_lanelet_mapping
-    if mapping is None:
-        return None
-
-    result = mapping.lanelet_to_road_and_lane.get(pose.lanelet_id)
-    if result is None:
-        logger.debug(
-            "Lanelet %d not in mapping; falling back to indirect path",
-            pose.lanelet_id,
-        )
-        return None
-
-    road_id, lane_id = result
-
-    # Compute Lanelet2 centerline point at pose.s, then apply lateral offset
-    lanelet = mm.lanelet_map.laneletLayer[pose.lanelet_id]
-    points = [(p.x, p.y, p.z) for p in lanelet.centerline]
-    x_cl, y_cl, _z_cl, heading_cl = _interpolate_at_s(points, pose.s)
-    total_heading = heading_cl + pose.heading
-
-    # t is offset from the centreline, so it is laid off the centreline's own
-    # direction -- see the note in _opendrive_to_carla.
-    x = x_cl + pose.t * (-math.sin(heading_cl))
-    y = y_cl + pose.t * math.cos(heading_cl)
-
-    # Convert MGRS -> XODR: subtract offset, NO y-flip
-    offset_x, offset_y = mm.mgrs_offset
-    xodr_x = x - offset_x
-    xodr_y = y - offset_y
-
-    # Project onto this ONE road's reference line
-    road = mm.road_network.road_ids_to_object[str(road_id)]
-    ref_line: np.ndarray = road.reference_line
-    if len(ref_line) < 2:
-        return None
-
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
-    diffs = ref_line - np.array([xodr_x, xodr_y])
-    dists = np.linalg.norm(diffs, axis=1)
-    nearest_idx = int(np.argmin(dists))
-
-    s_road = float(arc_lengths[nearest_idx])
-    heading_ref = _heading_at_s(ref_line, arc_lengths, s_road)
-    t_road = _signed_perp_distance(xodr_x, xodr_y, ref_line, nearest_idx, heading_ref)
-    heading_diff = _normalize_angle(total_heading - heading_ref)
-
-    return OpenDrivePose(
-        road_id=str(road_id),
-        lane_id=lane_id,
-        s=s_road,
-        t=t_road,
-        heading=heading_diff,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Direct: OpenDrivePose → Lanelet2Pose (no CARLA intermediate)
-# ---------------------------------------------------------------------------
-
-
-def _opendrive_to_lanelet2_direct(pose: OpenDrivePose) -> Optional[Lanelet2Pose]:
-    """Convert an OpenDRIVE pose directly to Lanelet2 using the cached mapping.
-
-    The road reference line point at ``(s, t)`` is converted to MGRS
-    coordinates (``xodr_xy + mgrs_offset``, no y-flip) and projected onto
-    the lanelet centerline.
-
-    Returns ``None`` when the mapping is unavailable or the (road, lane)
-    pair is not in the reverse index, signalling the caller should fall
-    back to the indirect path through CARLA world coordinates.
-    """
-    mm = MapManager.get_instance()
-    mapping = mm.road_lanelet_mapping
-    if mapping is None:
-        return None
-
-    road_id_int = int(pose.road_id)
-    lanelet_id = mapping.road_lane_to_lanelet.get((road_id_int, pose.lane_id))
-    if lanelet_id is None:
-        logger.debug(
-            "Road %s lane %d not in reverse mapping; falling back to indirect path",
-            pose.road_id,
-            pose.lane_id,
-        )
-        return None
-
-    # Compute XODR world point from road reference line at (s, t)
-    road = mm.road_network.road_ids_to_object[pose.road_id]
-    ref_line: np.ndarray = road.reference_line
-    if len(ref_line) < 2:
-        return None
-
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
-    x_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 0]))
-    y_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 1]))
-    heading_ref = _heading_at_s(ref_line, arc_lengths, pose.s)
-    total_heading = heading_ref + pose.heading
-
-    # Apply lateral offset t
-    xodr_x = x_ref + pose.t * (-math.sin(heading_ref))
-    xodr_y = y_ref + pose.t * math.cos(heading_ref)
-
-    # XODR → MGRS: add offset (no y-flip, both right-hand systems)
-    offset_x, offset_y = mm.mgrs_offset
-    mgrs_x = xodr_x + offset_x
-    mgrs_y = xodr_y + offset_y
-
-    # Project onto the lanelet centerline
-    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
-    points = [(p.x, p.y, p.z) for p in lanelet.centerline]
-    s_ll, t_ll, heading_cl = _project_to_centerline(points, mgrs_x, mgrs_y)
-    heading_diff = _normalize_angle(total_heading - heading_cl)
-
-    return Lanelet2Pose(lanelet_id=lanelet_id, s=s_ll, t=t_ll, heading=heading_diff)
 
 
 # ---------------------------------------------------------------------------
@@ -581,55 +443,122 @@ def _carla_to_opendrive_bruteforce(
     pose: CarlaWorldPose,
     mm: MapManager,
 ) -> OpenDrivePose:
-    """Brute-force nearest road search across all roads in the network.
+    """Brute-force road search across all roads in the network.
 
     Used as a fallback when ``carla.Map`` is unavailable or waypoint lookup
-    fails.
+    fails.  The road whose lanes hold the point wins over one whose reference
+    line merely passes closer: a lane two lanes out from its own reference
+    line is still nearer the end of the road before it than to that line.
+    Among roads that hold it (or none that do), the one whose lanes it is
+    nearest to wins, then the one whose reference line is nearest.
     """
     # CARLA world coords share the same origin as XODR; just flip y back.
-    od_x = pose.x
-    od_y = -pose.y
-    od_heading = -math.radians(pose.yaw)
+    point = np.array([pose.x, -pose.y])
 
-    best_road_id: str = ""
-    best_s: float = 0.0
-    best_t: float = 0.0
-    best_heading_diff: float = 0.0
-    best_lane_id: int = 0
-    best_dist: float = float("inf")
-
+    # (outside, dist, at_end, road_id, road, s, t, heading_ref) of the best so far
+    best: Optional[tuple] = None
     for road_id, road in mm.road_network.road_ids_to_object.items():
         ref_line: np.ndarray = road.reference_line  # shape (N, 2)
         if len(ref_line) < 2:
             continue
 
-        arc_lengths = _compute_arc_lengths_2d(ref_line)
-        diffs = ref_line - np.array([od_x, od_y])
-        dists = np.linalg.norm(diffs, axis=1)
-        nearest_idx = int(np.argmin(dists))
-        dist = float(dists[nearest_idx])
+        nearest_idx, dist, s, heading_ref, t = _project_onto_ref_line(ref_line, point)
+        overshoot = _overshoot_along(ref_line, nearest_idx, point)
+        # The lane widths are the costly part, and overshooting the road's end
+        # alone already puts a point further out than the best road so far.
+        if best is not None and overshoot > best[0] + _SEAM_TOLERANCE:
+            continue
+        # The lanes stack from the lane offset line, not the reference line.
+        t_lane = t - _lane_offset_at_s(road, s)
+        outside = math.hypot(
+            overshoot,
+            max(0.0, abs(t_lane) - _side_width(road, s, t_lane >= 0.0)),
+        )
+        candidate = (
+            outside,
+            dist,
+            nearest_idx == len(ref_line) - 1,
+            road_id,
+            road,
+            s,
+            t,
+            heading_ref,
+        )
+        if best is None or _beats(candidate, best):
+            best = candidate
 
-        if dist < best_dist:
-            best_dist = dist
-            best_road_id = road_id
-            s = float(arc_lengths[nearest_idx])
-            heading_ref = _heading_at_s(ref_line, arc_lengths, s)
-            t = _signed_perp_distance(od_x, od_y, ref_line, nearest_idx, heading_ref)
-            heading_diff = _normalize_angle(od_heading - heading_ref)
-            lane_id = _find_lane_at_t(road, s, t)
-
-            best_s = s
-            best_t = t
-            best_heading_diff = heading_diff
-            best_lane_id = lane_id
-
+    if best is None:
+        return OpenDrivePose(road_id="", lane_id=0, s=0.0, t=0.0, heading=0.0)
+    _outside, _dist, _at_end, road_id, road, s, t, heading_ref = best
     return OpenDrivePose(
-        road_id=best_road_id,
-        lane_id=best_lane_id,
-        s=best_s,
-        t=best_t,
-        heading=best_heading_diff,
+        road_id=road_id,
+        lane_id=_find_lane_at_t(road, s, t),
+        s=s,
+        t=t,
+        heading=_normalize_angle(-math.radians(pose.yaw) - heading_ref),
     )
+
+
+def _beats(candidate: tuple, best: tuple) -> bool:
+    """Whether road *candidate* holds the point better than road *best*.
+
+    Both are ``(outside, dist, at_end, ...)``.  A point on the seam between two
+    connected roads is as near to the end of one as to the start of the next.
+    A road covers [0, length), so the seam belongs to the road that starts
+    there -- otherwise which one won would depend on the order the roads were
+    read in.
+    """
+    outside, dist, at_end = candidate[:3]
+    best_outside, best_dist, best_at_end = best[:3]
+    if abs(outside - best_outside) > _SEAM_TOLERANCE:
+        return outside < best_outside
+    if abs(dist - best_dist) > _SEAM_TOLERANCE:
+        return dist < best_dist
+    return best_at_end and not at_end
+
+
+def _project_onto_ref_line(
+    ref_line: np.ndarray, point: np.ndarray
+) -> tuple[int, float, float, float, float]:
+    """Project *point* onto *ref_line* at its nearest vertex.
+
+    Returns ``(nearest_idx, dist, s, heading_ref, t)``: the vertex, the
+    distance to it, the arc length there, the reference heading at that arc
+    length and the signed lateral offset from it.
+    """
+    arc_lengths = _compute_arc_lengths_2d(ref_line)
+    dists = np.linalg.norm(ref_line - point, axis=1)
+    nearest_idx = int(np.argmin(dists))
+    s = float(arc_lengths[nearest_idx])
+    heading_ref = _heading_at_s(ref_line, arc_lengths, s)
+    t = _signed_perp_distance(
+        float(point[0]), float(point[1]), ref_line, nearest_idx, heading_ref
+    )
+    return nearest_idx, float(dists[nearest_idx]), s, heading_ref, t
+
+
+def _overshoot_along(
+    ref_line: np.ndarray, nearest_idx: int, point: np.ndarray
+) -> float:
+    """How far (m) *point* lies past the start or end of *ref_line*.
+
+    Zero unless the nearest vertex is an endpoint and the point projects
+    beyond it, along the first or last segment.
+    """
+    if nearest_idx == 0:
+        direction = ref_line[1] - ref_line[0]
+        offset = point - ref_line[0]
+        sign = -1.0
+    elif nearest_idx == len(ref_line) - 1:
+        direction = ref_line[-1] - ref_line[-2]
+        offset = point - ref_line[-1]
+        sign = 1.0
+    else:
+        return 0.0
+    length = float(np.linalg.norm(direction))
+    if length == 0.0:
+        return 0.0
+    return max(0.0, sign * float(np.dot(offset, direction)) / length)
 
 
 # ---------------------------------------------------------------------------
@@ -649,11 +578,24 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
     ll2_heading = -math.radians(pose.yaw)
 
     query = lanelet2.core.BasicPoint2d(ll2_x, ll2_y)
-    results = lanelet2.geometry.findNearest(mm.lanelet_map.laneletLayer, query, 1)
-    lanelet = results[0][1]
-
-    points = [(p.x, p.y, p.z) for p in lanelet.centerline]
-    s, t, heading_cl = _project_to_centerline(points, ll2_x, ll2_y)
+    results = lanelet2.geometry.findNearest(
+        mm.lanelet_map.laneletLayer, query, _STACKED_CANDIDATES
+    )
+    # Lanelets stacked over one another -- an overpass and the road beneath
+    # it -- are all as near in plan view, so the pose's elevation picks one.
+    nearest = results[0][0]
+    ll2_z = pose.z + mm.z_offset
+    best: Optional[tuple[float, Any, float, float, float]] = None
+    for distance, candidate in results:
+        if distance > nearest + _SEAM_TOLERANCE:
+            break
+        points = [(p.x, p.y, p.z) for p in candidate.centerline]
+        s, t, heading_cl = _project_to_centerline(points, ll2_x, ll2_y)
+        dz = abs(_interpolate_at_s(points, s)[2] - ll2_z)
+        if best is None or dz < best[0]:
+            best = (dz, candidate, s, t, heading_cl)
+    assert best is not None
+    _dz, lanelet, s, t, heading_cl = best
     heading_diff = _normalize_angle(ll2_heading - heading_cl)
 
     return Lanelet2Pose(lanelet_id=lanelet.id, s=s, t=t, heading=heading_diff)
@@ -785,13 +727,34 @@ def _lane_width_at_ds(lane, ds: float) -> float:
         else:
             break
 
-    s_offset = float(active.attrib.get("sOffset", 0.0))
-    a = float(active.attrib["a"])
-    b = float(active.attrib["b"])
-    c = float(active.attrib["c"])
-    d = float(active.attrib["d"])
-    local = ds - s_offset
-    return a + b * local + c * local**2 + d * local**3
+    return _cubic(active, ds - float(active.attrib.get("sOffset", 0.0)))
+
+
+def _cubic(elem, ds: float) -> float:
+    """Evaluate an OpenDRIVE ``a + b·ds + c·ds² + d·ds³`` record at *ds*."""
+    a = float(elem.attrib["a"])
+    b = float(elem.attrib["b"])
+    c = float(elem.attrib["c"])
+    d = float(elem.attrib["d"])
+    return a + b * ds + c * ds**2 + d * ds**3
+
+
+def _lane_offset_at_s(road, s: float) -> float:
+    """The road's ``<laneOffset>`` at *s*: how far (m) its lanes sit left of
+    the reference line.  Zero when the road declares none.
+    """
+    lanes_xml = road.road_xml.find("lanes")
+    if lanes_xml is None:
+        return 0.0
+    active = None
+    for elem in lanes_xml.findall("laneOffset"):
+        if float(elem.attrib.get("s", 0.0)) <= s:
+            active = elem
+        else:
+            break
+    if active is None:
+        return 0.0
+    return _cubic(active, s - float(active.attrib.get("s", 0.0)))
 
 
 def _find_lane_section_at_s(road, s: float):
@@ -857,21 +820,46 @@ def _lane_center_t(road, s: float, lane_id: int) -> float | None:
 def _find_lane_at_t(road, s: float, t: float) -> int:
     """Find the lane ID at lateral offset t for a given s on a road.
 
-    Returns the first lane on the correct side (positive t = left lanes with
-    positive IDs; negative t = right lanes with negative IDs).  Lane ID is
-    context-only information, so a best-effort match is sufficient.
+    Lanes are stacked outwards from the reference line, each as wide as its
+    ``<width>`` polynomial says at *s*: positive t walks the left lanes
+    (positive IDs), negative t the right ones (negative IDs).  The lane whose
+    band holds ``|t|`` is the answer; a point beyond the outermost lane is
+    given that lane.  With Lanelet2 and OpenDRIVE kept as separate frames this
+    is what tells two neighbouring lanes of one road apart.
+
+    *t* is measured from the reference line; the lanes stack from the lane
+    offset line, ``<laneOffset>`` to its left.
 
     Returns 0 if no lane sections are found.
     """
+    t_lane = t - _lane_offset_at_s(road, s)
+    edges = _lane_edges(road, s, t_lane >= 0.0)
+    for lane_id, outer in edges:
+        if abs(t_lane) < outer:
+            return lane_id
+    return edges[-1][0] if edges else 0
+
+
+def _side_width(road, s: float, is_left: bool) -> float:
+    """Total width (m) of the lanes on one side of *road* at *s*."""
+    edges = _lane_edges(road, s, is_left)
+    return edges[-1][1] if edges else 0.0
+
+
+def _lane_edges(road, s: float, is_left: bool) -> list[tuple[int, float]]:
+    """``(lane_id, outer |t|)`` of each lane on one side of *road* at *s*.
+
+    Innermost first, as pyxodr orders a section's ``left_lanes`` and
+    ``right_lanes``; empty when the road has no lane sections.
+    """
     active_section = _find_lane_section_at_s(road, s)
     if active_section is None:
-        return 0
-
-    is_left = t >= 0.0
-    for lane in active_section.lanes:
-        if is_left and lane.id > 0:
-            return lane.id
-        if not is_left and lane.id < 0:
-            return lane.id
-
-    return 0
+        return []
+    ds = s - float(active_section.lane_section_xml.attrib.get("s", 0.0))
+    lanes = active_section.left_lanes if is_left else active_section.right_lanes
+    edges = []
+    outer = 0.0
+    for lane in lanes:
+        outer += _lane_width_at_ds(lane, ds)
+        edges.append((lane.id, outer))
+    return edges

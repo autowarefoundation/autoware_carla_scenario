@@ -17,7 +17,6 @@ prevent.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -25,11 +24,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional
-from urllib.parse import urlparse
-from urllib.request import url2pathname
 
 __all__ = [
-    "CONVERTER_DISTRIBUTION",
     "DISTRIBUTION",
     "Pin",
     "PinResolutionError",
@@ -39,12 +35,6 @@ __all__ = [
 
 #: Distribution name of the framework.
 DISTRIBUTION = "autoware-carla-scenario"
-
-#: The converter the framework imports at module scope
-#: (``coordinate.road_lanelet_mapping``).  It lives in its own repository, so an
-#: exported Scenario Package pins it explicitly, to exactly the revision that is
-#: installed alongside the framework.
-CONVERTER_DISTRIBUTION = "autoware-lanelet2-to-opendrive"
 
 #: Overrides pin resolution with an exact released version.
 VERSION_ENV = "SCENARIO_EXPORT_FRAMEWORK_VERSION"
@@ -139,70 +129,6 @@ class Pin:
         """Whether this pin survives being copied to another machine."""
         return self.kind in ("version", "git")
 
-    def companion(self) -> "Pin":
-        """Return the matching pin for :data:`CONVERTER_DISTRIBUTION`.
-
-        The converter lives in its own repository, so it cannot share the
-        framework's commit.  It is pinned to exactly what is installed next to
-        the framework -- the revision the lockfile resolved and the test suite
-        ran against -- as recorded in its PEP 610 ``direct_url.json``:
-
-        * a version pin of the framework pins the converter's installed
-          version too;
-        * a converter installed from a git repository is pinned to that
-          repository and commit;
-        * a converter installed from a local directory is pinned by path,
-          which only a development export should ever end up with;
-        * a converter installed from an index is pinned to its exact version.
-
-        Extras are not carried across: they belong to the distribution that
-        declares them.
-        """
-        version = _installed_version(CONVERTER_DISTRIBUTION)
-        exact = Pin(
-            distribution=CONVERTER_DISTRIBUTION, kind="version", version=version
-        )
-        if self.kind == "version":
-            return exact
-
-        origin = _installed_direct_url(CONVERTER_DISTRIBUTION)
-        if origin is None:
-            return exact
-
-        url = origin.get("url", "")
-        vcs_info = origin.get("vcs_info")
-        if isinstance(vcs_info, dict) and vcs_info.get("vcs") == "git":
-            commit = vcs_info.get("commit_id")
-            if isinstance(commit, str) and _SHA_PATTERN.match(commit):
-                return Pin(
-                    distribution=CONVERTER_DISTRIBUTION,
-                    kind="git",
-                    repository=normalize_repository_url(url),
-                    commit=commit,
-                    subdirectory=origin.get("subdirectory") or None,
-                    version=version,
-                )
-            return exact
-
-        if url.startswith("file://"):
-            path = url2pathname(urlparse(url).path)
-            warnings: tuple[str, ...] = ()
-            if self.kind != "path":
-                warnings = (
-                    f"{CONVERTER_DISTRIBUTION} is installed from the local "
-                    f"directory {path}, so the exported package depends on it "
-                    "by path and will not resolve on another machine. Install "
-                    "it from its git repository before sharing the package.",
-                )
-            return Pin(
-                distribution=CONVERTER_DISTRIBUTION,
-                kind="path",
-                path=path,
-                version=version,
-                warnings=warnings,
-            )
-        return exact
-
 
 # ---------------------------------------------------------------------------
 # Git helpers
@@ -262,34 +188,14 @@ def framework_source_root() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _installed_version(distribution: str = DISTRIBUTION) -> Optional[str]:
-    """Return the installed version of *distribution*, or ``None``."""
+def _installed_version() -> Optional[str]:
+    """Return the installed version of the framework, or ``None``."""
     from importlib import metadata  # noqa: PLC0415
 
     try:
-        return metadata.version(distribution)
+        return metadata.version(DISTRIBUTION)
     except metadata.PackageNotFoundError:  # pragma: no cover - always installed
         return None
-
-
-def _installed_direct_url(distribution: str) -> Optional[dict[str, Any]]:
-    """Return the PEP 610 ``direct_url.json`` of *distribution*, or ``None``.
-
-    ``None`` means it was installed from an index (or is not installed at all).
-    """
-    from importlib import metadata  # noqa: PLC0415
-
-    try:
-        text = metadata.distribution(distribution).read_text("direct_url.json")
-    except metadata.PackageNotFoundError:
-        return None
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _resolve_git_pin(source_root: Path) -> Optional[Pin]:

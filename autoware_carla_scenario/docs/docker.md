@@ -24,7 +24,7 @@ Only installed code:
 
 | Present | Absent |
 | --- | --- |
-| `/opt/venv` — the framework, `autoware-lanelet2-to-opendrive`, the scenario package, their dependencies, and one pinned CARLA client | Source trees, `pyproject.toml`, tests, docs, git history |
+| `/opt/venv` — the framework, the scenario package, their dependencies, and one pinned CARLA client | Source trees, `pyproject.toml`, tests, docs, git history |
 | `ffmpeg`, when asked for | `uv`, wheels, build caches, a compiler, any apt package at all |
 
 The entry point is the `scenario` CLI and the working directory is `/work`,
@@ -72,7 +72,7 @@ the one that changes on every commit:
 | --- | --- | --- | --- | --- |
 | 1 | `carla` | The virtualenv itself and the pinned CARLA client | `carla-version`, `python-version` or the base image changes | ~12 MB |
 | 2 | `deps` | The framework's third-party dependency closure — OpenCV, scipy, numpy, the matplotlib stack, … | `uv.lock` changes | ~400 MB |
-| 3 | `framework` | `autoware-carla-scenario` and `autoware-lanelet2-to-opendrive` | Framework code changes | ~2 MB |
+| 3 | `framework` | `autoware-carla-scenario` | Framework code changes | ~2 MB |
 | 4 | `scenario` | The scenario wheel, plus any dependency it adds of its own | The scenario package changes | ~80 kB |
 
 (Sizes are approximate, for a scaffolded package with CARLA 0.10.0.)
