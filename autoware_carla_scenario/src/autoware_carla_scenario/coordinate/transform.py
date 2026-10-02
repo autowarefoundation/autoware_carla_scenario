@@ -76,22 +76,14 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     road = mm.road_network.road_ids_to_object[road_id]
     ref_line: np.ndarray = road.reference_line
 
-    od_x = pose.x
-    od_y = -pose.y
     od_heading = -math.radians(pose.yaw)
-
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
-    diffs = ref_line - np.array([od_x, od_y])
-    nearest_idx = int(np.argmin(np.linalg.norm(diffs, axis=1)))
-
-    s = float(arc_lengths[nearest_idx])
-    heading_ref = _heading_at_s(ref_line, arc_lengths, s)
-    t = _signed_perp_distance(od_x, od_y, ref_line, nearest_idx, heading_ref)
-    lane_id = _find_lane_at_t(road, s, t)
+    _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
+        ref_line, np.array([pose.x, -pose.y])
+    )
 
     return OpenDrivePose(
         road_id=road_id,
-        lane_id=lane_id,
+        lane_id=_find_lane_at_t(road, s, t),
         s=s,
         t=t,
         heading=_normalize_angle(od_heading - heading_ref),
@@ -457,71 +449,86 @@ def _carla_to_opendrive_bruteforce(
     nearest to wins, then the one whose reference line is nearest.
     """
     # CARLA world coords share the same origin as XODR; just flip y back.
-    od_x = pose.x
-    od_y = -pose.y
-    od_heading = -math.radians(pose.yaw)
-    point = np.array([od_x, od_y])
+    point = np.array([pose.x, -pose.y])
 
-    best_road_id: str = ""
-    best_s: float = 0.0
-    best_t: float = 0.0
-    best_heading_diff: float = 0.0
-    best_lane_id: int = 0
-    best_outside: float = float("inf")
-    best_dist: float = float("inf")
-    best_at_end: bool = False
-
+    # (outside, dist, at_end, road_id, road, s, t, heading_ref) of the best so far
+    best: Optional[tuple] = None
     for road_id, road in mm.road_network.road_ids_to_object.items():
         ref_line: np.ndarray = road.reference_line  # shape (N, 2)
         if len(ref_line) < 2:
             continue
 
-        arc_lengths = _compute_arc_lengths_2d(ref_line)
-        dists = np.linalg.norm(ref_line - point, axis=1)
-        nearest_idx = int(np.argmin(dists))
-        dist = float(dists[nearest_idx])
-        at_end = nearest_idx == len(ref_line) - 1
-
-        s = float(arc_lengths[nearest_idx])
-        heading_ref = _heading_at_s(ref_line, arc_lengths, s)
-        t = _signed_perp_distance(od_x, od_y, ref_line, nearest_idx, heading_ref)
+        nearest_idx, dist, s, heading_ref, t = _project_onto_ref_line(ref_line, point)
+        overshoot = _overshoot_along(ref_line, nearest_idx, point)
+        # The lane widths are the costly part, and overshooting the road's end
+        # alone already puts a point further out than the best road so far.
+        if best is not None and overshoot > best[0] + _SEAM_TOLERANCE:
+            continue
         outside = math.hypot(
-            _overshoot_along(ref_line, nearest_idx, point),
+            overshoot,
             max(0.0, abs(t) - _side_width(road, s, t >= 0.0)),
         )
+        candidate = (
+            outside,
+            dist,
+            nearest_idx == len(ref_line) - 1,
+            road_id,
+            road,
+            s,
+            t,
+            heading_ref,
+        )
+        if best is None or _beats(candidate, best):
+            best = candidate
 
-        if outside < best_outside - _SEAM_TOLERANCE:
-            better = True
-        elif outside <= best_outside + _SEAM_TOLERANCE:
-            # A point on the seam between two connected roads is as near to
-            # the end of one as to the start of the next.  A road covers
-            # [0, length), so the seam belongs to the road that starts there
-            # -- otherwise which one won would depend on the order the roads
-            # were read in.
-            on_seam = abs(dist - best_dist) <= _SEAM_TOLERANCE
-            better = dist < best_dist - _SEAM_TOLERANCE or (
-                on_seam and best_at_end and not at_end
-            )
-        else:
-            better = False
-
-        if better:
-            best_outside = outside
-            best_dist = dist
-            best_at_end = at_end
-            best_road_id = road_id
-            best_s = s
-            best_t = t
-            best_heading_diff = _normalize_angle(od_heading - heading_ref)
-            best_lane_id = _find_lane_at_t(road, s, t)
-
+    if best is None:
+        return OpenDrivePose(road_id="", lane_id=0, s=0.0, t=0.0, heading=0.0)
+    _outside, _dist, _at_end, road_id, road, s, t, heading_ref = best
     return OpenDrivePose(
-        road_id=best_road_id,
-        lane_id=best_lane_id,
-        s=best_s,
-        t=best_t,
-        heading=best_heading_diff,
+        road_id=road_id,
+        lane_id=_find_lane_at_t(road, s, t),
+        s=s,
+        t=t,
+        heading=_normalize_angle(-math.radians(pose.yaw) - heading_ref),
     )
+
+
+def _beats(candidate: tuple, best: tuple) -> bool:
+    """Whether road *candidate* holds the point better than road *best*.
+
+    Both are ``(outside, dist, at_end, ...)``.  A point on the seam between two
+    connected roads is as near to the end of one as to the start of the next.
+    A road covers [0, length), so the seam belongs to the road that starts
+    there -- otherwise which one won would depend on the order the roads were
+    read in.
+    """
+    outside, dist, at_end = candidate[:3]
+    best_outside, best_dist, best_at_end = best[:3]
+    if abs(outside - best_outside) > _SEAM_TOLERANCE:
+        return outside < best_outside
+    if abs(dist - best_dist) > _SEAM_TOLERANCE:
+        return dist < best_dist
+    return best_at_end and not at_end
+
+
+def _project_onto_ref_line(
+    ref_line: np.ndarray, point: np.ndarray
+) -> tuple[int, float, float, float, float]:
+    """Project *point* onto *ref_line* at its nearest vertex.
+
+    Returns ``(nearest_idx, dist, s, heading_ref, t)``: the vertex, the
+    distance to it, the arc length there, the reference heading at that arc
+    length and the signed lateral offset from it.
+    """
+    arc_lengths = _compute_arc_lengths_2d(ref_line)
+    dists = np.linalg.norm(ref_line - point, axis=1)
+    nearest_idx = int(np.argmin(dists))
+    s = float(arc_lengths[nearest_idx])
+    heading_ref = _heading_at_s(ref_line, arc_lengths, s)
+    t = _signed_perp_distance(
+        float(point[0]), float(point[1]), ref_line, nearest_idx, heading_ref
+    )
+    return nearest_idx, float(dists[nearest_idx]), s, heading_ref, t
 
 
 def _overshoot_along(
@@ -782,37 +789,33 @@ def _find_lane_at_t(road, s: float, t: float) -> int:
 
     Returns 0 if no lane sections are found.
     """
-    active_section = _find_lane_section_at_s(road, s)
-    if active_section is None:
-        return 0
-
-    side = _side_lanes(active_section, t >= 0.0)
-    if not side:
-        return 0
-
-    ds = s - float(active_section.lane_section_xml.attrib.get("s", 0.0))
-    outer = 0.0
-    for lane in side:
-        outer += _lane_width_at_ds(lane, ds)
+    edges = _lane_edges(road, s, t >= 0.0)
+    for lane_id, outer in edges:
         if abs(t) < outer:
-            return lane.id
-    return side[-1].id
-
-
-def _side_lanes(section, is_left: bool) -> list:
-    """The lanes of *section* on one side, innermost first."""
-    return sorted(
-        (lane for lane in section.lanes if lane.id != 0 and (lane.id > 0) == is_left),
-        key=lambda lane: abs(lane.id),
-    )
+            return lane_id
+    return edges[-1][0] if edges else 0
 
 
 def _side_width(road, s: float, is_left: bool) -> float:
     """Total width (m) of the lanes on one side of *road* at *s*."""
+    edges = _lane_edges(road, s, is_left)
+    return edges[-1][1] if edges else 0.0
+
+
+def _lane_edges(road, s: float, is_left: bool) -> list[tuple[int, float]]:
+    """``(lane_id, outer |t|)`` of each lane on one side of *road* at *s*.
+
+    Innermost first, as pyxodr orders a section's ``left_lanes`` and
+    ``right_lanes``; empty when the road has no lane sections.
+    """
     active_section = _find_lane_section_at_s(road, s)
     if active_section is None:
-        return 0.0
+        return []
     ds = s - float(active_section.lane_section_xml.attrib.get("s", 0.0))
-    return sum(
-        _lane_width_at_ds(lane, ds) for lane in _side_lanes(active_section, is_left)
-    )
+    lanes = active_section.left_lanes if is_left else active_section.right_lanes
+    edges = []
+    outer = 0.0
+    for lane in lanes:
+        outer += _lane_width_at_ds(lane, ds)
+        edges.append((lane.id, outer))
+    return edges

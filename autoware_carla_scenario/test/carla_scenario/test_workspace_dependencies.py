@@ -45,8 +45,9 @@ def _manifest(directory: Path) -> dict:
     return tomllib.loads((directory / "pyproject.toml").read_text())
 
 
-#: The converter: its top-level module and its distribution.
-_CONVERTER = ("autoware_lanelet2_to_opendrive", "autoware-lanelet2-to-opendrive")
+#: The converter's top-level module and distribution.
+_CONVERTER_MODULE = "autoware_lanelet2_to_opendrive"
+_CONVERTER_DISTRIBUTION = "autoware-lanelet2-to-opendrive"
 
 
 def _siblings() -> dict[str, str]:
@@ -142,14 +143,14 @@ def test_a_declared_sibling_resolves_from_the_workspace(module: str) -> None:
 
 def test_the_converter_is_not_imported() -> None:
     """Lanelet2 and OpenDRIVE are two frames of their own; no mapping is shared."""
-    module, _ = _CONVERTER
-    importers = _imported_top_level_modules().get(module)
-    assert not importers, f"{module} is imported by {sorted(map(str, importers))}"
+    importers = _imported_top_level_modules().get(_CONVERTER_MODULE)
+    assert (
+        not importers
+    ), f"{_CONVERTER_MODULE} is imported by {sorted(map(str, importers))}"
 
 
 def test_the_converter_is_not_a_dependency() -> None:
-    _, distribution = _CONVERTER
-    assert _canonical(distribution) not in _declared()
+    assert _canonical(_CONVERTER_DISTRIBUTION) not in _declared()
     assert not any(
-        _canonical(name) == _canonical(distribution) for name in _sources()
-    ), f"{distribution} still has a [tool.uv.sources] entry"
+        _canonical(name) == _canonical(_CONVERTER_DISTRIBUTION) for name in _sources()
+    ), f"{_CONVERTER_DISTRIBUTION} still has a [tool.uv.sources] entry"

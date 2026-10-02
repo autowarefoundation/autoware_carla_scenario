@@ -188,12 +188,12 @@ def framework_source_root() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _installed_version(distribution: str = DISTRIBUTION) -> Optional[str]:
-    """Return the installed version of *distribution*, or ``None``."""
+def _installed_version() -> Optional[str]:
+    """Return the installed version of the framework, or ``None``."""
     from importlib import metadata  # noqa: PLC0415
 
     try:
-        return metadata.version(distribution)
+        return metadata.version(DISTRIBUTION)
     except metadata.PackageNotFoundError:  # pragma: no cover - always installed
         return None
 
