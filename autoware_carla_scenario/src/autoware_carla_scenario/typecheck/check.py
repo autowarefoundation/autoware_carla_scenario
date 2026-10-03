@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from .driver import DRIVER_MODULE, render_driver
+from .toolchain import Toolchain, ToolchainError, codon_environment, find_codon
 from .transform import (
     PRELUDE,
     class_declarations,
@@ -40,17 +41,13 @@ from .transform import (
 )
 
 __all__ = [
-    "CODON_ENV",
     "Diagnostic",
     "ScenarioTypeError",
     "TypeCheckResult",
-    "find_codon",
+    "available_toolchain",
     "model_dir",
     "typecheck_scenario",
 ]
-
-#: Path of a ``codon`` executable to use instead of the bundled one.
-CODON_ENV = "AUTOWARE_CARLA_SCENARIO_CODON"
 
 #: Seconds a single compile may take.
 DEFAULT_TIMEOUT_SECONDS = 600.0
@@ -75,37 +72,18 @@ def model_dir() -> Path:
     return Path(__file__).resolve().parent / "codon"
 
 
-def find_codon() -> Path | None:
-    """The ``codon`` executable the checker runs, or ``None`` if there is none.
-
-    In order: ``$AUTOWARE_CARLA_SCENARIO_CODON``; the Codon bundled by the
-    ``typesafe-carla-toolchain`` package (the ``codon`` extra), the toolchain
-    typesafe_carla programs are compiled with; ``codon`` on ``PATH``;
-    ``~/.codon/bin/codon`` (Codon's own installer).
-    """
-    explicit = os.environ.get(CODON_ENV)
-    if explicit:
-        path = Path(explicit).expanduser()
-        return path if path.is_file() else None
+def available_toolchain() -> Toolchain | None:
+    """The Codon the checker runs (:func:`.toolchain.find_codon`), or ``None``."""
     try:
-        import typesafe_carla_toolchain  # noqa: PLC0415
-
-        bundled = Path(typesafe_carla_toolchain.codon_executable())
-        if bundled.is_file():
-            return bundled
-    except (ImportError, RuntimeError):
-        pass
-    on_path = shutil.which("codon")
-    if on_path:
-        return Path(on_path)
-    home = Path.home() / ".codon" / "bin" / "codon"
-    return home if home.is_file() else None
+        return find_codon()
+    except ToolchainError:
+        return None
 
 
 @lru_cache(maxsize=8)
-def _codon_stdlib(codon: Path) -> frozenset[str]:
+def _codon_stdlib(tc: Toolchain) -> frozenset[str]:
     """Top-level module names of Codon's standard library."""
-    for candidate in (codon.parent.parent / "lib" / "codon" / "stdlib",):
+    for candidate in (tc.codon_dir / "lib" / "codon" / "stdlib",):
         if candidate.is_dir():
             return frozenset(p.name.split(".")[0] for p in candidate.iterdir())
     return frozenset(
@@ -264,8 +242,8 @@ class _Sources:
     problems: list[Diagnostic] = field(default_factory=list)
 
 
-def _collect(roots: list[str], codon: Path) -> _Sources:
-    stdlib = _codon_stdlib(codon)
+def _collect(roots: list[str], tc: Toolchain) -> _Sources:
+    stdlib = _codon_stdlib(tc)
     modeled = _model_modules()
     prefixes = {_user_prefix(root) for root in roots}
     out = _Sources()
@@ -433,8 +411,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 _CACHE: dict[str, TypeCheckResult] = {}
 
 
-def _cache_key(codon: Path, sources: _Sources, driver_source: str) -> str:
-    digest = hashlib.sha256(str(codon).encode())
+def _cache_key(tc: Toolchain, sources: _Sources, driver_source: str) -> str:
+    digest = hashlib.sha256(str(tc.executable).encode())
     for path in sorted(model_dir().rglob("*.codon")):
         digest.update(path.read_bytes())
     for name, (path, _) in sorted(sources.modules.items()):
@@ -451,7 +429,7 @@ def typecheck_scenario(
     config_cls: type,
     scenario_dict: dict[str, Any] | None = None,
     *,
-    codon: Path | None = None,
+    toolchain: Toolchain | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> TypeCheckResult:
     """Compile *scenario_cls* built with ``config_cls(**scenario_dict)``.
@@ -461,7 +439,8 @@ def typecheck_scenario(
         config_cls: Its config class.
         scenario_dict: The ``scenario`` section of the resolved config, as the
             runner passes it to *config_cls*; ``None`` checks the defaults.
-        codon: The Codon executable; :func:`find_codon` by default.
+        toolchain: The Codon to compile with; found as typesafe_carla finds
+            it (:func:`.toolchain.find_codon`) by default.
         timeout: Seconds the compile may take.
 
     Returns:
@@ -470,22 +449,19 @@ def typecheck_scenario(
         scenario class without a source file).
     """
     name = f"{scenario_cls.__module__}.{scenario_cls.__qualname__}"
-    codon = codon or find_codon()
-    if codon is None:
-        return TypeCheckResult(
-            name,
-            ok=True,
-            skipped="no Codon compiler (install the `codon` extra, or set "
-            f"${CODON_ENV})",
-        )
+    if toolchain is None:
+        try:
+            toolchain = find_codon()
+        except ToolchainError as exc:
+            return TypeCheckResult(name, ok=True, skipped=f"no Codon compiler: {exc}")
     roots = sorted({scenario_cls.__module__, config_cls.__module__})
     if any(_module_file(root) is None for root in roots):
         return TypeCheckResult(
             name, ok=True, skipped="the scenario has no source file to compile"
         )
-    sources = _collect(roots, codon)
+    sources = _collect(roots, toolchain)
     driver = render_driver(scenario_cls, config_cls, dict(scenario_dict or {}))
-    key = _cache_key(codon, sources, driver.source)
+    key = _cache_key(toolchain, sources, driver.source)
     if key in _CACHE:
         return _CACHE[key]
     if sources.problems:
@@ -500,10 +476,17 @@ def typecheck_scenario(
             result = TypeCheckResult(name, ok=False, diagnostics=problems)
             _CACHE[key] = result
             return result
-        env = dict(os.environ, CODON_PATH=str(ws.root))
+        env = codon_environment(toolchain, ws.root)
         try:
             proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
-                [str(codon), "build", "-llvm", "-o", os.devnull, DRIVER_MODULE],
+                [
+                    str(toolchain.executable),
+                    "build",
+                    "-llvm",
+                    "-o",
+                    os.devnull,
+                    DRIVER_MODULE,
+                ],
                 cwd=ws.root,
                 env=env,
                 capture_output=True,

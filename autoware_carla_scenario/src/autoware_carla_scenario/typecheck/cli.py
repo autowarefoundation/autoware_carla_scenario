@@ -16,7 +16,8 @@ from __future__ import annotations
 import logging
 import sys
 
-from .check import CODON_ENV, find_codon, typecheck_scenario
+from .check import typecheck_scenario
+from .toolchain import ToolchainError, find_codon
 
 __all__ = ["main"]
 
@@ -30,12 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     if any(a in ("-h", "--help") for a in args):
         print(__doc__)  # noqa: T201
         return 0
-    if find_codon() is None:
-        print(  # noqa: T201
-            "scenario-check: no Codon compiler: install the `codon` extra "
-            f"(uv sync --extra codon) or set ${CODON_ENV}",
-            file=sys.stderr,
-        )
+    try:
+        toolchain = find_codon()
+    except ToolchainError as exc:
+        print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
         return 2
 
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
@@ -53,7 +52,9 @@ def main(argv: list[str] | None = None) -> int:
         if classes is None:
             print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
             continue
-        result = typecheck_scenario(classes[0], classes[1], run._to_dict(cfg.scenario))
+        result = typecheck_scenario(
+            classes[0], classes[1], run._to_dict(cfg.scenario), toolchain=toolchain
+        )
         status = "ok" if result.ok else "FAILED"
         print(f"[{status}] {config_name}: {result.format()}")  # noqa: T201
         failed += not result.ok

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "typesafe-carla-toolchain"
+# Mirrors the bundled Codon release; repackaging the same Codon bumps .postN.
+version = "0.19.3"
+description = "Pinned Codon compiler for typesafe-carla"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE.typesafe-carla-toolchain"]
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Source = "https://github.com/hakuturu583/typesafe_carla"
+Codon = "https://github.com/exaloop/codon"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/typesafe_carla_toolchain"]
+# The Codon distribution is downloaded and unpacked by hatch_build.py.
+artifacts = ["src/typesafe_carla_toolchain/codon/**"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["src/typesafe_carla_toolchain/codon"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"

@@ -245,6 +245,10 @@ against the typed model in `typecheck/codon/`, not the Python package, so:
   it only what typesafe_carla declares.
 - A scenario class declares the attributes it assigns on `self` at class level
   (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
+- Codon comes from `toolchain/`, typesafe_carla's `typesafe-carla-toolchain`
+  workspace member copied unchanged, and `typecheck/toolchain.py` is
+  typesafe_carla's Codon lookup. Update both from typesafe_carla rather than
+  editing them here.
 
 ## Development Guidelines
 

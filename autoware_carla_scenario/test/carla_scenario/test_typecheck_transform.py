@@ -278,10 +278,10 @@ def test_without_codon_auto_warns_and_required_refuses(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     from autoware_carla_scenario.registry import register_scenario, unregister_scenario
-    from autoware_carla_scenario.typecheck import CODON_ENV, ScenarioTypeError
+    from autoware_carla_scenario.typecheck import ENV_CODON, ScenarioTypeError
     from autoware_carla_scenario.typecheck.mode import check_registered_scenario
 
-    monkeypatch.setenv(CODON_ENV, str(tmp_path / "no-such-codon"))
+    monkeypatch.setenv(ENV_CODON, str(tmp_path / "no-such-codon"))
     register_scenario("typecheck_mode_case", _ModeScenario, _Config)  # type: ignore[arg-type]
     try:
         assert check_registered_scenario("typecheck_mode_case", {}, "off") is None

@@ -21,6 +21,7 @@ conflicts = [[
 [manifest]
 members = [
     "autoware-carla-scenario",
+    "typesafe-carla-toolchain",
 ]
 
 [manifest.dependency-groups]
@@ -41,7 +42,7 @@ dev = [
     { name = "pytest-testmon", specifier = ">=2.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260815" },
-    { name = "typesafe-carla-toolchain", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", git = "https://github.com/hakuturu583/typesafe_carla?subdirectory=toolchain&rev=a5463c0cc79cad5880bdaad18beada4ce5585adc" },
+    { name = "typesafe-carla-toolchain", editable = "toolchain" },
     { name = "weasyprint", specifier = ">=68.0" },
 ]
 
@@ -160,7 +161,7 @@ carla-0-9-16 = [
     { name = "carla", version = "0.9.16", source = { registry = "https://pypi.org/simple" } },
 ]
 codon = [
-    { name = "typesafe-carla-toolchain", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16') or (sys_platform != 'linux' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16')" },
+    { name = "typesafe-carla-toolchain" },
 ]
 
 [package.metadata]
@@ -184,7 +185,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "simple-lanelet2", specifier = ">=1.1.2" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "typesafe-carla-toolchain", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'codon'", git = "https://github.com/hakuturu583/typesafe_carla?subdirectory=toolchain&rev=a5463c0cc79cad5880bdaad18beada4ce5585adc" },
+    { name = "typesafe-carla-toolchain", marker = "extra == 'codon'", editable = "toolchain" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 provides-extras = ["carla", "carla-0-9-16", "codon"]
@@ -2534,7 +2535,7 @@ wheels = [
 [[package]]
 name = "typesafe-carla-toolchain"
 version = "0.19.3"
-source = { git = "https://github.com/hakuturu583/typesafe_carla?subdirectory=toolchain&rev=a5463c0cc79cad5880bdaad18beada4ce5585adc#a5463c0cc79cad5880bdaad18beada4ce5585adc" }
+source = { editable = "toolchain" }
 
 [[package]]
 name = "typing-extensions"

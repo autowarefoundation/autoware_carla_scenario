@@ -1,0 +1,6 @@
+This package redistributes Codon (https://github.com/exaloop/codon), which is
+licensed under the Apache License, Version 2.0. The full license text is
+included in the wheel at typesafe_carla_toolchain/codon/LICENSE, and the LLVM
+license at typesafe_carla_toolchain/codon/LICENSE.LLVM.
+
+The packaging code in this directory is part of typesafe_carla.

@@ -60,12 +60,19 @@ how it is constructed.
 
 ### Installing Codon
 
-Codon comes from the `typesafe-carla-toolchain` package, the toolchain
-typesafe_carla compiles its programs with (Codon 0.19, Linux x86_64). The dev
-group includes it, so `uv sync --dev` is enough in this repository; elsewhere
-install the `codon` extra (`autoware-carla-scenario[codon]`). The checker also
-uses `$AUTOWARE_CARLA_SCENARIO_CODON`, a `codon` on `PATH`, or
-`~/.codon/bin/codon`, in that order after the toolchain package.
+Codon is installed exactly as typesafe_carla installs it: the
+`typesafe-carla-toolchain` package, typesafe_carla's pinned Codon (0.19,
+Linux x86_64), is the `toolchain/` uv workspace member of this repository,
+copied unchanged from typesafe_carla. Building it downloads the pinned Codon
+release (checked against its SHA-256) and repackages it, so `uv sync --dev`
+installs Codon with no further step; elsewhere install the `codon` extra
+(`autoware-carla-scenario[codon]`).
+
+The checker finds Codon the way typesafe_carla's `typesafe-codon` launcher
+does, so one setup serves both: `$TYPESAFE_CODON` (a `codon` executable), the
+`typesafe-carla-toolchain` package, `$CODON_DIR/bin/codon`,
+`~/.codon/bin/codon`, then `codon` on `PATH`. It runs it with the launcher's
+environment (`CODON_DIR`, and `LD_LIBRARY_PATH` for the bundled runtime).
 
 ## What is checked
 

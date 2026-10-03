@@ -19,11 +19,13 @@ import yaml
 from autoware_carla_scenario.typecheck import (
     ScenarioTypeError,
     TypeCheckResult,
-    find_codon,
+    available_toolchain,
     typecheck_scenario,
 )
 
-pytestmark = pytest.mark.skipif(find_codon() is None, reason="no Codon compiler")
+pytestmark = pytest.mark.skipif(
+    available_toolchain() is None, reason="no Codon compiler"
+)
 
 _REPO = Path(__file__).resolve().parents[3]
 _TEMPLATE_SRC = _REPO / "examples" / "scenario_package_template" / "src"

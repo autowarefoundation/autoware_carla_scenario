@@ -46,12 +46,11 @@ dependencies = [
 [project.optional-dependencies]
 carla = ["carla==0.10.0"]
 carla-0-9-16 = ["carla==0.9.16"]
-# The Codon compiler the static check runs (autoware_carla_scenario.typecheck),
-# as typesafe_carla bundles it. Codon ships for Linux x86_64 only; elsewhere the
-# runner skips the check with a warning (`typecheck: auto`).
-codon = [
-    "typesafe-carla-toolchain>=0.19.3,<0.20 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
-]
+# The Codon compiler the static check runs (autoware_carla_scenario.typecheck):
+# typesafe_carla's toolchain package, the workspace member `toolchain/` (see the
+# root pyproject.toml). Codon ships for Linux x86_64 only; without this extra
+# the runner skips the check with a warning (`typecheck: auto`).
+codon = ["typesafe-carla-toolchain>=0.19.3,<0.20"]
 
 [tool.uv]
 conflicts = [
