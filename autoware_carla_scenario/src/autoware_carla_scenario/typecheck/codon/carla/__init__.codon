@@ -1,0 +1,296 @@
+# The CARLA client API, as much of it as scenario code reaches, for the static
+# check (docs/typecheck.md). Nothing here runs: the checker only compiles.
+#
+# Every name and signature is the one of typesafe_carla
+# (https://github.com/hakuturu583/typesafe_carla), the statically typed CARLA
+# client this framework is moving to, so that this module can later be replaced
+# by `from typesafe_carla import *` without changing what a scenario may write.
+# Keep it a subset: add a name only as typesafe_carla declares it.
+
+class Vector3D:
+    x: float
+    y: float
+    z: float
+
+    def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0):
+        self.x = x
+        self.y = y
+        self.z = z
+
+    def length(self) -> float:
+        raise NotImplementedError()
+
+    def squared_length(self) -> float:
+        raise NotImplementedError()
+
+    def distance(self, vector) -> float:
+        raise NotImplementedError()
+
+    def __add__(self, other: Vector3D) -> Vector3D:
+        raise NotImplementedError()
+
+    def __sub__(self, other: Vector3D) -> Vector3D:
+        raise NotImplementedError()
+
+    def __mul__(self, k: float) -> Vector3D:
+        raise NotImplementedError()
+
+
+class Location(Vector3D):
+    def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0):
+        super().__init__(x, y, z)
+
+
+class Rotation:
+    pitch: float
+    yaw: float
+    roll: float
+
+    def __init__(self, pitch: float = 0.0, yaw: float = 0.0, roll: float = 0.0):
+        self.pitch = pitch
+        self.yaw = yaw
+        self.roll = roll
+
+    def get_forward_vector(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def get_right_vector(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def get_up_vector(self) -> Vector3D:
+        raise NotImplementedError()
+
+
+class Transform:
+    location: Location
+    rotation: Rotation
+
+    def __init__(self, location: Optional[Location] = None, rotation: Optional[Rotation] = None):
+        self.location = location if location is not None else Location()
+        self.rotation = rotation if rotation is not None else Rotation()
+
+    def get_forward_vector(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def get_right_vector(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def get_up_vector(self) -> Vector3D:
+        raise NotImplementedError()
+
+
+class BoundingBox:
+    location: Location
+    extent: Vector3D
+    rotation: Rotation
+
+    def __init__(self):
+        self.location = Location()
+        self.extent = Vector3D()
+        self.rotation = Rotation()
+
+
+# An integer enumeration, as typesafe_carla's (control.codon): the members are
+# ints, read as `carla.TrafficLightState.Green`.
+class _TrafficLightState:
+    Red: int = 0
+    Yellow: int = 1
+    Green: int = 2
+    Off: int = 3
+    Unknown: int = 4
+
+
+TrafficLightState = _TrafficLightState()
+
+
+class Actor:
+    def __init__(self):
+        pass
+
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def type_id(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def is_alive(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> Dict[str, str]:
+        raise NotImplementedError()
+
+    @property
+    def bounding_box(self) -> BoundingBox:
+        raise NotImplementedError()
+
+    def get_transform(self) -> Transform:
+        raise NotImplementedError()
+
+    def set_transform(self, transform: Transform):
+        raise NotImplementedError()
+
+    def get_location(self) -> Location:
+        raise NotImplementedError()
+
+    def get_velocity(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def set_target_velocity(self, velocity: Vector3D):
+        raise NotImplementedError()
+
+    def get_acceleration(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def get_angular_velocity(self) -> Vector3D:
+        raise NotImplementedError()
+
+    def destroy(self) -> bool:
+        raise NotImplementedError()
+
+
+class TrafficLight(Actor):
+    def __init__(self):
+        super().__init__()
+
+    @property
+    def state(self) -> int:
+        raise NotImplementedError()
+
+    def get_state(self) -> int:
+        raise NotImplementedError()
+
+    def set_state(self, state: int):
+        raise NotImplementedError()
+
+    def get_opendrive_id(self) -> str:
+        raise NotImplementedError()
+
+    def freeze(self, freeze: bool):
+        raise NotImplementedError()
+
+
+class ActorList:
+    def __init__(self):
+        pass
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def __getitem__(self, index: int) -> Actor:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[Actor]:
+        raise NotImplementedError()
+
+    def find(self, id: int) -> Optional[Actor]:
+        raise NotImplementedError()
+
+    def filter(self, wildcard_pattern: str) -> ActorList:
+        raise NotImplementedError()
+
+
+class Waypoint:
+    def __init__(self):
+        pass
+
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def transform(self) -> Transform:
+        raise NotImplementedError()
+
+    @property
+    def road_id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def section_id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def lane_id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def s(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def is_junction(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def lane_width(self) -> float:
+        raise NotImplementedError()
+
+    def next(self, distance: float) -> List[Waypoint]:
+        raise NotImplementedError()
+
+    def previous(self, distance: float) -> List[Waypoint]:
+        raise NotImplementedError()
+
+    def get_left_lane(self) -> Optional[Waypoint]:
+        raise NotImplementedError()
+
+    def get_right_lane(self) -> Optional[Waypoint]:
+        raise NotImplementedError()
+
+
+class Map:
+    def __init__(self):
+        pass
+
+    @property
+    def name(self) -> str:
+        raise NotImplementedError()
+
+    def get_spawn_points(self) -> List[Transform]:
+        raise NotImplementedError()
+
+    def get_waypoint(self, location: Location, project_to_road: bool = True,
+                     lane_type: int = 2) -> Optional[Waypoint]:
+        raise NotImplementedError()
+
+    def get_waypoint_xodr(self, road_id: int, lane_id: int, s: float) -> Optional[Waypoint]:
+        raise NotImplementedError()
+
+
+class World:
+    def __init__(self):
+        pass
+
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    def get_actors(self) -> ActorList:
+        raise NotImplementedError()
+
+    def get_actor(self, actor_id: int) -> Optional[Actor]:
+        raise NotImplementedError()
+
+    def get_map(self) -> Map:
+        raise NotImplementedError()
+
+    def get_spectator(self) -> Actor:
+        raise NotImplementedError()
+
+    def tick(self, seconds: float = 10.0) -> int:
+        raise NotImplementedError()
+
+
+class Client:
+    def __init__(self, host: str = "127.0.0.1", port: int = 2000, worker_threads: int = 0):
+        pass
+
+    def set_timeout(self, seconds: float):
+        raise NotImplementedError()
+
+    def get_world(self) -> World:
+        raise NotImplementedError()

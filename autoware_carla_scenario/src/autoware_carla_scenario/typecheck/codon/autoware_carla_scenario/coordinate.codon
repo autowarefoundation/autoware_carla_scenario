@@ -1,0 +1,226 @@
+# Model of autoware_carla_scenario.coordinate (docs/typecheck.md).
+#
+# AnyPose (Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose]) is not a type
+# here: a function taking it is overloaded per pose type, as the Python
+# functions are with typing.overload, or generic and checked by _expect_pose.
+
+import carla
+
+from ._tc import _keyword_only
+
+
+@tuple
+class CoordinateFrame:
+    value: int
+    CARLA_WORLD: ClassVar[CoordinateFrame] = CoordinateFrame(1)
+    LANELET2: ClassVar[CoordinateFrame] = CoordinateFrame(2)
+    OPENDRIVE: ClassVar[CoordinateFrame] = CoordinateFrame(3)
+
+
+class FrameMismatchError(Static[Exception]):
+    frame_a: CoordinateFrame
+    frame_b: CoordinateFrame
+
+    def __init__(self, frame_a: CoordinateFrame, frame_b: CoordinateFrame, operation: str):
+        super().__init__("FrameMismatchError", operation)
+        self.frame_a = frame_a
+        self.frame_b = frame_b
+
+
+class Lanelet2Pose:
+    lanelet_id: int
+    s: float
+    t: float
+    heading: float
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2
+
+    def __init__(self, lanelet_id: int, s: float, t: float = 0.0, heading: float = 0.0):
+        self.lanelet_id = lanelet_id
+        self.s = s
+        self.t = t
+        self.heading = heading
+
+
+class OpenDrivePose:
+    road_id: str
+    lane_id: int
+    s: float
+    t: float
+    heading: float
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.OPENDRIVE
+
+    def __init__(self, road_id: str, lane_id: int, s: float, t: float = 0.0, heading: float = 0.0):
+        self.road_id = road_id
+        self.lane_id = lane_id
+        self.s = s
+        self.t = t
+        self.heading = heading
+
+
+class CarlaWorldPose:
+    x: float
+    y: float
+    z: float
+    roll: float
+    pitch: float
+    yaw: float
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.CARLA_WORLD
+
+    def __init__(self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0,
+                 yaw: float = 0.0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.roll = roll
+        self.pitch = pitch
+        self.yaw = yaw
+
+    def to_carla_transform(self) -> carla.Transform:
+        raise NotImplementedError()
+
+    @staticmethod
+    def from_carla_transform(t: carla.Transform) -> CarlaWorldPose:
+        raise NotImplementedError()
+
+
+def _expect_pose(pose):
+    """An AnyPose argument."""
+    if isinstance(pose, Lanelet2Pose):
+        pass
+    elif isinstance(pose, OpenDrivePose):
+        pass
+    elif isinstance(pose, CarlaWorldPose):
+        pass
+    else:
+        compile_error("expected a pose: a Lanelet2Pose, an OpenDrivePose or a CarlaWorldPose")
+
+
+def _expect_pose_list(poses) -> int:
+    """A Sequence[AnyPose] argument: a list or a tuple of poses."""
+    n = 0
+    for pose in poses:
+        _expect_pose(pose)
+        n += 1
+    return n
+
+
+def _expect_optional_pose(pose):
+    """An Optional[AnyPose] argument."""
+    if isinstance(pose, None):
+        pass
+    elif isinstance(pose, Optional[NoneType]):
+        pass
+    elif isinstance(pose, Optional):
+        _expect_pose(unwrap(pose))
+    else:
+        _expect_pose(pose)
+
+
+def _expect_pose_or_location(pose):
+    """A Union[AnyPose, carla.Location] argument."""
+    if isinstance(pose, carla.Location):
+        pass
+    else:
+        _expect_pose(pose)
+
+
+class GroundProjectionConfig:
+    ray_distance_upper: float
+    ray_distance_lower: float
+    z_log_threshold: float
+
+    def __init__(self, ray_distance_upper: float = 5.0, ray_distance_lower: float = 5.0,
+                 z_log_threshold: float = 0.01):
+        self.ray_distance_upper = ray_distance_upper
+        self.ray_distance_lower = ray_distance_lower
+        self.z_log_threshold = z_log_threshold
+
+
+def _expect_optional_ground_projection(gp) -> Optional[GroundProjectionConfig]:
+    if isinstance(gp, None):
+        return None
+    elif isinstance(gp, Optional[NoneType]):
+        return None
+    elif isinstance(gp, Optional):
+        return gp
+    elif isinstance(gp, GroundProjectionConfig):
+        return gp
+    else:
+        compile_error("expected a GroundProjectionConfig or None")
+
+
+def frame_of(pose) -> CoordinateFrame:
+    _expect_pose(pose)
+    raise NotImplementedError()
+
+
+def to_carla_world(pose: Lanelet2Pose) -> CarlaWorldPose:
+    raise NotImplementedError()
+
+
+def to_carla_world(pose: OpenDrivePose) -> CarlaWorldPose:
+    raise NotImplementedError()
+
+
+def to_opendrive(pose) -> OpenDrivePose:
+    _expect_pose(pose)
+    raise NotImplementedError()
+
+
+def to_lanelet2(pose: OpenDrivePose) -> Lanelet2Pose:
+    raise NotImplementedError()
+
+
+def to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
+    raise NotImplementedError()
+
+
+def to_carla_location(pose) -> carla.Location:
+    _expect_pose_or_location(pose)
+    raise NotImplementedError()
+
+
+def snap_to_carla_road(pose, world: carla.World, *_kw,
+                       ground_projection: GroundProjectionConfig = GroundProjectionConfig()
+                       ) -> CarlaWorldPose:
+    _keyword_only(_kw, "snap_to_carla_road(): ground_projection")
+    _expect_pose(pose)
+    raise NotImplementedError()
+
+
+def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
+    raise NotImplementedError()
+
+
+def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
+    raise NotImplementedError()
+
+
+def on_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> bool:
+    raise NotImplementedError()
+
+
+def lanelet_length(lanelet_id: int) -> float:
+    raise NotImplementedError()
+
+
+def get_stop_line_poses(lanelet_id: int) -> List[Lanelet2Pose]:
+    raise NotImplementedError()
+
+
+def get_stop_line_poses_with_following(lanelet_id: int) -> List[Lanelet2Pose]:
+    raise NotImplementedError()
+
+
+def find_nearest_traffic_light(world: carla.World, location, max_distance: float = 150.0
+                               ) -> Tuple[Optional[carla.TrafficLight], float]:
+    _expect_pose_or_location(location)
+    raise NotImplementedError()
+
+
+def lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id: int) -> Optional[int]:
+    raise NotImplementedError()
+
+
+def get_signal_ids_for_controller(controller_id: int) -> List[str]:
+    raise NotImplementedError()

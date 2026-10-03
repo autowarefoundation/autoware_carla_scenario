@@ -48,6 +48,12 @@ not install:
 uv run scenario scenario=intersection_passing/straight map=nishishinjuku
 ```
 
+Before it runs, every scenario is compiled with [Codon](https://github.com/exaloop/codon)
+against a typed model of the framework, and one that does not type-check is
+refused before CARLA starts. `uv run scenario-check` makes the same check without
+running anything; see
+[`docs/typecheck.md`](autoware_carla_scenario/docs/typecheck.md).
+
 See [`autoware_carla_scenario/README.md`](autoware_carla_scenario/README.md) and
 the documentation under [`autoware_carla_scenario/docs/`](autoware_carla_scenario/docs/)
 for the full guide.

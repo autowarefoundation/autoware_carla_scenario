@@ -6,6 +6,11 @@ members = [
     "autoware_carla_scenario",
 ]
 
+[tool.uv.sources]
+# Not on an index yet: the toolchain package of typesafe_carla, built from its
+# repository (the build downloads the pinned Codon release and repackages it).
+typesafe-carla-toolchain = { git = "https://github.com/hakuturu583/typesafe_carla", subdirectory = "toolchain", rev = "a5463c0cc79cad5880bdaad18beada4ce5585adc" }
+
 [dependency-groups]
 dev = [
     "black>=25.11.0",
@@ -27,6 +32,8 @@ dev = [
     "pytest>=9.0.3",
     "pytest-testmon>=2.2.0",
     "pytest-xdist>=3.8.0",
+    # Codon, for the static check of scenarios and its tests (the `codon` extra).
+    "typesafe-carla-toolchain>=0.19.3,<0.20 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",

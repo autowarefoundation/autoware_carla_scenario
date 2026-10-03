@@ -1,0 +1,199 @@
+# Model of autoware_carla_scenario.actions (docs/typecheck.md).
+
+import carla
+
+from ._tc import _keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool
+from .conditions import BaseCondition, _expect_optional_condition
+from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
+                         _expect_optional_ground_projection)
+from .entity_role import EntityRole, _expect_role
+from .traffic import TurnDirection, LaneChangeDirection
+
+
+@tuple
+class TickTiming:
+    value: str
+    PRE_TICK: ClassVar[TickTiming] = TickTiming("pre_tick")
+    POST_TICK: ClassVar[TickTiming] = TickTiming("post_tick")
+
+
+@tuple
+class ActionState:
+    value: str
+    STANDBY: ClassVar[ActionState] = ActionState("standbyState")
+    START_TRANSITION: ClassVar[ActionState] = ActionState("startTransition")
+    RUNNING: ClassVar[ActionState] = ActionState("runningState")
+    END_TRANSITION: ClassVar[ActionState] = ActionState("endTransition")
+    COMPLETE: ClassVar[ActionState] = ActionState("completeState")
+
+
+@tuple
+class TrafficLightTarget:
+    value: str
+    ALL: ClassVar[TrafficLightTarget] = TrafficLightTarget("all")
+
+
+class BaseAction:
+    label: str
+    REISSUES_BY_DEFAULT: ClassVar[bool] = False
+
+    def __init__(self, label: str, condition = None,
+                 timing: TickTiming = TickTiming("post_tick"), *_kw, once: bool = True,
+                 until = None, reissue = None):
+        _keyword_only(_kw, "BaseAction(): once, until and reissue")
+        _expect_optional_condition(condition)
+        _expect_optional_condition(until)
+        _expect_optional_bool(reissue)
+        self.label = label
+
+    def _acs_action(self) -> int:
+        """Marks an action for _acs_list (lists.codon)."""
+        return 0
+
+    @property
+    def timing(self) -> TickTiming:
+        raise NotImplementedError()
+
+    @property
+    def done(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def state(self) -> ActionState:
+        raise NotImplementedError()
+
+    @property
+    def reissues_while_running(self) -> bool:
+        raise NotImplementedError()
+
+    def execute(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def tick(self, world: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+
+def _expect_action(action: BaseAction) -> BaseAction:
+    # Checked once here, so an action subclass reaches execute() typed.
+    action.execute(carla.World())
+    return action
+
+
+def _expect_traffic_light_ids(ids):
+    """A Union[Sequence[int], TrafficLightTarget, None] argument."""
+    if isinstance(ids, None):
+        pass
+    elif isinstance(ids, Optional[NoneType]):
+        pass
+    elif isinstance(ids, TrafficLightTarget):
+        pass
+    else:
+        for i in ids:
+            if not isinstance(i, int):
+                compile_error("expected lanelet2 traffic light ids (ints), TrafficLightTarget.ALL or None")
+
+
+def _expect_lanelet2_poses(poses) -> List[Lanelet2Pose]:
+    """A Sequence[Lanelet2Pose] argument."""
+    out = List[Lanelet2Pose]()
+    for pose in poses:
+        out.append(pose)
+    return out
+
+
+class EnvironmentAction(BaseAction):
+    def __init__(self, cloudiness = None, precipitation = None, precipitation_deposits = None,
+                 wetness = None, wind_intensity = None, fog_density = None, fog_distance = None,
+                 sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "environment",
+                 once: bool = True):
+        _keyword_only(_kw, "EnvironmentAction(): label and once")
+        _expect_optional_float(cloudiness)
+        _expect_optional_float(precipitation)
+        _expect_optional_float(precipitation_deposits)
+        _expect_optional_float(wetness)
+        _expect_optional_float(wind_intensity)
+        _expect_optional_float(fog_density)
+        _expect_optional_float(fog_distance)
+        _expect_optional_float(sun_altitude_angle)
+        _expect_optional_float(sun_azimuth_angle)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def settings(self) -> Dict[str, float]:
+        raise NotImplementedError()
+
+
+class LaneChangeAction(BaseAction):
+    def __init__(self, entity_name, direction: LaneChangeDirection, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change",
+                 once: bool = True, until = None):
+        _keyword_only(_kw, "LaneChangeAction(): label, once and until")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once, until=until)
+
+
+class RoutingAction(BaseAction):
+    def __init__(self, entity_name, goal: Lanelet2Pose, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
+                 once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
+                 ground_projection = None, waypoints = ()):
+        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection and waypoints")
+        _expect_role(entity_name)
+        _expect_optional_ground_projection(ground_projection)
+        _expect_lanelet2_poses(waypoints)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def goal(self) -> Lanelet2Pose:
+        raise NotImplementedError()
+
+    @property
+    def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+
+class SetSpeedAction(BaseAction):
+    def __init__(self, entity_name, target_speed_kmh: float, rate_kmh_s = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "set_speed",
+                 once: bool = True, until = None, reissue = None):
+        _keyword_only(_kw, "SetSpeedAction(): label, once, until and reissue")
+        _expect_role(entity_name)
+        _expect_optional_float(rate_kmh_s)
+        super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
+
+
+class TrafficSignalAction(BaseAction):
+    def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "traffic_signal", once: bool = True, freeze: bool = True):
+        _keyword_only(_kw, "TrafficSignalAction(): label, once and freeze")
+        _expect_traffic_light_ids(lanelet2_traffic_light_ids)
+        super().__init__(label, condition, timing, once=once)
+
+
+class TrafficSignalControllerAction(BaseAction):
+    def __init__(self, controller: str, phase: str, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "traffic_signal_controller", once: bool = True):
+        _keyword_only(_kw, "TrafficSignalControllerAction(): label and once")
+        super().__init__(label, condition, timing, once=once)
+
+
+class TurnAction(BaseAction):
+    def __init__(self, entity_name, direction: TurnDirection, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "turn_signal",
+                 once: bool = True, search_distance: float = 200.0, waypoint_step: float = 2.0,
+                 post_junction_distance: float = 20.0):
+        _keyword_only(_kw, "TurnAction(): label, once, search_distance, waypoint_step and post_junction_distance")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+
+class WalkStraightAction(BaseAction):
+    def __init__(self, entity_name, speed_ms: float = 1.4, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "walk_straight",
+                 once: bool = True):
+        _keyword_only(_kw, "WalkStraightAction(): label and once")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)

@@ -1,0 +1,41 @@
+# Codon model of autoware_carla_scenario's public API (docs/typecheck.md).
+#
+# The scenario checker compiles a scenario against these modules instead of
+# the Python package: every class and function a scenario can import from
+# `autoware_carla_scenario` is declared here with its static types, and nothing
+# here runs. test_typecheck_model.py keeps each declaration in step with the
+# Python one it models.
+
+from .actions import (BaseAction, EnvironmentAction, LaneChangeAction, RoutingAction,
+                      SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
+                      TrafficSignalControllerAction, TurnAction, WalkStraightAction)
+from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,
+                         AndCondition, BaseCondition, CollisionCondition, CollisionTargetType,
+                         ComparisonRule, DistanceCoordinateSystem, ElapsedTimeCondition,
+                         EntityDistanceCondition, EntityExistenceCondition,
+                         EntityLanePositionCondition, EntityPositionDistanceCondition,
+                         NotCondition, OrCondition, PersistentCondition, RelativeDistanceType,
+                         RelativeSpeedCondition, ScalarComparisonRule, ScenarioResult,
+                         SpeedCondition, SpeedCoordinateSystem, SpeedDirection,
+                         StandstillCondition, StickyCondition, TemporaryStopCondition,
+                         TimeHeadwayCondition, TimeToCollisionCondition, TimeoutCondition,
+                         TrafficSignalCondition, TrafficSignalControllerCondition,
+                         WaypointCheckType, WaypointCondition, find_actor_by_role_name)
+from .constants import EGO_ROLE_NAME
+from .coordinate import (CarlaWorldPose, CoordinateFrame, FrameMismatchError,
+                         GroundProjectionConfig, Lanelet2Pose, OpenDrivePose,
+                         find_nearest_traffic_light, frame_of, get_stop_line_poses,
+                         get_stop_line_poses_with_following,
+                         lanelet2_traffic_light_id_to_opendrive_controller_id,
+                         snap_to_carla_road, to_carla_location, to_carla_world, to_lanelet2,
+                         to_opendrive)
+from .entity import (EgoVehicle, PedestrianEntity, PedestrianEntityConfig, SpawnLocation,
+                     SpawnPointIndex, SpawnTransform, VehicleEntity, VehicleEntityConfig)
+from .entity_role import EntityRole
+from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
+                         FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
+from .scenario_base import BaseScenario, EgoConfig
+from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
+                              EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
+                              ServerConfig, SweepConfig)
+from .traffic import LaneChangeDirection, TurnDirection

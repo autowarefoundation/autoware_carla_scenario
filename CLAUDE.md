@@ -232,6 +232,20 @@ If pre-commit hooks fail:
   against `carla_wheels/`. CI runs the suite on 3.10, 3.11 and 3.12 against
   both clients
 
+## Static Check (Codon)
+
+Scenarios are compiled with Codon before they run
+(`autoware_carla_scenario/typecheck/`, `docs/typecheck.md`). Codon compiles
+against the typed model in `typecheck/codon/`, not the Python package, so:
+
+- A change to the public API (a parameter added, renamed or made keyword-only,
+  a method, an enum member) needs the same change in the model;
+  `test_typecheck_model.py` fails until it has it.
+- `typecheck/codon/carla` follows typesafe_carla's names and signatures; add to
+  it only what typesafe_carla declares.
+- A scenario class declares the attributes it assigns on `self` at class level
+  (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
+
 ## Development Guidelines
 
 1. Type hints should be used throughout the codebase (package includes py.typed marker)

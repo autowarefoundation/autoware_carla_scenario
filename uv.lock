@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
@@ -41,6 +41,7 @@ dev = [
     { name = "pytest-testmon", specifier = ">=2.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260815" },
+    { name = "typesafe-carla-toolchain", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", git = "https://github.com/hakuturu583/typesafe_carla?subdirectory=toolchain&rev=a5463c0cc79cad5880bdaad18beada4ce5585adc" },
     { name = "weasyprint", specifier = ">=68.0" },
 ]
 
@@ -158,6 +159,9 @@ carla = [
 carla-0-9-16 = [
     { name = "carla", version = "0.9.16", source = { registry = "https://pypi.org/simple" } },
 ]
+codon = [
+    { name = "typesafe-carla-toolchain", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16') or (sys_platform != 'linux' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16')" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -180,9 +184,10 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "simple-lanelet2", specifier = ">=1.1.2" },
     { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "typesafe-carla-toolchain", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'codon'", git = "https://github.com/hakuturu583/typesafe_carla?subdirectory=toolchain&rev=a5463c0cc79cad5880bdaad18beada4ce5585adc" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["carla", "carla-0-9-16"]
+provides-extras = ["carla", "carla-0-9-16", "codon"]
 
 [[package]]
 name = "babel"
@@ -2525,6 +2530,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/90/6e/abec85b9013db5b93
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/c0/fc0644b7ddcfb969e95845837143cb5173ddd6e06ee4ba5fc493cd9329b7/types_pyyaml-6.0.12.20260906-py3-none-any.whl", hash = "sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b", size = 21282, upload-time = "2026-09-06T06:35:34.372Z" },
 ]
+
+[[package]]
+name = "typesafe-carla-toolchain"
+version = "0.19.3"
+source = { git = "https://github.com/hakuturu583/typesafe_carla?subdirectory=toolchain&rev=a5463c0cc79cad5880bdaad18beada4ce5585adc#a5463c0cc79cad5880bdaad18beada4ce5585adc" }
 
 [[package]]
 name = "typing-extensions"

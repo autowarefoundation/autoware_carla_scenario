@@ -1,0 +1,156 @@
+# Model of autoware_carla_scenario.scenario_base (docs/typecheck.md).
+#
+# Only the attributes a scenario subclass is meant to touch are declared: a
+# subclass that reads or writes another one of BaseScenario's attributes fails
+# the check, as it would break when the base class changes.
+
+import carla
+
+from ._tc import _keyword_only, _expect_int_sequence
+from .actions import BaseAction, _expect_action
+from .conditions import BaseCondition, _expect_condition
+from .constants import DEFAULT_TM_PORT
+from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
+                         _expect_optional_ground_projection)
+from .entity import (EgoConfig, EgoVehicle, VehicleEntity, PedestrianEntity,
+                     _expect_optional_ego_vehicle, _expect_optional_lanelet2_poses)
+
+
+def _expect_action_or_callback(cb):
+    """A Union[BaseAction, Callable[[carla.World], None]] argument."""
+    if hasattr(cb, "_acs_action"):
+        _expect_action(cb)
+    else:
+        cb(carla.World())
+
+
+def _expect_actor_getter(actor_getter):
+    """A Callable[[], Optional[carla.Actor]] argument."""
+    actor: Optional[carla.Actor] = actor_getter()
+
+
+class BaseScenario:
+    ego_config: EgoConfig
+    ego_entity: Optional[EgoVehicle]
+    random_seed: int
+    _spawn_pose: Optional[Lanelet2Pose]
+    _ground_projection: GroundProjectionConfig
+    DEFAULT_RANDOM_SEED: ClassVar[int] = 0
+    STABILIZE_TICKS: ClassVar[int] = 5
+
+    def __init__(self, ego_config: EgoConfig, *_kw, spawn_pose: Optional[Lanelet2Pose] = None,
+                 ground_projection = None, random_seed: int = 0, ego_type = None,
+                 ego_entity = None):
+        _keyword_only(_kw, "BaseScenario(): every argument but ego_config")
+        self.ego_config = ego_config
+        self.ego_entity = _expect_optional_ego_vehicle(ego_entity)
+        self.random_seed = random_seed
+        self._spawn_pose = spawn_pose
+        gp = _expect_optional_ground_projection(ground_projection)
+        self._ground_projection = gp if gp is not None else GroundProjectionConfig()
+
+    @property
+    def goal_pose(self) -> Optional[Lanelet2Pose]:
+        raise NotImplementedError()
+
+    @goal_pose.setter
+    def goal_pose(self, pose: Optional[Lanelet2Pose]):
+        raise NotImplementedError()
+
+    @property
+    def waypoint_poses(self) -> List[Lanelet2Pose]:
+        raise NotImplementedError()
+
+    @waypoint_poses.setter
+    def waypoint_poses(self, poses):
+        _expect_optional_lanelet2_poses(poses)
+        raise NotImplementedError()
+
+    def create_ego(self) -> EgoVehicle:
+        raise NotImplementedError()
+
+    def set_client(self, client: carla.Client, tm_port: int = 8100) -> None:
+        raise NotImplementedError()
+
+    @property
+    def client(self) -> carla.Client:
+        raise NotImplementedError()
+
+    @property
+    def tm_port(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def world(self) -> carla.World:
+        raise NotImplementedError()
+
+    def _setup_ego_spawn(self) -> OpenDrivePose:
+        raise NotImplementedError()
+
+    @property
+    def ego_requires_goal(self) -> bool:
+        raise NotImplementedError()
+
+    def require_goal(self) -> Optional[Lanelet2Pose]:
+        raise NotImplementedError()
+
+    def derive_goal_from_route(self, route_lanelet_ids) -> None:
+        _expect_int_sequence(route_lanelet_ids)
+        raise NotImplementedError()
+
+    def derive_waypoints_from_route(self, route_lanelet_ids) -> None:
+        _expect_int_sequence(route_lanelet_ids)
+        raise NotImplementedError()
+
+    def register_route_to_goal(self, initial_pose: Optional[CarlaWorldPose] = None) -> None:
+        raise NotImplementedError()
+
+    def setup(self) -> None:
+        raise NotImplementedError()
+
+    def is_done(self) -> bool:
+        raise NotImplementedError()
+
+    def register_init(self, cb) -> None:
+        _expect_action_or_callback(cb)
+        raise NotImplementedError()
+
+    def run_init(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def register_pre_tick(self, cb) -> None:
+        _expect_action_or_callback(cb)
+        raise NotImplementedError()
+
+    def register_post_tick(self, cb) -> None:
+        _expect_action_or_callback(cb)
+        raise NotImplementedError()
+
+    def register_entity(self, entity: VehicleEntity) -> None:
+        raise NotImplementedError()
+
+    def register_pedestrian(self, entity: PedestrianEntity) -> None:
+        raise NotImplementedError()
+
+    def register_pass_condition(self, condition: BaseCondition) -> None:
+        _expect_condition(condition)
+        raise NotImplementedError()
+
+    def register_fail_condition(self, condition: BaseCondition) -> None:
+        _expect_condition(condition)
+        raise NotImplementedError()
+
+    def follow_with_spectator(self, actor_getter, *_kw, offset_back: float = 8.0,
+                              offset_up: float = 5.0, pitch: float = -15.0) -> None:
+        _keyword_only(_kw, "BaseScenario.follow_with_spectator(): offset_back, offset_up and pitch")
+        _expect_actor_getter(actor_getter)
+        raise NotImplementedError()
+
+    def log_actor_position(self, actor_getter, *_kw, label: str = "actor",
+                           interval_ticks: int = 20) -> None:
+        _keyword_only(_kw, "BaseScenario.log_actor_position(): label and interval_ticks")
+        _expect_actor_getter(actor_getter)
+        raise NotImplementedError()
+
+    def set_initial_speed(self, ego_actor: carla.Actor) -> None:
+        raise NotImplementedError()

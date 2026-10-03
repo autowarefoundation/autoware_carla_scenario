@@ -1,0 +1,388 @@
+# Model of autoware_carla_scenario.conditions (docs/typecheck.md).
+#
+# Every condition derives from BaseCondition directly: the Python
+# CompositionCondition layer in between is left out (Codon miscompiles class
+# hierarchies two levels deep, and nothing a scenario writes names it).
+
+import carla
+
+from ._tc import _keyword_only, _expect_float, _Required, _required_str
+from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
+                         _expect_optional_pose, _expect_pose_list)
+from .entity_role import EntityRole, _expect_role, _expect_optional_role
+
+
+@tuple
+class ComparisonRule:
+    value: int
+    GREATER_THAN: ClassVar[ComparisonRule] = ComparisonRule(1)
+    LESS_THAN: ClassVar[ComparisonRule] = ComparisonRule(2)
+    EQUAL_TO: ClassVar[ComparisonRule] = ComparisonRule(3)
+    GREATER_THAN_OR_EQUAL: ClassVar[ComparisonRule] = ComparisonRule(4)
+    LESS_THAN_OR_EQUAL: ClassVar[ComparisonRule] = ComparisonRule(5)
+
+
+@tuple
+class AccelerationDirection:
+    value: int
+    LONGITUDINAL: ClassVar[AccelerationDirection] = AccelerationDirection(1)
+    LATERAL: ClassVar[AccelerationDirection] = AccelerationDirection(2)
+    MAGNITUDE: ClassVar[AccelerationDirection] = AccelerationDirection(3)
+
+
+@tuple
+class SpeedDirection:
+    value: int
+    LONGITUDINAL: ClassVar[SpeedDirection] = SpeedDirection(1)
+    LATERAL: ClassVar[SpeedDirection] = SpeedDirection(2)
+    MAGNITUDE: ClassVar[SpeedDirection] = SpeedDirection(3)
+
+
+@tuple
+class SpeedCoordinateSystem:
+    value: int
+    WORLD: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(1)
+    ENTITY: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(2)
+
+
+@tuple
+class DistanceCoordinateSystem:
+    value: int
+    ENTITY: ClassVar[DistanceCoordinateSystem] = DistanceCoordinateSystem(1)
+    LANE: ClassVar[DistanceCoordinateSystem] = DistanceCoordinateSystem(2)
+
+
+@tuple
+class RelativeDistanceType:
+    value: str
+    EUCLIDEAN: ClassVar[RelativeDistanceType] = RelativeDistanceType("euclidean")
+    LONGITUDINAL: ClassVar[RelativeDistanceType] = RelativeDistanceType("longitudinal")
+    LATERAL: ClassVar[RelativeDistanceType] = RelativeDistanceType("lateral")
+
+
+@tuple
+class CollisionTargetType:
+    value: str
+    ANY: ClassVar[CollisionTargetType] = CollisionTargetType("")
+    VEHICLE: ClassVar[CollisionTargetType] = CollisionTargetType("vehicle.")
+    PEDESTRIAN: ClassVar[CollisionTargetType] = CollisionTargetType("walker.")
+    STATIC: ClassVar[CollisionTargetType] = CollisionTargetType("static.")
+
+
+@tuple
+class WaypointCheckType:
+    value: int
+    IS_EMPTY: ClassVar[WaypointCheckType] = WaypointCheckType(1)
+
+
+class ScalarComparisonRule:
+    field: str
+    rule: ComparisonRule
+    value: float
+    tolerance: float
+
+    def __init__(self, field: str, rule: ComparisonRule, value: float, tolerance: float = 1e-06):
+        self.field = field
+        self.rule = rule
+        self.value = value
+        self.tolerance = tolerance
+
+    def satisfied(self, actual: float) -> bool:
+        raise NotImplementedError()
+
+
+class ConditionStatus:
+    label: str
+    satisfied: bool
+    message: str
+    condition_type: str
+    role: str
+
+    def __init__(self, label: str, satisfied: bool, message: str, condition_type: str = "",
+                 role: str = ""):
+        self.label = label
+        self.satisfied = satisfied
+        self.message = message
+        self.condition_type = condition_type
+        self.role = role
+
+
+class ScenarioResult:
+    passed: bool
+    message: str
+    elapsed_seconds: float
+    condition_statuses: List[ConditionStatus]
+
+    def __init__(self, passed: bool, message: str, elapsed_seconds: float,
+                 condition_statuses: List[ConditionStatus] = List[ConditionStatus]()):
+        self.passed = passed
+        self.message = message
+        self.elapsed_seconds = elapsed_seconds
+        self.condition_statuses = condition_statuses
+
+    def to_json(self, **kwargs) -> str:
+        raise NotImplementedError()
+
+
+class BaseCondition:
+    label: str
+
+    def __init__(self, label: str):
+        self.label = label
+
+    def _acs_condition(self) -> int:
+        """Marks a condition for _acs_list (lists.codon)."""
+        return 0
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        raise NotImplementedError()
+
+
+def _expect_optional_condition(condition) -> Optional[BaseCondition]:
+    """An Optional[BaseCondition] argument (Codon's Optional does not take a subclass)."""
+    if isinstance(condition, None):
+        return None
+    elif isinstance(condition, Optional[NoneType]):
+        return None
+    elif isinstance(condition, Optional):
+        if condition is None:
+            return None
+        return _expect_condition(unwrap(condition))
+    else:
+        return _expect_condition(condition)
+
+
+def _expect_condition(condition: BaseCondition) -> BaseCondition:
+    # Checked once here, so a condition subclass reaches check() typed.
+    condition.check(carla.World(), 0.0)
+    return condition
+
+
+def _expect_conditions(conditions) -> List[BaseCondition]:
+    """A Sequence[BaseCondition] argument: a list or tuple of any conditions."""
+    out = List[BaseCondition]()
+    for condition in conditions:
+        out.append(_expect_condition(condition))
+    return out
+
+
+def _optional_label(label: Optional[str]) -> str:
+    return label if label is not None else ""
+
+
+def find_actor_by_role_name(world: carla.World, role_name) -> Optional[carla.Actor]:
+    _expect_role(role_name)
+    raise NotImplementedError()
+
+
+class AlwaysTrueCondition(BaseCondition):
+    def __init__(self, *_kw, label: str = "always_true"):
+        _keyword_only(_kw, "AlwaysTrueCondition(): label")
+        super().__init__(label)
+
+
+class AndCondition(BaseCondition):
+    def __init__(self, conditions, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "AndCondition(): label")
+        _expect_conditions(conditions)
+        super().__init__(_optional_label(label))
+
+
+class OrCondition(BaseCondition):
+    def __init__(self, conditions, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "OrCondition(): label")
+        _expect_conditions(conditions)
+        super().__init__(_optional_label(label))
+
+
+class NotCondition(BaseCondition):
+    def __init__(self, condition: BaseCondition, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "NotCondition(): label")
+        _expect_condition(condition)
+        super().__init__(_optional_label(label))
+
+
+class StickyCondition(BaseCondition):
+    def __init__(self, condition: BaseCondition, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "StickyCondition(): label")
+        _expect_condition(condition)
+        super().__init__(_optional_label(label))
+
+
+class PersistentCondition(BaseCondition):
+    def __init__(self, condition: BaseCondition, duration: float, *_kw,
+                 label: Optional[str] = None):
+        _keyword_only(_kw, "PersistentCondition(): label")
+        _expect_condition(condition)
+        super().__init__(_optional_label(label))
+
+
+class ElapsedTimeCondition(BaseCondition):
+    def __init__(self, duration_seconds: float,
+                 rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "ElapsedTimeCondition(): label")
+        super().__init__(_required_str(label, "ElapsedTimeCondition(): label"))
+
+    @property
+    def duration_seconds(self) -> float:
+        raise NotImplementedError()
+
+
+class TimeoutCondition(BaseCondition):
+    def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
+        _keyword_only(_kw, "TimeoutCondition(): label")
+        super().__init__(_required_str(label, "TimeoutCondition(): label"))
+
+
+class CollisionCondition(BaseCondition):
+    def __init__(self, min_impulse: float = 0.0, target = None,
+                 target_type: CollisionTargetType = CollisionTargetType(""),  # ANY
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "CollisionCondition(): label")
+        _expect_optional_role(target)
+        super().__init__(_required_str(label, "CollisionCondition(): label"))
+
+
+class EntityExistenceCondition(BaseCondition):
+    def __init__(self, entity_name, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityExistenceCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "EntityExistenceCondition(): label"))
+
+
+class TrafficSignalCondition(BaseCondition):
+    def __init__(self, lanelet2_regulatory_element_id: int, expected_state: int, *_kw,
+                 label = _Required()):
+        _keyword_only(_kw, "TrafficSignalCondition(): label")
+        super().__init__(_required_str(label, "TrafficSignalCondition(): label"))
+
+
+class TrafficSignalControllerCondition(BaseCondition):
+    def __init__(self, controller: str, phase: str, *_kw, label = _Required()):
+        _keyword_only(_kw, "TrafficSignalControllerCondition(): label")
+        super().__init__(_required_str(label, "TrafficSignalControllerCondition(): label"))
+
+
+class AccelerationCondition(BaseCondition):
+    def __init__(self, entity_name, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 direction: AccelerationDirection = AccelerationDirection(3),  # MAGNITUDE
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "AccelerationCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "AccelerationCondition(): label"))
+
+
+class SpeedCondition(BaseCondition):
+    def __init__(self, entity_name, value: float, rule: ComparisonRule,
+                 direction: SpeedDirection = SpeedDirection(3),  # MAGNITUDE
+                 coordinate_system: SpeedCoordinateSystem = SpeedCoordinateSystem(1),  # WORLD
+                 reference_entity_name = None, tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "SpeedCondition(): label")
+        _expect_role(entity_name)
+        _expect_optional_role(reference_entity_name)
+        super().__init__(_required_str(label, "SpeedCondition(): label"))
+
+
+class RelativeSpeedCondition(BaseCondition):
+    def __init__(self, entity_name, reference_entity_name, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 direction: SpeedDirection = SpeedDirection(3),  # MAGNITUDE
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "RelativeSpeedCondition(): label")
+        _expect_role(entity_name)
+        _expect_role(reference_entity_name)
+        super().__init__(_required_str(label, "RelativeSpeedCondition(): label"))
+
+
+class StandstillCondition(BaseCondition):
+    def __init__(self, entity_name, duration: float, speed_threshold: float = 0.1, *_kw,
+                 label = _Required()):
+        _keyword_only(_kw, "StandstillCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "StandstillCondition(): label"))
+
+
+class EntityDistanceCondition(BaseCondition):
+    def __init__(self, source, target, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 vertical: bool = False,
+                 distance_type: RelativeDistanceType = RelativeDistanceType("euclidean"),
+                 edge_to_edge: bool = False, tolerance: float = 1e-06,
+                 coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),  # ENTITY
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityDistanceCondition(): label")
+        _expect_role(source)
+        _expect_role(target)
+        super().__init__(_required_str(label, "EntityDistanceCondition(): label"))
+
+
+class EntityPositionDistanceCondition(BaseCondition):
+    def __init__(self, entity_name, position, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 vertical: bool = False, tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityPositionDistanceCondition(): label")
+        _expect_role(entity_name)
+        _expect_pose(position)
+        super().__init__(_required_str(label, "EntityPositionDistanceCondition(): label"))
+
+
+class EntityLanePositionCondition(BaseCondition):
+    def __init__(self, entity_name, position,
+                 rules: Optional[List[ScalarComparisonRule]] = None, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityLanePositionCondition(): label")
+        _expect_role(entity_name)
+        _expect_pose(position)
+        super().__init__(_required_str(label, "EntityLanePositionCondition(): label"))
+
+    @staticmethod
+    def anywhere_on_road(entity_name, road_id: str,
+                         rules: Optional[List[ScalarComparisonRule]] = None, *_kw,
+                         label = _Required()) -> EntityLanePositionCondition:
+        _keyword_only(_kw, "EntityLanePositionCondition.anywhere_on_road(): label")
+        return EntityLanePositionCondition(entity_name, OpenDrivePose(road_id, 0, 0.0), rules,
+                                           label=_required_str(label, "EntityLanePositionCondition.anywhere_on_road(): label"))
+
+
+class TemporaryStopCondition(BaseCondition):
+    def __init__(self, entity_name, stop_positions, s_margin: float = 5.0,
+                 speed_threshold: float = 0.1, stop_duration: float = 1.0, *_kw, label = _Required()):
+        _keyword_only(_kw, "TemporaryStopCondition(): label")
+        _expect_role(entity_name)
+        _expect_pose_list(stop_positions)
+        super().__init__(_required_str(label, "TemporaryStopCondition(): label"))
+
+
+class TimeHeadwayCondition(BaseCondition):
+    def __init__(self, source, target, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 tolerance: float = 1e-06,
+                 coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),  # ENTITY
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "TimeHeadwayCondition(): label")
+        _expect_role(source)
+        _expect_role(target)
+        super().__init__(_required_str(label, "TimeHeadwayCondition(): label"))
+
+
+class TimeToCollisionCondition(BaseCondition):
+    def __init__(self, source, target = None, value: float = 4.0,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 position = None, edge_to_edge: bool = False, tolerance: float = 1e-06,
+                 coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),  # ENTITY
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "TimeToCollisionCondition(): label")
+        _expect_role(source)
+        _expect_optional_role(target)
+        _expect_optional_pose(position)
+        super().__init__(_required_str(label, "TimeToCollisionCondition(): label"))
+
+
+class WaypointCondition(BaseCondition):
+    def __init__(self, entity_name, distance: float,
+                 check_type: WaypointCheckType = WaypointCheckType(1),  # IS_EMPTY
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "WaypointCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "WaypointCondition(): label"))

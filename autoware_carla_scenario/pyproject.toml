@@ -46,6 +46,12 @@ dependencies = [
 [project.optional-dependencies]
 carla = ["carla==0.10.0"]
 carla-0-9-16 = ["carla==0.9.16"]
+# The Codon compiler the static check runs (autoware_carla_scenario.typecheck),
+# as typesafe_carla bundles it. Codon ships for Linux x86_64 only; elsewhere the
+# runner skips the check with a warning (`typecheck: auto`).
+codon = [
+    "typesafe-carla-toolchain>=0.19.3,<0.20 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [tool.uv]
 conflicts = [
@@ -74,6 +80,8 @@ module-name = [
 [project.scripts]
 scenario = "autoware_carla_scenario.examples.run:main"
 scenario-expand = "autoware_carla_scenario.examples.expand:main"
+# Compile scenarios with Codon (the static check the runner makes before a run).
+scenario-check = "autoware_carla_scenario.typecheck.cli:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"
 detect-no-3d-model = "autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main"
 viewer = "autoware_carla_scenario.ui:main"

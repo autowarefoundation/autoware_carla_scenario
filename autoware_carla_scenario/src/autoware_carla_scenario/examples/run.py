@@ -53,6 +53,11 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.typecheck import ScenarioTypeError
+from autoware_carla_scenario.typecheck.mode import (
+    check_registered_scenario,
+    typecheck_mode,
+)
 from autoware_carla_scenario.traffic import (
     TrafficBackend,
     TrafficConfig,
@@ -722,8 +727,12 @@ def build_scenario(
         )
         raise ValueError(msg)
 
-    ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario_dict = _to_dict(cfg.scenario)
+    # Compile the scenario before building anything of it: one that does not
+    # type-check is refused here, before the runner touches CARLA.
+    check_registered_scenario(scenario_name, scenario_dict, typecheck_mode(cfg))
+
+    ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
     # Built once: an Autoware ego holds a bridge server, and two of those cannot
     # hold the same address.
@@ -801,7 +810,13 @@ def _hydra_main(cfg: DictConfig) -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
-    result = run_scenario(cfg)
+    try:
+        result = run_scenario(cfg)
+    except ScenarioTypeError as exc:
+        if _is_multirun():
+            raise
+        print(exc, file=sys.stderr)  # noqa: T201
+        sys.exit(2)
     # Only exit for single-run mode. In --multirun, Hydra calls this
     # function repeatedly; sys.exit() would kill the entire sweep.
     if not _is_multirun():
@@ -875,7 +890,11 @@ def main() -> None:
             len(scenario_names),
             scenario_names,
         )
-        run_batch(scenario_names, remaining)
+        try:
+            run_batch(scenario_names, remaining)
+        except ScenarioTypeError as exc:
+            print(exc, file=sys.stderr)  # noqa: T201
+            sys.exit(2)
     else:
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
