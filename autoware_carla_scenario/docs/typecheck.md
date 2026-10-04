@@ -73,6 +73,8 @@ does, so one setup serves both: `$TYPESAFE_CODON` (a `codon` executable), the
 `typesafe-carla-toolchain` package, `$CODON_DIR/bin/codon`,
 `~/.codon/bin/codon`, then `codon` on `PATH`. It runs it with the launcher's
 environment (`CODON_DIR`, and `LD_LIBRARY_PATH` for the bundled runtime).
+The check is written for Codon 0.19: a Codon of another release series counts
+as no Codon at all, so `auto` warns and `required` refuses.
 
 ## What is checked
 
@@ -139,6 +141,12 @@ keyword-only parameters, and gives a list of different conditions the type
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
+- **Convert nested mappings in the config.** The runner passes a YAML mapping
+  to the config class as a `dict`, so a field annotated with a dataclass
+  (`goal: Goal`) holds one at run time unless the config's `__post_init__`
+  turns it into a `Goal`, as the built-in configs do for their NPC lists.
+  The check builds the config the same way and refuses an unconverted
+  mapping at its `scenario.<key>`.
 
 Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 `Sequence`, `type[...]`) are dropped from parameters, which become generic:

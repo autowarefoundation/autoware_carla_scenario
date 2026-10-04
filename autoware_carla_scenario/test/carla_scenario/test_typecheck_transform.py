@@ -187,6 +187,18 @@ def test_a_declaration_on_a_base_in_the_same_module_counts() -> None:
     assert undeclared_attributes(ast.parse(source), {}) == []
 
 
+def test_a_base_imported_under_an_alias_is_looked_up_by_its_own_name() -> None:
+    source = textwrap.dedent(
+        """
+        from .base import ScenarioBase as Parent
+        class Child(Parent):
+            def __init__(self):
+                self.x = 1
+        """
+    )
+    assert undeclared_attributes(ast.parse(source), {"ScenarioBase": {"x"}}) == []
+
+
 # ---------------------------------------------------------------------------
 # The driver
 # ---------------------------------------------------------------------------
@@ -209,6 +221,10 @@ class _Config:
     ids: list[int] = dataclasses.field(default_factory=list)
     npcs: list[_Npc] = dataclasses.field(default_factory=list)
     turn: _Turn = _Turn.LEFT
+
+    def __post_init__(self) -> None:
+        # As the built-in configs do: the runner passes the YAML mappings.
+        self.npcs = [_Npc(**n) if isinstance(n, dict) else n for n in self.npcs]
 
 
 class _Scenario:
@@ -238,6 +254,27 @@ def test_the_driver_renders_the_yaml_values_with_the_config_types() -> None:
     }
     assert f"from {__name__} import _Npc" in lines
     assert "    scenario.setup()" in lines
+
+
+def test_a_mapping_the_config_does_not_convert_stays_a_dict() -> None:
+    # config_cls(**scenario_dict) leaves it a dict at run time, so the driver
+    # must not pass it off as the annotated dataclass.
+    @dataclasses.dataclass
+    class Unconverted:
+        npc: Optional[_Npc] = None
+        npcs: list[_Npc] = dataclasses.field(default_factory=list)
+
+    driver = render_driver(
+        _Scenario,
+        Unconverted,
+        {"npc": {"spawn_lanelet_id": 1}, "npcs": [{"spawn_lanelet_id": 2}]},
+    )
+    lines = driver.source.splitlines()
+    by_key = {key: lines[line - 1].strip() for line, key in driver.config_lines.items()}
+    assert by_key == {
+        "scenario.npc": "config.npc = {'spawn_lanelet_id': 1}",
+        "scenario.npcs": "config.npcs = [{'spawn_lanelet_id': 2}]",
+    }
 
 
 def test_a_config_with_a_mandatory_field_is_built_by_its_constructor() -> None:
@@ -292,6 +329,35 @@ def test_without_codon_auto_warns_and_required_refuses(
             check_registered_scenario("typecheck_mode_case", {}, "required")
     finally:
         unregister_scenario("typecheck_mode_case")
+
+
+def test_a_codon_of_another_release_series_counts_as_no_codon(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from autoware_carla_scenario.typecheck import (
+        ENV_CODON,
+        ScenarioTypeError,
+        ToolchainError,
+        find_supported_codon,
+    )
+    from autoware_carla_scenario.registry import register_scenario, unregister_scenario
+    from autoware_carla_scenario.typecheck.mode import check_registered_scenario
+
+    codon = tmp_path / "bin" / "codon"
+    codon.parent.mkdir()
+    codon.write_text("#!/bin/sh\necho 0.18.2\n")
+    codon.chmod(0o755)
+    monkeypatch.setenv(ENV_CODON, str(codon))
+    with pytest.raises(ToolchainError, match=r"Codon 0\.18\.2.*Codon 0\.19\.x"):
+        find_supported_codon()
+    register_scenario("typecheck_version_case", _ModeScenario, _Config)  # type: ignore[arg-type]
+    try:
+        result = check_registered_scenario("typecheck_version_case", {}, "auto")
+        assert result is not None and result.skipped is not None
+        with pytest.raises(ScenarioTypeError, match="no Codon compiler"):
+            check_registered_scenario("typecheck_version_case", {}, "required")
+    finally:
+        unregister_scenario("typecheck_version_case")
 
 
 def test_a_scenario_with_a_custom_builder_is_not_checked() -> None:

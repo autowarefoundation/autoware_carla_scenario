@@ -122,7 +122,9 @@ _VALID_SETUP = """
 _counter = 0
 
 
-def _write_case(tmp_path: Path, setup: str, extra: str = "") -> tuple[type, type, Path]:
+def _write_case(
+    tmp_path: Path, setup: str, extra: str = "", config: str = _CONFIG
+) -> tuple[type, type, Path]:
     """A scenario package in *tmp_path* whose setup() body is *setup*."""
     global _counter
     _counter += 1
@@ -130,7 +132,7 @@ def _write_case(tmp_path: Path, setup: str, extra: str = "") -> tuple[type, type
     root = tmp_path / package
     root.mkdir()
     (root / "__init__.py").write_text("")
-    (root / "configs.py").write_text(_CONFIG)
+    (root / "configs.py").write_text(config)
     scenario = root / "scenario.py"
     scenario.write_text(
         _HEADER + textwrap.indent(textwrap.dedent(setup), " " * 8) + extra
@@ -324,6 +326,45 @@ def test_a_config_value_of_the_wrong_type_is_reported_at_its_key(
 
     error = _only_error(typecheck_scenario(scenario, config, {"timeout_secs": 3}))
     assert error.path == "scenario.timeout_secs"
+
+
+_NESTED_CONFIG = """
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Goal:
+    lanelet_id: int = 0
+
+
+@dataclass
+class CaseConfig:
+    goal: Goal = field(default_factory=Goal)
+"""
+
+_CONVERTING_CONFIG = (
+    _NESTED_CONFIG
+    + """
+    def __post_init__(self) -> None:
+        if isinstance(self.goal, dict):
+            self.goal = Goal(**self.goal)
+"""
+)
+
+
+def test_a_nested_mapping_compiles_only_where_the_config_converts_it(
+    tmp_path: Path,
+) -> None:
+    # The runner passes the YAML mapping as a dict: cfg.goal.lanelet_id works
+    # at run time only if the config turns it into a Goal.
+    setup = "self.derive_goal_from_route([cfg.goal.lanelet_id])\n"
+    values = {"goal": {"lanelet_id": 3}}
+    scenario, config, _ = _write_case(tmp_path, setup, config=_CONVERTING_CONFIG)
+    assert typecheck_scenario(scenario, config, values).ok
+
+    scenario, config, _ = _write_case(tmp_path, setup, config=_NESTED_CONFIG)
+    error = _only_error(typecheck_scenario(scenario, config, values))
+    assert error.path == "scenario.goal"
 
 
 def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> None:

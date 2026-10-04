@@ -16,8 +16,8 @@ from __future__ import annotations
 import logging
 import sys
 
-from .check import typecheck_scenario
-from .toolchain import ToolchainError, find_codon
+from .check import find_supported_codon, typecheck_scenario
+from .toolchain import ToolchainError
 
 __all__ = ["main"]
 
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         print(__doc__)  # noqa: T201
         return 0
     try:
-        toolchain = find_codon()
+        toolchain = find_supported_codon()
     except ToolchainError as exc:
         print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
         return 2

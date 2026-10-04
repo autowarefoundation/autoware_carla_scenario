@@ -17,10 +17,18 @@ and assigns each value on a line of its own, so Codon reports a bad value at
 that line, and :attr:`Driver.config_lines` maps it back to the
 ``scenario.<key>`` it came from; otherwise it passes the values to the
 constructor, as the runner does.
+
+A nested mapping is rendered as the dataclass its field is annotated with only
+where the config the runner builds holds one there (its ``__post_init__``
+converts it): ``config_cls(**scenario_dict)`` leaves a mapping it does not
+convert a ``dict``, and so does the driver, so Codon refuses the value at its
+``scenario.<key>`` line instead of passing code that reads the field's
+attributes.
 """
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import enum
 import math
@@ -61,8 +69,28 @@ def _hint_args(hint: Any) -> tuple[Any, tuple[Any, ...]]:
     return origin, typing.get_args(hint)
 
 
-def _render(value: Any, hint: Any, imports: _Imports) -> str:
-    """*value* as a Codon expression of the type *hint* names (Any: its own)."""
+#: The runtime value is not known (the config did not build in Python).
+_UNKNOWN: Any = object()
+
+
+def _at(actual: Any, key: Any) -> Any:
+    """The part of the runtime value *actual* that holds *key*."""
+    if actual is _UNKNOWN:
+        return _UNKNOWN
+    try:
+        if dataclasses.is_dataclass(actual) and not isinstance(actual, type):
+            return getattr(actual, key)
+        return actual[key]
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return _UNKNOWN
+
+
+def _render(value: Any, hint: Any, imports: _Imports, actual: Any = _UNKNOWN) -> str:
+    """*value* as a Codon expression of the type *hint* names (Any: its own).
+
+    *actual* is what the config built in Python holds for *value*: a mapping
+    becomes the dataclass *hint* names only if that holds one.
+    """
     origin, args = _hint_args(hint)
     if origin is typing.Union or (
         hasattr(types, "UnionType") and isinstance(hint, types.UnionType)
@@ -70,7 +98,7 @@ def _render(value: Any, hint: Any, imports: _Imports) -> str:
         rest = [a for a in args if a is not type(None)]
         if value is None:
             return "None"
-        return _render(value, rest[0] if len(rest) == 1 else Any, imports)
+        return _render(value, rest[0] if len(rest) == 1 else Any, imports, actual)
     if isinstance(value, enum.Enum):
         return f"{imports.name(type(value))}.{value.name}"
     if value is None:
@@ -88,17 +116,24 @@ def _render(value: Any, hint: Any, imports: _Imports) -> str:
     if isinstance(value, (int, str)):
         return repr(value)
     if isinstance(value, dict):
-        if isinstance(hint, type) and dataclasses.is_dataclass(hint):
-            return _render_dataclass(hint, value, imports)
+        if (
+            isinstance(hint, type)
+            and dataclasses.is_dataclass(hint)
+            and (actual is _UNKNOWN or isinstance(actual, hint))
+        ):
+            return _render_dataclass(hint, value, imports, actual)
         key_hint, value_hint = (args + (Any, Any))[:2] if origin is dict else (Any, Any)
         items = ", ".join(
-            f"{_render(k, key_hint, imports)}: {_render(v, value_hint, imports)}"
+            f"{_render(k, key_hint, imports)}: "
+            f"{_render(v, value_hint, imports, _at(actual, k))}"
             for k, v in value.items()
         )
         return "{" + items + "}"
     if isinstance(value, (list, tuple)):
         item_hint = args[0] if origin in (list, tuple) and args else Any
-        items = ", ".join(_render(v, item_hint, imports) for v in value)
+        items = ", ".join(
+            _render(v, item_hint, imports, _at(actual, i)) for i, v in enumerate(value)
+        )
         return f"({items},)" if isinstance(value, tuple) and value else f"[{items}]"
     return repr(value)
 
@@ -110,10 +145,12 @@ def _field_hints(cls: type) -> dict[str, Any]:
         return {}
 
 
-def _render_dataclass(cls: type, values: dict[str, Any], imports: _Imports) -> str:
+def _render_dataclass(
+    cls: type, values: dict[str, Any], imports: _Imports, actual: Any = _UNKNOWN
+) -> str:
     hints = _field_hints(cls)
     args = ", ".join(
-        f"{key}={_render(value, hints.get(key, Any), imports)}"
+        f"{key}={_render(value, hints.get(key, Any), imports, _at(actual, key))}"
         for key, value in values.items()
     )
     return f"{imports.name(cls)}({args})"
@@ -140,6 +177,11 @@ def render_driver(
     scenario_name = imports.name(scenario_cls)
     config_name = imports.name(config_cls)
     hints = _field_hints(config_cls)
+    try:
+        # What the runner builds, to render each value as the config holds it.
+        built: Any = config_cls(**copy.deepcopy(scenario_dict))
+    except Exception:  # noqa: BLE001 - the driver's constructor call reports it
+        built = _UNKNOWN
 
     by_assignment = _all_fields_have_defaults(config_cls)
     body = [
@@ -154,7 +196,7 @@ def render_driver(
     ]
     config_args: list[tuple[str, str]] = []
     for key, value in scenario_dict.items():
-        rendered = _render(value, hints.get(key, Any), imports)
+        rendered = _render(value, hints.get(key, Any), imports, _at(built, key))
         line = (
             f"    config.{key} = {rendered}"
             if by_assignment

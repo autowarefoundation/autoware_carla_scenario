@@ -476,10 +476,19 @@ def undeclared_attributes(
     (other than ``object``) or with a subclass in *tree*.  A name counts as
     declared when the class, a base class in *tree*, or a base class named in
     *declared_elsewhere* (class name -> declared names; the Codon model's
-    classes, and classes of other checked modules) declares it.
+    classes, and classes of other checked modules) declares it.  A base
+    imported under another name (``from .base import Base as Parent``) is
+    looked up by the name it is defined with.
     """
     classes = class_declarations(tree)
     subclassed = {b.rsplit(".", 1)[-1] for bases, _ in classes.values() for b in bases}
+    aliases = {
+        alias.asname: alias.name
+        for stmt in tree.body
+        if isinstance(stmt, ast.ImportFrom)
+        for alias in stmt.names
+        if alias.asname is not None and alias.asname != alias.name
+    }
 
     def declared(name: str, seen: frozenset[str] = frozenset()) -> set[str]:
         if name in seen:
@@ -490,7 +499,7 @@ def undeclared_attributes(
             for base in bases:
                 out |= declared(base.rsplit(".", 1)[-1], seen | {name})
             return out
-        return set(declared_elsewhere.get(name, set()))
+        return set(declared_elsewhere.get(aliases.get(name, name), set()))
 
     found: list[UndeclaredAttribute] = []
     for node in tree.body:

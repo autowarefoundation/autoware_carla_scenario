@@ -32,7 +32,14 @@ from pathlib import Path
 from typing import Any
 
 from .driver import DRIVER_MODULE, render_driver
-from .toolchain import Toolchain, ToolchainError, codon_environment, find_codon
+from .toolchain import (
+    SUPPORTED_CODON_SERIES,
+    Toolchain,
+    ToolchainError,
+    codon_environment,
+    find_codon,
+    is_supported_version,
+)
 from .transform import (
     PRELUDE,
     class_declarations,
@@ -45,6 +52,7 @@ __all__ = [
     "ScenarioTypeError",
     "TypeCheckResult",
     "available_toolchain",
+    "find_supported_codon",
     "model_dir",
     "typecheck_scenario",
 ]
@@ -72,10 +80,33 @@ def model_dir() -> Path:
     return Path(__file__).resolve().parent / "codon"
 
 
+@lru_cache(maxsize=8)
+def _supported(tc: Toolchain) -> Toolchain:
+    version = tc.version()
+    if not is_supported_version(version):
+        raise ToolchainError(
+            f"{tc.source}: {tc.executable} is Codon {version or '(unknown version)'}; "
+            f"the check is written for Codon {SUPPORTED_CODON_SERIES}.x"
+        )
+    return tc
+
+
+def find_supported_codon() -> Toolchain:
+    """The Codon :func:`.toolchain.find_codon` finds, if it is a supported release.
+
+    The source rewrite and the model target one Codon release series, so
+    another is treated as no Codon at all.
+
+    Raises:
+        ToolchainError: No Codon was found, or it is another release series.
+    """
+    return _supported(find_codon())
+
+
 def available_toolchain() -> Toolchain | None:
-    """The Codon the checker runs (:func:`.toolchain.find_codon`), or ``None``."""
+    """The Codon the checker runs (:func:`find_supported_codon`), or ``None``."""
     try:
-        return find_codon()
+        return find_supported_codon()
     except ToolchainError:
         return None
 
@@ -440,7 +471,8 @@ def typecheck_scenario(
         scenario_dict: The ``scenario`` section of the resolved config, as the
             runner passes it to *config_cls*; ``None`` checks the defaults.
         toolchain: The Codon to compile with; found as typesafe_carla finds
-            it (:func:`.toolchain.find_codon`) by default.
+            it, and of a supported release (:func:`find_supported_codon`), by
+            default.
         timeout: Seconds the compile may take.
 
     Returns:
@@ -451,7 +483,7 @@ def typecheck_scenario(
     name = f"{scenario_cls.__module__}.{scenario_cls.__qualname__}"
     if toolchain is None:
         try:
-            toolchain = find_codon()
+            toolchain = find_supported_codon()
         except ToolchainError as exc:
             return TypeCheckResult(name, ok=True, skipped=f"no Codon compiler: {exc}")
     roots = sorted({scenario_cls.__module__, config_cls.__module__})

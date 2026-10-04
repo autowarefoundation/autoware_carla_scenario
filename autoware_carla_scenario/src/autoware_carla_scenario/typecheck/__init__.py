@@ -22,6 +22,7 @@ from .check import (
     ScenarioTypeError,
     TypeCheckResult,
     available_toolchain,
+    find_supported_codon,
     model_dir,
     typecheck_scenario,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "available_toolchain",
     "check_registered_scenario",
     "find_codon",
+    "find_supported_codon",
     "model_dir",
     "typecheck_scenario",
 ]
