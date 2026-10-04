@@ -61,6 +61,8 @@ class TemporaryStopScenario(BaseScenario):
     on the lanelet and perform a temporary stop autonomously.
     """
 
+    _config: TemporaryStopConfig
+
     def __init__(
         self,
         ego_config: EgoConfig,

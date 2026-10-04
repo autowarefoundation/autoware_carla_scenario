@@ -110,6 +110,8 @@ class IntersectionPassingScenario(BaseScenario):
     Once all expected roads have been visited the scenario passes.
     """
 
+    _config: IntersectionPassingConfig
+
     def __init__(
         self,
         ego_config: EgoConfig,

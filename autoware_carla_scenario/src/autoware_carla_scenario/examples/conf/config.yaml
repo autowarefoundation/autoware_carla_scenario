@@ -9,6 +9,10 @@ defaults:
   - scenario: intersection_passing/left_turn
   - map: nishishinjuku
 
+# Compile the scenario with Codon before it runs, and refuse it if it does not
+# type-check (docs/typecheck.md): auto (when Codon is installed), required, off.
+typecheck: auto
+
 server:
   host: localhost
   port: 2000

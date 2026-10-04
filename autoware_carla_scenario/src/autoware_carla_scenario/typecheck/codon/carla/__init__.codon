@@ -1,0 +1,9 @@
+# `carla`, as scenario code imports it, for the static check (docs/typecheck.md).
+#
+# The CARLA client API is typesafe_carla's
+# (https://github.com/hakuturu583/typesafe_carla): its Codon library, which the
+# checker links into the workspace next to this module, so a scenario is
+# compiled against the whole typed API under the names it uses at run time.
+
+from typesafe_carla import *
+import typesafe_carla.command as command

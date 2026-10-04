@@ -10,6 +10,7 @@ The package provides these CLI commands:
 |---------|-----------|---------|
 | [`scenario`](#scenario-scenario-runner) | Hydra | Run autonomous driving scenario tests in CARLA |
 | `scenario-new` | argparse | Scaffold a standalone scenario package |
+| [`scenario-check`](typecheck.md) | Hydra compose | Compile scenarios with Codon without running them (the static check the runner makes before a run) |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
 | [`scenario-editor`](scenario_editor.md) | FastAPI + Uvicorn | Web UI for authoring scenarios and exporting reproducible packages |
@@ -27,14 +28,16 @@ Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/)
 
 1. Parses the `scenario=...` argument (supports glob patterns for batch execution)
 2. Composes a Hydra config from map, server, ego, entity, and scenario configs
-3. Connects to the CARLA server and loads the specified map (OpenDRIVE or built-in)
-4. Spawns the ego vehicle at the configured Lanelet2 position (converted to CARLA coordinates)
-5. Enables synchronous mode (fixed 20 Hz tick rate) and starts the native CARLA recorder
-6. Runs a warm-up phase (5 ticks for physics stabilization)
-7. Enables autopilot and applies initial speeds
-8. Executes the main tick loop, checking pass/fail conditions each tick
-9. Writes results as JSON and optionally renders a video from the recording
-10. Reloads the CARLA world for clean state between scenarios
+3. Compiles the scenario with Codon and refuses it if it does not type-check
+   ([Static Check](typecheck.md); `typecheck=off` skips it)
+4. Connects to the CARLA server and loads the specified map (OpenDRIVE or built-in)
+5. Spawns the ego vehicle at the configured Lanelet2 position (converted to CARLA coordinates)
+6. Enables synchronous mode (fixed 20 Hz tick rate) and starts the native CARLA recorder
+7. Runs a warm-up phase (5 ticks for physics stabilization)
+8. Enables autopilot and applies initial speeds
+9. Executes the main tick loop, checking pass/fail conditions each tick
+10. Writes results as JSON and optionally renders a video from the recording
+11. Reloads the CARLA world for clean state between scenarios
 
 ### Basic Usage
 
@@ -87,8 +90,10 @@ Autoware's own setup downloads maps into, so a machine that has run it clones
 nothing:
 
 ```bash
-# Town10HD_Opt, as published for CARLA 0.10, pinned to a commit
-uv run scenario scenario=intersection_passing/straight map=town10hd_opt
+# Town10HD_Opt, as published for CARLA 0.10, pinned to a commit. The built-in
+# scenario configs name Nishishinjuku lanelets, so place the ego on Town10's.
+uv run scenario scenario=lane_change/left map=town10hd_opt \
+  ego.spawn_lanelet_id=324 ego.spawn_s=10.0 ego.goal_lanelet_id=5650
 
 # Any repository, any revision
 uv run scenario map=town10hd_opt \

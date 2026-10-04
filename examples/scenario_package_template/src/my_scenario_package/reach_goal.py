@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 class ReachGoalScenario(BaseScenario):
     """Pass when the ego has visited every configured goal road."""
 
+    _config: ReachGoalConfig
+
     def __init__(
         self,
         ego_config: EgoConfig,

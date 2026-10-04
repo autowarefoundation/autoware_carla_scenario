@@ -69,6 +69,8 @@ class TrafficLightComplianceScenario(BaseScenario):
     6. Registers a :class:`TimeoutCondition` as a fail-safe.
     """
 
+    _config: TrafficLightComplianceConfig
+
     def __init__(
         self,
         ego_config: EgoConfig,

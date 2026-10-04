@@ -1,0 +1,43 @@
+# The part of Python's logging a scenario calls, for the scenario checker
+# (docs/typecheck.md). Nothing here runs.
+
+DEBUG = 10
+INFO = 20
+WARNING = 30
+ERROR = 40
+CRITICAL = 50
+
+
+class Logger:
+    name: str
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def debug(self, msg, *args) -> None:
+        pass
+
+    def info(self, msg, *args) -> None:
+        pass
+
+    def warning(self, msg, *args) -> None:
+        pass
+
+    def error(self, msg, *args) -> None:
+        pass
+
+    def exception(self, msg, *args) -> None:
+        pass
+
+    def critical(self, msg, *args) -> None:
+        pass
+
+    def setLevel(self, level: int) -> None:
+        pass
+
+    def isEnabledFor(self, level: int) -> bool:
+        return False
+
+
+def getLogger(name: str = "root") -> Logger:
+    return Logger(name)

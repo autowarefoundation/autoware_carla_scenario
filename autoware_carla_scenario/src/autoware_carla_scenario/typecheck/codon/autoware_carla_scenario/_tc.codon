@@ -1,0 +1,96 @@
+# Helpers for the Codon model of autoware_carla_scenario (docs/typecheck.md).
+#
+# The model is compiled, never run, so a function body here only has to be
+# well typed. Codon 0.19 lacks some of Python's typing, and these fill the gaps:
+#
+# * no keyword-only parameters (`*,`): a model function takes `*_kw` before
+#   them and calls _keyword_only(_kw, ...), a compile error when a caller
+#   passes those arguments by position;
+# * a Union parameter crashes the compiler, and an Optional[Base] parameter
+#   does not accept a subclass: such a parameter is generic (no annotation)
+#   and the body checks what it got with one of the _expect_* helpers below
+#   (or the model's own, next to the types they name).
+
+import internal.static as static
+
+
+@extend
+class str:
+    # `"%.1f" % x` is Python's printf formatting, which Codon's str lacks.
+    def __mod__(self, args) -> str:
+        return self
+
+
+def _keyword_only(extra, where: Literal[str]):
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+def _expect_float(x) -> float:
+    if isinstance(x, float):
+        return x
+    elif isinstance(x, int):
+        return float(x)
+    else:
+        compile_error("expected a float (or an int)")
+
+
+def _expect_optional_float(x) -> Optional[float]:
+    if isinstance(x, None):
+        return None
+    elif isinstance(x, Optional[NoneType]):
+        return None
+    elif isinstance(x, Optional):
+        if x is None:
+            return None
+        return _expect_float(unwrap(x))
+    else:
+        return _expect_float(x)
+
+
+def _expect_bool(x) -> bool:
+    if isinstance(x, bool):
+        return x
+    else:
+        compile_error("expected a bool")
+
+
+def _expect_optional_bool(x) -> Optional[bool]:
+    if isinstance(x, None):
+        return None
+    elif isinstance(x, Optional[NoneType]):
+        return None
+    elif isinstance(x, Optional):
+        if x is None:
+            return None
+        return _expect_bool(unwrap(x))
+    else:
+        return _expect_bool(x)
+
+
+def _expect_int_sequence(xs) -> List[int]:
+    """A Sequence[int]: a list or a tuple of ints."""
+    out = List[int]()
+    for x in xs:
+        if isinstance(x, int):
+            out.append(x)
+        else:
+            compile_error("expected a sequence of ints")
+    return out
+
+
+# A required keyword-only parameter after defaulted ones (`..., *, label: str`)
+# is `label = _Required()` here, read through _required_str(): Codon does not
+# allow a parameter without a default after defaulted ones.
+@tuple
+class _Required:
+    _unused: int = 0
+
+
+def _required_str(value, where: Literal[str]) -> str:
+    if isinstance(value, _Required):
+        compile_error(where + " is a required keyword argument")
+    elif isinstance(value, str):
+        return value
+    else:
+        compile_error(where + " must be a str")

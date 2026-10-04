@@ -1,0 +1,164 @@
+# Model of autoware_carla_scenario.kinematics (docs/typecheck.md).
+
+import carla
+
+from .coordinate import CoordinateFrame
+
+
+class Vector3:
+    x: float
+    y: float
+    z: float
+
+    def __init__(self, x: float, y: float, z: float):
+        self.x = x
+        self.y = y
+        self.z = z
+
+    def magnitude(self) -> float:
+        raise NotImplementedError()
+
+    def normalized(self) -> Vector3:
+        raise NotImplementedError()
+
+    def dot(self, other: Vector3) -> float:
+        raise NotImplementedError()
+
+    def cross(self, other: Vector3) -> Vector3:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero() -> Vector3:
+        return Vector3(0.0, 0.0, 0.0)
+
+    @staticmethod
+    def from_carla_vector3d(v: carla.Vector3D) -> Vector3:
+        return Vector3(v.x, v.y, v.z)
+
+
+class AbsoluteVelocity:
+    vector: Vector3
+    frame: CoordinateFrame
+
+    def __init__(self, vector: Vector3, frame: CoordinateFrame):
+        self.vector = vector
+        self.frame = frame
+
+    def speed(self) -> float:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero(frame: CoordinateFrame) -> AbsoluteVelocity:
+        return AbsoluteVelocity(Vector3.zero(), frame)
+
+    @staticmethod
+    def from_components(vx: float, vy: float, vz: float, frame: CoordinateFrame) -> AbsoluteVelocity:
+        return AbsoluteVelocity(Vector3(vx, vy, vz), frame)
+
+    @staticmethod
+    def from_carla_vector3d(v: carla.Vector3D) -> AbsoluteVelocity:
+        return AbsoluteVelocity(Vector3.from_carla_vector3d(v), CoordinateFrame.CARLA_WORLD)
+
+
+class RelativeVelocity:
+    vector: Vector3
+    frame: CoordinateFrame
+
+    def __init__(self, vector: Vector3, frame: CoordinateFrame):
+        self.vector = vector
+        self.frame = frame
+
+    def speed(self) -> float:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero(frame: CoordinateFrame) -> RelativeVelocity:
+        return RelativeVelocity(Vector3.zero(), frame)
+
+    @staticmethod
+    def from_components(vx: float, vy: float, vz: float, frame: CoordinateFrame) -> RelativeVelocity:
+        return RelativeVelocity(Vector3(vx, vy, vz), frame)
+
+    @staticmethod
+    def between(target: AbsoluteVelocity, reference: AbsoluteVelocity) -> RelativeVelocity:
+        raise NotImplementedError()
+
+
+class FrenetVelocity:
+    longitudinal: float
+    lateral: float
+
+    def __init__(self, longitudinal: float, lateral: float):
+        self.longitudinal = longitudinal
+        self.lateral = lateral
+
+    def speed(self) -> float:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero() -> FrenetVelocity:
+        return FrenetVelocity(0.0, 0.0)
+
+
+class AbsoluteAcceleration:
+    vector: Vector3
+    frame: CoordinateFrame
+
+    def __init__(self, vector: Vector3, frame: CoordinateFrame):
+        self.vector = vector
+        self.frame = frame
+
+    def magnitude(self) -> float:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero(frame: CoordinateFrame) -> AbsoluteAcceleration:
+        return AbsoluteAcceleration(Vector3.zero(), frame)
+
+    @staticmethod
+    def from_components(ax: float, ay: float, az: float, frame: CoordinateFrame) -> AbsoluteAcceleration:
+        return AbsoluteAcceleration(Vector3(ax, ay, az), frame)
+
+    @staticmethod
+    def from_carla_vector3d(v: carla.Vector3D) -> AbsoluteAcceleration:
+        return AbsoluteAcceleration(Vector3.from_carla_vector3d(v), CoordinateFrame.CARLA_WORLD)
+
+
+class RelativeAcceleration:
+    vector: Vector3
+    frame: CoordinateFrame
+
+    def __init__(self, vector: Vector3, frame: CoordinateFrame):
+        self.vector = vector
+        self.frame = frame
+
+    def magnitude(self) -> float:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero(frame: CoordinateFrame) -> RelativeAcceleration:
+        return RelativeAcceleration(Vector3.zero(), frame)
+
+    @staticmethod
+    def from_components(ax: float, ay: float, az: float, frame: CoordinateFrame) -> RelativeAcceleration:
+        return RelativeAcceleration(Vector3(ax, ay, az), frame)
+
+    @staticmethod
+    def between(target: AbsoluteAcceleration, reference: AbsoluteAcceleration) -> RelativeAcceleration:
+        raise NotImplementedError()
+
+
+class FrenetAcceleration:
+    longitudinal: float
+    lateral: float
+
+    def __init__(self, longitudinal: float, lateral: float):
+        self.longitudinal = longitudinal
+        self.lateral = lateral
+
+    def magnitude(self) -> float:
+        raise NotImplementedError()
+
+    @staticmethod
+    def zero() -> FrenetAcceleration:
+        return FrenetAcceleration(0.0, 0.0)

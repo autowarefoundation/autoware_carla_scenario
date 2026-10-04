@@ -159,3 +159,6 @@ class ScenarioRunConfig:
         | TemporaryStopConfig
     ) = field(default_factory=IntersectionPassingConfig)
     sweep: SweepConfig = field(default_factory=SweepConfig)
+    #: Static check before the run: ``auto``, ``required`` or ``off``
+    #: (:mod:`autoware_carla_scenario.typecheck.mode`).
+    typecheck: str = "auto"

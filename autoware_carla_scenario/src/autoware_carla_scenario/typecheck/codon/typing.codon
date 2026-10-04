@@ -1,0 +1,15 @@
+# Python's typing, for the scenario checker (docs/typecheck.md). Optional,
+# List, Dict, Set, Tuple, Callable, Union, ClassVar and Literal are Codon
+# builtins already; these are the names Codon lacks. An annotation the
+# checker cannot express in Codon is dropped (typecheck/transform.py), so the
+# abstract collections only appear here for class-level declarations.
+
+TYPE_CHECKING = True
+
+Sequence = List
+MutableSequence = List
+Iterable = List
+Collection = List
+Mapping = Dict
+MutableMapping = Dict
+AbstractSet = Set

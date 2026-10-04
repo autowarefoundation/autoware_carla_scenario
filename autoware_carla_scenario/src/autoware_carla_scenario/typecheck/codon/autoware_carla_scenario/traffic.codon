@@ -1,0 +1,17 @@
+# Model of the parts of autoware_carla_scenario.traffic a scenario names
+# (docs/typecheck.md): the manoeuvre directions. Traffic backends are the
+# runner's business and are not modelled.
+
+
+@tuple
+class TurnDirection:
+    value: str
+    LEFT: ClassVar[TurnDirection] = TurnDirection("left")
+    RIGHT: ClassVar[TurnDirection] = TurnDirection("right")
+
+
+@tuple
+class LaneChangeDirection:
+    value: str
+    LEFT: ClassVar[LaneChangeDirection] = LaneChangeDirection("left")
+    RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")

@@ -53,6 +53,7 @@ __all__ = [
     "unregister_scenario",
     "get_scenario_registry",
     "get_scenario_builder",
+    "get_scenario_classes",
     "register_conf_dir",
     "unregister_conf_dir",
     "get_conf_dirs",
@@ -82,6 +83,11 @@ BuildScenarioFn = Callable[["DictConfig"], "tuple[EgoConfig, BaseScenario]"]
 # ---------------------------------------------------------------------------
 
 _SCENARIO_REGISTRY: dict[str, ScenarioBuilder] = {}
+
+#: The classes given to :func:`register_scenario`, for the static check
+#: (:mod:`autoware_carla_scenario.typecheck`), which compiles the scenario the
+#: way its builder constructs it.  A custom builder has no entry.
+_SCENARIO_CLASSES: dict[str, tuple[type[BaseScenario], type]] = {}
 
 
 def register_scenario(
@@ -119,6 +125,7 @@ def register_scenario(
         )
 
     _SCENARIO_REGISTRY[name] = _builder
+    _SCENARIO_CLASSES[name] = (scenario_cls, config_cls)
 
 
 def register_scenario_builder(name: str, builder: ScenarioBuilder) -> None:
@@ -129,6 +136,7 @@ def register_scenario_builder(name: str, builder: ScenarioBuilder) -> None:
     pattern and you need full control over instantiation.
     """
     _SCENARIO_REGISTRY[name] = builder
+    _SCENARIO_CLASSES.pop(name, None)
 
 
 def get_scenario_registry() -> dict[str, ScenarioBuilder]:
@@ -149,6 +157,16 @@ def get_scenario_builder(name: str) -> ScenarioBuilder | None:
     return _SCENARIO_REGISTRY.get(name)
 
 
+def get_scenario_classes(name: str) -> tuple[type[BaseScenario], type] | None:
+    """Return the ``(scenario_cls, config_cls)`` registered under *name*.
+
+    ``None`` when *name* is unknown or was registered with a custom builder
+    (:func:`register_scenario_builder`), whose construction only the builder
+    knows.
+    """
+    return _SCENARIO_CLASSES.get(name)
+
+
 def unregister_scenario(name: str) -> None:
     """Remove the scenario registered under *name*, if present.
 
@@ -157,6 +175,7 @@ def unregister_scenario(name: str) -> None:
     for test cleanup or to swap a scenario at runtime).
     """
     _SCENARIO_REGISTRY.pop(name, None)
+    _SCENARIO_CLASSES.pop(name, None)
 
 
 # ---------------------------------------------------------------------------

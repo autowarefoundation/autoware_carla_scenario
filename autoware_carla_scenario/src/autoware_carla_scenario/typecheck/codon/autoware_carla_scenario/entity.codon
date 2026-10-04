@@ -1,0 +1,222 @@
+# Model of autoware_carla_scenario.entity (docs/typecheck.md).
+#
+# EgoConfig lives in scenario_base in Python; it is defined here, next to the
+# EgoVehicle.spawn() that takes it, and scenario_base re-exports it.
+# SpawnLocation (Union[SpawnPointIndex, SpawnTransform] in Python) is the base
+# class of the two here.
+
+import carla
+
+from ._tc import _keyword_only
+from .constants import EGO_ROLE_NAME
+from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
+                         _expect_optional_ground_projection)
+from .entity_role import EntityRole, _expect_role
+
+
+class SpawnLocation:
+    def __init__(self):
+        pass
+
+
+class SpawnTransform(SpawnLocation):
+    value: carla.Transform
+
+    def __init__(self, value: carla.Transform):
+        super().__init__()
+        self.value = value
+
+
+class SpawnPointIndex(SpawnLocation):
+    value: int
+
+    def __init__(self, value: int):
+        super().__init__()
+        self.value = value
+
+
+class VehicleEntityConfig:
+    role_name: EntityRole
+    spawn_location: SpawnLocation
+    vehicle_type: str
+    initial_speed_kmh: float
+    spawn_retry_max_count: int
+    spawn_retry_t_step: float
+    spawn_retry_z_step: float
+    od_pose: Optional[OpenDrivePose]
+    ground_projection: Optional[GroundProjectionConfig]
+
+    def __init__(self, role_name, spawn_location: SpawnLocation,
+                 vehicle_type: str = "vehicle.mini.cooper", initial_speed_kmh: float = 0.0,
+                 spawn_retry_max_count: int = 0, spawn_retry_t_step: float = 0.1,
+                 spawn_retry_z_step: float = 0.5, od_pose: Optional[OpenDrivePose] = None,
+                 ground_projection = None):
+        self.role_name = _expect_role(role_name)
+        self.spawn_location = spawn_location
+        self.vehicle_type = vehicle_type
+        self.initial_speed_kmh = initial_speed_kmh
+        self.spawn_retry_max_count = spawn_retry_max_count
+        self.spawn_retry_t_step = spawn_retry_t_step
+        self.spawn_retry_z_step = spawn_retry_z_step
+        self.od_pose = od_pose
+        self.ground_projection = _expect_optional_ground_projection(ground_projection)
+
+
+def _expect_optional_lanelet2_poses(poses) -> List[Lanelet2Pose]:
+    """An Optional[Sequence[Lanelet2Pose]] argument."""
+    out = List[Lanelet2Pose]()
+    if isinstance(poses, None):
+        pass
+    elif isinstance(poses, Optional[NoneType]):
+        pass
+    elif isinstance(poses, Optional):
+        if poses is not None:
+            for pose in unwrap(poses):
+                out.append(pose)
+    else:
+        for pose in poses:
+            out.append(pose)
+    return out
+
+
+class EgoConfig(VehicleEntityConfig):
+    goal_pose: Optional[Lanelet2Pose]
+    waypoint_poses: List[Lanelet2Pose]
+
+    def __init__(self, spawn_location: SpawnLocation, vehicle_type: str = "vehicle.mini.cooper",
+                 initial_speed_kmh: float = 0.0, spawn_retry_max_count: int = 0,
+                 spawn_retry_t_step: float = 0.1, spawn_retry_z_step: float = 0.5, *_kw,
+                 goal_pose: Optional[Lanelet2Pose] = None, waypoint_poses = None):
+        _keyword_only(_kw, "EgoConfig(): goal_pose and waypoint_poses")
+        super().__init__(EGO_ROLE_NAME, spawn_location, vehicle_type, initial_speed_kmh,
+                         spawn_retry_max_count, spawn_retry_t_step, spawn_retry_z_step)
+        self.goal_pose = goal_pose
+        self.waypoint_poses = _expect_optional_lanelet2_poses(waypoint_poses)
+
+
+class VehicleEntity:
+    def __init__(self, config: VehicleEntityConfig):
+        pass
+
+    @property
+    def role_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    @property
+    def vehicle_type(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def initial_speed_kmh(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def actor(self) -> Optional[carla.Actor]:
+        raise NotImplementedError()
+
+    def spawn(self, world: carla.World) -> carla.Actor:
+        raise NotImplementedError()
+
+    def destroy(self) -> None:
+        raise NotImplementedError()
+
+
+class PedestrianEntityConfig:
+    role_name: EntityRole
+    spawn_location: SpawnTransform
+    walker_type: str
+
+    def __init__(self, role_name, spawn_location: SpawnTransform,
+                 walker_type: str = "walker.pedestrian.0001"):
+        self.role_name = _expect_role(role_name)
+        self.spawn_location = spawn_location
+        self.walker_type = walker_type
+
+
+class PedestrianEntity:
+    def __init__(self, config: PedestrianEntityConfig):
+        pass
+
+    @property
+    def role_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    @property
+    def walker_type(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def actor(self) -> Optional[carla.Actor]:
+        raise NotImplementedError()
+
+    def spawn(self, world: carla.World) -> carla.Actor:
+        raise NotImplementedError()
+
+    def destroy(self) -> None:
+        raise NotImplementedError()
+
+    def walk_straight(self, speed_ms: float) -> None:
+        raise NotImplementedError()
+
+
+class EgoVehicle:
+    use_autopilot: ClassVar[bool] = True
+    requires_goal: ClassVar[bool] = False
+    attaches_to_existing_actor: ClassVar[bool] = False
+
+    def __init__(self):
+        pass
+
+    def _acs_ego_vehicle(self) -> int:
+        return 0
+
+    @property
+    def actor(self) -> Optional[carla.Actor]:
+        raise NotImplementedError()
+
+    @property
+    def is_initialized(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def termination_requested(self) -> bool:
+        raise NotImplementedError()
+
+    def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
+                 initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
+                 waypoints = ()) -> None:
+        _keyword_only(_kw, "EgoVehicle.route_to(): initial_pose, ground_projection and waypoints")
+        raise NotImplementedError()
+
+    def spawn(self, world: carla.World, config: EgoConfig) -> carla.Actor:
+        raise NotImplementedError()
+
+    def on_scenario_start(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def on_tick(self, world: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+    def on_scenario_end(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def destroy(self) -> None:
+        raise NotImplementedError()
+
+
+def _expect_optional_ego_vehicle(ego) -> Optional[EgoVehicle]:
+    """An Optional[EgoVehicle] argument (Codon's Optional does not take a subclass)."""
+    if isinstance(ego, None):
+        return None
+    elif isinstance(ego, Optional[NoneType]):
+        return None
+    elif isinstance(ego, Optional):
+        if ego is None:
+            return None
+        return _expect_ego_vehicle(unwrap(ego))
+    else:
+        return _expect_ego_vehicle(ego)
+
+
+def _expect_ego_vehicle(ego: EgoVehicle) -> EgoVehicle:
+    return ego

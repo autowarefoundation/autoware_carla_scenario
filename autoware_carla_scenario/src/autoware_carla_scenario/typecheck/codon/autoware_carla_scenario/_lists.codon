@@ -1,0 +1,29 @@
+# _acs_list: what the checker puts in place of a list display
+# (typecheck/transform.py), e.g. `[ElapsedTimeCondition(...), SpeedCondition(...)]`.
+#
+# Codon gives a list display the type of its first element, so a list of two
+# different conditions does not compile. Python's is a list of conditions, and
+# so is this one: a display that starts with a condition (or an action) is a
+# List[BaseCondition] (List[BaseAction]), and any other display keeps the type
+# of its first element, as Codon's would.
+
+from .actions import BaseAction
+from .conditions import BaseCondition
+
+
+def _acs_list(*items):
+    if hasattr(items[0], "_acs_condition"):
+        conditions = List[BaseCondition]()
+        for item in items:
+            conditions.append(item)
+        return conditions
+    elif hasattr(items[0], "_acs_action"):
+        actions = List[BaseAction]()
+        for item in items:
+            actions.append(item)
+        return actions
+    else:
+        out = List[type(items[0])]()
+        for item in items:
+            out.append(item)
+        return out

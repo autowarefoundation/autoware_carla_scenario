@@ -82,6 +82,8 @@ class LaneChangeScenario(BaseScenario):
     5. Registers a :class:`TimeoutCondition` as a fail-safe.
     """
 
+    _config: LaneChangeConfig
+
     def __init__(
         self,
         ego_config: EgoConfig,
