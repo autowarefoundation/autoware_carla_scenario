@@ -18,10 +18,7 @@
 #     <out>/venv-layer.sh
 #
 # Members come from `[tool.uv.workspace] members` in the root manifest, globs
-# and all, so the set stays in step with the workspace itself. Members listed
-# in `[tool.pack-scenario-image] exclude-members` are left out: development
-# tools such as the Codon toolchain, which no runtime install needs and whose
-# wheel build downloads a compiler.
+# and all, so the set stays in step with the workspace itself.
 #
 # Used by action.yml next to it, and by anyone building the image by hand
 # (see autoware_carla_scenario/docs/docker.md).
@@ -139,13 +136,9 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 with (root / "pyproject.toml").open("rb") as handle:
-    tool = tomllib.load(handle).get("tool", {})
-workspace = tool.get("uv", {}).get("workspace", {})
+    workspace = tomllib.load(handle).get("tool", {}).get("uv", {}).get("workspace", {})
 
-patterns = workspace.get("exclude", []) + tool.get("pack-scenario-image", {}).get(
-    "exclude-members", []
-)
-excluded = {path for pattern in patterns for path in root.glob(pattern)}
+excluded = {path for pattern in workspace.get("exclude", []) for path in root.glob(pattern)}
 seen: list[Path] = []
 for pattern in workspace.get("members", []):
     for path in sorted(root.glob(pattern)):
@@ -168,10 +161,6 @@ else
     # No interpreter new enough for tomllib (3.11+). Fall back to the shape a
     # uv workspace has in practice -- a depth-one directory with a pyproject --
     # and say so, because this cannot see a nested member.
-    if grep -q '^\[tool\.pack-scenario-image\]' "${framework_dir}/pyproject.toml"; then
-        echo "assemble-context.sh: ${framework_dir}/pyproject.toml excludes members from the image, which needs python3.11+ (tomllib) to read" >&2
-        exit 1
-    fi
     echo "assemble-context.sh: no python3 with tomllib; falling back to a depth-one scan" >&2
     for candidate in "${framework_dir}"/*/; do
         [ -f "${candidate}pyproject.toml" ] || continue

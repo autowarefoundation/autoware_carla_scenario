@@ -250,6 +250,25 @@ class AfterCondition(BaseCondition):
     assert error.line == _line_of(path, "message=elapsed")
 
 
+def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
+    # Calls the framework's own model never declared: `carla` is the whole of
+    # typesafe_carla's typed API.
+    setup = """
+        library = self.world.get_blueprint_library()
+        blueprint = library.find("vehicle.tesla.model3")
+        blueprint.set_attribute("role_name", "npc")
+        waypoint = self.world.get_map().get_waypoint(carla.Location(x=1.0, y=2.0))
+        if waypoint is not None:
+            npc = self.world.try_spawn_actor(blueprint, waypoint.transform)
+            if npc is not None:
+                npc.as_vehicle().apply_control(carla.VehicleControl(throttle=0.5))
+        self.world.set_weather(carla.WeatherParameters.ClearNoon)
+        """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 # ---------------------------------------------------------------------------
 # What is refused, and where it is reported
 # ---------------------------------------------------------------------------
@@ -293,6 +312,16 @@ class AfterCondition(BaseCondition):
             "cfg.goal_lanelet_id)",
             "has no attribute 'goal_lanelet_id'",
         ),
+        (
+            "self.world.get_spectator().set_transform(carla.Location(x=1.0))\n",
+            "set_transform(carla.Location",
+            "'Location' does not match expected type 'Transform'",
+        ),
+        (
+            "self.world.get_blueprint_library().find(3)\n",
+            "find(3)",
+            "'int' does not match expected type 'str'",
+        ),
     ],
     ids=[
         "missing-label",
@@ -302,6 +331,8 @@ class AfterCondition(BaseCondition):
         "int-role",
         "method-typo",
         "config-field-typo",
+        "carla-wrong-argument",
+        "carla-int-for-str",
     ],
 )
 def test_a_wrong_scenario_is_refused_at_its_line(

@@ -21,7 +21,6 @@ conflicts = [[
 [manifest]
 members = [
     "autoware-carla-scenario",
-    "typesafe-carla-toolchain",
 ]
 
 [manifest.dependency-groups]
@@ -42,7 +41,7 @@ dev = [
     { name = "pytest-testmon", specifier = ">=2.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260815" },
-    { name = "typesafe-carla-toolchain", editable = "toolchain" },
+    { name = "typesafe-carla", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=0.1.0,<0.2" },
     { name = "weasyprint", specifier = ">=68.0" },
 ]
 
@@ -161,7 +160,7 @@ carla-0-9-16 = [
     { name = "carla", version = "0.9.16", source = { registry = "https://pypi.org/simple" } },
 ]
 codon = [
-    { name = "typesafe-carla-toolchain" },
+    { name = "typesafe-carla", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16') or (sys_platform != 'linux' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16')" },
 ]
 
 [package.metadata]
@@ -185,7 +184,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "simple-lanelet2", specifier = ">=1.1.2" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "typesafe-carla-toolchain", marker = "extra == 'codon'", editable = "toolchain" },
+    { name = "typesafe-carla", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'codon'", specifier = ">=0.1.0,<0.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 provides-extras = ["carla", "carla-0-9-16", "codon"]
@@ -2533,9 +2532,25 @@ wheels = [
 ]
 
 [[package]]
+name = "typesafe-carla"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typesafe-carla-toolchain", marker = "(python_full_version < '3.12' and sys_platform == 'emscripten') or (platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux') or (sys_platform == 'darwin' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16') or (sys_platform == 'emscripten' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16') or (sys_platform == 'linux' and extra == 'extra-23-autoware-carla-scenario-carla' and extra == 'extra-23-autoware-carla-scenario-carla-0-9-16')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/d8/15f06d228a4da84dcd6075643ef72688345c329edd5e19dd5a4ae9b46a68/typesafe_carla-0.1.0.tar.gz", hash = "sha256:5832e8e1468274d33bd742419f96017d0ffa3e74d07f25630baabf6239e5e299", size = 647738, upload-time = "2026-10-04T09:37:09.685Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/1f/82454ce868d077adc09ee1ca637848dd1650594869ced3712e67c13a3f37/typesafe_carla-0.1.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d2f109daae73305bc14e84e13741e675abc72a329128051409d7952da332ca01", size = 1962076, upload-time = "2026-10-04T09:37:07.958Z" },
+]
+
+[[package]]
 name = "typesafe-carla-toolchain"
 version = "0.19.3"
-source = { editable = "toolchain" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/70/7d9e51989ca614ebecd9c78f5480fa27613f158aff8a864ba18c62f2c886/typesafe_carla_toolchain-0.19.3.tar.gz", hash = "sha256:64a79d6b368673f9dd3f2fc7eb17b8aae2cffbc2d29270f2abacc6160875f84d", size = 3640, upload-time = "2026-10-04T09:36:47.343Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/64/f4136d4b332e8fb90212f8b701d9ea64c0f6b0f21047d80e61b336effbd1/typesafe_carla_toolchain-0.19.3-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:8a65ac11f5ed9f9963b4a0fe788aa31effe18755b8a4cb3cbdc1de6a4b028e76", size = 72696151, upload-time = "2026-10-04T09:36:44.788Z" },
+]
 
 [[package]]
 name = "typing-extensions"

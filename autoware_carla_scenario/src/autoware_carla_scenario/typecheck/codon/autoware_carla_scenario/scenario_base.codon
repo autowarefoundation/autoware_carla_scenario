@@ -21,7 +21,7 @@ def _expect_action_or_callback(cb):
     if hasattr(cb, "_acs_action"):
         _expect_action(cb)
     else:
-        cb(carla.World())
+        cb(carla.Client().get_world())
 
 
 def _expect_actor_getter(actor_getter):

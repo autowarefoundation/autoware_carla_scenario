@@ -75,7 +75,7 @@ class BaseAction:
 
 def _expect_action(action: BaseAction) -> BaseAction:
     # Checked once here, so an action subclass reaches execute() typed.
-    action.execute(carla.World())
+    action.execute(carla.Client().get_world())
     return action
 
 

@@ -154,7 +154,7 @@ def _expect_optional_condition(condition) -> Optional[BaseCondition]:
 
 def _expect_condition(condition: BaseCondition) -> BaseCondition:
     # Checked once here, so a condition subclass reaches check() typed.
-    condition.check(carla.World(), 0.0)
+    condition.check(carla.Client().get_world(), 0.0)
     return condition
 
 

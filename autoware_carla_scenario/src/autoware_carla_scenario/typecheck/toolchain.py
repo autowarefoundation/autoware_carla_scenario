@@ -1,16 +1,19 @@
-"""Locates the Codon compiler, as typesafe_carla does.
+"""Locates the Codon compiler and typesafe_carla's Codon library.
 
-This is typesafe_carla's ``python/typesafe_carla/toolchain.py``
-(https://github.com/hakuturu583/typesafe_carla, commit a5463c0), with the same
-search order and environment, so one Codon setup serves both:
+Both come from typesafe_carla (https://github.com/hakuturu583/typesafe_carla),
+installed with the ``codon`` extra: the compiler is found by
+``typesafe_carla.toolchain.find_codon``, so one Codon setup serves both
+projects, in its order:
 
 1. ``TYPESAFE_CODON``: path to a ``codon`` executable.
-2. The ``typesafe-carla-toolchain`` package (a pinned, bundled Codon; the
-   ``toolchain/`` workspace member), once it is installed. It must provide
-   ``typesafe_carla_toolchain.codon_executable()``.
+2. The ``typesafe-carla-toolchain`` package (the pinned Codon typesafe-carla
+   depends on).
 3. ``CODON_DIR``: a Codon installation directory (``$CODON_DIR/bin/codon``).
 4. ``~/.codon/bin/codon`` (the official installer's location).
 5. ``codon`` on ``PATH``.
+
+and the library is ``typesafe_carla.paths.codon_modules_dir()``. Without
+typesafe-carla installed there is neither, and :func:`find_codon` says so.
 
 :func:`codon_environment` is the environment typesafe_carla's launcher runs
 Codon in (``CODON_DIR``, and ``LD_LIBRARY_PATH`` for the bundled runtime).
@@ -19,25 +22,35 @@ Codon in (``CODON_DIR``, and ``LD_LIBRARY_PATH`` for the bundled runtime).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "BUILD_CONFIG_MODULE",
     "ENV_CODON",
     "SUPPORTED_CODON_SERIES",
     "Toolchain",
     "ToolchainError",
+    "build_config_source",
     "codon_environment",
+    "codon_library_dir",
     "find_codon",
     "is_supported_version",
 ]
 
-# The Codon release series typesafe_carla is tested with.
+# The Codon release series the check is written for (typesafe_carla's).
 SUPPORTED_CODON_SERIES = "0.19"
 
 ENV_CODON = "TYPESAFE_CODON"
+
+#: The module typesafe_carla's library reads its compile-time switches from.
+BUILD_CONFIG_MODULE = "_tsc_build_config"
+
+_NOT_INSTALLED = (
+    "typesafe-carla is not installed: install the `codon` extra "
+    "(autoware-carla-scenario[codon], Linux x86_64), or `uv sync --dev`"
+)
 
 
 class ToolchainError(RuntimeError):
@@ -64,45 +77,41 @@ class Toolchain:
         ]
 
 
-def _from_executable(exe: Path, source: str) -> Toolchain:
-    exe = exe.expanduser().resolve()
-    if not exe.is_file():
-        raise ToolchainError(f"{source}: {exe} is not a file")
-    return Toolchain(exe, exe.parent.parent, source)
-
-
-def _bundled() -> Toolchain | None:
-    try:
-        import typesafe_carla_toolchain  # noqa: PLC0415
-    except ImportError:
-        return None
-    try:
-        exe = typesafe_carla_toolchain.codon_executable()
-    except RuntimeError as e:  # installed without its Codon bundle
-        raise ToolchainError(f"typesafe-carla-toolchain: {e}") from e
-    return _from_executable(Path(exe), "typesafe-carla-toolchain")
-
-
 def find_codon() -> Toolchain:
-    explicit = os.environ.get(ENV_CODON)
-    if explicit:
-        return _from_executable(Path(explicit), ENV_CODON)
-    bundled = _bundled()
-    if bundled is not None:
-        return bundled
-    codon_dir = os.environ.get("CODON_DIR")
-    if codon_dir and (Path(codon_dir) / "bin" / "codon").is_file():
-        return _from_executable(Path(codon_dir) / "bin" / "codon", "CODON_DIR")
-    home = Path.home() / ".codon" / "bin" / "codon"
-    if home.is_file():
-        return _from_executable(home, "~/.codon")
-    on_path = shutil.which("codon")
-    if on_path:
-        return _from_executable(Path(on_path), "PATH")
-    raise ToolchainError(
-        "Codon compiler not found. Install typesafe-carla-toolchain, or Codon "
-        f"{SUPPORTED_CODON_SERIES}.x (https://github.com/exaloop/codon/releases), and point "
-        f"{ENV_CODON} at the codon executable if it is not in ~/.codon or on PATH."
+    """The Codon compiler, found as typesafe_carla finds it."""
+    try:
+        from typesafe_carla import toolchain as tsc_toolchain  # noqa: PLC0415
+    except ImportError as exc:
+        raise ToolchainError(_NOT_INSTALLED) from exc
+    try:
+        tc = tsc_toolchain.find_codon()
+    except (tsc_toolchain.ToolchainError, RuntimeError) as exc:
+        raise ToolchainError(str(exc)) from exc
+    return Toolchain(Path(tc.executable), Path(tc.codon_dir), tc.source)
+
+
+def codon_library_dir() -> Path:
+    """The ``typesafe_carla`` Codon package scenarios are compiled against."""
+    try:
+        from typesafe_carla import paths as tsc_paths  # noqa: PLC0415
+    except ImportError as exc:
+        raise ToolchainError(_NOT_INSTALLED) from exc
+    try:
+        return (tsc_paths.codon_modules_dir() / "typesafe_carla").resolve()
+    except tsc_paths.PathError as exc:
+        raise ToolchainError(str(exc)) from exc
+
+
+def build_config_source(strict: bool = False) -> str:
+    """``_tsc_build_config.codon``, as typesafe_carla's launcher writes it.
+
+    In strict mode typesafe_carla's Python-API compatibility shortcuts are
+    compile errors; otherwise they compile (the launcher warns about them).
+    """
+    return (
+        "# Generated by autoware_carla_scenario's static check, as typesafe-codon\n"
+        "# generates it; imported by typesafe_carla/_strict.codon.\n"
+        f"TSC_STRICT: Static[int] = {int(strict)}\n"
     )
 
 

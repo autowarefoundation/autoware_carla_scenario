@@ -14,10 +14,11 @@ autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenari
 ```
 
 The scenario still runs as Python, exactly as before: the check compiles the
-same source, never runs what it compiled, and changes nothing at run time. It
-is the first step towards [typesafe_carla](https://github.com/hakuturu583/typesafe_carla),
-the statically typed CARLA client for Codon this framework is moving to as its
-backend.
+same source, never runs what it compiled, and changes nothing at run time.
+The CARLA API a scenario calls is checked against
+[typesafe_carla](https://github.com/hakuturu583/typesafe_carla), the statically
+typed CARLA client for Codon this framework is moving to as its backend: for
+the check, `import carla` is typesafe_carla.
 
 ## Running it
 
@@ -58,23 +59,24 @@ registered with `register_scenario_builder()` (a custom builder, such as the
 packages the Scenario Editor exports) is not checked: only its builder knows
 how it is constructed.
 
-### Installing Codon
+### Installing Codon and typesafe_carla
 
-Codon is installed exactly as typesafe_carla installs it: the
-`typesafe-carla-toolchain` package, typesafe_carla's pinned Codon (0.19,
-Linux x86_64), is the `toolchain/` uv workspace member of this repository,
-copied unchanged from typesafe_carla. Building it downloads the pinned Codon
-release (checked against its SHA-256) and repackages it, so `uv sync --dev`
-installs Codon with no further step; elsewhere install the `codon` extra
-(`autoware-carla-scenario[codon]`).
+The check needs typesafe_carla (the `typesafe-carla` package, from PyPI) and
+the Codon compiler it pins (`typesafe-carla-toolchain`, 0.19, which
+typesafe-carla depends on). Both ship for Linux x86_64 only. `uv sync --dev`
+installs them; elsewhere install the `codon` extra
+(`autoware-carla-scenario[codon]`). Neither is a run-time dependency, so a
+scenario image does not carry them.
 
 The checker finds Codon the way typesafe_carla's `typesafe-codon` launcher
-does, so one setup serves both: `$TYPESAFE_CODON` (a `codon` executable), the
-`typesafe-carla-toolchain` package, `$CODON_DIR/bin/codon`,
-`~/.codon/bin/codon`, then `codon` on `PATH`. It runs it with the launcher's
-environment (`CODON_DIR`, and `LD_LIBRARY_PATH` for the bundled runtime).
+does (it calls typesafe_carla's own lookup), so one setup serves both:
+`$TYPESAFE_CODON` (a `codon` executable), the `typesafe-carla-toolchain`
+package, `$CODON_DIR/bin/codon`, `~/.codon/bin/codon`, then `codon` on `PATH`.
+It runs it with the launcher's environment (`CODON_DIR`, and `LD_LIBRARY_PATH`
+for the bundled runtime).
 The check is written for Codon 0.19: a Codon of another release series counts
-as no Codon at all, so `auto` warns and `required` refuses.
+as no Codon at all, so `auto` warns and `required` refuses. So does a missing
+typesafe-carla.
 
 ## What is checked
 
@@ -102,9 +104,12 @@ other `register_*` methods, the `check()` of a custom condition and the
 `autoware_carla_scenario/typecheck/codon/` holds Codon declarations of
 everything a scenario imports from `autoware_carla_scenario`: the conditions,
 actions, poses and coordinate functions, entities, `BaseScenario`, the shared
-config dataclasses, with their static types. `codon/carla` declares the part
-of the CARLA API a scenario reaches, with the names and signatures of
-typesafe_carla, so that it can later be replaced by typesafe_carla itself.
+config dataclasses, with their static types. The CARLA API is not modelled:
+`codon/carla` is `from typesafe_carla import *`, and the checker puts
+typesafe_carla's Codon library next to it, the way `typesafe-codon` puts it on
+`CODON_PATH`, so a scenario is checked against the whole typed CARLA API.
+typesafe_carla's Python-API compatibility shortcuts (such as calling a
+`Vehicle` method on a plain `Actor`) compile, as they do outside strict mode.
 Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).

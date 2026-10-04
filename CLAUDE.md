@@ -241,14 +241,16 @@ against the typed model in `typecheck/codon/`, not the Python package, so:
 - A change to the public API (a parameter added, renamed or made keyword-only,
   a method, an enum member) needs the same change in the model;
   `test_typecheck_model.py` fails until it has it.
-- `typecheck/codon/carla` follows typesafe_carla's names and signatures; add to
-  it only what typesafe_carla declares.
+- The CARLA API is typesafe_carla's own Codon library (the `typesafe-carla`
+  package): `typecheck/codon/carla` is `from typesafe_carla import *`, and the
+  checker links the library into its workspace. Model framework functions
+  that take or return CARLA types with typesafe_carla's types.
 - A scenario class declares the attributes it assigns on `self` at class level
   (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
-- Codon comes from `toolchain/`, typesafe_carla's `typesafe-carla-toolchain`
-  workspace member copied unchanged, and `typecheck/toolchain.py` is
-  typesafe_carla's Codon lookup. Update both from typesafe_carla rather than
-  editing them here.
+- Codon is the `typesafe-carla-toolchain` that `typesafe-carla` depends on (dev
+  group and the `codon` extra, Linux x86_64), found by typesafe_carla's own
+  lookup (`typecheck/toolchain.py` wraps `typesafe_carla.toolchain` and
+  `typesafe_carla.paths`).
 
 ## Development Guidelines
 

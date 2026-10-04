@@ -12,9 +12,10 @@ typed compiler for Python syntax, against a typed model of this framework
 
 The runner does this for every scenario registered with
 :func:`~autoware_carla_scenario.register_scenario` (the ``typecheck`` config
-key), and ``scenario-check`` does it without running anything.  The model
-follows the API of `typesafe_carla <https://github.com/hakuturu583/typesafe_carla>`_,
-the statically typed CARLA client the framework is moving to.
+key), and ``scenario-check`` does it without running anything.  The CARLA
+API is checked against `typesafe_carla <https://github.com/hakuturu583/typesafe_carla>`_,
+the statically typed CARLA client the framework is moving to: for the check,
+``import carla`` is typesafe_carla's Codon library.
 """
 
 from .check import (

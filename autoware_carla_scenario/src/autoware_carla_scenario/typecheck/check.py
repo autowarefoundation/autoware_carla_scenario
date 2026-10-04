@@ -8,11 +8,12 @@ the lot with ``codon build -llvm``.  Nothing compiled is ever run: the
 compile *is* the check, and a scenario that does not compile is refused before
 the runner touches CARLA.
 
-What is checked is everything ``setup()`` and ``is_done()`` reach, as far as
-the model goes: the framework's public API, the part of the CARLA API in
-``codon/carla``, and the scenario package's own modules.  A module outside
-those (numpy, say) has no Codon model, and a scenario importing one fails the
-check with a message saying so.
+What is checked is everything ``setup()`` and ``is_done()`` reach: the
+framework's public API (as far as the model goes), the CARLA API, which is
+typesafe_carla's Codon library (``import carla`` is ``from typesafe_carla
+import *``), and the scenario package's own modules.  A module outside those
+(numpy, say) has no Codon model, and a scenario importing one fails the check
+with a message saying so.
 """
 
 from __future__ import annotations
@@ -33,10 +34,13 @@ from typing import Any
 
 from .driver import DRIVER_MODULE, render_driver
 from .toolchain import (
+    BUILD_CONFIG_MODULE,
     SUPPORTED_CODON_SERIES,
     Toolchain,
     ToolchainError,
+    build_config_source,
     codon_environment,
+    codon_library_dir,
     find_codon,
     is_supported_version,
 )
@@ -95,12 +99,16 @@ def find_supported_codon() -> Toolchain:
     """The Codon :func:`.toolchain.find_codon` finds, if it is a supported release.
 
     The source rewrite and the model target one Codon release series, so
-    another is treated as no Codon at all.
+    another is treated as no Codon at all.  typesafe_carla's Codon library has
+    to be there too: scenarios are compiled against it.
 
     Raises:
-        ToolchainError: No Codon was found, or it is another release series.
+        ToolchainError: No Codon or no typesafe_carla was found, or the Codon
+            is of another release series.
     """
-    return _supported(find_codon())
+    tc = _supported(find_codon())
+    codon_library_dir()
+    return tc
 
 
 def available_toolchain() -> Toolchain | None:
@@ -329,6 +337,10 @@ def _build_workspace(
     root: Path, sources: _Sources, driver: Any
 ) -> tuple[_Workspace, list[Diagnostic]]:
     shutil.copytree(model_dir(), root, dirs_exist_ok=True)
+    # The CARLA API, as typesafe-codon puts it on CODON_PATH: the library and
+    # the compile-time switches it reads.
+    (root / "typesafe_carla").symlink_to(codon_library_dir(), target_is_directory=True)
+    (root / f"{BUILD_CONFIG_MODULE}.codon").write_text(build_config_source())
     ws = _Workspace(root, driver)
     problems: list[Diagnostic] = []
     declared = {cls: set(names) for cls, names in _model_declarations().items()}
@@ -442,8 +454,17 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 _CACHE: dict[str, TypeCheckResult] = {}
 
 
+@lru_cache(maxsize=4)
+def _library_digest(library: Path) -> str:
+    digest = hashlib.sha256(str(library).encode())
+    for path in sorted(library.rglob("*.codon")):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def _cache_key(tc: Toolchain, sources: _Sources, driver_source: str) -> str:
     digest = hashlib.sha256(str(tc.executable).encode())
+    digest.update(_library_digest(codon_library_dir()).encode())
     for path in sorted(model_dir().rglob("*.codon")):
         digest.update(path.read_bytes())
     for name, (path, _) in sorted(sources.modules.items()):
@@ -486,6 +507,10 @@ def typecheck_scenario(
             toolchain = find_supported_codon()
         except ToolchainError as exc:
             return TypeCheckResult(name, ok=True, skipped=f"no Codon compiler: {exc}")
+    try:
+        codon_library_dir()
+    except ToolchainError as exc:
+        return TypeCheckResult(name, ok=True, skipped=f"no CARLA API to check: {exc}")
     roots = sorted({scenario_cls.__module__, config_cls.__module__})
     if any(_module_file(root) is None for root in roots):
         return TypeCheckResult(
