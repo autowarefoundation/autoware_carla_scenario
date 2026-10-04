@@ -23,7 +23,7 @@ from autoware_carla_scenario.typecheck.transform import (
 
 
 def _transform(source: str) -> str:
-    out = transform_source(textwrap.dedent(source)).source
+    out = transform_source(textwrap.dedent(source))
     assert out.startswith(PRELUDE)
     return out[len(PRELUDE) :]
 
@@ -136,7 +136,7 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "AndCondition(_acs_list(stopped, restarted))" in out
     assert "c = [460, 265]" in out
     assert "d = [only(1)]" in out
-    assert transform_source("x = [f(), g()]\n").uses_acs_list
+    assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
 # ---------------------------------------------------------------------------

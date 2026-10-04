@@ -34,13 +34,12 @@ from typing import Any
 
 from .driver import DRIVER_MODULE, render_driver
 from .toolchain import (
-    BUILD_CONFIG_MODULE,
     SUPPORTED_CODON_SERIES,
     Toolchain,
     ToolchainError,
-    build_config_source,
     codon_environment,
     codon_library_dir,
+    codon_path_dir,
     find_codon,
     is_supported_version,
 )
@@ -65,8 +64,8 @@ __all__ = [
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
 _PACKAGE = "autoware_carla_scenario"
-#: Modules the model directory provides besides the framework's own.
-_SHIMS = frozenset({"carla", "__future__", "logging", "dataclasses", "typing"})
+#: Lines :data:`.transform.PRELUDE` adds above every rewritten module.
+_PRELUDE_LINES = PRELUDE.count("\n")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _LOCATION = re.compile(
@@ -122,12 +121,21 @@ def available_toolchain() -> Toolchain | None:
 @lru_cache(maxsize=8)
 def _codon_stdlib(tc: Toolchain) -> frozenset[str]:
     """Top-level module names of Codon's standard library."""
-    for candidate in (tc.codon_dir / "lib" / "codon" / "stdlib",):
-        if candidate.is_dir():
-            return frozenset(p.name.split(".")[0] for p in candidate.iterdir())
+    stdlib = tc.codon_dir / "lib" / "codon" / "stdlib"
+    if stdlib.is_dir():
+        return frozenset(p.name.split(".")[0] for p in stdlib.iterdir())
     return frozenset(
         {"math", "random", "itertools", "collections", "functools", "sys", "os"}
     )
+
+
+@lru_cache(maxsize=1)
+def _shims() -> frozenset[str]:
+    """Modules the model directory provides besides the framework's own."""
+    return frozenset(p.name.split(".")[0] for p in model_dir().iterdir()) - {
+        _PACKAGE,
+        "__pycache__",
+    }
 
 
 @lru_cache(maxsize=1)
@@ -266,7 +274,7 @@ def _imports(
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 base = package.split(".")
-                base = base[: len(base) - (node.level - 1)] if node.level > 1 else base
+                base = base[: len(base) - node.level + 1]
                 name = ".".join(base + ([node.module] if node.module else []))
             else:
                 name = node.module or ""
@@ -274,16 +282,24 @@ def _imports(
     return out
 
 
+@dataclass(frozen=True)
+class _Module:
+    path: Path
+    is_package: bool  # a package __init__
+    text: str
+    tree: ast.Module
+
+
 @dataclass
 class _Sources:
-    #: module name -> (source file, is a package __init__)
-    modules: dict[str, tuple[Path, bool]] = field(default_factory=dict)
+    modules: dict[str, _Module] = field(default_factory=dict)
     problems: list[Diagnostic] = field(default_factory=list)
 
 
 def _collect(roots: list[str], tc: Toolchain) -> _Sources:
     stdlib = _codon_stdlib(tc)
     modeled = _model_modules()
+    shims = _shims()
     prefixes = {_user_prefix(root) for root in roots}
     out = _Sources()
     queue = list(roots)
@@ -295,11 +311,12 @@ def _collect(roots: list[str], tc: Toolchain) -> _Sources:
         if path is None:
             continue
         is_package = path.name == "__init__.py"
-        out.modules[name] = (path, is_package)
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        out.modules[name] = _Module(path, is_package, text, tree)
         for imported, names, lineno in _imports(tree, name, is_package):
             top = imported.split(".")[0]
-            if imported in modeled or top in _SHIMS:
+            if imported in modeled or top in shims:
                 continue
             if any(imported == p or imported.startswith(p + ".") for p in prefixes):
                 submodules = [
@@ -329,36 +346,33 @@ def _collect(roots: list[str], tc: Toolchain) -> _Sources:
 class _Workspace:
     root: Path
     driver: Any
-    #: workspace-relative file -> (original path, line offset)
-    files: dict[str, tuple[str, int]] = field(default_factory=dict)
+    #: workspace-relative file -> original path
+    files: dict[str, str] = field(default_factory=dict)
 
 
 def _build_workspace(
-    root: Path, sources: _Sources, driver: Any
+    root: Path, sources: _Sources, driver: Any, codon_path: Path
 ) -> tuple[_Workspace, list[Diagnostic]]:
     shutil.copytree(model_dir(), root, dirs_exist_ok=True)
-    # The CARLA API, as typesafe-codon puts it on CODON_PATH: the library and
-    # the compile-time switches it reads.
-    (root / "typesafe_carla").symlink_to(codon_library_dir(), target_is_directory=True)
-    (root / f"{BUILD_CONFIG_MODULE}.codon").write_text(build_config_source())
+    # The CARLA API: typesafe_carla's CODON_PATH directory (the library and
+    # the compile-time switches it reads), linked in, as Codon reads only one.
+    for entry in codon_path.iterdir():
+        (root / entry.name).symlink_to(entry.resolve())
     ws = _Workspace(root, driver)
     problems: list[Diagnostic] = []
     declared = {cls: set(names) for cls, names in _model_declarations().items()}
-    trees: dict[str, ast.Module] = {}
-    for name, (path, _is_package) in sources.modules.items():
-        trees[name] = ast.parse(path.read_text(encoding="utf-8"))
-    for tree in trees.values():
-        for cls, (_bases, own) in class_declarations(tree).items():
+    for module in sources.modules.values():
+        for cls, (_bases, own) in class_declarations(module.tree).items():
             declared.setdefault(cls, set()).update(own)
-    for name, (path, is_package) in sorted(sources.modules.items()):
+    for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
-        rel = rel / "__init__.py" if is_package else rel.with_suffix(".py")
-        for attr in undeclared_attributes(trees[name], declared):
-            problems.append(Diagnostic(attr.message(), str(path), attr.lineno))
+        rel = rel / "__init__.py" if module.is_package else rel.with_suffix(".py")
+        for attr in undeclared_attributes(module.tree, declared):
+            problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(transform_source(path.read_text(encoding="utf-8")).source)
-        ws.files[rel.as_posix()] = (str(path), PRELUDE.count("\n"))
+        dest.write_text(transform_source(module.text))
+        ws.files[rel.as_posix()] = str(module.path)
     # Every package on the way needs an __init__; one not compiled is empty.
     for rel_name in list(ws.files):
         parent = Path(rel_name).parent
@@ -387,8 +401,7 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             return (key if key else _DRIVER_LABEL, 0 if key else line, False)
         candidates = by_basename.get(Path(file).name, [])
         if len(candidates) == 1:
-            original, offset = ws.files[candidates[0]]
-            return (original, line - offset, True)
+            return (ws.files[candidates[0]], line - _PRELUDE_LINES, True)
         return None
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
@@ -420,13 +433,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
         located = [(f, locate(f[0], f[1])) if f[0] else (f, None) for f in frames]
-        primary = next((loc for f, loc in located if loc and loc[2]), None)
-        primary = primary or next((loc for f, loc in located if loc), None)
-        column = None
-        for f, loc in located:
-            if loc is not None and loc == primary:
-                column = f[2]
-                break
+        pf, primary = next(
+            ((f, loc) for f, loc in located if loc and loc[2]), None
+        ) or next(((f, loc) for f, loc in located if loc), (None, None))
+        column = pf[2] if pf is not None else None
         trace = []
         for f, loc in located[1:]:
             if f[0] == DRIVER_MODULE:
@@ -454,25 +464,32 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 _CACHE: dict[str, TypeCheckResult] = {}
 
 
-@lru_cache(maxsize=4)
-def _library_digest(library: Path) -> str:
-    digest = hashlib.sha256(str(library).encode())
-    for path in sorted(library.rglob("*.codon")):
+def _tree_digest(digest: Any, paths: list[Path]) -> None:
+    for path in sorted(paths):
         digest.update(path.read_bytes())
+
+
+@lru_cache(maxsize=4)
+def _framework_digest(codon_path: Path) -> str:
+    """The inputs that do not change while the process runs: the CARLA
+    library, the model and the checker itself."""
+    library = (codon_path / "typesafe_carla").resolve()
+    digest = hashlib.sha256(str(library).encode())
+    _tree_digest(digest, list(library.rglob("*.codon")))
+    _tree_digest(digest, list(model_dir().rglob("*.codon")))
+    _tree_digest(digest, list(Path(__file__).parent.glob("*.py")))
     return digest.hexdigest()
 
 
-def _cache_key(tc: Toolchain, sources: _Sources, driver_source: str) -> str:
+def _cache_key(
+    tc: Toolchain, codon_path: Path, sources: _Sources, driver_source: str
+) -> str:
     digest = hashlib.sha256(str(tc.executable).encode())
-    digest.update(_library_digest(codon_library_dir()).encode())
-    for path in sorted(model_dir().rglob("*.codon")):
-        digest.update(path.read_bytes())
-    for name, (path, _) in sorted(sources.modules.items()):
+    digest.update(_framework_digest(codon_path).encode())
+    for name, module in sorted(sources.modules.items()):
         digest.update(name.encode())
-        digest.update(path.read_bytes())
+        digest.update(module.text.encode())
     digest.update(driver_source.encode())
-    for path in sorted(Path(__file__).parent.glob("*.py")):
-        digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
@@ -508,7 +525,7 @@ def typecheck_scenario(
         except ToolchainError as exc:
             return TypeCheckResult(name, ok=True, skipped=f"no Codon compiler: {exc}")
     try:
-        codon_library_dir()
+        codon_path = codon_path_dir()
     except ToolchainError as exc:
         return TypeCheckResult(name, ok=True, skipped=f"no CARLA API to check: {exc}")
     roots = sorted({scenario_cls.__module__, config_cls.__module__})
@@ -518,21 +535,44 @@ def typecheck_scenario(
         )
     sources = _collect(roots, toolchain)
     driver = render_driver(scenario_cls, config_cls, dict(scenario_dict or {}))
-    key = _cache_key(toolchain, sources, driver.source)
-    if key in _CACHE:
-        return _CACHE[key]
-    if sources.problems:
-        result = TypeCheckResult(name, ok=False, diagnostics=list(sources.problems))
+    key = _cache_key(toolchain, codon_path, sources, driver.source)
+    if key not in _CACHE:
+        result = _compile(name, sources, driver, toolchain, codon_path, timeout)
+        if result is None:  # timed out: no verdict worth keeping
+            return _timed_out(name, timeout)
         _CACHE[key] = result
-        return result
+    return _CACHE[key]
+
+
+def _timed_out(name: str, timeout: float) -> TypeCheckResult:
+    return TypeCheckResult(
+        name,
+        ok=False,
+        crashed=True,
+        diagnostics=[
+            Diagnostic(f"Codon did not finish compiling within {timeout:.0f}s")
+        ],
+        seconds=timeout,
+    )
+
+
+def _compile(
+    name: str,
+    sources: _Sources,
+    driver: Any,
+    toolchain: Toolchain,
+    codon_path: Path,
+    timeout: float,
+) -> TypeCheckResult | None:
+    """The verdict on *sources*, or ``None`` when Codon ran out of time."""
+    if sources.problems:
+        return TypeCheckResult(name, ok=False, diagnostics=list(sources.problems))
 
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="acs-typecheck-") as tmp:
-        ws, problems = _build_workspace(Path(tmp), sources, driver)
+        ws, problems = _build_workspace(Path(tmp), sources, driver, codon_path)
         if problems:
-            result = TypeCheckResult(name, ok=False, diagnostics=problems)
-            _CACHE[key] = result
-            return result
+            return TypeCheckResult(name, ok=False, diagnostics=problems)
         env = codon_environment(toolchain, ws.root)
         try:
             proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
@@ -552,15 +592,7 @@ def typecheck_scenario(
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return TypeCheckResult(
-                name,
-                ok=False,
-                crashed=True,
-                diagnostics=[
-                    Diagnostic(f"Codon did not finish compiling within {timeout:.0f}s")
-                ],
-                seconds=time.monotonic() - started,
-            )
+            return None
         output = proc.stdout + proc.stderr
         diagnostics = _parse_output(output, ws)
     seconds = time.monotonic() - started
@@ -574,7 +606,7 @@ def typecheck_scenario(
             f"exit status {proc.returncode}"
         ]
         diagnostics = [Diagnostic(f"Codon failed without a diagnostic: {tail[0]}")]
-    result = TypeCheckResult(
+    return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
         diagnostics=diagnostics,
@@ -582,5 +614,3 @@ def typecheck_scenario(
         output=output,
         seconds=seconds,
     )
-    _CACHE[key] = result
-    return result

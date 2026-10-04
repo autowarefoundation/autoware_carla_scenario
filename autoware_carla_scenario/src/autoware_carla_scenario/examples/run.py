@@ -649,6 +649,14 @@ def run_batch(
     # Log detailed execution plan before building anything.
     _log_batch_plan(scenario_names, configs, overrides)
 
+    # Build (and statically check) every scenario before anything reads the
+    # config values or fetches the map, so a bad value is refused first.
+    scenarios: list[BaseScenario] = []
+    for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
+        logger.info("Building scenario [%d/%d]: %s", i, len(scenario_names), name)
+        _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
+        scenarios.append(scenario)
+
     first_cfg = configs[0]
 
     map_paths = resolve_map_paths(first_cfg.map)
@@ -681,9 +689,7 @@ def run_batch(
         traffic_backend=build_traffic_backend(first_cfg),
     )
 
-    for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
-        logger.info("Building scenario [%d/%d]: %s", i, len(scenario_names), name)
-        _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
+    for scenario in scenarios:
         queue.add(scenario)
 
     logger.info("All %d scenario(s) built. Starting execution...", len(scenario_names))

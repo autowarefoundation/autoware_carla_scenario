@@ -90,8 +90,10 @@ Autoware's own setup downloads maps into, so a machine that has run it clones
 nothing:
 
 ```bash
-# Town10HD_Opt, as published for CARLA 0.10, pinned to a commit
-uv run scenario scenario=intersection_passing/straight map=town10hd_opt
+# Town10HD_Opt, as published for CARLA 0.10, pinned to a commit. The built-in
+# scenario configs name Nishishinjuku lanelets, so place the ego on Town10's.
+uv run scenario scenario=lane_change/left map=town10hd_opt \
+  ego.spawn_lanelet_id=324 ego.spawn_s=10.0 ego.goal_lanelet_id=5650
 
 # Any repository, any revision
 uv run scenario map=town10hd_opt \

@@ -449,3 +449,19 @@ def test_build_scenario_refuses_a_wrong_scenario_before_building_it(
             )
     finally:
         unregister_scenario("typecheck_case")
+
+
+def test_a_batch_refuses_a_wrong_value_before_reading_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    def must_not_run(_cfg: Any) -> Any:
+        raise AssertionError("the map was resolved before the scenarios were checked")
+
+    monkeypatch.setattr(run, "resolve_map_paths", must_not_run)
+    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.timeout_seconds")):
+        run.run_batch(
+            ["lane_change/left", "lane_change/right"],
+            ["scenario.timeout_seconds=fast"],
+        )

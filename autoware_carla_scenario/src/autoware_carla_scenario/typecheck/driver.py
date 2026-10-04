@@ -64,11 +64,6 @@ class _Imports:
         return cls.__qualname__
 
 
-def _hint_args(hint: Any) -> tuple[Any, tuple[Any, ...]]:
-    origin = typing.get_origin(hint)
-    return origin, typing.get_args(hint)
-
-
 #: The runtime value is not known (the config did not build in Python).
 _UNKNOWN: Any = object()
 
@@ -91,13 +86,9 @@ def _render(value: Any, hint: Any, imports: _Imports, actual: Any = _UNKNOWN) ->
     *actual* is what the config built in Python holds for *value*: a mapping
     becomes the dataclass *hint* names only if that holds one.
     """
-    origin, args = _hint_args(hint)
-    if origin is typing.Union or (
-        hasattr(types, "UnionType") and isinstance(hint, types.UnionType)
-    ):
+    origin, args = typing.get_origin(hint), typing.get_args(hint)
+    if origin is typing.Union or isinstance(hint, types.UnionType):
         rest = [a for a in args if a is not type(None)]
-        if value is None:
-            return "None"
         return _render(value, rest[0] if len(rest) == 1 else Any, imports, actual)
     if isinstance(value, enum.Enum):
         return f"{imports.name(type(value))}.{value.name}"

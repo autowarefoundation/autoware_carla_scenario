@@ -35,7 +35,6 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "PRELUDE",
-    "Transformed",
     "UndeclaredAttribute",
     "class_declarations",
     "transform_source",
@@ -84,14 +83,6 @@ _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
 _FACTORY_LITERALS = {"list": "[]", "dict": "{}", "set": "set()", "tuple": "()"}
 
 
-@dataclass
-class Transformed:
-    """A transformed module and what the rewrite needed."""
-
-    source: str
-    uses_acs_list: bool = False
-
-
 @dataclass(frozen=True)
 class UndeclaredAttribute:
     """``self.<name>`` assigned in *class_name* without a class-level declaration."""
@@ -117,8 +108,10 @@ class _Edits:
     lines: list[bytes]
     starts: list[int] = field(default_factory=list)
     edits: list[tuple[int, int, str]] = field(default_factory=list)
+    data: bytes = b""
 
     def __post_init__(self) -> None:
+        self.data = b"".join(self.lines)
         offset = 0
         for line in self.lines:
             self.starts.append(offset)
@@ -128,7 +121,7 @@ class _Edits:
         return self.starts[lineno - 1] + col
 
     def text(self, start: int, end: int) -> str:
-        return b"".join(self.lines)[start:end].decode()
+        return self.data[start:end].decode()
 
     def node_span(self, node: ast.AST) -> tuple[int, int]:
         return (
@@ -144,7 +137,7 @@ class _Edits:
         self.edits.append((start, end, text + "\n" * max(lost, 0)))
 
     def apply(self) -> str:
-        data = b"".join(self.lines)
+        data = self.data
         last = len(data) + 1
         for start, end, text in sorted(self.edits, key=lambda e: e[0], reverse=True):
             if end > last:
@@ -200,33 +193,22 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         if inner_text is None:
             return None
         return f"Optional[{inner_text}]" if len(rest) < len(members) else inner_text
-    name = _dotted(node)
-    if name is not None:
-        base = name.rsplit(".", 1)[-1] if name.startswith("typing.") else name
-        if base in _UNEXPRESSIBLE:
-            return None
-        if base in _ABSTRACT_GENERICS and not class_level:
-            return None
-        return name
+    subscript = isinstance(node, ast.Subscript)
+    base_name = _dotted(node.value if subscript else node)  # type: ignore[attr-defined]
+    if base_name is None:
+        return None
+    base = base_name.removeprefix("typing.")
+    if subscript and base_name in _OPTIONAL_NAMES:
+        inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
+        return None if inner_text is None else f"Optional[{inner_text}]"
+    if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
+        return None
+    if not subscript:
+        return base_name
     if isinstance(node, ast.Subscript):
-        base_name = _dotted(node.value)
-        if base_name is None:
-            return None
-        base = (
-            base_name.rsplit(".", 1)[-1]
-            if base_name.startswith("typing.")
-            else base_name
-        )
         args = (
             list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
         )
-        if base_name in _OPTIONAL_NAMES:
-            inner_text = codon_annotation(args[0], class_level=class_level)
-            return None if inner_text is None else f"Optional[{inner_text}]"
-        if base in _UNEXPRESSIBLE:
-            return None
-        if base in _ABSTRACT_GENERICS and not class_level:
-            return None
         if base_name not in _CONCRETE_GENERICS and base not in _ABSTRACT_GENERICS:
             return None  # a generic Codon has no model of (NDArray, ...)
         if any(isinstance(a, ast.Constant) and a.value is Ellipsis for a in args):
@@ -257,7 +239,6 @@ def _field_default(call: ast.Call, edits: _Edits) -> str | None:
 class _Rewriter(ast.NodeVisitor):
     def __init__(self, edits: _Edits) -> None:
         self.edits = edits
-        self.uses_acs_list = False
         self._class_depth = 0
         self._function_depth = 0
 
@@ -401,11 +382,10 @@ class _Rewriter(ast.NodeVisitor):
             start, end = self.edits.node_span(node)
             self.edits.replace(start, start + 1, "_acs_list(")
             self.edits.replace(end - 1, end, ")")
-            self.uses_acs_list = True
         self.generic_visit(node)
 
 
-def transform_source(source: str) -> Transformed:
+def transform_source(source: str) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`."""
     if not source.endswith("\n"):
         source += "\n"
@@ -413,7 +393,7 @@ def transform_source(source: str) -> Transformed:
     edits = _Edits(source.encode().splitlines(keepends=True))
     rewriter = _Rewriter(edits)
     rewriter.visit(tree)
-    return Transformed(PRELUDE + edits.apply(), uses_acs_list=rewriter.uses_acs_list)
+    return PRELUDE + edits.apply()
 
 
 # ---------------------------------------------------------------------------

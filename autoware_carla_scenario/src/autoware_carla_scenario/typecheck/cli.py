@@ -14,9 +14,13 @@ no Codon compiler to check with.
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
-from .check import find_supported_codon, typecheck_scenario
+from .check import find_supported_codon
+from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
 __all__ = ["main"]
@@ -38,23 +42,30 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
-    from ..registry import get_scenario_classes, load_scenario_plugins  # noqa: PLC0415
+    from ..registry import load_scenario_plugins  # noqa: PLC0415
 
     load_scenario_plugins()
     pattern, overrides = run._extract_scenario_override(["scenario-check", *args])
     names = run._resolve_scenario_glob(pattern or "**/*")
+    cfgs = [run._compose_config(name, overrides) for name in names]
+
+    def check(cfg: Any) -> Any:
+        return typecheck_registered(
+            str(cfg.scenario.name), run._to_dict(cfg.scenario), toolchain=toolchain
+        )
+
+    # Each check is a separate `codon build`: run a few side by side (each
+    # takes a CPU core and some memory of its own).
+    with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
+        results = list(pool.map(check, cfgs))
 
     failed = 0
-    for config_name in names:
-        cfg = run._compose_config(config_name, overrides)
-        scenario_name = str(cfg.scenario.name)
-        classes = get_scenario_classes(scenario_name)
-        if classes is None:
-            print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
+    for config_name, cfg, result in zip(names, cfgs, results):
+        if result is None:
+            print(
+                f"{config_name}: {str(cfg.scenario.name)!r} has a custom builder: not checked"
+            )  # noqa: T201
             continue
-        result = typecheck_scenario(
-            classes[0], classes[1], run._to_dict(cfg.scenario), toolchain=toolchain
-        )
         status = "ok" if result.ok else "FAILED"
         print(f"[{status}] {config_name}: {result.format()}")  # noqa: T201
         failed += not result.ok

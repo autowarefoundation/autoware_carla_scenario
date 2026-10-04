@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Literal, Mapping, cast
+from typing import Any, Literal, Mapping, cast, get_args
 
 from .check import ScenarioTypeError, TypeCheckResult, typecheck_scenario
+from .toolchain import Toolchain
 
 __all__ = [
     "TYPECHECK_ENV",
@@ -21,12 +22,13 @@ __all__ = [
     "TypecheckMode",
     "check_registered_scenario",
     "typecheck_mode",
+    "typecheck_registered",
 ]
 
 logger = logging.getLogger(__name__)
 
 TypecheckMode = Literal["auto", "required", "off"]
-TYPECHECK_MODES: tuple[TypecheckMode, ...] = ("auto", "required", "off")
+TYPECHECK_MODES: tuple[TypecheckMode, ...] = get_args(TypecheckMode)
 TYPECHECK_ENV = "AUTOWARE_CARLA_SCENARIO_TYPECHECK"
 
 
@@ -49,6 +51,26 @@ def typecheck_mode(cfg: Mapping[str, Any] | None = None) -> TypecheckMode:
     return cast(TypecheckMode, mode)
 
 
+def typecheck_registered(
+    name: str,
+    scenario_dict: Mapping[str, Any],
+    *,
+    toolchain: Toolchain | None = None,
+) -> TypeCheckResult | None:
+    """Compile the scenario registered as *name*, built with *scenario_dict*.
+
+    Returns ``None`` when *name* was registered with a custom builder
+    (:func:`~autoware_carla_scenario.register_scenario_builder`), which the
+    checker cannot drive.
+    """
+    from ..registry import get_scenario_classes  # noqa: PLC0415 - imports CARLA
+
+    classes = get_scenario_classes(name)
+    if classes is None:
+        return None
+    return typecheck_scenario(*classes, dict(scenario_dict), toolchain=toolchain)
+
+
 def check_registered_scenario(
     name: str,
     scenario_dict: Mapping[str, Any],
@@ -67,13 +89,10 @@ def check_registered_scenario(
     """
     if mode == "off":
         return None
-    from ..registry import get_scenario_classes  # noqa: PLC0415 - imports CARLA
-
-    classes = get_scenario_classes(name)
-    if classes is None:
+    result = typecheck_registered(name, scenario_dict)
+    if result is None:
         logger.info("Scenario %r has a custom builder: not statically checked", name)
         return None
-    result = typecheck_scenario(classes[0], classes[1], dict(scenario_dict))
     if result.skipped is not None:
         if mode == "required":
             result.ok = False
