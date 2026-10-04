@@ -32,7 +32,6 @@ __all__ = [
     "Toolchain",
     "ToolchainError",
     "codon_environment",
-    "codon_library_dir",
     "codon_path_dir",
     "find_codon",
     "is_supported_version",
@@ -88,18 +87,6 @@ def find_codon() -> Toolchain:
     except (tsc_toolchain.ToolchainError, RuntimeError) as exc:
         raise ToolchainError(str(exc)) from exc
     return Toolchain(Path(tc.executable), Path(tc.codon_dir), tc.source)
-
-
-def codon_library_dir() -> Path:
-    """The ``typesafe_carla`` Codon package scenarios are compiled against."""
-    try:
-        from typesafe_carla import paths as tsc_paths  # noqa: PLC0415
-    except ImportError as exc:
-        raise ToolchainError(_NOT_INSTALLED) from exc
-    try:
-        return (tsc_paths.codon_modules_dir() / "typesafe_carla").resolve()
-    except tsc_paths.PathError as exc:
-        raise ToolchainError(str(exc)) from exc
 
 
 def codon_path_dir() -> Path:

@@ -38,7 +38,6 @@ from .toolchain import (
     Toolchain,
     ToolchainError,
     codon_environment,
-    codon_library_dir,
     codon_path_dir,
     find_codon,
     is_supported_version,
@@ -98,15 +97,17 @@ def find_supported_codon() -> Toolchain:
     """The Codon :func:`.toolchain.find_codon` finds, if it is a supported release.
 
     The source rewrite and the model target one Codon release series, so
-    another is treated as no Codon at all.  typesafe_carla's Codon library has
-    to be there too: scenarios are compiled against it.
+    another is treated as no Codon at all.  typesafe_carla's ``CODON_PATH``
+    directory has to be there too (it is created here, once, before any
+    concurrent check reads it): scenarios are compiled against it.
 
     Raises:
-        ToolchainError: No Codon or no typesafe_carla was found, or the Codon
-            is of another release series.
+        ToolchainError: No Codon or no typesafe_carla was found, the Codon
+            is of another release series, or typesafe_carla's ``CODON_PATH``
+            directory cannot be created.
     """
     tc = _supported(find_codon())
-    codon_library_dir()
+    codon_path_dir()
     return tc
 
 

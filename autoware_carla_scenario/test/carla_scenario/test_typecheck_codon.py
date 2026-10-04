@@ -465,3 +465,12 @@ def test_a_batch_refuses_a_wrong_value_before_reading_the_config(
             ["lane_change/left", "lane_change/right"],
             ["scenario.timeout_seconds=fast"],
         )
+
+
+def test_scenario_check_fails_an_unknown_scenario_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.typecheck.cli import main
+
+    assert main(["scenario=lane_change/left", "scenario.name=no_such_scenario"]) == 1
+    assert "unknown scenario name 'no_such_scenario'" in capsys.readouterr().out

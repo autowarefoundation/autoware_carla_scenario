@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
-    from ..registry import load_scenario_plugins  # noqa: PLC0415
+    from ..registry import get_scenario_builder, load_scenario_plugins  # noqa: PLC0415
 
     load_scenario_plugins()
     pattern, overrides = run._extract_scenario_override(["scenario-check", *args])
@@ -61,10 +61,13 @@ def main(argv: list[str] | None = None) -> int:
 
     failed = 0
     for config_name, cfg, result in zip(names, cfgs, results):
+        scenario_name = str(cfg.scenario.name)
+        if result is None and get_scenario_builder(scenario_name) is None:
+            print(f"[FAILED] {config_name}: unknown scenario name {scenario_name!r}")  # noqa: T201
+            failed += 1
+            continue
         if result is None:
-            print(
-                f"{config_name}: {str(cfg.scenario.name)!r} has a custom builder: not checked"
-            )  # noqa: T201
+            print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
             continue
         status = "ok" if result.ok else "FAILED"
         print(f"[{status}] {config_name}: {result.format()}")  # noqa: T201
