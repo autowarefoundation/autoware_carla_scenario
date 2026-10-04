@@ -680,17 +680,19 @@ def run_batch(
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
-        # The runner's own fail-safe: without this the queue default (60 s)
-        # caps every run, which is shorter than an Autoware stack needs to
-        # localize, route and engage.
-        timeout_seconds=float(first_cfg.scenario.get("timeout_seconds", 60.0)),
         max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(first_cfg),
     )
 
-    for scenario in scenarios:
-        queue.add(scenario)
+    for cfg, scenario in zip(configs, scenarios):
+        # The runner's own fail-safe, each scenario's own: without it the
+        # queue default (60 s) caps every run, which is shorter than an
+        # Autoware stack needs to localize, route and engage.
+        queue.add(
+            scenario,
+            timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
+        )
 
     logger.info("All %d scenario(s) built. Starting execution...", len(scenario_names))
 
