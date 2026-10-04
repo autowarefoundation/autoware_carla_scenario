@@ -16,6 +16,13 @@ members = [
 [tool.uv.sources]
 typesafe-carla-toolchain = { workspace = true }
 
+[tool.pack-scenario-image]
+# Workspace members the scenario image does not ship (read by
+# .github/actions/pack-scenario-image/assemble-context.sh). The toolchain is
+# only needed for the static check, which runs before a scenario is packed;
+# building its wheel downloads Codon, which the image has no use for.
+exclude-members = ["toolchain"]
+
 [dependency-groups]
 dev = [
     "black>=25.11.0",
