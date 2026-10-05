@@ -97,7 +97,8 @@ class SumoBackendConfig:
             default.
         fcd_output: Record every SUMO vehicle's state each step (SUMO's
             floating car data) to ``<output_dir>/sumo/fcd.xml``, for replaying
-            or plotting a run's traffic afterwards.
+            or plotting a run's traffic afterwards, and the SUMO time each CARLA
+            tick maps to in ``<output_dir>/sumo/clock.csv``.
         sumo_args: Extra command-line arguments for SUMO.
     """
 

@@ -186,10 +186,26 @@ class _Actors(list):  # type: ignore[type-arg]
         return list(self) if pattern == "vehicle.*" else []
 
 
+class _Stamp:
+    def __init__(self, frame: int) -> None:
+        self.frame = frame
+        self.elapsed_seconds = 100.0 + frame * 0.05
+
+
+class _Snapshot:
+    def __init__(self, frame: int) -> None:
+        self.timestamp = _Stamp(frame)
+
+
 class _FakeWorld:
     def __init__(self, actors: list[_FakeActor]) -> None:
         self.actors = actors
         self.spawned: list[_FakeActor] = []
+        self.frame = 0
+
+    def get_snapshot(self) -> _Snapshot:
+        self.frame += 1
+        return _Snapshot(self.frame)
 
     def get_actors(self) -> _Actors:
         return _Actors(self.actors)
@@ -426,3 +442,26 @@ def test_a_published_vehicle_keeps_its_speed_in_sumo_after_the_warm_up(
         assert backend._traci.vehicle.getSpeed(driven_id) > 0.5
     finally:
         backend.close()
+
+
+@needs_sumo
+def test_fcd_output_records_how_sumo_time_maps_onto_carla_time(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, warmup_s=1.0, fcd_output=True
+    )
+    try:
+        for i in range(10):
+            backend.tick(world, i * 0.05)
+    finally:
+        backend.close()
+    out = tmp_path / "out" / "sumo"
+    assert (out / "fcd.xml").is_file()
+    rows = (out / "clock.csv").read_text().splitlines()
+    assert rows[0] == "sumo_time,carla_elapsed_seconds,carla_frame"
+    sumo_t, carla_t, frame = (float(x) for x in rows[1].split(","))
+    # The warm-up ran SUMO alone, so its clock leads CARLA's by that much.
+    assert sumo_t == pytest.approx(1.05)
+    assert (carla_t, frame) == (pytest.approx(100.05), 1)
+    assert len(rows) == 11

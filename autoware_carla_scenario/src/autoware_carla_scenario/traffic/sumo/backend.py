@@ -148,6 +148,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._ego_actor: Any = None
         self._running = False
         self._failures = 0
+        #: With fcd_output: SUMO time, CARLA simulation time and frame per tick.
+        self._clock_log: Any = None
 
     @property
     def port(self) -> int:
@@ -230,6 +232,10 @@ class SumoTrafficBackend(TrafficBackend):
             cmd += ["-r", ",".join(str(r) for r in routes)]
         if self._config.fcd_output:
             cmd += ["--fcd-output", str(out / "fcd.xml"), "--fcd-output.geo", "false"]
+            # How SUMO's clock maps onto CARLA's, to line the FCD up with
+            # anything else recorded on CARLA's (camera frames, a rosbag).
+            self._clock_log = (out / "clock.csv").open("w")
+            self._clock_log.write("sumo_time,carla_elapsed_seconds,carla_frame\n")
         cmd += self._config.sumo_args
         try:
             self._traci.start(cmd)
@@ -298,6 +304,12 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._traci.simulationStep()
+            if self._clock_log is not None:
+                stamp = world.get_snapshot().timestamp
+                self._clock_log.write(
+                    f"{self._traci.simulation.getTime():.3f},"
+                    f"{stamp.elapsed_seconds:.3f},{stamp.frame}\n"
+                )
             self._pull_driven()
             self._sync_ambient(world)
             if self._config.traffic_light_authority == "sumo":
@@ -313,6 +325,9 @@ class SumoTrafficBackend(TrafficBackend):
     def close(self) -> None:
         """Stop SUMO, destroy the ambient actors and forget the run."""
         self._tm.close()
+        if self._clock_log is not None:
+            self._clock_log.close()
+            self._clock_log = None
         if self._running and self._traci is not None:
             try:
                 if self._traci.__name__ == "libsumo":
