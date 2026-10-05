@@ -63,6 +63,10 @@ __all__ = [
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
 _PACKAGE = "autoware_carla_scenario"
+#: typesafe_carla's Codon library: not modelled here but linked into the
+#: workspace from typesafe_carla's CODON_PATH (``_build_workspace``), so every
+#: ``typesafe_carla`` module a scenario imports (``typesafe_carla.carla``) exists.
+_LIBRARY = "typesafe_carla"
 #: Lines :data:`.transform.PRELUDE` adds above every rewritten module.
 _PRELUDE_LINES = PRELUDE.count("\n")
 
@@ -317,7 +321,7 @@ def _collect(roots: list[str], tc: Toolchain) -> _Sources:
         out.modules[name] = _Module(path, is_package, text, tree)
         for imported, names, lineno in _imports(tree, name, is_package):
             top = imported.split(".")[0]
-            if imported in modeled or top in shims:
+            if imported in modeled or top in shims or top == _LIBRARY:
                 continue
             if any(imported == p or imported.startswith(p + ".") for p in prefixes):
                 submodules = [
