@@ -7,8 +7,8 @@ OpenDRIVE roads.  Each road check uses a
 once the vehicle visits the road, and the conditions are combined with
 :class:`~autoware_carla_scenario.AndCondition` to assert the full route.
 
-The scenario supports an optional ``turn_direction`` (``"left"`` / ``"right"``)
-that registers a :class:`~autoware_carla_scenario.TurnAction` to steer the ego
+The scenario supports an optional ``turn_direction`` (``"left"`` / ``"right"`` /
+``"straight"``) that registers a :class:`~autoware_carla_scenario.TurnAction` to steer the ego
 through the junction, and an optional ``min_speed_kmh`` that adds a
 :class:`~autoware_carla_scenario.SpeedCondition` fail condition.
 
@@ -86,6 +86,7 @@ def _lanelet_start_road_id(lanelet_id: int) -> str:
 _TURN_DIRECTION_MAP: dict[str, TurnDirection] = {
     "left": TurnDirection.LEFT,
     "right": TurnDirection.RIGHT,
+    "straight": TurnDirection.STRAIGHT,
 }
 
 

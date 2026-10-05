@@ -7,6 +7,9 @@
 # Nishi-Shinjuku case. Every lanelet value is replaced per case.
 scenario:
   name: intersection_passing
+  # Straight on: the TrafficManager's autopilot would otherwise pick any way
+  # out of the junction.
+  turn_direction: straight
   expected_route_lanelet_ids: [460, 265]
   # 25 m to the stop line, the junction, and onto the lane beyond it.
   timeout_seconds: 15.0
