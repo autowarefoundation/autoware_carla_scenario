@@ -134,8 +134,8 @@ class PedestrianDartOutConfig:
     #: Walking speed into the road (m/s); a run, not a stroll.
     walk_speed_ms: float = 2.0
 
-    #: CARLA blueprint of the pedestrian.
-    walker_type: str = "walker.pedestrian.0001"
+    #: CARLA blueprint of the pedestrian: one CARLA 0.9 and 0.10 both ship.
+    walker_type: str = "walker.pedestrian.0015"
 
     #: The run passes once the ego is this far past the pedestrian's crossing
     #: line, on its own lanelet (m).

@@ -27,7 +27,6 @@ from autoware_carla_scenario import (
     EGO_ROLE_NAME,
     BaseScenario,
     CollisionCondition,
-    DistanceCoordinateSystem,
     EgoConfig,
     ElapsedTimeCondition,
     EntityDistanceCondition,
@@ -61,7 +60,7 @@ _CHANGE_TOWARDS_EGO: dict[str, LaneChangeDirection] = {
     "right": LaneChangeDirection.LEFT,
 }
 
-#: Two vehicles this close sideways, in lane coordinates, share a lane (m).
+#: Two vehicles this close sideways, across the ego's heading, share a lane (m).
 _SAME_LANE_M = 1.0
 
 
@@ -140,13 +139,12 @@ class CutInScenario(BaseScenario):
             )
         )
 
-        # In the ego's lane: next to nothing sideways, measured along the lane.
+        # In the ego's lane: next to nothing sideways of the ego's heading.
         same_lane = EntityDistanceCondition(
             EGO_ROLE_NAME,
             CUT_IN_ROLE,
             _SAME_LANE_M,
             distance_type=RelativeDistanceType.LATERAL,
-            coordinate_system=DistanceCoordinateSystem.LANE,
             label="npc_in_ego_lane",
         )
         self.register_pass_condition(
