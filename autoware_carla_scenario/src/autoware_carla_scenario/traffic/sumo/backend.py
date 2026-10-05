@@ -574,23 +574,33 @@ class SumoTrafficBackend(TrafficBackend):
             return False
         if edge.startswith(":"):
             # Inside a junction: a route has to start on a normal edge, so it
-            # starts on the one the junction lane leads to.
+            # starts at the beginning of the lane the junction lane leads to
+            # -- not lane 0, which is a footway on a road that has one.
             links = tc.lane.getLinks(f"{edge}_{lane}")
-            edge = links[0][0].rsplit("_", 1)[0] if links else ""
-            pos, lane = 0.0, 0
+            if links:
+                edge, index = links[0][0].rsplit("_", 1)
+                pos, lane = 0.0, int(index)
+            else:
+                edge = ""
         if not edge:
             logger.warning("%s is off the SUMO network", sumo_id)
             return False
         route_id = f"route:{sumo_id}"
-        tc.route.add(route_id, self._continue_route([edge]))
-        tc.vehicle.add(
-            sumo_id,
-            route_id,
-            typeID="DEFAULT_VEHTYPE",
-            departLane=str(lane),
-            departPos=f"{pos:.2f}",
-            departSpeed="0",
-        )
+        try:
+            tc.route.add(route_id, self._continue_route([edge]))
+            tc.vehicle.add(
+                sumo_id,
+                route_id,
+                typeID="DEFAULT_VEHTYPE",
+                departLane=str(lane),
+                departPos=f"{pos:.2f}",
+                departSpeed="0",
+            )
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.warning(
+                "SUMO could not add %s on %s_%d: %s", sumo_id, edge, lane, exc
+            )
+            return False
         tc.vehicle.setLength(sumo_id, self._length(actor))
         tc.vehicle.setWidth(sumo_id, max(2.0 * float(actor.bounding_box.extent.y), 0.5))
         return True
