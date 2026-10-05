@@ -33,6 +33,20 @@ from .constraints import (
 logger = logging.getLogger(__name__)
 
 
+def _override_value(value: Any) -> str:
+    """Render a binding's value the way a Hydra override reads it back.
+
+    A list becomes ``[a,b]`` with no spaces, which Hydra parses as a list and a
+    shell never has to be asked about. An int stays an int: ``goal_lanelet_id``
+    does not take ``1234.0``.
+    """
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_override_value(v) for v in value) + "]"
+    return str(value)
+
+
 def expand_sweep(
     sweep: Mapping[Any, Any], lanelet_map: Any, arguments: Sequence[str] = ()
 ) -> list[list[str]]:
@@ -78,7 +92,7 @@ def expand_sweep(
                     exc_info=True,
                 )
                 break
-            overrides.append(f"{binding.target_key}={result.value}")
+            overrides.append(f"{binding.target_key}={_override_value(result.value)}")
             if result.lanelet_id_override is not None:
                 overrides[0] = f"{target_key}={result.lanelet_id_override}"
         else:

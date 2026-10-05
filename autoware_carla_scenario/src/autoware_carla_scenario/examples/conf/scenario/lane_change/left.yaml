@@ -8,7 +8,9 @@ scenario:
 ego:
   initial_speed_kmh: 1.0
   spawn_lanelet_id: 183
-  spawn_s: 0.0
+  # Off the lanelet's start, which can sit on the seam between two
+  # OpenDRIVE roads and resolve to the one the ego is not on.
+  spawn_s: 5.0
   # Up the road from the spawn.
   goal_lanelet_id: 141
 
@@ -19,9 +21,11 @@ sweep:
         constraints:
           - type: has_adjacent
             value: left
+          # Long enough to finish the change before the road ends: the pass
+          # condition looks for the target lane on the road the ego starts on.
           - type: lanelet_length
             rule: greater_than_or_equal
-            value: 10.0
+            value: 30.0
           - type: not
             constraint:
               type: is_junction

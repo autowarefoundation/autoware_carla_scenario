@@ -208,7 +208,8 @@ def get_stop_line_poses(lanelet_id: int) -> List[Lanelet2Pose]:
     raise NotImplementedError()
 
 
-def get_stop_line_poses_with_following(lanelet_id: int) -> List[Lanelet2Pose]:
+def get_stop_line_poses_with_following(lanelet_id: int, depth: int = 1
+                                       ) -> List[Lanelet2Pose]:
     raise NotImplementedError()
 
 

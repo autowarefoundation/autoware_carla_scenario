@@ -22,9 +22,14 @@ is the whole point -- none of them are needed again to install it.
 Two consequences worth stating plainly, because they are properties of a
 wheelhouse rather than of this code:
 
-* it is built **for one platform and one Python**, the exporting machine's.
-  Wheels are selected by the interpreter that resolves them, so a wheelhouse
-  built on cp312/linux-x86_64 installs on cp312/linux-x86_64;
+* it is built **for one platform**, the exporting machine's, but for *every*
+  interpreter the package supports.  Wheels are selected by the interpreter
+  that resolves them, so one pass is made per interpreter and the results are
+  merged into the single directory: the pure-Python wheels are shared, and the
+  compiled ones sit side by side with their own ``cp3xx`` tag.  That is what
+  lets the same wheelhouse install under ROS 2 Humble's Python 3.10 and
+  Jazzy's 3.12, which is the difference between a scenario that runs on a
+  vehicle and one that needs a PPA first;
 * it is **large** -- the CARLA client, OpenCV and the lanelet2 bindings alone
   are most of a hundred megabytes.  That is the cost of not needing a network.
 """
@@ -37,6 +42,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -57,6 +63,7 @@ __all__ = [
     "build_wheelhouse",
     "carla_extra",
     "carla_wheels",
+    "supported_pythons",
     "unpinned_carla_client",
     "venv_python",
 ]
@@ -109,7 +116,9 @@ class Wheelhouse:
         version: Version of that distribution.
         wheels: Every wheel filename in the directory, sorted.
         size_bytes: What those wheels came to, which is what a download costs.
-        python_tag: The interpreter the wheels were resolved for, e.g. ``3.10``.
+        python_tags: Every interpreter the wheels were resolved for, in
+            ascending order, e.g. ``("3.10", "3.11", "3.12")``.  The directory
+            installs under any of them.
         log: Combined output of the tools that ran.
     """
 
@@ -118,7 +127,7 @@ class Wheelhouse:
     version: str
     wheels: tuple[str, ...] = ()
     size_bytes: int = 0
-    python_tag: str = ""
+    python_tags: tuple[str, ...] = ()
     log: str = ""
 
 
@@ -241,6 +250,40 @@ def carla_wheels(extra: str = "") -> list[Path]:
     return sorted(root.glob(f"carla-{version}-*.whl"))
 
 
+#: An interpreter tag in a wheel filename, e.g. ``cp310``.
+_CPYTHON_TAG = re.compile(r"cp3(\d+)$")
+
+
+def supported_pythons(package_root: Path) -> list[str]:
+    """Return every interpreter the package at *package_root* can install under.
+
+    Read off the CARLA wheels the package vendors, because the client is the
+    one dependency with a per-interpreter ceiling -- everything else either
+    ships a wheel for the whole of ``requires-python`` or is pure Python.  A
+    package vendoring cp310, cp311 and cp312 is a package whose wheelhouse
+    should hold all three, which is what makes one export serve both ROS 2
+    distributions.
+
+    Returns:
+        The versions in ascending order, e.g. ``["3.10", "3.11", "3.12"]``, or
+        an empty list when the package vendors nothing to read them from --
+        the client came from an index, and the caller falls back to the
+        interpreter the package recorded.
+    """
+    versions = set()
+    for wheel in (Path(package_root) / VENDORED_WHEELS_DIR).glob("carla-*.whl"):
+        # `name-version-[build-]python-abi-platform`; the python tag is the
+        # third field, and a wheel for several interpreters dots them together.
+        fields = wheel.stem.split("-")
+        if len(fields) < 5:
+            continue
+        for tag in fields[-3].split("."):
+            matched = _CPYTHON_TAG.match(tag)
+            if matched:
+                versions.add(f"3.{matched.group(1)}")
+    return sorted(versions, key=lambda version: int(version.split(".")[1]))
+
+
 # ---------------------------------------------------------------------------
 # Building
 # ---------------------------------------------------------------------------
@@ -320,10 +363,13 @@ def _builder_environment(parent: Path, python: str) -> tuple[Path, str]:
     distribution or a git checkout* when no wheel is published, which is the
     case for the framework itself.
 
+    One per interpreter, named after it: a wheelhouse is filled by a pass per
+    interpreter and the second pass must not find the first one's environment.
+
     Raises:
         WheelhouseError: If the environment could not be created.
     """
-    venv = parent / "builder"
+    venv = parent / f"builder-{python}"
     result = run_uv(
         parent,
         "venv",
@@ -393,7 +439,7 @@ def build_wheelhouse(
     distribution: str,
     version: str,
     run_command: str,
-    python: str = "",
+    pythons: Sequence[str] = (),
 ) -> Wheelhouse:
     """Build a self-contained wheelhouse for the package at *package_root*.
 
@@ -408,8 +454,12 @@ def build_wheelhouse(
             directory.
         run_command: The command that runs the scenario once installed, for the
             directory's own README.
-        python: Interpreter version to resolve the wheels for.  Defaults to the
-            package's ``.python-version``.
+        pythons: Interpreter versions to resolve the wheels for, e.g.
+            ``("3.10", "3.12")``.  Defaults to every interpreter the package's
+            vendored CARLA wheels cover -- see :func:`supported_pythons` --
+            and falls back to the package's ``.python-version`` when it
+            vendors none.  One pass is made per interpreter into the same
+            directory.
 
     Returns:
         The :class:`Wheelhouse` describing what was built.
@@ -436,15 +486,19 @@ def build_wheelhouse(
         if any(destination.iterdir()):
             raise WheelhouseError(f"{destination} is not empty.")
 
-    if not python:
+    targets = [str(interpreter) for interpreter in pythons]
+    if not targets:
+        targets = supported_pythons(package_root)
+    if not targets:
         recorded = package_root / ".python-version"
-        python = (
+        single = (
             recorded.read_text(encoding="utf-8").strip() if recorded.is_file() else ""
         )
-    if not python:  # pragma: no cover - every generated package records one
-        import platform  # noqa: PLC0415
+        if not single:  # pragma: no cover - every generated package records one
+            import platform  # noqa: PLC0415
 
-        python = platform.python_version()
+            single = platform.python_version()
+        targets = [single]
 
     destination.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="scenario-wheelhouse-"))
@@ -458,15 +512,19 @@ def build_wheelhouse(
 
         log += _build_project_wheel(package_root, destination)
 
-        venv, venv_log = _builder_environment(scratch, python)
-        log += venv_log
-
         # The package vendors its CARLA wheel; pip has to be told where, since
         # `[tool.uv] find-links` means nothing to it.
         vendored = package_root / VENDORED_WHEELS_DIR
-        log += _download_wheels(
-            venv, pinned, destination, [vendored] if vendored.is_dir() else []
-        )
+        find_links = [vendored] if vendored.is_dir() else []
+        # A pass per interpreter, all into the same directory. pip resolves the
+        # requirements file against the interpreter that runs it -- markers and
+        # wheel tags both -- so this is the only way to end up with a directory
+        # that installs under more than one. The passes cannot collide: a wheel
+        # two interpreters share is byte-identical and is simply rewritten.
+        for interpreter in targets:
+            venv, venv_log = _builder_environment(scratch, interpreter)
+            log += venv_log
+            log += _download_wheels(venv, pinned, destination, find_links)
 
         # Inside the guard: the last two files are small, but the disk they go
         # on has just taken 160 MB of wheels, and a wheelhouse missing its
@@ -478,7 +536,7 @@ def build_wheelhouse(
             version=version,
             wheels=tuple(path.name for path in wheels),
             size_bytes=sum(path.stat().st_size for path in wheels),
-            python_tag=python,
+            python_tags=tuple(targets),
             log=log,
         )
         _write_install_files(built, requirements=requirements, run_command=run_command)
@@ -606,12 +664,13 @@ def _write_install_files(
         environment.get_template("wheelhouse_README.md.jinja").render(
             distribution=wheelhouse.distribution,
             version=wheelhouse.version,
-            python=wheelhouse.python_tag,
+            pythons=list(wheelhouse.python_tags),
             wheel_count=len(wheelhouse.wheels),
             run_command=run_command,
             # A wheelhouse installs on the platform it was built for and no
-            # other, so the layout of the venv it tells the reader to make is
-            # this platform's -- `Scripts` on Windows, `bin` everywhere else.
+            # other -- the interpreter is the axis it covers several of -- so
+            # the layout of the venv it tells the reader to make is this
+            # platform's: `Scripts` on Windows, `bin` everywhere else.
             venv_bin="Scripts" if os.name == "nt" else "bin",
         ),
         encoding="utf-8",

@@ -409,3 +409,61 @@ class TestBuildGoalPose:
 
         assert goal is not None
         assert goal.s == 0.0
+
+
+def test_run_batch_gives_each_scenario_its_own_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    built: list[object] = []
+
+    def fake_build(cfg: object, **_: object) -> tuple[None, object]:
+        built.append(object())
+        return None, built[-1]
+
+    added: list[tuple[object, float | None]] = []
+
+    class FakeQueue:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        def add(
+            self, scenario: object, *, timeout_seconds: float | None = None
+        ) -> None:
+            added.append((scenario, timeout_seconds))
+
+        def __enter__(self) -> "FakeQueue":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def run_all(self) -> list[object]:
+            return []
+
+    monkeypatch.setattr(run, "build_scenario", fake_build)
+    monkeypatch.setattr(run, "ScenarioQueue", FakeQueue)
+    monkeypatch.setattr(
+        run,
+        "resolve_map_paths",
+        lambda _m: SimpleNamespace(
+            install_xodr=None,
+            overwrite_xodr=False,
+            opendrive_path=None,
+            lanelet2_path=None,
+            name="M",
+            projector_type=None,
+        ),
+    )
+    monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
+    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: None)
+    monkeypatch.setattr(run, "_print_summary", lambda *a, **k: True)
+
+    with pytest.raises(SystemExit):
+        run.run_batch(["lane_change/left", "lane_change_fail/right"], [])
+
+    assert added == [(built[0], 10.0), (built[1], 1.5)]

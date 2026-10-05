@@ -68,8 +68,10 @@ __all__ = [
 
 #: Bumped when the manifest's own shape changes.  Version 2 moved the document
 #: and the Hydra config inside the package module, so that they reach the wheel,
-#: and added the ``wheelhouse`` section.
-MANIFEST_FORMAT_VERSION = 2
+#: and added the ``wheelhouse`` section.  Version 3 turned that section's
+#: ``python`` into a list: a wheelhouse is built for every interpreter the
+#: package supports, not just the exporting one.
+MANIFEST_FORMAT_VERSION = 3
 
 #: Directory holding the ``*.jinja`` templates for a generated package.
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -416,7 +418,7 @@ def _build_manifest(
                     f"{wheelhouse.distribution}"
                 ),
                 "wheels": len(wheelhouse.wheels),
-                "python": wheelhouse.python_tag,
+                "python": list(wheelhouse.python_tags),
             }
             if wheelhouse is not None
             else None

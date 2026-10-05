@@ -631,7 +631,9 @@ class ScenarioRunner:
     # Scenario execution
     # ------------------------------------------------------------------
 
-    def run_scenario(self, scenario: BaseScenario) -> ScenarioResult:
+    def run_scenario(
+        self, scenario: BaseScenario, *, timeout_seconds: float | None = None
+    ) -> ScenarioResult:
         """Execute a single scenario from setup to teardown.
 
         Steps:
@@ -648,10 +650,14 @@ class ScenarioRunner:
 
         Args:
             scenario: The scenario to run.
+            timeout_seconds: The default timeout for this scenario; the
+                runner's ``timeout_seconds`` when ``None``.
 
         Returns:
             The outcome of the scenario execution.
         """
+        if timeout_seconds is None:
+            timeout_seconds = self.timeout_seconds
         if self._world is None:
             self._world = self._client.get_world()
 
@@ -816,7 +822,7 @@ class ScenarioRunner:
 
             # Register default timeout fail condition
             scenario.register_fail_condition(
-                TimeoutCondition(self.timeout_seconds, label="default_timeout")
+                TimeoutCondition(timeout_seconds, label="default_timeout")
             )
 
             logger.info("[%s] === Tick loop start ===", scenario_name)
