@@ -129,7 +129,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "2.64.1"
+version = "2.64.2"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "fastapi" },
