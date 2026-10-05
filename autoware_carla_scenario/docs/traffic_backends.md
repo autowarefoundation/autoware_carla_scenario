@@ -215,6 +215,72 @@ queue = ScenarioQueue(map_name="Town10HD_Opt", traffic_backend=NullTrafficBacken
 `ScenarioQueue` passes it to the `ScenarioRunner` it builds, and one backend
 serves every scenario in the queue — the same way one CARLA server does.
 
+## Background traffic
+
+Vehicles no scenario entity stands for are created and removed by two actions
+modelled on OpenSCENARIO's `TrafficSourceAction` and `TrafficSinkAction`. Where
+OpenSCENARIO gives a source or sink a position and a radius, these take
+**lanelet constraints** -- the vocabulary a sweep picks its cases with -- so the
+same action means "every lane outside a junction" on any map:
+
+```python
+from autoware_carla_scenario import ElapsedTimeCondition, TrafficSinkAction, TrafficSourceAction
+
+not_in_junction = [{"type": "not", "constraint": {"type": "is_junction"}}]
+
+# Placed during initialization, then no more: register_init runs once.
+self.register_init(TrafficSourceAction(not_in_junction, initial_vehicles=20))
+
+# Six a minute during the first 30 s of the run, at most 30 on the road.
+self.register_pre_tick(
+    TrafficSourceAction(
+        not_in_junction,
+        vehicles_per_minute=6.0,
+        max_vehicles=30,
+        until=ElapsedTimeCondition(30.0, label="first_30s"),
+    )
+)
+
+# Removed at the ends of the map's roads for the whole run.
+self.register_pre_tick(
+    TrafficSinkAction(
+        [{"type": "not", "constraint": {"type": "previous_of",
+          "constraints": [{"type": "lanelet_length", "value": 0.0}]}}]
+    )
+)
+```
+
+- **When they act** is the trigger (`condition`) and the end condition
+  (`until`), as for every action. With no `until` a source or sink runs until
+  the scenario ends, as OpenSCENARIO's do; with one, it stops on the first tick
+  `until` fires. Registered with `register_init`, a source places its
+  `initial_vehicles` once, during initialization, and never again.
+- **Who drives them** is the backend: `spawn_background`, `background_vehicles`
+  and `remove_background` on `TrafficBackend`. Under `traffic=sumo` they are
+  SUMO vehicles that wander the network (a random way out at each junction) and
+  are mirrored into CARLA like the rest of SUMO's traffic; ones placed during
+  initialization have SUMO's warm-up to spread out. Under
+  `traffic=traffic_manager` they are CARLA vehicles on autopilot. `none` creates
+  none, with a warning.
+- **`speed_kmh`** is the speed they drive at, at most. **`max_vehicles`** counts
+  every background vehicle on the road, whichever source made it.
+
+The examples take all of this from the config, for any scenario:
+
+```bash
+uv run scenario scenario=intersection_passing/left_turn map=town10hd_opt \
+  traffic=sumo background_traffic.enabled=true
+# Only what initialization places:
+uv run scenario ... background_traffic.enabled=true background_traffic.source.vehicles_per_minute=0
+# Keep adding for the first 20 s only:
+uv run scenario ... background_traffic.enabled=true background_traffic.source.stop_after_seconds=20
+```
+
+`background_traffic` (in `examples/conf/config.yaml`) is off by default, and the
+SUMO backend's own `ambient` randomTrips demand is off in
+`conf/traffic/sumo.yaml`, so an example runs with no traffic but its own unless
+asked.
+
 ## Why this exists
 
 CARLA's TrafficManager is a good default for a handful of scripted NPCs and the

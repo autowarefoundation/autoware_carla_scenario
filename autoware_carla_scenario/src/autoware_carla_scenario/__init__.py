@@ -89,6 +89,8 @@ if TYPE_CHECKING:
         TrafficSignalControllerAction as TrafficSignalControllerAction,
         TurnAction as TurnAction,
         TurnDirection as TurnDirection,
+        TrafficSinkAction as TrafficSinkAction,
+        TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
@@ -379,6 +381,8 @@ __all__ = [
     "WaypointCondition",
     "TurnAction",
     "TurnDirection",
+    "TrafficSinkAction",
+    "TrafficSourceAction",
     "WalkStraightAction",
     # Sensors
     "CameraRecorder",
@@ -409,6 +413,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     ),
     "TurnAction": (".actions", "TurnAction"),
     "WalkStraightAction": (".actions", "WalkStraightAction"),
+    "TrafficSourceAction": (".actions", "TrafficSourceAction"),
+    "TrafficSinkAction": (".actions", "TrafficSinkAction"),
     "TurnDirection": (".actions", "TurnDirection"),
     # camera / sensor
     "CameraRecorder": (".camera_recorder", "CameraRecorder"),

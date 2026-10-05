@@ -93,6 +93,12 @@ _DRIVEN_COLOR = (30, 90, 220, 255)
 #: whatever lane is there whoever may use it (4).  Without the 4 a pedestrian
 #: crossing the road is put on the nearest footway, where no vehicle sees it.
 _KEEP_ROUTE_ANYWHERE = 2 | 4
+#: The length SUMO is told a background vehicle has before its CARLA mirror
+#: exists, m, and how many junctions its route runs through.
+_BACKGROUND_LENGTH_M = 4.6
+_BACKGROUND_ROUTE_EDGES = 40
+#: How far from a lane a background vehicle may be asked for and still be put on it, m.
+_BACKGROUND_MAX_OFFSET_M = 5.0
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
 _CARLA_TO_SUMO_SIGNAL = {"Red": "r", "Yellow": "y", "Green": "G"}
@@ -156,6 +162,11 @@ class SumoTrafficBackend(TrafficBackend):
         self._walkers: dict[int, str] = {}
         #: CARLA pedestrians no edge was found near, so not yet in SUMO.
         self._walkers_off_network: set[int] = set()
+        #: SUMO ids of the background vehicles spawn_background added.
+        self._background: set[str] = set()
+        self._background_count = 0
+        #: SUMO id -> the CARLA blueprint asked for its mirror.
+        self._blueprints: dict[str, str] = {}
         #: SUMO id -> the CARLA actor mirroring an ambient SUMO vehicle.
         self._ambient: dict[str, Any] = {}
         #: SUMO id -> lane index a lane change aims for.
@@ -384,6 +395,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._external = {}
         self._walkers = {}
         self._walkers_off_network = set()
+        self._background = set()
+        self._background_count = 0
+        self._blueprints = {}
         self._ambient = {}
         self._lane_targets = {}
         self._signals = {}
@@ -561,30 +575,40 @@ class SumoTrafficBackend(TrafficBackend):
             self._offset,
         )
 
-    def _add_vehicle(self, sumo_id: str, actor: Any) -> bool:
-        """Add *actor* to SUMO where it stands; ``False`` if it is off the network."""
+    def _road_position(
+        self, pose: Pose2D, sumo_id: str
+    ) -> Optional[tuple[str, float, int]]:
+        """The (edge, position, lane index) a car at SUMO *pose* starts from.
+
+        ``None``, with a warning, where there is no road for a car there.
+        """
         tc = self._traci
-        pose = self._carla_pose_to_sumo(actor)
         try:
             edge, pos, lane = tc.simulation.convertRoad(
                 pose.x, pose.y, False, "passenger"
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("%s is off the SUMO network: %s", sumo_id, exc)
-            return False
+            return None
         if edge.startswith(":"):
             # Inside a junction: a route has to start on a normal edge, so it
             # starts at the beginning of the lane the junction lane leads to
             # -- not lane 0, which is a footway on a road that has one.
             links = tc.lane.getLinks(f"{edge}_{lane}")
-            if links:
-                edge, index = links[0][0].rsplit("_", 1)
-                pos, lane = 0.0, int(index)
-            else:
-                edge = ""
-        if not edge:
-            logger.warning("%s is off the SUMO network", sumo_id)
+            if not links:
+                logger.warning("%s is off the SUMO network", sumo_id)
+                return None
+            edge, index = links[0][0].rsplit("_", 1)
+            pos, lane = 0.0, int(index)
+        return edge, pos, lane
+
+    def _add_vehicle(self, sumo_id: str, actor: Any) -> bool:
+        """Add *actor* to SUMO where it stands; ``False`` if it is off the network."""
+        tc = self._traci
+        place = self._road_position(self._carla_pose_to_sumo(actor), sumo_id)
+        if place is None:
             return False
+        edge, pos, lane = place
         route_id = f"route:{sumo_id}"
         try:
             tc.route.add(route_id, self._continue_route([edge]))
@@ -604,6 +628,115 @@ class SumoTrafficBackend(TrafficBackend):
         tc.vehicle.setLength(sumo_id, self._length(actor))
         tc.vehicle.setWidth(sumo_id, max(2.0 * float(actor.bounding_box.extent.y), 0.5))
         return True
+
+    # ------------------------------------------------------------------
+    # Background traffic
+    # ------------------------------------------------------------------
+
+    def spawn_background(
+        self,
+        world: Any,
+        transform: Any,
+        *,
+        speed_kmh: float,
+        blueprint: Optional[str] = None,
+    ) -> Optional[str]:
+        """Add a SUMO vehicle at *transform*; it is mirrored into CARLA like
+        the rest of SUMO's traffic, and wanders the network until its route
+        runs out."""
+        del world
+        if not self._running:
+            return None
+        tc = self._traci
+        self._background_count += 1
+        sumo_id = f"bg{self._background_count}"
+        location, rotation = transform.location, transform.rotation
+        pose = carla_to_sumo(
+            Pose2D(location.x, location.y, location.z, rotation.yaw),
+            _BACKGROUND_LENGTH_M,
+            self._offset,
+        )
+        place = self._road_position(pose, sumo_id)
+        if place is None:
+            return None
+        edge, pos, lane = place
+        # convertRoad answers with the nearest lane however far away it is;
+        # a background vehicle goes only where there is one.
+        lane_x, lane_y = tc.simulation.convert2D(edge, pos, lane)
+        if math.hypot(lane_x - pose.x, lane_y - pose.y) > _BACKGROUND_MAX_OFFSET_M:
+            logger.debug("No lane for background vehicle %s near %s", sumo_id, pose)
+            return None
+        route_id = f"route:{sumo_id}"
+        try:
+            tc.route.add(route_id, self._wander(edge))
+            tc.vehicle.add(
+                sumo_id,
+                route_id,
+                typeID="DEFAULT_VEHTYPE",
+                departLane=str(lane),
+                departPos=f"{pos:.2f}",
+                # The fastest it can safely enter at: a fixed speed near a
+                # junction is one SUMO refuses to insert the vehicle at.
+                departSpeed="max" if speed_kmh > 0 else "0",
+            )
+            if speed_kmh > 0:
+                tc.vehicle.setMaxSpeed(sumo_id, max(speed_kmh / 3.6, 1.0))
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.warning(
+                "SUMO could not add %s on %s_%d: %s", sumo_id, edge, lane, exc
+            )
+            return None
+        self._background.add(sumo_id)
+        if blueprint:
+            self._blueprints[sumo_id] = blueprint
+        return sumo_id
+
+    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+        """Every background vehicle SUMO still has, at its CARLA ``(x, y)``."""
+        del world
+        if not self._running:
+            return {}
+        vehicle = self._traci.vehicle
+        present = set(vehicle.getIDList())
+        # A vehicle added this step is pending until SUMO inserts it; one that
+        # is neither has reached the end of its route and left.
+        pending = set(self._traci.simulation.getPendingVehicles())
+        self._background &= present | pending
+        out: dict[str, tuple[float, float]] = {}
+        for sumo_id in self._background & present:
+            x, y, z = vehicle.getPosition3D(sumo_id)
+            pose = sumo_to_carla(
+                Pose2D(x, y, z, vehicle.getAngle(sumo_id)),
+                vehicle.getLength(sumo_id),
+                self._offset,
+            )
+            out[sumo_id] = (pose.x, pose.y)
+        return out
+
+    def remove_background(self, world: Any, handle: str) -> None:
+        """Take a background vehicle out of SUMO; its CARLA mirror goes with it."""
+        del world
+        if handle not in self._background or not self._running:
+            return
+        self._background.discard(handle)
+        try:
+            self._traci.vehicle.remove(handle)
+        except Exception as exc:  # noqa: BLE001 - it may have left on its own
+            logger.debug("SUMO: removing %s: %s", handle, exc)
+
+    def _wander(self, edge: str, edges: int = _BACKGROUND_ROUTE_EDGES) -> list[str]:
+        """A route from *edge* that takes a random way out at every junction."""
+        route = [edge]
+        for _ in range(edges):
+            outgoing = [
+                to_edge.getID()
+                for to_edge in self._net.getEdge(route[-1]).getOutgoing()
+                if to_edge.allows("passenger")
+            ]
+            if not outgoing:
+                break
+            route.append(self._rng.choice(sorted(outgoing)))
+        return route
 
     def _continue_route(self, route: list[str], edges: int = 3) -> list[str]:
         """*route* extended by up to *edges* edges, straight on where possible."""
@@ -1087,7 +1220,9 @@ class SumoTrafficBackend(TrafficBackend):
                 pose = sumo_to_carla(
                     Pose2D(x, y, z, tc.vehicle.getAngle(sumo_id)), length, self._offset
                 )
-                blueprint = library.find(self._config.blueprint)
+                blueprint = library.find(
+                    self._blueprints.get(sumo_id, self._config.blueprint)
+                )
                 if blueprint.has_attribute("role_name"):
                     blueprint.set_attribute("role_name", f"sumo:{sumo_id}")
                 # A little above the road: at road height the wheels touch the
