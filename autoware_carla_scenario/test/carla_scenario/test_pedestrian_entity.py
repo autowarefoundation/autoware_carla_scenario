@@ -212,7 +212,9 @@ class TestWalking:
         actor = walker.actor
         assert actor is not None
         control = actor.apply_control.call_args[0][0]
-        from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_speed_command,
+        )
 
         # The command that moves it at 1.4 m/s on the installed CARLA.
         assert control.speed == pytest.approx(walker_speed_command(1.4))
@@ -250,12 +252,16 @@ class TestWalkingSpeed:
     """CARLA 0.10 scales a walker's commanded speed down about twentyfold."""
 
     def test_carla_09_takes_the_speed_as_it_is(self) -> None:
-        from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_speed_command,
+        )
 
         assert walker_speed_command(1.4, (0, 9)) == 1.4
 
     def test_carla_010_is_given_the_speed_that_moves_it_at_that(self) -> None:
-        from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_speed_command,
+        )
 
         # 2 m/s needs a command of about 41 on 0.10.0.
         assert walker_speed_command(2.0, (0, 10)) == pytest.approx(41.0)
