@@ -10,6 +10,11 @@ traffic:
     # traffic_manager: the scenario's NPCs (and an autopilot ego) are driven as
     # under the traffic_manager backend. sumo: SUMO drives them too.
     scenario_vehicles: traffic_manager
+    # How CARLA's copies of SUMO's vehicles follow them. physics: CARLA's
+    # vehicle physics, steered and driven along SUMO's trajectory. teleport:
+    # placed where SUMO has them every tick.
+    vehicle_control: physics
+    resync_distance_m: 8.0
     # Where the TrafficManager is, as for the traffic_manager backend.
     tm_port: ${oc.select:traffic_manager.port,null}
     # carla: SUMO obeys CARLA's lights. sumo: CARLA's lights follow SUMO. none.

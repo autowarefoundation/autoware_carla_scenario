@@ -63,6 +63,13 @@ from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
 from .geometry import Pose2D, carla_to_sumo, sumo_to_carla
 from .network import SumoNetwork, build_network, generate_trips, sumo_home
+from .physics_control import (
+    longitudinal,
+    lookahead_distance,
+    pursuit_curvature,
+    steer_command,
+    to_vehicle_frame,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +157,10 @@ class SumoTrafficBackend(TrafficBackend):
         self._failures = 0
         #: With fcd_output: SUMO time, CARLA simulation time and frame per tick.
         self._clock_log: Any = None
+        #: Actor id -> what the physics follower keeps between ticks.
+        self._physics: dict[int, dict[str, Any]] = {}
+        #: Commands for this tick, sent in one batch.
+        self._commands: list[Any] = []
 
     @property
     def port(self) -> int:
@@ -186,7 +197,8 @@ class SumoTrafficBackend(TrafficBackend):
             raise TrafficBackendUnavailable(
                 "sumolib is not installed: install the `sumo` extra"
             ) from exc
-        self._net = sumolib.net.readNet(str(self._network.net_file))
+        # With internal lanes: a look-ahead point inside a junction lies on one.
+        self._net = sumolib.net.readNet(str(self._network.net_file), withInternal=True)
 
         out = Path(context.output_dir) / "sumo"
         out.mkdir(parents=True, exist_ok=True)
@@ -312,6 +324,7 @@ class SumoTrafficBackend(TrafficBackend):
                 )
             self._pull_driven()
             self._sync_ambient(world)
+            self._flush_commands()
             if self._config.traffic_light_authority == "sumo":
                 self._signals_to_carla()
             self._failures = 0
@@ -359,6 +372,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._signals = {}
         self._ego_actor = None
         self._failures = 0
+        self._physics = {}
+        self._commands = []
 
     def describe(self) -> dict[str, Any]:
         """The backend, its seed, network and demand, for the result record."""
@@ -611,11 +626,251 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.setPreviousSpeed(sumo_id, speed)
 
     def _follow(self, actor: Any, sumo_id: str, length: float) -> None:
-        """Carry *actor* to where its SUMO vehicle is after this step.
+        """Carry *actor* towards where its SUMO vehicle is after this step."""
+        if self._config.vehicle_control == "physics":
+            self._drive(actor, sumo_id, length)
+        else:
+            self._teleport(actor, sumo_id, length)
 
-        Put where the SUMO vehicle was at the start of the step, with SUMO's
-        speed as a constant velocity for the tick to come (see the module
-        docstring for why not a physics-off actor).
+    def _flush_commands(self) -> None:
+        """Send this tick's physics commands in one batch."""
+        if (
+            self._commands
+            and self._context is not None
+            and self._context.client is not None
+        ):
+            self._context.client.apply_batch(self._commands)
+        self._commands = []
+
+    def _lookahead(
+        self, sumo_id: str, distance: float
+    ) -> Optional[tuple[float, float]]:
+        """The point *distance* metres ahead of the vehicle along its lanes (SUMO xy).
+
+        Walks the current lane's shape, then on through the junction lane and
+        onto the next edge of the vehicle's route.  ``None`` when SUMO's lanes
+        cannot be followed (the caller extrapolates along the heading).
+        """
+        import sumolib  # noqa: PLC0415
+
+        tc = self._traci
+        try:
+            lane = self._net.getLane(tc.vehicle.getLaneID(sumo_id))
+        except Exception:  # noqa: BLE001 - off every lane, or a lane sumolib lacks
+            return None
+        # Mid lane change, SUMO's vehicle is off its lane's centre by this much
+        # (to the left when positive); the point aimed at is too, or the car
+        # would cut the lane change short of where SUMO has it.
+        lateral = float(tc.vehicle.getLateralLanePosition(sumo_id))
+        offset = tc.vehicle.getLanePosition(sumo_id) + distance
+        route = list(tc.vehicle.getRoute(sumo_id))
+        index = tc.vehicle.getRouteIndex(sumo_id)
+
+        def at(shape: Any, along: float) -> tuple[float, float]:
+            x0, y0 = sumolib.geomhelper.positionAtShapeOffset(shape, along)
+            x1, y1 = sumolib.geomhelper.positionAtShapeOffset(shape, along + 0.5)
+            norm = math.hypot(x1 - x0, y1 - y0)
+            if norm < 1e-6 or lateral == 0.0:
+                return x0, y0
+            # Left of the lane's direction, in SUMO's right-handed frame.
+            return x0 - (y1 - y0) / norm * lateral, y0 + (x1 - x0) / norm * lateral
+
+        for _ in range(4):
+            if offset <= lane.getLength():
+                return at(lane.getShape(), offset)
+            offset -= lane.getLength()
+            edge = lane.getEdge()
+            if edge.getFunction() == "internal":
+                successors = [c.getToLane() for c in lane.getOutgoing()]
+            else:
+                nxt = route[index + 1] if 0 <= index < len(route) - 1 else None
+                index += 1
+                conns = [
+                    c
+                    for c in lane.getOutgoing()
+                    if nxt is None or c.getTo().getID() == nxt
+                ]
+                successors = [
+                    self._net.getLane(c.getViaLaneID())
+                    if c.getViaLaneID()
+                    else c.getToLane()
+                    for c in conns
+                ]
+            if not successors:
+                return at(lane.getShape(), max(lane.getLength() - 0.5, 0.0))
+            lane = successors[0]
+        return None
+
+    def _geometry(self, actor: Any) -> dict[str, Any]:
+        """Wheelbase, rear-axle offset and steering range of *actor*, read once."""
+        state = self._physics.get(actor.id)
+        if state is not None:
+            return state
+
+        # From the bounding box unless CARLA reports the wheels: CARLA 0.10's
+        # wheel locations read as zero.  A passenger car's wheelbase is about
+        # 0.58 of its length (a Lincoln MKZ's: 2.85 m of 4.9 m).
+        length = 2.0 * float(actor.bounding_box.extent.x)
+        wheel_base, rear_offset, max_steer = 0.58 * length, -0.29 * length, 70.0
+        try:
+            import carla  # noqa: PLC0415
+
+            physics = actor.get_physics_control()
+            wheels = physics.wheels
+            tf = actor.get_transform()
+            fwd = tf.get_forward_vector()
+
+            def ahead(w: Any) -> float:
+                # `location` on CARLA 0.10, `position` before; world centimetres.
+                p: Any = getattr(w, "location", None) or getattr(w, "position")
+                return (p.x / 100.0 - tf.location.x) * fwd.x + (
+                    p.y / 100.0 - tf.location.y
+                ) * fwd.y
+
+            front = (ahead(wheels[0]) + ahead(wheels[1])) / 2.0
+            rear = (ahead(wheels[2]) + ahead(wheels[3])) / 2.0
+            if 1.0 < front - rear < length:
+                wheel_base, rear_offset = front - rear, rear
+            max_steer = float(wheels[0].max_steer_angle) or max_steer
+            # CARLA 0.10 ships a corrupt speed-based steering curve that cuts the
+            # steering angle at driving speeds (the Autoware interface flattens
+            # it for its ego for the same reason); a flat one makes the steer
+            # command map linearly onto the wheel's range, as the follower
+            # assumes.
+            physics.steering_curve = [
+                carla.Vector2D(0.0, 1.0),
+                carla.Vector2D(120.0, 1.0),
+            ]
+            actor.apply_physics_control(physics)
+        except Exception as exc:  # noqa: BLE001 - keep the estimates
+            logger.debug("SUMO: no physics control for %s: %s", actor.id, exc)
+        state = {
+            "wheel_base": wheel_base,
+            "rear_offset": rear_offset,
+            "max_steer_rad": math.radians(max_steer),
+            "steer": None,
+            "integral": 0.0,
+            # Not yet moving at its SUMO vehicle's speed: SUMO inserts cars at
+            # speed, and a velocity given at spawn does not survive CARLA
+            # placing the car.
+            "launched": False,
+        }
+        self._physics[actor.id] = state
+        return state
+
+    def _drive(self, actor: Any, sumo_id: str, length: float) -> None:
+        """Steer and accelerate *actor* along its SUMO vehicle's trajectory.
+
+        CARLA's physics moves the car; SUMO only says where it should be.  A car
+        that has drifted further than ``resync_distance_m`` (a collision, a kerb)
+        is put back on its SUMO vehicle.
+        """
+        import carla  # noqa: PLC0415
+
+        tc = self._traci
+        state = self._geometry(actor)
+        dt = self._context.fixed_delta_seconds if self._context is not None else 0.05
+        target_speed = float(tc.vehicle.getSpeed(sumo_id))
+        x, y, z = tc.vehicle.getPosition3D(sumo_id)
+        angle = tc.vehicle.getAngle(sumo_id)
+        target = sumo_to_carla(Pose2D(x, y, z, angle), length, self._offset)
+        ahead = lookahead_distance(target_speed)
+        look = self._lookahead(sumo_id, ahead)
+        if look is None:
+            heading = math.radians(90.0 - angle)
+            look = (x + math.cos(heading) * ahead, y + math.sin(heading) * ahead)
+        look_x, look_y = look[0] - self._offset[0], -(look[1] - self._offset[1])
+
+        tf = actor.get_transform()
+        velocity = actor.get_velocity()
+        speed = math.hypot(velocity.x, velocity.y)
+        long_error, side_error = to_vehicle_frame(
+            tf.location.x, tf.location.y, tf.rotation.yaw, target.x, target.y
+        )
+        if math.hypot(long_error, side_error) > self._config.resync_distance_m:
+            logger.info(
+                "SUMO: %s is %.1f m off its SUMO vehicle on %s (%.1f m along, %.1f m "
+                "across, %.1f vs %.1f m/s); putting it back",
+                sumo_id,
+                math.hypot(long_error, side_error),
+                tc.vehicle.getLaneID(sumo_id),
+                long_error,
+                side_error,
+                speed,
+                target_speed,
+            )
+            yaw = math.radians(target.heading_deg)
+            self._commands += [
+                carla.command.ApplyTransform(
+                    actor.id,
+                    carla.Transform(
+                        carla.Location(target.x, target.y, tf.location.z + 0.2),
+                        carla.Rotation(yaw=target.heading_deg),
+                    ),
+                ),
+                carla.command.ApplyTargetVelocity(
+                    actor.id,
+                    carla.Vector3D(
+                        math.cos(yaw) * target_speed, math.sin(yaw) * target_speed, 0.0
+                    ),
+                ),
+            ]
+            state["steer"], state["integral"], state["steer_integral"] = None, 0.0, 0.0
+            return
+        curvature = pursuit_curvature(
+            x=tf.location.x,
+            y=tf.location.y,
+            yaw_deg=tf.rotation.yaw,
+            lookahead_x=look_x,
+            lookahead_y=look_y,
+            rear_axle_offset=state["rear_offset"],
+        )
+        # CARLA's yaw rate is degrees per second, positive turning right.
+        yaw_rate = math.radians(actor.get_angular_velocity().z)
+        steering = steer_command(
+            curvature=curvature,
+            actual_curvature=yaw_rate / speed if speed > 1.0 else curvature,
+            wheel_base=state["wheel_base"],
+            integral=state.get("steer_integral", 0.0),
+            dt=dt,
+        )
+        state["steer_integral"] = steering.integral
+        if not state["launched"]:
+            state["launched"] = True
+            yaw = math.radians(tf.rotation.yaw)
+            self._commands.append(
+                carla.command.ApplyTargetVelocity(
+                    actor.id,
+                    carla.Vector3D(
+                        math.cos(yaw) * target_speed, math.sin(yaw) * target_speed, 0.0
+                    ),
+                )
+            )
+        drive = longitudinal(
+            speed=speed,
+            sumo_speed=target_speed,
+            sumo_acceleration=float(tc.vehicle.getAcceleration(sumo_id)),
+            longitudinal_error=long_error,
+            integral=state["integral"],
+            dt=dt,
+        )
+        state["steer"], state["integral"] = steering.steer, drive.integral
+        self._commands.append(
+            carla.command.ApplyVehicleControl(
+                actor.id,
+                carla.VehicleControl(
+                    throttle=drive.throttle,
+                    brake=drive.brake,
+                    steer=steering.steer,
+                ),
+            )
+        )
+
+    def _teleport(self, actor: Any, sumo_id: str, length: float) -> None:
+        """Put *actor* where its SUMO vehicle was at the start of this step.
+
+        With SUMO's speed as a constant velocity for the tick to come (see the
+        module docstring for why not a physics-off actor).
         """
         import carla  # noqa: PLC0415
 
@@ -684,8 +939,10 @@ class SumoTrafficBackend(TrafficBackend):
         wanted = self._ambient_ids()
         wanted_set = set(wanted)
         for sumo_id in [i for i in self._ambient if i not in wanted_set]:
+            gone = self._ambient.pop(sumo_id)
+            self._physics.pop(gone.id, None)
             try:
-                self._ambient.pop(sumo_id).destroy()
+                gone.destroy()
             except RuntimeError:
                 pass
         library = world.get_blueprint_library()
@@ -712,6 +969,17 @@ class SumoTrafficBackend(TrafficBackend):
                 if actor is None:
                     continue
                 self._ambient[sumo_id] = actor
+                if self._config.vehicle_control == "physics":
+                    # Moving at SUMO's speed from its first tick; steered from
+                    # the next, once CARLA has placed it.
+                    yaw = math.radians(pose.heading_deg)
+                    speed = tc.vehicle.getSpeed(sumo_id)
+                    actor.set_target_velocity(
+                        carla.Vector3D(
+                            math.cos(yaw) * speed, math.sin(yaw) * speed, 0.0
+                        )
+                    )
+                    continue
             self._follow(actor, sumo_id, length)
 
     # ------------------------------------------------------------------
@@ -795,6 +1063,7 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in self._driven:
             tc.vehicle.setSpeed(sumo_id, -1)  # back to SUMO's own speed
         self._sync_ambient(world)
+        self._flush_commands()
         logger.info(
             "SUMO warmed up for %.0f s: %d ambient vehicle(s) on the road",
             self._config.warmup_s,

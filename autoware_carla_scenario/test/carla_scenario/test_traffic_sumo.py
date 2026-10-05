@@ -157,6 +157,20 @@ class _FakeActor:
 
         return carla.Vector3D(0.0, 0.0, 0.0)
 
+    def get_angular_velocity(self) -> Any:
+        import carla
+
+        return carla.Vector3D(0.0, 0.0, 0.0)
+
+    def set_target_velocity(self, velocity: Any) -> None:
+        self.target_velocity = velocity
+
+    def get_physics_control(self) -> Any:
+        raise RuntimeError("no physics in a fake")  # the backend falls back
+
+    def apply_ackermann_controller_settings(self, settings: Any) -> None:
+        self.controller_settings = settings
+
     def enable_constant_velocity(self, velocity: Any) -> None:
         self.constant_velocity = velocity
 
@@ -217,6 +231,19 @@ class _FakeWorld:
         actor = _FakeActor(transform, getattr(blueprint, "role_name", ""))
         self.spawned.append(actor)
         return actor
+
+
+_CLIENT: dict[str, Any] = {}
+
+
+class _BatchClient:
+    """Keeps every command batch the backend sends."""
+
+    def __init__(self) -> None:
+        self.batches: list[list[Any]] = []
+
+    def apply_batch(self, commands: list[Any]) -> None:
+        self.batches.append(list(commands))
 
 
 class _Entity:
@@ -289,12 +316,14 @@ def _prepared(
         ),
         traffic_light_authority="none",
         warmup_s=options.pop("warmup_s", 0.0),
+        vehicle_control=options.pop("vehicle_control", "teleport"),
         cache_dir=str(tmp_path / "cache"),
         **options,
     )
     backend = SumoTrafficBackend(config)
     backend.prepare(
         TrafficContext(
+            client=_CLIENT.get("client"),
             xodr_path=crossroads,
             fixed_delta_seconds=0.05,
             random_seed=3,
@@ -465,3 +494,118 @@ def test_fcd_output_records_how_sumo_time_maps_onto_carla_time(
     assert sumo_t == pytest.approx(1.05)
     assert (carla_t, frame) == (pytest.approx(100.05), 1)
     assert len(rows) == 11
+
+
+# ---------------------------------------------------------------------------
+# The physics follower
+# ---------------------------------------------------------------------------
+
+
+def test_pure_pursuit_asks_to_turn_right_towards_a_point_on_the_right() -> None:
+    from autoware_carla_scenario.traffic.sumo.physics_control import pursuit_curvature
+
+    common = dict(x=0.0, y=0.0, yaw_deg=0.0)
+    # CARLA is left-handed: +y is to the right of a car facing +x.
+    right = pursuit_curvature(lookahead_x=10.0, lookahead_y=2.0, **common)  # type: ignore[arg-type]
+    left = pursuit_curvature(lookahead_x=10.0, lookahead_y=-2.0, **common)  # type: ignore[arg-type]
+    straight = pursuit_curvature(lookahead_x=10.0, lookahead_y=0.0, **common)  # type: ignore[arg-type]
+    assert right > 0 > left
+    assert straight == pytest.approx(0.0)
+    # The arc through a point 10 m ahead and 2 m right: 2·sin(α)/d.
+    assert right == pytest.approx(2 * (2 / 104**0.5) / 104**0.5)
+
+
+def test_the_steer_command_inverts_carlas_square_law_and_corrects_the_rest() -> None:
+    import math
+
+    from autoware_carla_scenario.traffic.sumo.physics_control import steer_command
+
+    # A curvature that needs 5.1° at the road wheel: 51° × steer² gives 0.316.
+    curvature = math.tan(math.radians(5.1)) / 2.8
+    exact = steer_command(
+        curvature=curvature, actual_curvature=curvature, wheel_base=2.8, integral=0.0
+    )
+    assert exact.steer == pytest.approx(0.316, abs=1e-3) and exact.integral == 0.0
+    # Turning less than asked: more steer, and the integral starts to build.
+    short = steer_command(
+        curvature=curvature, actual_curvature=0.0, wheel_base=2.8, integral=0.0
+    )
+    assert short.steer > exact.steer and short.integral > 0.0
+    # Left is negative, and the command never leaves CARLA's [-1, 1].
+    assert (
+        steer_command(
+            curvature=-curvature,
+            actual_curvature=-curvature,
+            wheel_base=2.8,
+            integral=0.0,
+        ).steer
+        < 0
+    )
+    assert (
+        steer_command(
+            curvature=1.0, actual_curvature=-1.0, wheel_base=2.8, integral=5.0
+        ).steer
+        == 1.0
+    )
+
+
+def test_the_speed_controller_catches_up_holds_and_stops() -> None:
+    from autoware_carla_scenario.traffic.sumo.physics_control import longitudinal
+
+    base = dict(speed=5.0, sumo_speed=5.0, sumo_acceleration=0.0, integral=0.0)
+    on_target = longitudinal(longitudinal_error=0.0, **base)  # type: ignore[arg-type]
+    behind = longitudinal(longitudinal_error=2.0, **base)  # type: ignore[arg-type]
+    ahead = longitudinal(longitudinal_error=-2.0, **base)  # type: ignore[arg-type]
+    # 2 m behind its SUMO vehicle it aims 3 m/s faster; 2 m ahead, 3 m/s slower.
+    assert behind.target_speed == pytest.approx(8.0) and behind.throttle > 0.0
+    assert ahead.target_speed == pytest.approx(2.0) and ahead.brake > 0.0
+    assert on_target.throttle == pytest.approx(
+        0.0
+    ) and on_target.brake == pytest.approx(0.0)
+    # SUMO's own acceleration is fed forward.
+    feedforward = longitudinal(
+        speed=5.0,
+        sumo_speed=5.0,
+        sumo_acceleration=2.0,
+        longitudinal_error=0.0,
+        integral=0.0,
+    )
+    assert feedforward.throttle > 0.0
+    # Stopped in SUMO and nearly stopped in CARLA: held on the brake.
+    held = longitudinal(
+        speed=0.1,
+        sumo_speed=0.0,
+        sumo_acceleration=0.0,
+        longitudinal_error=0.0,
+        integral=1.0,
+    )
+    assert (held.throttle, held.brake, held.integral) == (0.0, 1.0, 0.0)
+
+
+@needs_sumo
+def test_physics_mode_drives_sumos_vehicles_with_throttle_brake_and_steer(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    import carla
+
+    client = _BatchClient()
+    _CLIENT["client"] = client
+    try:
+        backend, world, npc, _ego = _prepared(
+            crossroads, tmp_path, vehicle_control="physics"
+        )
+    finally:
+        _CLIENT.clear()
+    try:
+        for i in range(20):
+            backend.tick(world, i * 0.05)
+        commands = [c for batch in client.batches for c in batch]
+        controls = [
+            c for c in commands if isinstance(c, carla.command.ApplyVehicleControl)
+        ]
+        assert controls and all(c.actor_id == npc.id for c in controls)
+        # SUMO pulls away, so the car is given throttle -- and is not teleported.
+        assert max(c.control.throttle for c in controls) > 0.0
+        assert npc.constant_velocity is None
+    finally:
+        backend.close()

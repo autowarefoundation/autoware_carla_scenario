@@ -274,11 +274,26 @@ SUMO fills the rest of the road.
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the
 world's `fixed_delta_seconds` and the seed to the scenario's. CARLA poses are
 published before SUMO steps; SUMO's result is applied to the actors after it.
-A mirrored actor keeps its physics: each tick it is placed where its SUMO
-vehicle was at the start of the step and given SUMO's speed as a constant
-velocity, which carries it to where SUMO is at the end of it. CARLA reports no
-velocity for a physics-off actor, so this is what keeps `get_velocity()` --
-and every speed condition -- right for SUMO's vehicles.
+How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
+
+- `physics` (default) drives it with CARLA's vehicle physics, as TeraSim's
+  `ackermann_physics` mode does. SUMO plans; each tick the car is steered towards
+  a point 4-10 m ahead on SUMO's lanes (pure pursuit, offset by SUMO's lateral
+  position mid lane change), and a PI throttle/brake controller with SUMO's
+  acceleration as feedforward drives it at SUMO's speed, corrected by how far it
+  is behind or ahead. Two CARLA 0.10 quirks are handled: its Ackermann
+  controller's speed loop oscillates (so speed is controlled here and sent as
+  throttle and brake), and its steering input maps onto the wheels roughly as
+  51° × steer² rather than linearly (so the steer command inverts that and
+  closes a loop on the car's measured curvature). A car further than
+  `resync_distance_m` from its SUMO vehicle is put back on it. SUMO does not see
+  where physics actually put the car (TeraSim feeds that back with a patched
+  SUMO), so gaps SUMO keeps are kept to within the tracking error -- on Town10
+  p95 1.1 m.
+- `teleport` places it where its SUMO vehicle was at the start of the step and
+  gives it SUMO's speed as a constant velocity (`enable_constant_velocity`),
+  which carries it to where SUMO is at the end of it: exact, but the car is not
+  driven by its physics.
 
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the

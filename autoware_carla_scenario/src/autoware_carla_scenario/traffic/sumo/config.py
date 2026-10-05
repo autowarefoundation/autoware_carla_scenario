@@ -18,6 +18,7 @@ __all__ = ["AmbientTrafficConfig", "SumoBackendConfig"]
 
 _LIGHT_AUTHORITIES = ("carla", "sumo", "none")
 _SCENARIO_VEHICLE_DRIVERS = ("traffic_manager", "sumo")
+_VEHICLE_CONTROLS = ("physics", "teleport")
 
 
 @dataclass
@@ -69,6 +70,15 @@ class SumoBackendConfig:
             SUMO, whose traffic reacts to them.  ``sumo``: SUMO drives them, and
             their manoeuvres become TraCI calls.
         tm_port: TrafficManager port, for ``scenario_vehicles=traffic_manager``.
+        vehicle_control: How a CARLA vehicle SUMO drives follows its SUMO
+            vehicle.  ``physics`` (the default): with CARLA's vehicle physics,
+            steered along SUMO's path (pure pursuit, as TeraSim's
+            ``ackermann_physics`` mode does) and driven at SUMO's speed by a PI
+            throttle/brake controller.
+            ``teleport``: put where SUMO has it every tick, with SUMO's speed as
+            a constant velocity.
+        resync_distance_m: With ``physics``, a vehicle further than this from
+            its SUMO vehicle (after a collision, say) is put back on it.
         traffic_light_authority: Which simulator's signals the other follows.
             ``carla``: SUMO's signals take the states of CARLA's lights every
             step, so SUMO traffic obeys the lights the ego sees and a scenario
@@ -104,6 +114,8 @@ class SumoBackendConfig:
 
     scenario_vehicles: str = "traffic_manager"
     tm_port: int = DEFAULT_TM_PORT
+    vehicle_control: str = "physics"
+    resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
     net_path: Optional[str] = None
     route_path: Optional[str] = None
@@ -123,6 +135,11 @@ class SumoBackendConfig:
             raise ValueError(
                 "traffic_light_authority must be one of "
                 f"{', '.join(_LIGHT_AUTHORITIES)} (got {self.traffic_light_authority!r})"
+            )
+        if self.vehicle_control not in _VEHICLE_CONTROLS:
+            raise ValueError(
+                "vehicle_control must be one of "
+                f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
         if self.scenario_vehicles not in _SCENARIO_VEHICLE_DRIVERS:
             raise ValueError(
