@@ -154,6 +154,8 @@ class ScenarioQueue:
         self._traffic_backend = traffic_backend
 
         self._scenarios: List[BaseScenario] = []
+        #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
+        self._timeouts: dict[int, float] = {}
         self._results: List[ScenarioResult] = []
         self._scenario_results: dict[int, ScenarioResult] = {}
         self._runner: Optional[ScenarioRunner] = None
@@ -162,13 +164,19 @@ class ScenarioQueue:
     # Scenario registration
     # ------------------------------------------------------------------
 
-    def add(self, scenario: BaseScenario) -> None:
+    def add(
+        self, scenario: BaseScenario, *, timeout_seconds: Optional[float] = None
+    ) -> None:
         """Append a scenario to the queue.
 
         Args:
             scenario: A :class:`BaseScenario` instance to enqueue.
+            timeout_seconds: This scenario's timeout; the queue's
+                ``timeout_seconds`` when ``None``.
         """
         self._scenarios.append(scenario)
+        if timeout_seconds is not None:
+            self._timeouts[id(scenario)] = timeout_seconds
 
     # ------------------------------------------------------------------
     # Execution
@@ -210,7 +218,9 @@ class ScenarioQueue:
                             if attempt == 0
                             else "CARLA cooldown (retry)",
                         )
-                    result = self._runner.run_scenario(scenario)
+                    result = self._runner.run_scenario(
+                        scenario, timeout_seconds=self._timeouts.get(id(scenario))
+                    )
                     self._scenario_results[id(scenario)] = result
                     results.append(result)
                     break

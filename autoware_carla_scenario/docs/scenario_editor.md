@@ -634,8 +634,10 @@ cut_in-wheelhouse.zip
 `-- cut_in_scenario_wheelhouse/
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-    |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl  # not published to any index
-    |-- ... every transitive dependency, ~70 wheels
+    |-- carla-0.10.0-cp310-cp310-linux_x86_64.whl  # not published to any index,
+    |-- carla-0.10.0-cp311-cp311-linux_x86_64.whl  # one per supported interpreter
+    |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl
+    |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
     `-- README.md                                  # how to install it
 ```
@@ -693,16 +695,24 @@ The response is still the **report** -- warnings, the tool log, whether the
 package's own tests passed -- with the download link in it. Making the response
 the file itself would throw away the very things an export is checked for.
 
-### One platform, one interpreter
+### One platform, every supported interpreter
 
-A wheelhouse is resolved *by* an interpreter *for* a platform: the wheels are the
-ones the exporting machine's Python selected, and the CARLA client in particular
-is a compiled extension with one wheel per interpreter. Installing them under a
-different Python or on a different platform fails on the first wheel with no
-matching tag; export from an interpreter matching the target instead.
+A wheelhouse is resolved *for* a platform: the wheels are the ones the exporting
+machine selected, so installing them on a different platform fails on the first
+wheel with no matching tag -- export from a matching machine instead.
 
-It is also large -- the client, OpenCV and the lanelet2 bindings come to most of
-160 MB. That is the cost of not needing a network at install time.
+The interpreter is not that kind of constraint. Resolution is done once per
+interpreter the package supports, all into the same directory, and *which*
+interpreters those are is read off the CARLA wheels the package vendors --
+cp310, cp311 and cp312 for 0.10.0. The pure-Python wheels are shared between
+the passes and the compiled ones sit side by side with their own tag, so pip
+installs whichever matches. That is what lets one export serve ROS 2 Humble,
+whose Python is 3.10, and Jazzy, whose Python is 3.12: the alternative is a
+`python3.12` that Ubuntu 22.04 does not package at all.
+
+It is large -- the clients, OpenCV and the lanelet2 bindings, once per
+interpreter. That is the cost of not needing a network at install time, and of
+not needing to know which Python the target runs before exporting.
 
 ### Reproducibility
 
@@ -735,14 +745,14 @@ is not a successful export.
 The manifest records only values that were actually observed:
 
 ```yaml
-format_version: 2
+format_version: 3
 scenario: {id: cut_in, title: Cut in, document_version: 1, package: cut-in-scenario}
 runtime: {python: 3.12.10, uv: 0.12.0, requires_python: '>=3.10,<3.13'}
 wheelhouse:
   directory: cut_in_scenario_wheelhouse
   install: pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
-  wheels: 70
-  python: '3.12.10'
+  wheels: 104
+  python: ['3.10', '3.11', '3.12']
 autoware_carla_scenario:
   source: git
   repository: https://github.com/hakuturu583/autoware_carla_scenario
