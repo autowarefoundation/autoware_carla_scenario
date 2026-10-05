@@ -35,7 +35,7 @@ from ..driver.observation import (
 from .ego import EgoVehicle
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
     from ..sensor.carla_camera import CarlaCameraSensor
 

@@ -12,7 +12,7 @@ from .base import CompositionCondition
 from .speed import SpeedCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 class StandstillCondition(CompositionCondition):

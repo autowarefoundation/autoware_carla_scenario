@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 __all__ = ["hold_vehicles_still"]
 
@@ -26,7 +26,7 @@ def hold_vehicles_still(world: "carla.World") -> None:
     re-applied every tick because whatever drives the ego applies its own
     control every tick too.
     """
-    import carla  # noqa: PLC0415 -- this helper is CARLA-side by definition
+    import typesafe_carla.carla as carla  # noqa: PLC0415 -- this helper is CARLA-side by definition
 
     stopped = carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True)
     for actor in world.get_actors().filter("vehicle.*"):

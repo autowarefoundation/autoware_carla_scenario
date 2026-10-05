@@ -122,4 +122,4 @@ class TestSharedRuntime:
             "autoware_carla_scenario.authoring.builders",
             "autoware_carla_scenario.authoring.hydra_config",
         ):
-            assert "\nimport carla" not in _source_of(module), module
+            assert "\nimport typesafe_carla" not in _source_of(module), module

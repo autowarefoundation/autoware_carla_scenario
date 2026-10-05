@@ -12,7 +12,7 @@ from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 class AccelerationDirection(Enum):

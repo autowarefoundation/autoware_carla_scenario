@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import carla
+import typesafe_carla.carla as carla
 import pytest
 from omegaconf import DictConfig, OmegaConf
 

@@ -22,15 +22,16 @@ uv run scenario scenario={{ scenario_id }} map={{ map_group }}
 command fails instead of quietly resolving something new. That is what makes
 this directory reproducible.
 
-The CARLA client is installed by this package, through the framework's
-`{{ carla_extra }}` extra -- nothing has to be installed by hand.
-{% if vendored_wheels %}
-That client is published to no index, so its wheel travels in
-[`{{ vendored_wheels }}/`]({{ vendored_wheels }}) and `pyproject.toml` points uv
-at it with a relative `find-links`.
-{% else %}
-That client comes from an index, so nothing is vendored here.
-{% endif %}
+The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla),
+a dependency of the framework -- nothing has to be installed by hand. Its
+CPython package (`typesafe_carla.carla`) is not in its wheel: it is compiled
+once per installation, by the first import or ahead of time with
+
+```bash
+uv run typesafe-codon pycarla                     # ~15 min, ~8 GB RAM, needs cc
+```
+
+into `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` moves it).
 
 ## Test it
 
@@ -57,6 +58,14 @@ The document and the Hydra config live *inside* `src/{{ package_name }}/`
 precisely so that they are in the wheel: an installed scenario carries its own
 scenario rather than needing this directory kept beside it.
 
+The one thing a wheelhouse cannot carry is typesafe_carla's compiled CPython
+package. Build it on the target once, right after installing -- it needs a C
+compiler (`cc`) and about 8 GB of RAM, but no network:
+
+```bash
+typesafe-codon pycarla
+```
+
 ## Layout
 
 ```
@@ -64,10 +73,6 @@ scenario rather than needing this directory kept beside it.
 |-- pyproject.toml              # dependencies, pinned exactly
 |-- uv.lock                     # the resolved dependency graph (commit this)
 |-- .python-version             # {{ python_version }}
-{% if vendored_wheels %}
-|-- {{ vendored_wheels }}/
-|   `-- carla-*.whl             # the client, vendored: not on any index
-{% endif %}
 |-- scenario/
 |   `-- manifest.yaml           # what this package was generated from
 |-- src/{{ package_name }}/

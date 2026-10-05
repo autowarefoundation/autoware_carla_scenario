@@ -13,7 +13,7 @@ import math
 from typing import List
 from unittest import mock
 
-import carla
+import typesafe_carla.carla as carla
 import pytest
 
 from autoware_carla_scenario.autoware_bridge import (

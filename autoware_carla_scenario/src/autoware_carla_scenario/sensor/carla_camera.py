@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 from .base import CameraSensorBase, CameraSensorConfig
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ class CarlaCameraSensor(CameraSensorBase):
         if self._attached:
             raise RuntimeError("CarlaCameraSensor is already attached")
 
-        import carla as _carla
+        import typesafe_carla.carla as _carla
 
         cfg = self._carla_config
         bp_lib = world.get_blueprint_library()

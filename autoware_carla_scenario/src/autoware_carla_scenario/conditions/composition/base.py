@@ -12,7 +12,7 @@ from ..base import BaseCondition, ScenarioResult
 from ..entity_existence import EntityExistenceCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 _NEAR_ZERO_THRESHOLD = 1e-12
 """Magnitude below which a forward vector is considered degenerate."""

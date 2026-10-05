@@ -46,15 +46,7 @@ from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
 from .uv_tool import uv_version as _uv_version
 from .validator import validate_document
-from .wheelhouse import (
-    VENDORED_WHEELS_DIR,
-    Wheelhouse,
-    WheelhouseError,
-    build_wheelhouse,
-    carla_extra,
-    carla_wheels,
-    unpinned_carla_client,
-)
+from .wheelhouse import Wheelhouse, WheelhouseError, build_wheelhouse
 
 logger = logging.getLogger(__name__)
 
@@ -240,51 +232,12 @@ def _pin_summary(pin: Pin) -> str:
     return f"local path `{pin.path}` -- **not portable**"
 
 
-def _vendor_carla_wheels(root: Path, extra: str, warnings: list[str]) -> Optional[str]:
-    """Copy the CARLA client wheels into the package.  Returns their directory.
-
-    The package always *asks* for the client through the framework's extra; the
-    question here is only where the client comes from.  0.10.0 is published to
-    no index, so the wheel has to travel with the package: copying it in and
-    pointing uv at it with a relative ``find-links`` keeps the package
-    self-contained wherever it is copied.  0.9.16 is on PyPI, so nothing needs
-    vendoring and the resolver finds it.
-
-    Args:
-        root: The package being written.
-        extra: The framework extra whose client to vendor.
-        warnings: Appended to when no local wheel was found.
-
-    Returns:
-        The relative directory the wheels were copied into, or ``None`` when
-        there was no local wheel to copy -- either because the client is on an
-        index, or because the framework is installed rather than run out of its
-        repository.
-    """
-    wheels = carla_wheels(extra)
-    if not wheels:
-        warnings.append(
-            f"No local wheel was vendored for the '{extra}' CARLA client, so "
-            "it has to resolve from an index. If that client is not published "
-            "there, locking will fail -- point SCENARIO_EXPORT_CARLA_WHEELS at "
-            "a directory holding its wheel."
-        )
-        return None
-    destination = root / VENDORED_WHEELS_DIR
-    destination.mkdir(parents=True, exist_ok=True)
-    for wheel in wheels:
-        shutil.copy2(wheel, destination / wheel.name)
-    return VENDORED_WHEELS_DIR
-
-
 def _write_package_tree(
     root: Path,
     document: ScenarioDocument,
     names: dict[str, str],
     pin: Pin,
     uv_version: Optional[str],
-    vendored_wheels: Optional[str],
-    carla_extra_name: str,
     warnings: list[str],
 ) -> dict[str, str]:
     """Render every file of the package under *root*.  Returns the file map."""
@@ -307,8 +260,6 @@ def _write_package_tree(
         "pin_summaries": [(p.distribution, _pin_summary(p)) for p in pins],
         "pin_note": _pin_note(pin),
         "uv_required_version": uv_version,
-        "vendored_wheels": vendored_wheels,
-        "carla_extra": carla_extra_name,
         "uv_pin_summary": (
             f"`{uv_version}` (`tool.uv.required-version`)"
             if uv_version
@@ -736,26 +687,7 @@ def export_package(
     log = ""
     built: Optional[Wheelhouse] = None
     try:
-        # The extra is requested whichever way the client is obtained: it is
-        # what puts `carla` in the wheelhouse, and a scenario that cannot
-        # import it cannot run. Vendoring is the separate question of whether
-        # a copy has to travel with the package -- 0.10.0 is on no index, so
-        # it does; 0.9.16 is on PyPI, so it does not.
-        extra = carla_extra()
-        unpinned = unpinned_carla_client()
-        if unpinned is not None:
-            warnings.append(
-                f"CARLA {unpinned} is installed here and no client extra pins "
-                f"it, so this export requests '{extra}' instead. The scenario "
-                "will run against a different client from the one it was "
-                "authored against."
-            )
-        pin = replace(pin, extras=(extra,))
-        vendored = _vendor_carla_wheels(staging, extra, warnings)
-
-        files = _write_package_tree(
-            staging, document, names, pin, uv_version, vendored, extra, warnings
-        )
+        files = _write_package_tree(staging, document, names, pin, uv_version, warnings)
 
         checks, check_log = _self_check(
             staging, lock=lock, verify=verify, run_tests=run_tests, warnings=warnings

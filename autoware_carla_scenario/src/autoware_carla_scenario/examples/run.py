@@ -34,7 +34,7 @@ import os
 import sys
 from pathlib import Path
 
-import carla
+import typesafe_carla.carla as carla
 import hydra
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra

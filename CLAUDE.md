@@ -214,7 +214,6 @@ If pre-commit hooks fail:
   - `src/autoware_carla_scenario/` - Package sources
   - `test/` - pytest suite
   - `docs/`, `mkdocs.yml` - Documentation
-- `carla_wheels/` - Vendored CARLA client wheels (`[tool.uv] find-links`)
 - `data/` - The nishishinjuku fixture map (Lanelet2 `.osm` and its committed OpenDRIVE `.xodr`) shared by the tests and the example configs
 - `examples/scenario_package_template/` - A standalone scenario package to copy
 - `.github/actions/pack-scenario-image/` - Composite action that packs a scenario package into an image
@@ -225,12 +224,15 @@ If pre-commit hooks fail:
 
 - **simple-lanelet2** (>=1.1.2) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
+- **typesafe-carla** (>=0.2.0) - The CARLA client (CARLA UE5 only; Linux
+  x86_64), imported as `import typesafe_carla.carla as carla`. Its CPython
+  package is built once per installation (first import, or
+  `typesafe-codon pycarla`; ~15 min, ~8 GB of memory, needs `cc`) into
+  `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` overrides).
+  The official `carla` package is not a dependency and must not be imported.
 - Python 3.10 through 3.12. `autoware_carla_scenario` declares
-  `requires-python = ">=3.10,<3.13"`, capped by the CARLA client and nothing
-  else -- the comment on that line is the canonical explanation, and
-  `test_the_vendored_wheels_cover_the_declared_python_range` checks the range
-  against `carla_wheels/`. CI runs the suite on 3.10, 3.11 and 3.12 against
-  both clients
+  `requires-python = ">=3.10,<3.13"` -- the comment on that line is the
+  canonical explanation. CI runs the suite on 3.10, 3.11 and 3.12
 
 ## Static Check (Codon)
 
@@ -241,14 +243,17 @@ against the typed model in `typecheck/codon/`, not the Python package, so:
 - A change to the public API (a parameter added, renamed or made keyword-only,
   a method, an enum member) needs the same change in the model;
   `test_typecheck_model.py` fails until it has it.
-- The CARLA API is typesafe_carla's own Codon library (the `typesafe-carla`
-  package): `typecheck/codon/carla` is `from typesafe_carla import *`, and the
-  checker links the library into its workspace. Model framework functions
-  that take or return CARLA types with typesafe_carla's types.
+- The CARLA API is typesafe_carla's (the `typesafe-carla` package), at run
+  time and in the check alike: code imports it as
+  `import typesafe_carla.carla as carla` (never `import carla`, never
+  `from typesafe_carla import carla`, which Codon 0.19 cannot resolve). At
+  run time that is typesafe_carla's CPython package; in the check, its Codon
+  library, which the checker links into its workspace. Model framework
+  functions that take or return CARLA types with typesafe_carla's types.
 - A scenario class declares the attributes it assigns on `self` at class level
   (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
-- Codon is the `typesafe-carla-toolchain` that `typesafe-carla` depends on (dev
-  group and the `codon` extra, Linux x86_64), found by typesafe_carla's own
+- Codon is the `typesafe-carla-toolchain` that `typesafe-carla` depends on (a
+  run-time dependency, Linux x86_64), found by typesafe_carla's own
   lookup (`typecheck/toolchain.py` wraps `typesafe_carla.toolchain` and
   `typesafe_carla.paths`).
 

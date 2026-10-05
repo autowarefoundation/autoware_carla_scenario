@@ -12,7 +12,7 @@ from ..conditions import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

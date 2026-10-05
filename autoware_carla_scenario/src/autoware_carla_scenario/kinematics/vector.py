@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import carla  # noqa: F401
+    import typesafe_carla.carla as carla  # noqa: F401
 
 
 @dataclass(frozen=True)

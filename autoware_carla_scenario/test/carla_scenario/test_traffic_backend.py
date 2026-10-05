@@ -342,7 +342,7 @@ class TestWhatAScenarioInjects:
 
     @staticmethod
     def _scenario():
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         from autoware_carla_scenario import BaseScenario, EgoConfig  # noqa: PLC0415
         from autoware_carla_scenario.entity import SpawnTransform  # noqa: PLC0415

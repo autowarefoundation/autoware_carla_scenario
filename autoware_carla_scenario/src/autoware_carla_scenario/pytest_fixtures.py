@@ -26,7 +26,7 @@ class CarlaScenarioFixture:
         # tests/my_tests/conftest.py
         import os
         import pytest
-        import carla
+        import typesafe_carla.carla as carla
         from autoware_carla_scenario import (
             CarlaScenarioFixture,
             CarlaServerManager,

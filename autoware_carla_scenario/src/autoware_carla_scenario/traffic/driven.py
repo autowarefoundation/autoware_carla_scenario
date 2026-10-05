@@ -34,7 +34,7 @@ from ..constants import DEFAULT_TM_PORT
 from .base import LaneChangeDirection, TrafficBackend, TurnDirection
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

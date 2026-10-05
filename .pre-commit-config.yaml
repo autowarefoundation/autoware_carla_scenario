@@ -51,9 +51,7 @@ repos:
       # docs fix paid for minutes of end-to-end conversion and wheelhouse
       # builds. `files` scopes it to the changes that can actually break it:
       # the package itself, `pyproject.toml` and `uv.lock` (which move every
-      # dependency), the fixture map under `data/`, and
-      # `carla_wheels/` -- `carla_wheels()` reads that directory, and a test
-      # asserts its interpreter tags cover the declared `requires-python`.
+      # dependency), and the fixture map under `data/`.
       #
       # It leaves out `slow` like CI's fast job does (CI runs them in their own
       # job): the one export self-check that builds a wheelhouse took ~10 of a
@@ -68,4 +66,4 @@ repos:
         entry: uv run pytest --no-testmon -m "not integration and not slow" autoware_carla_scenario/test
         language: system
         pass_filenames: false
-        files: '^(autoware_carla_scenario/|data/|carla_wheels/|pyproject\.toml$|uv\.lock$)'
+        files: '^(autoware_carla_scenario/|data/|pyproject\.toml$|uv\.lock$)'

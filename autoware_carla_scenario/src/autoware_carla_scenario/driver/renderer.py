@@ -35,7 +35,7 @@ from .geometry import Pose
 from .observation import to_local_pose, to_local_vector
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 logger = logging.getLogger(__name__)

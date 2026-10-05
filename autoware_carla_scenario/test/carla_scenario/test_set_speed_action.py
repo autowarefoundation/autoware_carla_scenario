@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-import carla
+import typesafe_carla.carla as carla
 import pytest
 
 from autoware_carla_scenario import SetSpeedAction

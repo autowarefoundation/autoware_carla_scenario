@@ -1,6 +1,6 @@
 # Model of autoware_carla_scenario.kinematics (docs/typecheck.md).
 
-import carla
+import typesafe_carla.carla as carla
 
 from .coordinate import CoordinateFrame
 

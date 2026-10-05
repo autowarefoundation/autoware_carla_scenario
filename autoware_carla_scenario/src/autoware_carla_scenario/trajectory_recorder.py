@@ -37,7 +37,7 @@ import logging
 from pathlib import Path
 from typing import IO, Any
 
-import carla
+import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

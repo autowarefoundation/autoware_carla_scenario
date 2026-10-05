@@ -634,9 +634,8 @@ cut_in-wheelhouse.zip
 `-- cut_in_scenario_wheelhouse/
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-    |-- carla-0.10.0-cp310-cp310-linux_x86_64.whl  # not published to any index,
-    |-- carla-0.10.0-cp311-cp311-linux_x86_64.whl  # one per supported interpreter
-    |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl
+    |-- typesafe_carla-0.2.*.whl                   # the CARLA client
+    |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
     |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
     `-- README.md                                  # how to install it
@@ -649,8 +648,20 @@ resolution:
 unzip cut_in-wheelhouse.zip
 python3 -m venv .venv
 .venv/bin/pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
+.venv/bin/typesafe-codon pycarla     # once: compiles the CARLA client, needs cc
 .venv/bin/scenario scenario=cut_in map=nishishinjuku
 ```
+
+The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla),
+and its CPython package (`typesafe_carla.carla`) is the one part of the install
+that no wheel carries: it is compiled once per installation, on the target,
+with the Codon compiler from the `typesafe-carla-toolchain` wheel. That takes
+about 15 minutes and 8 GB of RAM and needs a C compiler (`cc`), but no network.
+`typesafe-codon pycarla` does it ahead of time; skipped, the first
+`import typesafe_carla.carla` -- the first scenario run -- does it instead. The
+result lands in `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR`
+moves it). An offline vehicle therefore needs `cc` installed and that one build
+run, in addition to pip.
 
 That is the point of the format. Autoware's `scenario_bridge` installs a
 scenario into a venv built from `python3-venv` and `python3-pip` -- the two
@@ -669,20 +680,10 @@ config, the package's own tests -- and still runs `uv sync --locked` and those
 tests against it. That project is now a **build input**: the wheels are resolved
 from its lockfile and the project itself does not leave the server.
 
-The CARLA client is always requested, through one of the framework's client
-extras, because a scenario that cannot `import carla` cannot run. *Which* extra
-is read off the client installed in the editor's own environment -- `carla` for
-0.10.0, `carla-0-9-16` for the legacy one -- so a scenario is exported against
-the client it was authored against rather than a fixed one.
-
-Where that client comes from is a separate question. 0.10.0 is published to no
-index, so its wheel is vendored into the package (`carla_wheels/`, reached by a
-relative `[tool.uv] find-links`); 0.9.16 is on PyPI, so nothing is vendored and
-the resolver finds it. When neither is true -- a framework installed from a
-wheel rather than run out of its repository, with an unpublished client --
-locking fails and says so, rather than producing a wheelhouse with no client in
-it. `SCENARIO_EXPORT_CARLA_WHEELS` points the export at a directory of client
-wheels when the repository's own are not the ones wanted.
+The CARLA client needs no special handling: `typesafe-carla` is a plain
+dependency of the framework, published on PyPI, so the package requests no
+extra, vendors no wheel, and the lock resolves the client like any other
+dependency.
 
 There is no destination field. The editor is routinely used from another machine
 on the LAN, where a path typed into it would name a directory on the host running
@@ -702,16 +703,17 @@ machine selected, so installing them on a different platform fails on the first
 wheel with no matching tag -- export from a matching machine instead.
 
 The interpreter is not that kind of constraint. Resolution is done once per
-interpreter the package supports, all into the same directory, and *which*
-interpreters those are is read off the CARLA wheels the package vendors --
-cp310, cp311 and cp312 for 0.10.0. The pure-Python wheels are shared between
+interpreter the package supports, all into the same directory. *Which*
+interpreters those are is the CI-tested range -- 3.10, 3.11 and 3.12 -- narrowed
+to what the package's `requires-python` admits; the package inherits the
+framework's, so normally all three. The pure-Python wheels are shared between
 the passes and the compiled ones sit side by side with their own tag, so pip
 installs whichever matches. That is what lets one export serve ROS 2 Humble,
 whose Python is 3.10, and Jazzy, whose Python is 3.12: the alternative is a
 `python3.12` that Ubuntu 22.04 does not package at all.
 
-It is large -- the clients, OpenCV and the lanelet2 bindings, once per
-interpreter. That is the cost of not needing a network at install time, and of
+It is large -- the CARLA client and its Codon toolchain, OpenCV and the
+lanelet2 bindings, the compiled ones once per interpreter. That is the cost of not needing a network at install time, and of
 not needing to know which Python the target runs before exporting.
 
 ### Reproducibility
@@ -719,7 +721,7 @@ not needing to know which Python the target runs before exporting.
 | What | Pinned by |
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA |
-| `carla` | the client extra in use: vendored from the repository when that client is on no index (0.10.0), resolved from PyPI when it is (0.9.16) |
+| `typesafe-carla` | the framework's own requirement (`>=0.2.0,<0.3`), locked in `uv.lock` like everything else |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |
@@ -731,8 +733,7 @@ than guessing. A local-path dependency is only produced by an explicit
 development export, which says so in its README and manifest.
 
 Set `SCENARIO_EXPORT_FRAMEWORK_VERSION` to pin a published release instead of
-the current checkout's commit, and `SCENARIO_EXPORT_CARLA_WHEELS` to point the
-export at a directory of client wheels other than the repository's own.
+the current checkout's commit.
 
 ### Export is atomic
 
@@ -758,7 +759,6 @@ autoware_carla_scenario:
   repository: https://github.com/hakuturu583/autoware_carla_scenario
   commit: 0123456789abcdef0123456789abcdef01234567
   subdirectory: autoware_carla_scenario
-  extras: [carla]
 files:
   document: src/cut_in_scenario/document.yaml
   hydra_config: src/cut_in_scenario/conf/scenario/cut_in.yaml
@@ -793,10 +793,11 @@ uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
     hydra/sweeper=lanelet_constraint
 ```
 
-The CARLA client needs no separate step: the export requests it through the
-framework's client extra, so it is in the lock and in the wheelhouse alongside
-everything else. Installing one by hand would replace the client the scenario
-was exported against.
+The CARLA client needs no separate install: `typesafe-carla` is a dependency of
+the framework, so it is in the lock and in the wheelhouse alongside everything
+else. Its CPython package still has to be compiled once on the machine that
+runs the scenario -- `.venv/bin/typesafe-codon pycarla`, or the first run does
+it (see [Save Draft vs Export Wheelhouse](#save-draft-vs-export-wheelhouse)).
 
 ## Offline
 

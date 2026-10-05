@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
     from ..coordinate.poses import OpenDrivePose
     from ..coordinate.snap import GroundProjectionConfig
@@ -131,7 +131,7 @@ def spawn_vehicle_actor(
     # Lanelet2 and OpenDRIVE geometries disagree, move the retries back to the
     # OpenDRIVE lane -- possibly the opposing one -- before offsetting them.
     if actor is None and spawn_retry_max_count > 0 and od_pose is not None:
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         base_transform = resolved_transform
         yaw_rad = math.radians(base_transform.rotation.yaw)

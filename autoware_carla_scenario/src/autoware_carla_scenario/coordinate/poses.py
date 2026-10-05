@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, Union
 
-import carla  # noqa: F401
+import typesafe_carla.carla as carla  # noqa: F401
 
 if TYPE_CHECKING:
     from .frames import CoordinateFrame

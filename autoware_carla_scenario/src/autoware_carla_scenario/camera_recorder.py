@@ -12,7 +12,7 @@ import queue
 import subprocess
 from pathlib import Path
 
-import carla
+import typesafe_carla.carla as carla
 import ffmpeg
 import numpy as np
 

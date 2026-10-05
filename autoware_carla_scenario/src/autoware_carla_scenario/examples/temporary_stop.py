@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-import carla
+import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,

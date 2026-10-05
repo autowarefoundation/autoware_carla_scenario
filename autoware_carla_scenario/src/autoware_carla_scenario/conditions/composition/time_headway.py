@@ -13,7 +13,7 @@ from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 _SPEED_EPSILON = 1e-6
 """Below this speed the headway is undefined rather than very large."""

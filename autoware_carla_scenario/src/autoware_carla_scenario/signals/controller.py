@@ -42,7 +42,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
-import carla
+import typesafe_carla.carla as carla
 
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
 

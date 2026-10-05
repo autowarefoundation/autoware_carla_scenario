@@ -16,6 +16,21 @@ pick the best match in the directory:
 .venv/{{ venv_bin }}/pip install --no-index --find-links . -r requirements.txt
 ```
 
+Then build typesafe_carla's CPython package, the CARLA client. It is not in
+any wheel: it is compiled once per installation, for the interpreter of this
+venv, with the Codon compiler that came in the `typesafe-carla-toolchain`
+wheel. That needs a C compiler (`cc`), about 8 GB of RAM and some fifteen
+minutes, but no network. Left out, the first `import typesafe_carla.carla` --
+the first scenario run -- does it instead:
+
+```bash
+.venv/{{ venv_bin }}/typesafe-codon pycarla
+```
+
+The build lands in `~/.cache/typesafe_carla/pycarla`; set
+`TYPESAFE_CARLA_PYCARLA_DIR` to put it elsewhere, for example somewhere a
+service user can read.
+
 Then run the scenario:
 
 ```bash
@@ -45,6 +60,6 @@ fails on the first wheel that has no matching tag -- re-export on a matching
 machine instead.
 
 The interpreter is the one axis it covers more than one of: the directory was
-resolved once per Python in the table above{% if pythons | length > 1 %}, so the compiled extensions -- the
-CARLA client among them -- are in here once per interpreter and pip takes the
-tag it can install{% endif %}. A Python outside that list has no wheels here.
+resolved once per Python in the table above{% if pythons | length > 1 %}, so the compiled extensions -- OpenCV
+and the lanelet2 bindings among them -- are in here once per interpreter and
+pip takes the tag it can install{% endif %}. A Python outside that list has no wheels here.

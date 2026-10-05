@@ -4,7 +4,7 @@
 # here: a function taking it is overloaded per pose type, as the Python
 # functions are with typing.overload, or generic and checked by _expect_pose.
 
-import carla
+import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only
 

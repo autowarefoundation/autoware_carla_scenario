@@ -4,35 +4,53 @@ Run with the image's own interpreter::
 
     docker run --rm --entrypoint python \
         -v "$PWD/.github/actions/pack-scenario-image/smoke-test.py:/tmp/smoke-test.py:ro" \
-        my-scenario:carla0.10.0 /tmp/smoke-test.py 0.10.0
+        my-scenario:latest /tmp/smoke-test.py
 
-It asserts the properties the image exists to guarantee: the CARLA client is
-exactly the version pinned at build time, the scenario package's entry point
-registers its scenario, and Hydra can reach that package's config directory.
+It asserts the properties the image exists to guarantee: the CARLA client,
+typesafe_carla's CPython package, was compiled into the image and loads
+without compiling anything, the official `carla` package is not there, the
+scenario package's entry point registers its scenario, and Hydra can reach
+that package's config directory.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import sys
 from importlib.metadata import version
 
 
 def main(argv: list[str]) -> int:
-    """Check the pinned CARLA client and the registered scenarios."""
-    if len(argv) != 2:
-        print(f"usage: {argv[0]} <expected-carla-version>", file=sys.stderr)
+    """Check the compiled CARLA client and the registered scenarios."""
+    if len(argv) != 1:
+        print(f"usage: {argv[0]}", file=sys.stderr)
         return 2
-    expected = argv[1]
 
-    installed = version("carla")
-    if installed != expected:
+    if os.environ.get("TYPESAFE_CARLA_PYCARLA_BUILD") != "0":
         print(
-            f"CARLA client is {installed}, but the image was built for {expected}",
+            "TYPESAFE_CARLA_PYCARLA_BUILD is not 0: a container would compile "
+            "the CARLA client on its first import",
             file=sys.stderr,
         )
         return 1
+    try:
+        import typesafe_carla.carla as carla
+    except ImportError as exc:
+        print(f"The compiled CARLA client does not load: {exc}", file=sys.stderr)
+        return 1
+    carla.Transform(carla.Location(1.0, 2.0, 3.0))
+    if importlib.util.find_spec("carla") is not None:
+        print("The official `carla` package is installed in the image", file=sys.stderr)
+        return 1
+    from typesafe_carla import paths
 
-    # Imported lazily so a CARLA mismatch is reported before the heavier import.
+    installed = (
+        f"typesafe-carla {version('typesafe-carla')} "
+        f"(CARLA {paths.native_info()['carla_git_ref']})"
+    )
+
+    # Imported lazily so a client problem is reported before the heavier import.
     from autoware_carla_scenario.registry import (
         get_conf_dirs,
         get_scenario_registry,

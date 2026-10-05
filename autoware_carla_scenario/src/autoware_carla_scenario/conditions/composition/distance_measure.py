@@ -24,7 +24,7 @@ from ...kinematics import Vector3
 from .base import entity_axes
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 __all__ = ["RelativeDistanceType", "half_extent_along", "separation"]
 

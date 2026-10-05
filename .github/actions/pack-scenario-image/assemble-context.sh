@@ -10,8 +10,6 @@
 #     <out>/framework/<member>/pyproject.toml
 #     <out>/framework/<member>/src/
 #     <out>/framework/<member>/README.md    # only when the member declares one
-#     <out>/framework/carla_wheels/         # local wheels for CARLA releases
-#                                           # that are not published to PyPI
 #     <out>/scenario/                       # the generated scenario package,
 #                                           # minus VCS, caches and build output
 #     <out>/slim-venv.py                    # both run by the venv stage
@@ -31,13 +29,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 scenario_dir=""
 out_dir=""
 framework_dir="${REPO_ROOT}"
-carla_wheel_dir="carla_wheels"
 
 usage() {
     cat >&2 <<'USAGE'
 Usage: assemble-context.sh --scenario <dir> --out <dir>
                            [--framework <dir>]
-                           [--carla-wheel-dir <rel-path>]
 
   --scenario         Generated scenario package (the directory holding its
                      pyproject.toml). Required.
@@ -45,9 +41,6 @@ Usage: assemble-context.sh --scenario <dir> --out <dir>
                      missing; existing content is removed. Required.
   --framework        uv workspace root providing the framework packages.
                      Defaults to this repository.
-  --carla-wheel-dir  Directory of local CARLA wheels, relative to --framework.
-                     Defaults to carla_wheels. Missing or empty is fine: the
-                     client is then resolved from PyPI.
 USAGE
     exit 2
 }
@@ -57,7 +50,6 @@ while [ $# -gt 0 ]; do
         --scenario) scenario_dir="${2:?--scenario needs a value}"; shift 2 ;;
         --out) out_dir="${2:?--out needs a value}"; shift 2 ;;
         --framework) framework_dir="${2:?--framework needs a value}"; shift 2 ;;
-        --carla-wheel-dir) carla_wheel_dir="${2:?--carla-wheel-dir needs a value}"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "assemble-context.sh: unknown argument: $1" >&2; usage ;;
     esac
@@ -112,7 +104,7 @@ copy_tree() {
 
 cp "${framework_dir}/pyproject.toml" "${out_dir}/framework/pyproject.toml"
 # The wheelhouse stage exports this as a constraints file, so the image pins
-# every framework dependency and not just the CARLA client.
+# every framework dependency, the CARLA client (typesafe-carla) included.
 [ -f "${framework_dir}/uv.lock" ] || {
     echo "assemble-context.sh: ${framework_dir} has no uv.lock -- run 'uv lock' first; the image pins its dependencies from it" >&2
     exit 1
@@ -193,14 +185,6 @@ for member in "${member_paths[@]}"; do
         copy_tree "${src}" "${dst}"
     fi
 done
-
-# Always present so the Dockerfile's COPY resolves and the workspace root's
-# `[tool.uv] find-links` target exists, even when there is nothing to vendor.
-mkdir -p "${out_dir}/framework/carla_wheels"
-if [ -d "${framework_dir}/${carla_wheel_dir}" ]; then
-    find "${framework_dir}/${carla_wheel_dir}" -maxdepth 1 -name '*.whl' \
-        -exec cp -t "${out_dir}/framework/carla_wheels/" {} +
-fi
 
 copy_tree "${scenario_dir}" "${out_dir}/scenario"
 

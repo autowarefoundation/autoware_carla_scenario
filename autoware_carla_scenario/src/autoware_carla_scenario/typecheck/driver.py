@@ -210,7 +210,7 @@ def render_driver(
         "_acs_check_scenario()",
     ]
     head = [
-        "import carla",
+        "import typesafe_carla.carla as carla",
         "from autoware_carla_scenario import (BaseScenario, EgoConfig, GroundProjectionConfig,",
         "                                     Lanelet2Pose, SpawnTransform)",
         *imports.lines,

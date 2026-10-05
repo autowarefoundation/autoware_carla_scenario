@@ -9,7 +9,7 @@ from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult, find_actor_by_role_name
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

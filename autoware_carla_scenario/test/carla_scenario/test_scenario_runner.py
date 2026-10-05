@@ -305,7 +305,7 @@ class TestInitPhaseOrdering:
     """
 
     def test_init_runs_before_on_scenario_start_and_the_wait(self):
-        import carla
+        import typesafe_carla.carla as carla
 
         from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
 

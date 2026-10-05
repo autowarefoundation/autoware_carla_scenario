@@ -7,7 +7,7 @@ import math
 import threading
 from typing import Any, Optional, Union
 
-import carla
+import typesafe_carla.carla as carla
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import EntityRole

@@ -20,7 +20,6 @@ Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 ```
 .
 ├── autoware_carla_scenario/          # The framework package (uv workspace member)
-├── carla_wheels/                     # Vendored CARLA Python wheels resolved by uv
 ├── data/                             # nishishinjuku fixture map used by the tests and examples
 ├── examples/scenario_package_template/  # A standalone scenario package to copy
 ├── .github/actions/                  # Composite actions (incl. scenario image packing)
@@ -35,9 +34,16 @@ packages, no C++ toolchain, no container. `git` has to be on `PATH`, because
 uv clones the converter.
 
 ```bash
-uv sync --dev --extra carla            # CARLA 0.10.0 (default, UE5)
-uv sync --dev --extra carla-0-9-16     # CARLA 0.9.16 (legacy, UE4)
+uv sync --dev
+uv run typesafe-codon pycarla   # optional: build the CARLA client now (~15 min, ~8 GB of memory)
 ```
+
+The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla)
+(CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64), imported as
+`import typesafe_carla.carla as carla`. Its CPython package is compiled once
+per installation, by the first import or ahead of time by
+`typesafe-codon pycarla`, which needs a C compiler (`cc`). The official
+`carla` wheels, and CARLA 0.9.16 (UE4), are no longer used.
 
 Run a scenario against the bundled nishishinjuku map. Its OpenDRIVE file,
 `data/nishishinjuku_carla.xodr`, is committed next to the Lanelet2 one; it was
@@ -49,8 +55,7 @@ uv run scenario scenario=intersection_passing/straight map=nishishinjuku
 ```
 
 Before it runs, every scenario is compiled with [Codon](https://github.com/exaloop/codon)
-against a typed model of the framework and the CARLA API of
-[typesafe_carla](https://github.com/hakuturu583/typesafe_carla), and one that does
+against a typed model of the framework and typesafe_carla's CARLA API, and one that does
 not type-check is refused before CARLA starts. `uv run scenario-check` makes the same check without
 running anything; see
 [`docs/typecheck.md`](autoware_carla_scenario/docs/typecheck.md).

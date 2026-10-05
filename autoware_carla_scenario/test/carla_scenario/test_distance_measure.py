@@ -12,7 +12,7 @@ import math
 import re
 from unittest.mock import MagicMock
 
-import carla
+import typesafe_carla.carla as carla
 import pytest
 
 from autoware_carla_scenario import (

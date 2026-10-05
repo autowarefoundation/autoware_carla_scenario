@@ -40,7 +40,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
     from ..autoware_bridge.base import AutowareBridge, BridgePose
     from ..coordinate import GroundProjectionConfig, Lanelet2Pose

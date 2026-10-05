@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
-import carla
+import typesafe_carla.carla as carla
 
 from ..entity_role import EntityRole
 

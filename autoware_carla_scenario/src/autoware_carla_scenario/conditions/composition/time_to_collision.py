@@ -16,7 +16,7 @@ from .base import CompositionCondition, DistanceCoordinateSystem
 from .distance_measure import half_extent_along
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 _CLOSING_SPEED_EPSILON = 1e-6
 """Closing speeds below this are treated as "not closing" (infinite TTC)."""

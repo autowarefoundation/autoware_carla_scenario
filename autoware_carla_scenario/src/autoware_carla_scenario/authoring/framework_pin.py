@@ -62,7 +62,8 @@ class Pin:
         commit: Full 40-character commit SHA, for ``kind="git"``.
         subdirectory: Path of the framework project inside the repository.
         path: Absolute local path, for ``kind="path"`` (development only).
-        extras: Extras to request of this distribution, e.g. ``("carla",)``.
+        extras: Extras to request of this distribution, e.g. ``("some-extra",)``.
+            Empty by default: the framework declares no extras.
         warnings: Reproducibility caveats worth surfacing to the user.
     """
 

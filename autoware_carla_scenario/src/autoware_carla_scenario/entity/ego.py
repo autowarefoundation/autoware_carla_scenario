@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
     from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
     from ..scenario_base import EgoConfig
