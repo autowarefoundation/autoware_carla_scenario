@@ -19,9 +19,11 @@ sweep:
         constraints:
           - type: has_adjacent
             value: left
+          # Long enough to finish the change before the road ends: the pass
+          # condition looks for the target lane on the road the ego starts on.
           - type: lanelet_length
             rule: greater_than_or_equal
-            value: 10.0
+            value: 30.0
           - type: not
             constraint:
               type: is_junction
