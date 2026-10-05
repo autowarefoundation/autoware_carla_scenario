@@ -108,7 +108,7 @@ def offline_export(monkeypatch: pytest.MonkeyPatch) -> None:
             version="0.1.0",
             wheels=(wheel,),
             size_bytes=0,
-            python_tags=("3.10",),
+            python_tags=("3.10", "3.12"),
         )
 
     monkeypatch.setattr(module, "_lock", _lock)
@@ -1290,6 +1290,11 @@ class TestValidateSaveExport:
         assert f"/draft/{draft_id}/wheelhouse.zip" in response.text
         # The report says how to install it, because that is the whole point.
         assert "pip install --no-index --find-links" in response.text
+        # And under which interpreters, which is the other half of "can I
+        # install this": these templates render with Jinja's default
+        # undefined, so a field the report names but the result does not
+        # carry comes out as a blank rather than an error.
+        assert "3.10, 3.12" in response.text
 
         download = client.get(f"/draft/{draft_id}/wheelhouse.zip")
         assert download.status_code == 200

@@ -634,8 +634,10 @@ cut_in-wheelhouse.zip
 `-- cut_in_scenario_wheelhouse/
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-    |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl  # not published to any index
-    |-- ... every transitive dependency, ~70 wheels
+    |-- carla-0.10.0-cp310-cp310-linux_x86_64.whl  # not published to any index,
+    |-- carla-0.10.0-cp311-cp311-linux_x86_64.whl  # one per supported interpreter
+    |-- carla-0.10.0-cp312-cp312-linux_x86_64.whl
+    |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
     `-- README.md                                  # how to install it
 ```

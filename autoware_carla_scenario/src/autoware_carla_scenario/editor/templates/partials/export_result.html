@@ -16,14 +16,14 @@
       <dl class="ed-kv">
         <div><dt>Wheels</dt><dd>{{ result.wheelhouse.wheels | length }} ({{ (result.wheelhouse.size_bytes / 1048576) | round | int }} MB)</dd></div>
         <div><dt>Framework</dt><dd>{{ result.pin.kind }}{% if result.pin.commit %} @ {{ result.pin.commit[:12] }}{% elif result.pin.version %} {{ result.pin.version }}{% endif %}</dd></div>
-        <div><dt>Python</dt><dd>{{ result.manifest.runtime.python }}</dd></div>
+        <div><dt>Python</dt><dd>{{ result.wheelhouse.python_tags | join(', ') }}</dd></div>
         <div><dt>uv</dt><dd>{{ result.manifest.runtime.uv or 'not recorded' }}</dd></div>
         <div><dt>uv sync --locked</dt><dd>{{ 'verified' if result.verified else 'not run' }}</dd></div>
         <div><dt>Package tests</dt><dd>{{ 'passed' if result.tested else 'not run' }}</dd></div>
       </dl>
       <p style="font-size:12px; margin-top:6px">
-        These wheels were resolved for Python {{ result.wheelhouse.python_tag }} on this
-        machine's platform, and install only there.
+        These wheels were resolved on this machine's platform, once per interpreter above:
+        they install under any of those Pythons, but on this platform only.
       </p>
       {% if result.warnings %}
         <ul style="margin-top:8px">
