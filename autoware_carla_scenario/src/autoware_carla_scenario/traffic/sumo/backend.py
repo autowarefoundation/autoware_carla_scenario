@@ -84,8 +84,8 @@ LANE_CHANGE_SETTLED_M: float = 0.3
 TURN_SEARCH_EDGES: int = 8
 #: Speed mode bits of a vehicle SUMO does not control (all checks off).
 _SPEED_MODE_EXTERNAL = 0
-#: SUMO connection directions that count as each turn.
-_TURNS = {TurnDirection.LEFT: ("l", "L"), TurnDirection.RIGHT: ("r", "R")}
+#: SUMO connection directions that count as each turn, by TurnDirection value.
+_TURNS = {"left": ("l", "L"), "right": ("r", "R"), "straight": ("s",)}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
 _PUBLISHED_COLOR = (220, 30, 40, 255)
 _DRIVEN_COLOR = (30, 90, 220, 255)
@@ -633,7 +633,7 @@ class SumoTrafficBackend(TrafficBackend):
         for _ in range(TURN_SEARCH_EDGES):
             last = self._net.getEdge(route[-1])
             for to_edge, conns in last.getOutgoing().items():
-                if any(c.getDirection() in _TURNS[direction] for c in conns):
+                if any(c.getDirection() in _TURNS[direction.value] for c in conns):
                     return self._continue_route([*route, to_edge.getID()])
             ahead = self._continue_route(route, 1)
             if len(ahead) == len(route):
