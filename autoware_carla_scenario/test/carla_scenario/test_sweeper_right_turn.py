@@ -106,6 +106,16 @@ class TestRouteThroughBinding:
         with pytest.raises(ValueError, match="depth must be >= 1"):
             RouteThroughBinding(target_key="k", depth=0)
 
+    def test_last_only_gives_the_end_of_the_route_as_an_id(self) -> None:
+        lanelet_map = _map({10: [20], 20: [30]})
+        graph = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+
+        result = RouteThroughBinding(
+            target_key="ego.goal_lanelet_id", depth=2, last_only=True
+        ).resolve(10, lanelet_map, graph)
+
+        assert result.value == 30
+
 
 class TestOverrideValue:
     def test_a_list_renders_as_a_hydra_list_without_spaces(self) -> None:

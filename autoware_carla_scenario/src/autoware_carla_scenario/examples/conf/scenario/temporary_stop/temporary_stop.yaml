@@ -1,4 +1,11 @@
 # @package _global_
+# Logical: every stop line of the map that no traffic light governs (a stop
+# sign's), one concrete scenario each.
+#
+#   scenario-expand scenario=temporary_stop/temporary_stop map=<map>
+#
+# The values outside `sweep:` are what a run without expanding uses: the fixed
+# Nishi-Shinjuku case. Every lanelet value is replaced per case.
 scenario:
   name: temporary_stop
   s_margin: 5.0
@@ -13,3 +20,28 @@ ego:
   spawn_s: 0.0
   # Past the stop line this run is about, and on up the road.
   goal_lanelet_id: 132
+
+sweep:
+  constraints:
+    ego.spawn_lanelet_id:
+      - type: and
+        constraints:
+          - type: has_stop_line
+          - type: not
+            constraint:
+              type: has_traffic_light_stop_line
+          - type: not
+            constraint:
+              type: in_set
+              values: ${map.no_3d_model_lanelet_ids}
+  bindings:
+    # 15 m short of the stop line, walking back onto the lane before where the
+    # line is nearer its lanelet's start than that.
+    ego.spawn_s:
+      type: stop_line_offset
+      offset: 15.0
+    # Past the stop line: the lane after the one it is on.
+    ego.goal_lanelet_id:
+      type: route_through
+      depth: 1
+      last_only: true
