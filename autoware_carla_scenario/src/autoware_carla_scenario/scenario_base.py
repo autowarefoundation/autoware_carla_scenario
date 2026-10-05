@@ -243,6 +243,12 @@ class BaseScenario(ABC):
             backend: The run's traffic backend.
         """
         self._traffic_backend = backend
+        for action in (
+            *self._init_actions,
+            *self._pre_tick_actions,
+            *self._post_tick_actions,
+        ):
+            self._hand_backend_to(action)
 
     @property
     def traffic_backend(self) -> Optional[TrafficBackend]:
@@ -525,8 +531,21 @@ class BaseScenario(ABC):
         """
         if isinstance(cb, BaseAction):
             actions.append(cb)
+            self._hand_backend_to(cb)
         else:
             callbacks.append(cb)
+
+    def _hand_backend_to(self, action: BaseAction) -> None:
+        """Give *action* the run's traffic backend, if it acts through one.
+
+        Background traffic (:class:`~autoware_carla_scenario.TrafficSourceAction`
+        and friends) is created by the backend, so an action that makes some
+        needs it the way a vehicle entity does.  Whichever of registration and
+        :meth:`set_traffic_backend` comes second hands it over.
+        """
+        inject = getattr(action, "set_traffic_backend", None)
+        if callable(inject) and self._traffic_backend is not None:
+            inject(self._traffic_backend)
 
     def register_init(
         self, cb: Union[BaseAction, Callable[["carla.World"], None]]

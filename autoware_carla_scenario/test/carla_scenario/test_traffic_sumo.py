@@ -592,6 +592,52 @@ def test_a_vehicle_inside_a_junction_joins_sumo_on_a_road_lane(
 
 
 @needs_sumo
+def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert handle is not None
+        for i in range(5):
+            backend.tick(world, i * 0.05)
+        assert handle in tc.vehicle.getIDList()
+        assert tc.vehicle.getSpeed(handle) > 4.0
+        # Mirrored into CARLA like the rest of SUMO's traffic.
+        mirror = backend._ambient[handle]
+        assert mirror in world.spawned
+        (x, y) = backend.background_vehicles(world)[handle]
+        assert -60.0 < x < -50.0 and y == pytest.approx(5.25, abs=1.0)
+
+        backend.remove_background(world, handle)
+        backend.tick(world, 0.3)
+        assert handle not in tc.vehicle.getIDList()
+        assert handle not in backend.background_vehicles(world)
+        assert mirror.destroyed
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_background_vehicle_off_the_road_is_refused(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    try:
+        assert (
+            backend.spawn_background(
+                world, _carla_transform(-60.0, 500.0, 0.0), speed_kmh=20.0
+            )
+            is None
+        )
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_pedestrians_can_be_left_out_of_sumo(
     crossroads_with_sidewalks: Path, tmp_path: Path
 ) -> None:

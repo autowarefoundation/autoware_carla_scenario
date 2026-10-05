@@ -372,6 +372,51 @@ class TrafficBackend:
         self._unavailable("turn_at_junction", entity)
 
     # ------------------------------------------------------------------
+    # Background traffic -- vehicles no scenario entity stands for
+    # ------------------------------------------------------------------
+
+    def spawn_background(
+        self,
+        world: Any,
+        transform: Any,
+        *,
+        speed_kmh: float,
+        blueprint: Optional[str] = None,
+    ) -> Optional[str]:
+        """Put one background vehicle on the road and let this backend drive it.
+
+        Background traffic is what :class:`~autoware_carla_scenario.TrafficSourceAction`
+        asks for: vehicles no scenario entity stands for, driven by the traffic
+        model like any other traffic.  May be called before :meth:`start` --
+        during the scenario's initialization -- as well as during the run.
+
+        Args:
+            world: The CARLA world.
+            transform: Where, as a ``carla.Transform`` on a driving lane.
+            speed_kmh: The speed it drives at, at most.
+            blueprint: A CARLA vehicle blueprint, or ``None`` for the backend's own.
+
+        Returns:
+            A handle naming the vehicle for :meth:`remove_background`, or
+            ``None`` when it could not be placed (no lane there, the spot is
+            taken, the backend has no traffic model).
+        """
+        del world, transform, speed_kmh, blueprint
+        logger.warning(
+            "%s: %r cannot create background traffic", type(self).__name__, self.name
+        )
+        return None
+
+    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+        """Every live background vehicle, by handle, at its CARLA ``(x, y)``."""
+        del world
+        return {}
+
+    def remove_background(self, world: Any, handle: str) -> None:
+        """Take the background vehicle *handle* off the road."""
+        del world, handle
+
+    # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 

@@ -29,8 +29,11 @@ traffic:
     curve_lateral_acceleration: 3.0
     # carla: SUMO obeys CARLA's lights. sumo: CARLA's lights follow SUMO. none.
     traffic_light_authority: carla
+    # SUMO's own randomTrips demand, independent of the scenario. Off: the
+    # examples' background traffic is background_traffic (config.yaml), which
+    # places it with lanelet constraints and can be ended by condition.
     ambient:
-      enabled: true
+      enabled: false
       vehicles_per_hour: 900
     # SUMO seconds simulated before the scenario clock starts.
     warmup_s: 30.0

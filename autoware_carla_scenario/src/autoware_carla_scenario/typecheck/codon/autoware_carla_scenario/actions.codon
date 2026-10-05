@@ -190,6 +190,25 @@ class TurnAction(BaseAction):
         super().__init__(label, condition, timing, once=once)
 
 
+class TrafficSourceAction(BaseAction):
+    def __init__(self, constraints, *_kw, initial_vehicles: int = 0,
+                 vehicles_per_minute: float = 0.0, max_vehicles = None,
+                 speed_kmh: float = 30.0, min_gap_m: float = 15.0, blueprint = None,
+                 seed: int = 0, label: str = "traffic_source", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), once: bool = True,
+                 until = None, reissue = None):
+        _keyword_only(_kw, "TrafficSourceAction(): everything after the constraints")
+        super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
+
+
+class TrafficSinkAction(BaseAction):
+    def __init__(self, constraints, *_kw, label: str = "traffic_sink", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), once: bool = True,
+                 until = None, reissue = None):
+        _keyword_only(_kw, "TrafficSinkAction(): everything after the constraints")
+        super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
+
+
 class WalkStraightAction(BaseAction):
     def __init__(self, entity_name, speed_ms: float = 1.4, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "walk_straight",

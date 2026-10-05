@@ -8,6 +8,7 @@ from .set_speed import SetSpeedAction
 from .traffic_signal import TrafficLightTarget, TrafficSignalAction
 from .traffic_signal_controller import TrafficSignalControllerAction
 from .turn import TurnAction, TurnDirection
+from .background_traffic import TrafficSinkAction, TrafficSourceAction
 from .walk_straight import WalkStraightAction
 
 __all__ = [
@@ -23,5 +24,7 @@ __all__ = [
     "TrafficSignalControllerAction",
     "TurnAction",
     "TurnDirection",
+    "TrafficSinkAction",
+    "TrafficSourceAction",
     "WalkStraightAction",
 ]

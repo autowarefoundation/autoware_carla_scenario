@@ -45,6 +45,51 @@ ego:
   # autopilot | autoware | carla_driver
   entity: autopilot
 
+# Background traffic: vehicles no scenario entity stands for, placed and
+# removed by TrafficSourceAction / TrafficSinkAction through the traffic
+# backend (SUMO's own traffic under traffic=sumo, autopilot cars under
+# traffic=traffic_manager). Off unless a run asks for it:
+#
+#   uv run scenario ... traffic=sumo background_traffic.enabled=true
+#
+# Where vehicles appear and disappear is given as lanelet constraints, the
+# vocabulary a sweep uses, so the same settings fit any map.
+background_traffic:
+  enabled: false
+  seed: 0
+  source:
+    constraints:
+      - type: not
+        constraint:
+          type: is_junction
+      - type: lanelet_length
+        rule: greater_than_or_equal
+        value: 20.0
+    # Placed during initialization, before the run starts.
+    initial_vehicles: 20
+    # Then added while the run lasts; 0 keeps it to the initial ones.
+    vehicles_per_minute: 6.0
+    # Stop adding after this many seconds of the run; null to keep going.
+    stop_after_seconds: null
+    # The most background vehicles on the road at once.
+    max_vehicles: 30
+    # The speed they drive at, at most.
+    speed_kmh: 30.0
+    min_gap_m: 20.0
+    blueprint: null
+  sink:
+    # Where they are removed; null for no sink. Lanelets with no successor --
+    # the ends of the map's roads -- by default.
+    constraints:
+      - type: not
+        constraint:
+          type: previous_of
+          constraints:
+            - type: lanelet_length
+              rule: greater_than_or_equal
+              value: 0.0
+    stop_after_seconds: null
+
 entity:
   ground_projection_ray_distance_upper: 5.0
   ground_projection_ray_distance_lower: 10.0

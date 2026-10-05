@@ -45,10 +45,13 @@ from autoware_carla_scenario import (
     BaseScenario,
     EgoConfig,
     EgoVehicle,
+    ElapsedTimeCondition,
     GroundProjectionConfig,
     Lanelet2Pose,
     ScenarioQueue,
     SpawnTransform,
+    TrafficSinkAction,
+    TrafficSourceAction,
 )
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
@@ -730,6 +733,7 @@ def build_scenario(
     if build_scenario_fn is not None:
         ego, scenario = build_scenario_fn(cfg)
         _apply_ego_config(cfg, scenario)
+        add_background_traffic(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -755,7 +759,92 @@ def build_scenario(
     ego_entity = build_ego_entity(cfg)
     if ego_entity is not None:
         scenario.ego_entity = ego_entity
+    add_background_traffic(cfg, scenario)
     return ego, scenario
+
+
+def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Register the run's background traffic on *scenario*, when it asks for any.
+
+    ``background_traffic`` in the config (off by default) becomes up to three
+    actions, whatever the scenario:
+
+    * a :class:`TrafficSourceAction` registered for initialization, placing
+      ``source.initial_vehicles`` before the run starts -- under ``traffic=sumo``
+      before SUMO's warm-up, which spreads them along their routes;
+    * another on the tick loop adding ``source.vehicles_per_minute``, ended by
+      ``source.stop_after_seconds`` when given;
+    * a :class:`TrafficSinkAction` removing them on ``sink.constraints``, ended
+      by ``sink.stop_after_seconds`` when given.
+
+    So ``background_traffic.enabled=true`` turns it on for any run, and
+    ``background_traffic.source.vehicles_per_minute=0`` keeps it to the vehicles
+    placed during initialization.
+    """
+    background = cfg.get("background_traffic")
+    if background is None or not background.get("enabled", False):
+        return
+    settings = _to_dict(background)
+    source = settings.get("source") or {}
+    sink = settings.get("sink") or {}
+    seed = int(settings.get("seed", 0))
+
+    def until(seconds: object, label: str) -> ElapsedTimeCondition | None:
+        if seconds is None:
+            return None
+        return ElapsedTimeCondition(float(str(seconds)), label=label)
+
+    max_vehicles = source.get("max_vehicles")
+    constraints = source.get("constraints") or []
+
+    def source_action(
+        *, initial: int, rate: float, seed: int, label: str
+    ) -> TrafficSourceAction:
+        return TrafficSourceAction(
+            constraints,
+            initial_vehicles=initial,
+            vehicles_per_minute=rate,
+            max_vehicles=None if max_vehicles is None else int(max_vehicles),
+            speed_kmh=float(source.get("speed_kmh", 30.0)),
+            min_gap_m=float(source.get("min_gap_m", 15.0)),
+            blueprint=source.get("blueprint"),
+            seed=seed,
+            label=label,
+            until=(
+                until(source.get("stop_after_seconds"), "background_source_ends")
+                if rate > 0
+                else None
+            ),
+        )
+
+    initial = int(source.get("initial_vehicles", 0))
+    rate = float(source.get("vehicles_per_minute", 0.0))
+    if constraints and initial > 0:
+        scenario.register_init(
+            source_action(
+                initial=initial, rate=0.0, seed=seed, label="background_initial"
+            )
+        )
+    if constraints and rate > 0:
+        scenario.register_pre_tick(
+            source_action(
+                initial=0, rate=rate, seed=seed + 1, label="background_source"
+            )
+        )
+    if sink.get("constraints"):
+        scenario.register_pre_tick(
+            TrafficSinkAction(
+                sink["constraints"],
+                label="background_sink",
+                until=until(sink.get("stop_after_seconds"), "background_sink_ends"),
+            )
+        )
+    logger.info(
+        "Background traffic: %d at start, %.1f/min after, sink %s",
+        initial if constraints else 0,
+        rate if constraints else 0.0,
+        "on" if sink.get("constraints") else "off",
+    )
 
 
 def run_scenario(
