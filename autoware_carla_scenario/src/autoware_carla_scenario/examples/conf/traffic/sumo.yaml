@@ -20,6 +20,10 @@ traffic:
     resync_distance_m: 8.0
     # Where the TrafficManager is, as for the traffic_manager backend.
     tm_port: ${oc.select:traffic_manager.port,null}
+    # Lateral acceleration (m/s^2) SUMO traffic is held to in bends when the
+    # map is converted (roadgen cuts edges at bends and slows each piece and
+    # each junction turn); null converts the map as it is.
+    curve_lateral_acceleration: 3.0
     # carla: SUMO obeys CARLA's lights. sumo: CARLA's lights follow SUMO. none.
     traffic_light_authority: carla
     ambient:

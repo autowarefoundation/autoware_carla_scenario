@@ -190,7 +190,9 @@ class SumoTrafficBackend(TrafficBackend):
             self._network = SumoNetwork(net_file, net_file.with_suffix(".safe"))
         else:
             self._network = build_network(
-                self._opendrive(context), self._config.resolved_cache_dir()
+                self._opendrive(context),
+                self._config.resolved_cache_dir(),
+                self._config.curve_lateral_acceleration,
             )
         self._offset = _net_offset(self._network.net_file)
         try:

@@ -295,6 +295,14 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   of it); inside junctions nothing is corrected. On Town10 it did not reduce
   contacts: a SUMO vehicle moved back to a lagging car is re-planned from a
   state its own model would not have reached.
+  SUMO's car-following models read no curvature, so a vehicle takes a bend at
+  the speed limit -- on Town10 up to ~10 m/s² sideways, more than a car under
+  physics can follow. `curve_lateral_acceleration` (3.0 m/s² by default) has
+  roadgen cut each edge at its bends and give every piece, and every path
+  across a junction, the speed `sqrt(a / curvature)` its sharpest point allows;
+  SUMO's vehicles then brake for a bend before they reach it. The pieces keep
+  the edge's id on the first and `<edge>.p1`, `<edge>.p2`, … after it, and
+  roadgen's trace has every one.
 - `teleport` places it where its SUMO vehicle was at the start of the step and
   gives it SUMO's speed as a constant velocity (`enable_constant_velocity`),
   which carries it to where SUMO is at the end of it: exact, but the car is not

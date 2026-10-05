@@ -73,6 +73,34 @@ def test_the_config_refuses_unknown_keys_and_light_modes() -> None:
     assert SumoBackendConfig().ambient.period() == pytest.approx(4.0)
 
 
+def test_curve_speeds_are_on_by_default_and_must_be_positive() -> None:
+    assert SumoBackendConfig().curve_lateral_acceleration == pytest.approx(3.0)
+    assert (
+        SumoBackendConfig.from_mapping(
+            {"curve_lateral_acceleration": None}
+        ).curve_lateral_acceleration
+        is None
+    )
+    for bad in (0.0, -2.0):
+        with pytest.raises(ValueError, match="curve_lateral_acceleration"):
+            SumoBackendConfig.from_mapping({"curve_lateral_acceleration": bad})
+
+
+def test_an_older_roadgen_converts_without_curve_speeds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.traffic.sumo import network
+
+    class OldMap:
+        def export_sumo(self, directory: str, trace: bool = True) -> str:
+            return "old"
+
+    with caplog.at_level("WARNING"):
+        assert network._export(OldMap(), tmp_path, 3.0) == "old"
+    assert "curve speeds" in caplog.text
+    assert network._export(OldMap(), tmp_path, None) == "old"
+
+
 @pytest.mark.parametrize(
     ("yaw", "angle"), [(0.0, 90.0), (90.0, 180.0), (-90.0, 0.0), (180.0, 270.0)]
 )
@@ -472,6 +500,34 @@ def test_a_published_vehicle_keeps_its_speed_in_sumo_after_the_warm_up(
         assert backend._traci.vehicle.getSpeed(driven_id) > 0.5
     finally:
         backend.close()
+
+
+@needs_sumo
+def test_turns_across_the_junction_are_held_to_their_curve_speed(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    import roadgen
+    import sumolib
+
+    from autoware_carla_scenario.traffic.sumo.network import build_network
+
+    if "curve_lateral_acceleration" not in (roadgen.Map.export_sumo.__doc__ or ""):
+        pytest.skip("roadgen without curve speeds")
+    opendrive = crossroads.read_text()
+
+    def slowest_turn(acceleration: float | None) -> float:
+        net = sumolib.net.readNet(
+            str(build_network(opendrive, tmp_path, acceleration).net_file),
+            withInternal=True,
+        )
+        return min(
+            lane.getSpeed()
+            for edge in net.getEdges()
+            if edge.getFunction() == "internal"
+            for lane in edge.getLanes()
+        )
+
+    assert slowest_turn(2.0) < slowest_turn(None)
 
 
 @needs_sumo

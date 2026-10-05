@@ -91,6 +91,16 @@ class SumoBackendConfig:
             that sets them (``TrafficSignalAction``) sets them for SUMO too.
             ``sumo``: CARLA's lights follow SUMO's programs.  ``none``: each
             keeps its own.
+        curve_lateral_acceleration: Lateral acceleration (m/s²) SUMO traffic is
+            held to in bends when the world's OpenDRIVE is converted: roadgen
+            cuts each edge at its bends and gives every piece, and every path
+            across a junction, the speed ``sqrt(a / curvature)`` its sharpest
+            point allows, where that is below the limit.  SUMO's models read no
+            curvature, so without it traffic takes Town10's bends at up to
+            ~10 m/s² sideways, which a car under ``physics`` cannot follow.
+            ``None`` converts the map as it is.  Needs a roadgen with
+            ``export_sumo(curve_lateral_acceleration=...)``; an older one
+            converts without it, with a warning.  Ignored with ``net_path``.
         net_path: An existing ``.net.xml`` to run on, instead of converting the
             world's OpenDRIVE.  Its x/y must be OpenDRIVE's plus its
             ``netOffset``, as netconvert writes a network built from it.
@@ -124,6 +134,7 @@ class SumoBackendConfig:
     feedback_distance_m: float = 0.0
     resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
+    curve_lateral_acceleration: Optional[float] = 3.0
     net_path: Optional[str] = None
     route_path: Optional[str] = None
     ambient: AmbientTrafficConfig = field(default_factory=AmbientTrafficConfig)
@@ -147,6 +158,13 @@ class SumoBackendConfig:
             raise ValueError(
                 "vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
+            )
+        if self.curve_lateral_acceleration is not None and not (
+            self.curve_lateral_acceleration > 0.0
+        ):
+            raise ValueError(
+                "curve_lateral_acceleration must be positive or null "
+                f"(got {self.curve_lateral_acceleration!r})"
             )
         if self.scenario_vehicles not in _SCENARIO_VEHICLE_DRIVERS:
             raise ValueError(

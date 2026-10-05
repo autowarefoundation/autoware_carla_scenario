@@ -27,6 +27,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..base import TrafficBackendError, TrafficBackendUnavailable
 
@@ -109,8 +110,15 @@ def _versions() -> str:
     return ",".join(out)
 
 
-def build_network(opendrive: str, cache_dir: Path) -> SumoNetwork:
+def build_network(
+    opendrive: str, cache_dir: Path, curve_lateral_acceleration: float | None = None
+) -> SumoNetwork:
     """The SUMO network of *opendrive* (OpenDRIVE text), built or cached.
+
+    Args:
+        curve_lateral_acceleration: Hold traffic in bends to this lateral
+            acceleration, m/s² (roadgen's option of the same name); ``None``
+            converts the map as it is.
 
     Raises:
         TrafficBackendUnavailable: roadgen or SUMO is not installed.
@@ -122,7 +130,10 @@ def build_network(opendrive: str, cache_dir: Path) -> SumoNetwork:
         raise TrafficBackendUnavailable(
             f"roadgen is not installed: {_INSTALL}"
         ) from exc
-    key = hashlib.sha256((_versions() + "\0" + opendrive).encode()).hexdigest()[:16]
+    options = f"curve_lateral_acceleration={curve_lateral_acceleration}"
+    key = hashlib.sha256(
+        "\0".join((_versions(), options, opendrive)).encode()
+    ).hexdigest()[:16]
     target = cache_dir / key
     network = SumoNetwork(target / "network.net.xml", target / "network.safe")
     if network.net_file.is_file():
@@ -135,7 +146,7 @@ def build_network(opendrive: str, cache_dir: Path) -> SumoNetwork:
         xodr.write_text(sanitize_opendrive(opendrive))
         try:
             road_map = roadgen.read_opendrive(str(xodr))
-            prefix = road_map.export_sumo(str(tmp))
+            prefix = _export(road_map, tmp, curve_lateral_acceleration)
         except Exception as exc:  # roadgen raises ValueError, among others
             raise TrafficBackendError(
                 f"roadgen could not convert the map: {exc}"
@@ -165,6 +176,24 @@ def build_network(opendrive: str, cache_dir: Path) -> SumoNetwork:
         shutil.rmtree(tmp, ignore_errors=True)
     logger.info("Built the SUMO network %s", network.net_file)
     return network
+
+
+def _export(
+    road_map: Any, directory: Path, curve_lateral_acceleration: float | None
+) -> str:
+    if curve_lateral_acceleration is None:
+        return road_map.export_sumo(str(directory))
+    try:
+        return road_map.export_sumo(
+            str(directory), curve_lateral_acceleration=curve_lateral_acceleration
+        )
+    except TypeError:
+        logger.warning(
+            "roadgen %s cannot hold traffic to curve speeds; converting without "
+            "(SUMO traffic will take bends at the speed limit)",
+            _versions(),
+        )
+        return road_map.export_sumo(str(directory))
 
 
 def generate_trips(
