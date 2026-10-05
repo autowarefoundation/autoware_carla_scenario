@@ -63,9 +63,7 @@ __all__ = [
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
 _PACKAGE = "autoware_carla_scenario"
-#: typesafe_carla's Codon library: not modelled here but linked into the
-#: workspace from typesafe_carla's CODON_PATH (``_build_workspace``), so every
-#: ``typesafe_carla`` module a scenario imports (``typesafe_carla.carla``) exists.
+#: typesafe_carla's Codon library, in its CODON_PATH directory.
 _LIBRARY = "typesafe_carla"
 #: Lines :data:`.transform.PRELUDE` adds above every rewritten module.
 _PRELUDE_LINES = PRELUDE.count("\n")
@@ -301,10 +299,17 @@ class _Sources:
     problems: list[Diagnostic] = field(default_factory=list)
 
 
-def _collect(roots: list[str], tc: Toolchain) -> _Sources:
+def _linked(codon_path: Path) -> frozenset[str]:
+    """Top-level modules of typesafe_carla's CODON_PATH directory: not
+    modelled here but linked into the workspace (``_build_workspace``), so a
+    scenario's ``import typesafe_carla.carla`` resolves to the library."""
+    return frozenset(p.name.split(".")[0] for p in codon_path.iterdir())
+
+
+def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
     stdlib = _codon_stdlib(tc)
     modeled = _model_modules()
-    shims = _shims()
+    shims = _shims() | _linked(codon_path)
     prefixes = {_user_prefix(root) for root in roots}
     out = _Sources()
     queue = list(roots)
@@ -321,7 +326,7 @@ def _collect(roots: list[str], tc: Toolchain) -> _Sources:
         out.modules[name] = _Module(path, is_package, text, tree)
         for imported, names, lineno in _imports(tree, name, is_package):
             top = imported.split(".")[0]
-            if imported in modeled or top in shims or top == _LIBRARY:
+            if imported in modeled or top in shims:
                 continue
             if any(imported == p or imported.startswith(p + ".") for p in prefixes):
                 submodules = [
@@ -478,7 +483,7 @@ def _tree_digest(digest: Any, paths: list[Path]) -> None:
 def _framework_digest(codon_path: Path) -> str:
     """The inputs that do not change while the process runs: the CARLA
     library, the model and the checker itself."""
-    library = (codon_path / "typesafe_carla").resolve()
+    library = (codon_path / _LIBRARY).resolve()
     digest = hashlib.sha256(str(library).encode())
     _tree_digest(digest, list(library.rglob("*.codon")))
     _tree_digest(digest, list(model_dir().rglob("*.codon")))
@@ -538,7 +543,7 @@ def typecheck_scenario(
         return TypeCheckResult(
             name, ok=True, skipped="the scenario has no source file to compile"
         )
-    sources = _collect(roots, toolchain)
+    sources = _collect(roots, toolchain, codon_path)
     driver = render_driver(scenario_cls, config_cls, dict(scenario_dict or {}))
     key = _cache_key(toolchain, codon_path, sources, driver.source)
     if key not in _CACHE:

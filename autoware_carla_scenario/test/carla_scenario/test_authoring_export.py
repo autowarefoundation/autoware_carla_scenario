@@ -449,12 +449,13 @@ class TestCarlaClient:
         assert "extra" not in readme
 
     def test_tested_pythons_match_the_frameworks_requires_python(self) -> None:
-        """Two hand-written statements of CI's range; nothing else ties them.
+        """Three hand-written statements of one range; nothing else ties them.
 
-        A generated package inherits the framework's `requires-python`, and the
-        wheelhouse is resolved for each of :data:`TESTED_PYTHONS` it admits.
-        Widen one without the other and the wheelhouse silently covers fewer
-        interpreters than the package claims to support, or more than CI tests.
+        A generated package inherits the framework's `requires-python`, the
+        wheelhouse is resolved for each of :data:`TESTED_PYTHONS` it admits, and
+        CI's test matrix is what "tested" means. Widen one without the others
+        and the wheelhouse silently covers fewer interpreters than the package
+        claims to support, or more than CI tests.
         """
         from autoware_carla_scenario.authoring.framework_pin import (
             framework_source_root,
@@ -463,9 +464,6 @@ class TestCarlaClient:
         pyproject = framework_source_root() / "pyproject.toml"
         if not pyproject.is_file():
             pytest.skip("not a source checkout")
-        assert supported_pythons(framework_source_root()) == list(TESTED_PYTHONS)
-
-        # ...and the range admits nothing outside them either.
         from packaging.specifiers import SpecifierSet
 
         declared = tomllib.loads(pyproject.read_text())["project"]["requires-python"]
@@ -475,6 +473,10 @@ class TestCarlaClient:
             if SpecifierSet(declared).contains(f"3.{minor}")
         ]
         assert admitted == list(TESTED_PYTHONS), declared
+
+        ci = framework_source_root().parent / ".github" / "workflows" / "ci.yml"
+        matrix = yaml.safe_load(ci.read_text())["jobs"]["test"]["strategy"]["matrix"]
+        assert matrix["python-version"] == list(TESTED_PYTHONS)
 
 
 class TestShippedRequirements:
@@ -664,6 +666,14 @@ class TestWheelhouseRefusals:
         assert any("No wheelhouse was built" in w for w in result.warnings)
 
 
+def _write_pyproject(root: Path, requires_python: str) -> None:
+    """A minimal package at *root* declaring *requires_python*."""
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "nothing"\nrequires-python = "{requires_python}"\n',
+        encoding="utf-8",
+    )
+
+
 class TestWheelhouseInterpreters:
     """A wheelhouse covers every interpreter the package can run under.
 
@@ -676,18 +686,12 @@ class TestWheelhouseInterpreters:
         self, tmp_path: Path
     ) -> None:
         """The tested interpreters the package's `requires-python` admits."""
-        (tmp_path / "pyproject.toml").write_text(
-            '[project]\nname = "nothing"\nrequires-python = ">=3.10,<3.13"\n',
-            encoding="utf-8",
-        )
+        _write_pyproject(tmp_path, ">=3.10,<3.13")
         assert supported_pythons(tmp_path) == ["3.10", "3.11", "3.12"]
 
     def test_an_open_range_stops_at_what_ci_tests(self, tmp_path: Path) -> None:
         """`>=3.11` is not a list: nothing past the tested range is built for."""
-        (tmp_path / "pyproject.toml").write_text(
-            '[project]\nname = "nothing"\nrequires-python = ">=3.11"\n',
-            encoding="utf-8",
-        )
+        _write_pyproject(tmp_path, ">=3.11")
         assert supported_pythons(tmp_path) == [
             version for version in TESTED_PYTHONS if version != "3.10"
         ]
@@ -721,10 +725,7 @@ class TestWheelhouseInterpreters:
         import autoware_carla_scenario.authoring.wheelhouse as module
 
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
-        (tmp_path / "pyproject.toml").write_text(
-            '[project]\nname = "nothing"\nrequires-python = ">=3.10,!=3.11.*"\n',
-            encoding="utf-8",
-        )
+        _write_pyproject(tmp_path, ">=3.10,!=3.11.*")
 
         built: list[str] = []
         filled: list[Path] = []
@@ -764,10 +765,7 @@ class TestWheelhouseInterpreters:
         import autoware_carla_scenario.authoring.wheelhouse as module
 
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
-        (tmp_path / "pyproject.toml").write_text(
-            '[project]\nname = "nothing"\nrequires-python = ">=3.10,!=3.11.*"\n',
-            encoding="utf-8",
-        )
+        _write_pyproject(tmp_path, ">=3.10,!=3.11.*")
 
         built: list[str] = []
 

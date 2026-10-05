@@ -56,7 +56,8 @@ COPY framework/ framework/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv build --wheel --all-packages --out-dir /wheels/framework framework \
     && uv export --directory framework --frozen --no-dev --no-emit-workspace \
-        --no-hashes -o /wheels/requirements.txt
+        --no-hashes -o /wheels/requirements.txt \
+    && grep -E '^typesafe-carla(-toolchain)?==' /wheels/requirements.txt > /wheels/client.txt
 
 COPY scenario/ scenario/
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -97,25 +98,24 @@ COPY venv-layer.sh /usr/local/bin/
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 
-COPY --from=wheelhouse /wheels/requirements.txt /wheels/requirements.txt
-
 # --- layer 1: the virtualenv and the CARLA client --------------------------
 # typesafe-carla (with its prebuilt CPython package) and its Codon toolchain,
-# on their own and before anything else, at the versions the lock pins (the
-# constraints file is the lock): they depend on nothing else, so the layer is
+# on their own and before anything else, at the versions the lock pins:
+# client.txt holds just those two lines of the exported lock, so the layer is
 # a function of those two versions and the base image alone, and two images
 # built for the same client share it whatever else they contain.
+COPY --from=wheelhouse /wheels/client.txt /wheels/client.txt
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv --python /usr/local/bin/python3 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
-        --constraint /wheels/requirements.txt \
-        typesafe-carla \
+        --requirement /wheels/client.txt \
     && sh /usr/local/bin/venv-layer.sh capture /opt/venv /export client
 
 # --- layer 2: the framework's third-party dependency closure ---------------
 # The requirements file is the workspace lock exported without its own members,
 # so this installs exactly the third-party versions this repository tests --
 # and changes only when uv.lock does, not when framework code does.
+COPY --from=wheelhouse /wheels/requirements.txt /wheels/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/venv/bin/python \
         --requirement /wheels/requirements.txt \

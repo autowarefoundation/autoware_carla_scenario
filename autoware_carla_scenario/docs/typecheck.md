@@ -65,10 +65,9 @@ how it is constructed.
 
 The check needs typesafe_carla (the `typesafe-carla` package, from PyPI) and
 the Codon compiler it pins (`typesafe-carla-toolchain`, 0.19, which
-typesafe-carla depends on). Both ship for Linux x86_64 only. Both are
+typesafe-carla depends on). Both ship for Linux x86_64 only, and both are
 run-time dependencies of the framework anyway: typesafe_carla is its CARLA
-client, and the Codon compiler is what builds that client's CPython package
-(see [installation](installation.md)).
+client (see [installation](installation.md)).
 
 The checker finds Codon the way typesafe_carla's `typesafe-codon` launcher
 does (it calls typesafe_carla's own lookup), so one setup serves both:

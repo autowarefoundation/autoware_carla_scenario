@@ -62,8 +62,6 @@ class Pin:
         commit: Full 40-character commit SHA, for ``kind="git"``.
         subdirectory: Path of the framework project inside the repository.
         path: Absolute local path, for ``kind="path"`` (development only).
-        extras: Extras to request of this distribution, e.g. ``("some-extra",)``.
-            Empty by default: the framework declares no extras.
         warnings: Reproducibility caveats worth surfacing to the user.
     """
 
@@ -74,21 +72,17 @@ class Pin:
     commit: Optional[str] = None
     subdirectory: Optional[str] = None
     path: Optional[str] = None
-    extras: tuple[str, ...] = field(default=())
     warnings: tuple[str, ...] = field(default=())
 
     # -- rendering ------------------------------------------------------
 
     def requirement(self) -> str:
         """Return the PEP 508 requirement for ``project.dependencies``."""
-        name = self.distribution
-        if self.extras:
-            name += f"[{','.join(self.extras)}]"
         if self.kind == "version":
-            return f"{name}=={self.version}"
+            return f"{self.distribution}=={self.version}"
         # git and path pins carry their locator in [tool.uv.sources]; the
         # requirement itself stays a bare name so the two never disagree.
-        return name
+        return self.distribution
 
     def uv_source(self) -> Optional[dict[str, Any]]:
         """Return the ``[tool.uv.sources]`` entry, or ``None`` for a version pin."""
@@ -121,8 +115,6 @@ class Pin:
             entry["subdirectory"] = self.subdirectory
         if self.path is not None:
             entry["path"] = self.path
-        if self.extras:
-            entry["extras"] = list(self.extras)
         return entry
 
     @property

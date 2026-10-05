@@ -34,15 +34,14 @@ uv run scenario scenario={{ scenario_name }}/default scenario.timeout_seconds=20
 
 ## Ship it as a container
 
-`pack-scenario-image` builds an image holding this package, the framework and a
-CARLA client pinned at build time:
+`pack-scenario-image` builds an image holding this package, the framework and
+its CARLA client (typesafe_carla, at the version the framework's lock pins):
 
 ```yaml
 - uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
   with:
     scenario-package-path: {{ package_name }}
     image: ghcr.io/<owner>/{{ distribution_name }}
-    carla-version: "0.10.0"
 ```
 
 Pin a release tag instead of `main` for a reproducible framework version. See

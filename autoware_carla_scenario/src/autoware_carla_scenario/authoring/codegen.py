@@ -51,6 +51,9 @@ __all__ = ["GenerationError", "diff_against_disk", "generate", "main"]
 
 #: Where the rendered module lands, and the template that renders it.
 _HERE = Path(__file__).parent
+
+#: The CARLA client module, as the runtime imports it (``import ... as carla``).
+_CARLA_MODULE = "typesafe_carla.carla"
 TEMPLATES_DIR = _HERE / "templates"
 OUTPUT_PATH = _HERE / "_builders_generated.py"
 TEMPLATE_NAME = "builders.py.jinja"
@@ -97,9 +100,7 @@ def _import_localns() -> dict[str, Any]:
     ``typesafe_carla.carla``, under the name the runtime imports it as), closes
     that gap without asking the runtime to import anything it does not need.
     """
-    namespace: dict[str, Any] = {
-        "carla": importlib.import_module("typesafe_carla.carla")
-    }
+    namespace: dict[str, Any] = {"carla": importlib.import_module(_CARLA_MODULE)}
     for module_name in (
         "autoware_carla_scenario.actions",
         "autoware_carla_scenario.conditions",
@@ -197,9 +198,7 @@ def _enum_expression(
     the enums impossible to drift apart: an option matching neither is an error
     now, where before it only surfaced as a ``KeyError`` at build time.
     """
-    if _is_carla_type(enum_type) or not (
-        isinstance(enum_type, type) and issubclass(enum_type, enum.Enum)
-    ):
+    if _is_carla_type(enum_type):
         # CARLA's enums (``carla.TrafficLightState``) are read off the module
         # the runtime imports with ``getattr`` and checked with ``hasattr``,
         # whatever kind of class the client makes them.  Checking matters most
@@ -214,7 +213,7 @@ def _enum_expression(
             )
         return (
             f"getattr(carla.{enum_type.__name__}, str({source}))",
-            "import typesafe_carla.carla as carla",
+            f"import {_CARLA_MODULE} as carla",
         )
 
     name = enum_type.__name__
@@ -371,7 +370,7 @@ def _is_carla_type(annotation: type) -> bool:
     Asked of the module rather than read off ``__module__``, so the generated
     file does not depend on how the client spells its own module name.
     """
-    module = importlib.import_module("typesafe_carla.carla")
+    module = importlib.import_module(_CARLA_MODULE)
     return getattr(module, annotation.__name__, None) is annotation
 
 

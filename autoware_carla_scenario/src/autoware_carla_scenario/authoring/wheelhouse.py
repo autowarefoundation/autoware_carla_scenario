@@ -148,7 +148,7 @@ class Wheelhouse:
 # ---------------------------------------------------------------------------
 
 
-def _requires_python(package_root: Path) -> Optional[str]:
+def _declared_requires_python(package_root: Path) -> Optional[str]:
     """Return the ``requires-python`` the package at *package_root* declares."""
     pyproject = Path(package_root) / "pyproject.toml"
     if not pyproject.is_file():
@@ -172,11 +172,7 @@ def supported_pythons(package_root: Path) -> list[str]:
 
     Intersected rather than taken from ``requires-python`` alone, because a
     specifier is not a list: ``>=3.10`` admits interpreters nobody has tested
-    and that a builder environment may not even exist for.  No dependency has
-    a per-interpreter ceiling inside that range any more.  The official CARLA
-    client used to be that dependency, and its vendored wheels were what this
-    read; the client is now typesafe_carla, whose CPython package is compiled
-    on the target for whichever interpreter imports it.
+    and that a builder environment may not even exist for.
 
     Returns:
         The versions in ascending order, e.g. ``["3.10", "3.11", "3.12"]``, or
@@ -184,7 +180,7 @@ def supported_pythons(package_root: Path) -> list[str]:
         one that admits none of them) -- the caller then falls back to the
         interpreter the package recorded in ``.python-version``.
     """
-    declared = _requires_python(package_root)
+    declared = _declared_requires_python(package_root)
     if declared is None:
         return []
     try:

@@ -39,15 +39,11 @@ uv sync --dev
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla)
 (CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64), imported as
-`import typesafe_carla.carla as carla`. Its wheel on PyPI carries the CPython
-package prebuilt, for every Python 3.10+, so the sync above is the whole
-install: nothing is compiled and no `cc` is needed. Only where no matching
-prebuilt package exists (typesafe_carla from a source checkout, or a
-typesafe-carla-toolchain other than the one its wheel was built with) does the
-first import build it (15-50 min, ~14 GB of memory, `cc`);
-`uv run typesafe-codon pycarla` does that ahead of time, and says there is
-nothing to build when the prebuilt package applies. The official `carla`
-wheels, and CARLA 0.9.16 (UE4), are no longer used.
+`import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython
+package prebuilt, so the sync above is the whole install; see
+[installation](autoware_carla_scenario/docs/installation.md) for the cases that
+build it instead. The official `carla` wheels, and CARLA 0.9.16 (UE4), are no
+longer used.
 
 Run a scenario against the bundled nishishinjuku map. Its OpenDRIVE file,
 `data/nishishinjuku_carla.xodr`, is committed next to the Lanelet2 one; it was
