@@ -29,12 +29,13 @@ class TurnAction(BaseAction):
        OpenDRIVE road network) to find the next junction
     3. Enumerates all possible paths through the junction
     4. Selects the path whose heading change best matches *direction*
-       (approximately −90° for left, +90° for right in CARLA's yaw convention)
+       (approximately −90° for left, +90° for right and 0° for straight on, in
+       CARLA's yaw convention)
     5. Calls ``TrafficManager.set_path`` to apply the route
 
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.
-        direction: :class:`TurnDirection` — ``LEFT`` or ``RIGHT``.
+        direction: :class:`TurnDirection` — ``LEFT``, ``RIGHT`` or ``STRAIGHT``.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.

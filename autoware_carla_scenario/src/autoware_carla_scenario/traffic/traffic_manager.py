@@ -54,6 +54,12 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: left-handed and clockwise-positive seen from above.
 _LEFT_TARGET_DEG: float = -90.0
 _RIGHT_TARGET_DEG: float = 90.0
+#: The heading change each direction aims for through a junction.
+_TARGET_DEG: dict[TurnDirection, float] = {
+    TurnDirection.LEFT: _LEFT_TARGET_DEG,
+    TurnDirection.RIGHT: _RIGHT_TARGET_DEG,
+    TurnDirection.STRAIGHT: 0.0,
+}
 
 
 class TrafficManagerBackend(TrafficBackend):
@@ -508,9 +514,10 @@ def _pick_branch(
 
     - Left turn  ≈ −90° heading change
     - Right turn ≈ +90° heading change
+    - Straight on ≈ 0°
     """
     entry_yaw = pre_junction_wp.transform.rotation.yaw
-    target = _LEFT_TARGET_DEG if direction is TurnDirection.LEFT else _RIGHT_TARGET_DEG
+    target = _TARGET_DEG[direction]
 
     best: Optional[List[Any]] = None
     best_score = float("inf")
