@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
@@ -21,6 +22,35 @@ __all__ = ["PedestrianEntity", "PedestrianEntityConfig"]
 #: off the map sits exactly on the surface, and a walker spawned flush with it
 #: is rejected as colliding with the ground.
 _SPAWN_LIFT_M = 0.3
+
+#: CARLA 0.10 (UE5) moves a walker at about 1/20.5 of the ``WalkerControl``
+#: speed it is given, whatever the step length -- measured on 0.10.0: 2 -> 0.098
+#: m/s, 20 -> 0.98 m/s, 40 -> 1.95 m/s -- and no faster than 2 m/s. CARLA 0.9
+#: takes the speed as it is.
+_UE5_WALKER_SPEED_SCALE = 20.5
+_UE5_WALKER_MAX_SPEED_MS = 2.0
+
+
+def _carla_version() -> tuple[int, int]:
+    """(major, minor) of the installed CARLA client, which matches the server."""
+    try:
+        major, minor = importlib.metadata.version("carla").split(".")[:2]
+        return int(major), int(minor)
+    except (importlib.metadata.PackageNotFoundError, ValueError):
+        return (0, 9)
+
+
+def walker_speed_command(speed_ms: float, version: tuple[int, int] | None = None) -> float:
+    """The ``WalkerControl`` speed that moves a walker at *speed_ms* on this CARLA."""
+    if (version or _carla_version()) < (0, 10):
+        return speed_ms
+    if speed_ms > _UE5_WALKER_MAX_SPEED_MS:
+        logger.warning(
+            "CARLA 0.10 walks a pedestrian at %.1f m/s at most; %.1f m/s asked for",
+            _UE5_WALKER_MAX_SPEED_MS,
+            speed_ms,
+        )
+    return speed_ms * _UE5_WALKER_SPEED_SCALE
 
 
 @dataclass
@@ -159,7 +189,7 @@ class PedestrianEntity:
             return
         forward = self._walker.get_transform().get_forward_vector()
         self._walker.apply_control(
-            carla.WalkerControl(direction=forward, speed=speed_ms)
+            carla.WalkerControl(direction=forward, speed=walker_speed_command(speed_ms))
         )
 
     # ------------------------------------------------------------------
