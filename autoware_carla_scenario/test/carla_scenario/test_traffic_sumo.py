@@ -567,6 +567,31 @@ def test_sumo_traffic_stops_for_carlas_pedestrians_on_the_road(
 
 
 @needs_sumo
+def test_a_vehicle_inside_a_junction_joins_sumo_on_a_road_lane(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    # Lane 0 of an edge with a footway is the footway: a vehicle placed from
+    # inside the junction starts on the lane its junction lane leads to.
+    backend, world, _npc, _ego = _prepared(crossroads_with_sidewalks, tmp_path)
+    tc = backend._traci
+    # Inside the junction, on the junction lane from arm 0's outer lane into
+    # arm 1 (SUMO's front bumper at x = -5: CARLA's centre half a car behind).
+    car = _FakeActor(_carla_transform(-7.3, 5.25, 0.0), "late")
+    junction_edge, _, junction_lane = tc.simulation.convertRoad(
+        -5.0, -5.25, False, "passenger"
+    )
+    assert junction_edge.startswith(":")
+    target = tc.lane.getLinks(f"{junction_edge}_{junction_lane}")[0][0]
+    try:
+        assert backend._add_vehicle("late", car)
+        backend.tick(world, 0.0)
+        assert tc.vehicle.getLaneID("late") == target
+        assert backend._net.getLane(target).allows("passenger")
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_pedestrians_can_be_left_out_of_sumo(
     crossroads_with_sidewalks: Path, tmp_path: Path
 ) -> None:
