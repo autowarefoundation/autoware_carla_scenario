@@ -36,3 +36,8 @@ file://.*
 
 # Add project-specific exclusions below this line
 # ------------------------------------------------
+# Placeholders in docstrings that describe URL shapes, not links.
+^https?://(user@)?host/owner/repo
+^https://huggingface\.co/datasets/OWNER/NAME
+# The git-lfs pointer format's version line, not a page.
+^https://git-lfs\.github\.com/spec/v1$

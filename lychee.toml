@@ -34,17 +34,8 @@ scheme = [
     "http",
 ]
 
-# Include only these file types
-include = [
-    "**/*.md",
-    "**/*.py",
-    "**/*.yml",
-    "**/*.yaml",
-    "**/*.toml",
-    "**/*.html",
-    "**/*.rst",
-    "**/*.txt",
-]
+# Which files are checked is given by the inputs (link-checker.yml); `include`
+# would be a list of URL regexes, not file globs.
 
 # Exclude these paths from checking
 exclude_path = [
@@ -58,6 +49,10 @@ exclude_path = [
     ".ruff_cache",
     "build",
     "dist",
+    # The viewer's and the editor's Jinja templates: their root-relative links
+    # are the web app's routes (`/maps`, `/static/editor.css`), not files.
+    "autoware_carla_scenario/src/autoware_carla_scenario/editor/templates",
+    "autoware_carla_scenario/src/autoware_carla_scenario/ui/templates",
 ]
 
 # GitHub token (set via environment variable GITHUB_TOKEN)
