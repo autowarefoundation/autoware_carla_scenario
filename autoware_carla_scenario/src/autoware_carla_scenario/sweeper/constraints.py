@@ -205,6 +205,46 @@ class IsJunctionConstraint:
 
 
 @dataclass(frozen=True)
+class TurnDirectionConstraint:
+    """Matches junction lanelets whose ``turn_direction`` tag has a given value.
+
+    :class:`IsJunctionConstraint` asks whether the tag is there at all;  this
+    one asks what it says, which is what picks one manoeuvre out of a map::
+
+        - type: turn_direction
+          value: right
+
+    Autoware's Lanelet2 maps tag every lanelet inside a junction with
+    ``turn_direction``: ``left``, ``right`` or ``straight``.  A lanelet
+    outside a junction carries no tag and never matches.
+
+    Pair it with :class:`HasTrafficLightStopLineConstraint` to keep to the
+    signalised turns, which are the ones CARLA can map to a junction::
+
+        - type: and
+          constraints:
+            - type: turn_direction
+              value: right
+            - type: has_traffic_light_stop_line
+    """
+
+    value: str = "straight"
+
+    def __post_init__(self) -> None:
+        valid = {"left", "right", "straight"}
+        if self.value not in valid:
+            raise ValueError(
+                f"Unknown turn_direction {self.value!r}. Available: {sorted(valid)}"
+            )
+
+    def evaluate(self, lanelet: Any) -> bool:
+        """Return ``True`` if the lanelet turns the way this constraint says."""
+        if "turn_direction" not in lanelet.attributes:
+            return False
+        return str(lanelet.attributes["turn_direction"]) == self.value
+
+
+@dataclass(frozen=True)
 class LaneletLengthConstraint:
     """Matches lanelets whose 2D centerline length satisfies a comparison rule.
 
@@ -443,6 +483,7 @@ _LEAF_REGISTRY: dict[str, type] = {
     "has_stop_line": HasStopLineConstraint,
     "has_traffic_light_stop_line": HasTrafficLightStopLineConstraint,
     "is_junction": IsJunctionConstraint,
+    "turn_direction": TurnDirectionConstraint,
     "has_adjacent": HasAdjacentConstraint,
     "lanelet_length": LaneletLengthConstraint,
     "equals": EqualsConstraint,
