@@ -52,6 +52,7 @@ def test_sumo_is_a_built_in_backend_that_builds_without_sumo_loaded() -> None:
     assert backend.name == "sumo"
     assert backend.describe()["traffic_light_authority"] == "none"
     assert backend.describe()["scenario_vehicles"] == "traffic_manager"
+    assert backend.describe()["vehicle_control"] == "physics"
 
 
 def test_the_config_refuses_unknown_keys_and_light_modes() -> None:

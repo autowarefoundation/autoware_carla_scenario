@@ -383,6 +383,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._network is not None:
             out["network"] = str(self._network.net_file)
         out["scenario_vehicles"] = self._config.scenario_vehicles
+        out["vehicle_control"] = self._config.vehicle_control
         out["ambient_period_s"] = (
             self._config.ambient.period() if self._config.ambient.enabled else None
         )
