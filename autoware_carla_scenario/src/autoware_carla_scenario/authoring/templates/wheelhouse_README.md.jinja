@@ -16,20 +16,20 @@ pick the best match in the directory:
 .venv/{{ venv_bin }}/pip install --no-index --find-links . -r requirements.txt
 ```
 
-Then build typesafe_carla's CPython package, the CARLA client. It is not in
-any wheel: it is compiled once per installation, for the interpreter of this
-venv, with the Codon compiler that came in the `typesafe-carla-toolchain`
-wheel. That needs a C compiler (`cc`), about 8 GB of RAM and some fifteen
-minutes, but no network. Left out, the first `import typesafe_carla.carla` --
-the first scenario run -- does it instead:
+Nothing has to be built afterwards. The CARLA client is typesafe_carla
+(`import typesafe_carla.carla as carla`), and the `typesafe-carla` wheel in
+here carries its CPython package prebuilt, for every Python 3.10+, so the
+install above is the whole of it: no C compiler, no build step.
 
-```bash
-.venv/{{ venv_bin }}/typesafe-codon pycarla
-```
-
-The build lands in `~/.cache/typesafe_carla/pycarla`; set
-`TYPESAFE_CARLA_PYCARLA_DIR` to put it elsewhere, for example somewhere a
-service user can read.
+Only if that prebuilt package does not match the installation -- a
+`typesafe-carla-toolchain` other than the one the wheel was built with -- does
+the first `import typesafe_carla.carla`, the first scenario run, build it with
+the Codon compiler from the toolchain wheel: 15 to 30 minutes, about 8 GB of
+RAM and a C compiler (`cc`), but no network. In that case
+`.venv/{{ venv_bin }}/typesafe-codon pycarla` does it ahead of time (and
+reports that there is nothing to build when the prebuilt package applies); the
+build lands in `~/.cache/typesafe_carla/pycarla`, or in
+`TYPESAFE_CARLA_PYCARLA_DIR` if set.
 
 Then run the scenario:
 

@@ -7,9 +7,9 @@ This guide will help you install the `autoware-carla-scenario` package.
 ### Operating System
 
 - **Linux x86_64** (Ubuntu 22.04 is the reference; CI runs on
-  `ubuntu-latest`). Every dependency resolves to a wheel; the one thing
-  compiled is the CARLA client's CPython package, once per installation (see
-  [CARLA client](#carla-client)).
+  `ubuntu-latest`). Every dependency resolves to a wheel, the CARLA client's
+  CPython package included (see [CARLA client](#carla-client)), so nothing
+  is compiled on install.
 
 ### Python Version
 
@@ -35,18 +35,28 @@ provides the Codon library the static check compiles scenarios against, and
 pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
 `carla` wheels are not used, and no extra has to be requested.
 
-Its CPython package is not in its wheel: it is compiled once per installation,
-by the first `import typesafe_carla.carla` or ahead of time with
+The released wheel on PyPI carries its CPython package prebuilt
+(`typesafe_carla/carla/_prebuilt`), one build that serves every Python 3.10+,
+so `uv sync` (or `pip install`) is the whole installation: nothing is
+compiled, no C compiler is needed, and nothing is fetched beyond the install
+itself.
+
+Only where no matching prebuilt package exists -- typesafe_carla installed
+from a source checkout or an sdist, edited Codon sources, or a
+`typesafe-carla-toolchain` release other than the one the wheel was built
+with -- does the first `import typesafe_carla.carla` build it instead. That
+build takes 15 to 30 minutes and about 8 GB of RAM, needs a C compiler
+(`cc`), and lands in `~/.cache/typesafe_carla/pycarla`.
 
 ```bash
 uv run typesafe-codon pycarla
 ```
 
-The build takes about 15 minutes and 8 GB of RAM and needs a C compiler
-(`cc`). It lands in `~/.cache/typesafe_carla/pycarla`; set
-`TYPESAFE_CARLA_PYCARLA_DIR` to put it elsewhere, and
-`TYPESAFE_CARLA_PYCARLA_BUILD=0` to make a missing build an `ImportError`
-instead of starting one.
+runs it ahead of time, and reports that there is nothing to build when the
+prebuilt package applies. Set `TYPESAFE_CARLA_PYCARLA_DIR` to put the build
+elsewhere (a directory set this way is used in preference to the prebuilt
+package), and `TYPESAFE_CARLA_PYCARLA_BUILD=0` to make a missing build an
+`ImportError` instead of starting one.
 
 ### Package Manager
 
@@ -86,18 +96,15 @@ converter separately when you need to generate a map.
     uv sync
     ```
 
-3. (Optional) Build the CARLA client's CPython package now rather than on
-   first import (see [CARLA client](#carla-client)):
-
-    ```bash
-    uv run typesafe-codon pycarla
-    ```
+    The CARLA client arrives with its CPython package prebuilt; nothing more
+    to build (see [CARLA client](#carla-client)).
 
 !!! note
     The Lanelet2 binding comes from
     [`simple-lanelet2`](https://github.com/hakuturu583/simple_lanelet2)
     as a prebuilt wheel, so `uv sync` needs no apt packages and no C++
-    toolchain on any host. Only the one-time CARLA client build needs `cc`.
+    toolchain on any host, and the CARLA client's prebuilt CPython package
+    means no `cc` either.
 
 ## Environment Configuration
 

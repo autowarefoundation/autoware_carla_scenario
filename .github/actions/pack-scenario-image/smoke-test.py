@@ -7,7 +7,7 @@ Run with the image's own interpreter::
         my-scenario:latest /tmp/smoke-test.py
 
 It asserts the properties the image exists to guarantee: the CARLA client,
-typesafe_carla's CPython package, was compiled into the image and loads
+typesafe_carla's prebuilt CPython package, is in the image and loads
 without compiling anything, the official `carla` package is not there, the
 scenario package's entry point registers its scenario, and Hydra can reach
 that package's config directory.
@@ -22,22 +22,22 @@ from importlib.metadata import version
 
 
 def main(argv: list[str]) -> int:
-    """Check the compiled CARLA client and the registered scenarios."""
+    """Check the prebuilt CARLA client and the registered scenarios."""
     if len(argv) != 1:
         print(f"usage: {argv[0]}", file=sys.stderr)
         return 2
 
     if os.environ.get("TYPESAFE_CARLA_PYCARLA_BUILD") != "0":
         print(
-            "TYPESAFE_CARLA_PYCARLA_BUILD is not 0: a container would compile "
-            "the CARLA client on its first import",
+            "TYPESAFE_CARLA_PYCARLA_BUILD is not 0: a container whose prebuilt "
+            "CARLA client did not apply would compile it on its first import",
             file=sys.stderr,
         )
         return 1
     try:
         import typesafe_carla.carla as carla
     except ImportError as exc:
-        print(f"The compiled CARLA client does not load: {exc}", file=sys.stderr)
+        print(f"The prebuilt CARLA client does not load: {exc}", file=sys.stderr)
         return 1
     carla.Transform(carla.Location(1.0, 2.0, 3.0))
     if importlib.util.find_spec("carla") is not None:

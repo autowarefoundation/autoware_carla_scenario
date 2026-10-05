@@ -35,14 +35,15 @@ wheelhouse rather than of this code:
   bindings alone are well over a hundred megabytes.  That is the cost of not
   needing a network.
 
-One thing a wheelhouse cannot carry: typesafe_carla's CPython package
-(``typesafe_carla.carla``) is not in its wheel.  It is compiled once per
-installation, on the target, by the first ``import typesafe_carla.carla`` --
-or ahead of time with ``typesafe-codon pycarla`` -- which takes about fifteen
-minutes and 8 GB of RAM and needs a C compiler (``cc``), but no network: the
-compiler is the toolchain wheel already in the directory.  An offline vehicle
-install therefore needs ``cc`` and that one build, best run right after
-``pip install`` rather than left to the first scenario.
+The CARLA client needs nothing beyond its wheels either: the released
+``typesafe-carla`` wheel the wheelhouse holds carries typesafe_carla's CPython
+package (``typesafe_carla.carla``) prebuilt, one build for every Python 3.10+,
+so an offline vehicle install is ``pip install`` and nothing else -- no
+``cc``, no build step.  Only where that prebuilt package does not match (a
+``typesafe-carla-toolchain`` other than the one the wheel was built with, for
+instance) does the first ``import typesafe_carla.carla`` build it (15 to 30
+minutes, about 8 GB of RAM, ``cc``), still without a network: the compiler is
+the toolchain wheel already in the directory.
 """
 
 from __future__ import annotations

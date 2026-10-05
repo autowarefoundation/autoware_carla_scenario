@@ -433,14 +433,18 @@ class TestCarlaClient:
         assert "find-links" not in data.get("tool", {}).get("uv", {})
         assert not (package / "carla_wheels").exists()
 
-    def test_the_readme_says_how_the_client_is_built(self, package: Path) -> None:
-        """The CPython package is compiled on the target, not shipped in a wheel.
+    def test_the_readme_names_the_client_and_its_prebuilt_package(
+        self, package: Path
+    ) -> None:
+        """The client is typesafe_carla, whose wheel carries its CPython package.
 
-        An offline install that does not know that finds out on its first
-        scenario run, fifteen minutes into a build that needs `cc`.
+        The README has to name the import a scenario uses -- never the official
+        `carla` package -- and tell an offline installer that nothing has to be
+        built on the target, so nobody installs `cc` or runs a build for nothing.
         """
         readme = (package / "README.md").read_text()
-        assert "typesafe-codon pycarla" in readme
+        assert "import typesafe_carla.carla as carla" in readme
+        assert "prebuilt" in readme
         assert "carla-*.whl" not in readme
         assert "extra" not in readme
 

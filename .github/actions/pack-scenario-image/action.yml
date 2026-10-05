@@ -2,8 +2,9 @@ name: Pack scenario package
 description: >
   Build (and optionally push) a container image for a scenario package
   generated with 'scenario-new'. The CARLA client, typesafe_carla, comes from
-  the framework's lock and its CPython package is compiled at build time and
-  baked into the image: a container never resolves or compiles a client.
+  the framework's lock, and the CPython package its wheel carries prebuilt is
+  baked into the image: nothing is compiled at build time, and a container
+  never resolves or compiles a client.
   See autoware_carla_scenario/docs/docker.md.
 
 inputs:
@@ -71,8 +72,8 @@ inputs:
     default: "true"
   smoke-test:
     description: >
-      After building, run the image to check that the compiled CARLA client
-      loads and that the scenario package registered itself.
+      After building, run the image to check that the prebuilt CARLA client
+      loads without compiling and that the scenario package registered itself.
     required: false
     default: "true"
   cache:
@@ -84,8 +85,8 @@ inputs:
       Cache key namespace. Defaults to one scope per image, so several images
       built in the same workflow do not evict each other. Give two images the
       same scope to share it instead: everything behind their scenario layer
-      is the same build when the lock and framework are -- including the
-      ~15 minute compile of the CARLA client.
+      is the same build when the lock and framework are, client and
+      dependency layers included.
     required: false
     default: ""
 

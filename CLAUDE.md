@@ -225,10 +225,17 @@ If pre-commit hooks fail:
 - **simple-lanelet2** (>=1.1.2) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
 - **typesafe-carla** (>=0.2.0) - The CARLA client (CARLA UE5 only; Linux
-  x86_64), imported as `import typesafe_carla.carla as carla`. Its CPython
-  package is built once per installation (first import, or
-  `typesafe-codon pycarla`; ~15 min, ~8 GB of memory, needs `cc`) into
-  `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` overrides).
+  x86_64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel
+  carries the CPython package prebuilt (`typesafe_carla/carla/_prebuilt`, one
+  build for every Python 3.10+), so installing it compiles nothing and needs
+  no `cc`. Only where no matching prebuilt package exists (a source checkout
+  or sdist, edited Codon sources, a different typesafe-carla-toolchain) does
+  the first import build it (15-30 min, ~8 GB of memory, needs `cc`) into
+  `~/.cache/typesafe_carla/pycarla`; `typesafe-codon pycarla` does that ahead
+  of time ("nothing to build" when the prebuilt one applies).
+  `TYPESAFE_CARLA_PYCARLA_DIR` overrides the build directory (and wins over the
+  prebuilt package); `TYPESAFE_CARLA_PYCARLA_BUILD=0` turns a missing build
+  into an `ImportError`, as the Docker image does.
   The official `carla` package is not a dependency and must not be imported.
 - Python 3.10 through 3.12. `autoware_carla_scenario` declares
   `requires-python = ">=3.10,<3.13"` -- the comment on that line is the

@@ -7,12 +7,13 @@ authors = [
 ]
 # The interpreters CI tests. The ceiling came from the official CARLA client
 # (its wheels stopped at cp312), which the framework no longer uses: the CARLA
-# client is typesafe_carla, whose CPython package is built per installation
+# client is typesafe_carla, whose wheel carries its CPython package prebuilt
 # for any Python 3.10+. Raise it together with CI's interpreter matrix.
 requires-python = ">=3.10,<3.13"
 dependencies = [
     # The CARLA client: `import typesafe_carla.carla as carla` (its CPython
-    # package, built on first import or by `typesafe-codon pycarla`) at run
+    # package, prebuilt in the wheel; built on first import only where that
+    # prebuilt one does not match, e.g. a source install) at run
     # time, and its Codon library for the static check (typecheck/). It pulls
     # in typesafe-carla-toolchain, the pinned Codon compiler both need. Both
     # ship for Linux x86_64 only, as CARLA's own client did.

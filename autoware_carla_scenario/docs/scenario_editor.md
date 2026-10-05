@@ -634,7 +634,7 @@ cut_in-wheelhouse.zip
 `-- cut_in_scenario_wheelhouse/
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-    |-- typesafe_carla-0.2.*.whl                   # the CARLA client
+    |-- typesafe_carla-0.2.*.whl                   # the CARLA client, CPython package prebuilt
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
     |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
@@ -648,20 +648,22 @@ resolution:
 unzip cut_in-wheelhouse.zip
 python3 -m venv .venv
 .venv/bin/pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
-.venv/bin/typesafe-codon pycarla     # once: compiles the CARLA client, needs cc
 .venv/bin/scenario scenario=cut_in map=nishishinjuku
 ```
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla),
-and its CPython package (`typesafe_carla.carla`) is the one part of the install
-that no wheel carries: it is compiled once per installation, on the target,
-with the Codon compiler from the `typesafe-carla-toolchain` wheel. That takes
-about 15 minutes and 8 GB of RAM and needs a C compiler (`cc`), but no network.
-`typesafe-codon pycarla` does it ahead of time; skipped, the first
-`import typesafe_carla.carla` -- the first scenario run -- does it instead. The
-result lands in `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR`
-moves it). An offline vehicle therefore needs `cc` installed and that one build
-run, in addition to pip.
+and the `typesafe-carla` wheel in the wheelhouse is the released one from
+PyPI, which carries its CPython package (`typesafe_carla.carla`) prebuilt --
+one build for every Python 3.10+. So pip is the whole installation, here as
+everywhere: nothing is compiled on the target, and an offline vehicle needs
+neither `cc` nor a build step. Only if that prebuilt package does not match
+the installation -- a `typesafe-carla-toolchain` other than the one the wheel
+was built with, say -- does the first `import typesafe_carla.carla`, the first
+scenario run, build it with the Codon compiler from the toolchain wheel (15 to
+30 minutes, about 8 GB of RAM, `cc`, but no network) into
+`~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` moves it);
+`typesafe-codon pycarla` does that ahead of time, and reports that there is
+nothing to build when the prebuilt package applies.
 
 That is the point of the format. Autoware's `scenario_bridge` installs a
 scenario into a venv built from `python3-venv` and `python3-pip` -- the two
@@ -795,9 +797,9 @@ uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
 
 The CARLA client needs no separate install: `typesafe-carla` is a dependency of
 the framework, so it is in the lock and in the wheelhouse alongside everything
-else. Its CPython package still has to be compiled once on the machine that
-runs the scenario -- `.venv/bin/typesafe-codon pycarla`, or the first run does
-it (see [Save Draft vs Export Wheelhouse](#save-draft-vs-export-wheelhouse)).
+else, with its CPython package prebuilt, so nothing has to be compiled on the
+machine that runs the scenario (see
+[Save Draft vs Export Wheelhouse](#save-draft-vs-export-wheelhouse)).
 
 ## Offline
 
