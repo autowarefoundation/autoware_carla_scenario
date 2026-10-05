@@ -8,8 +8,10 @@
 scenario:
   name: intersection_passing
   expected_route_lanelet_ids: [460, 265]
-  timeout_seconds: 5.0
-  min_speed_kmh: 5.0
+  # 25 m to the stop line, the junction, and onto the lane beyond it.
+  timeout_seconds: 15.0
+  # Below the 5 km/h it starts at: "does not stop", not "never dips at all".
+  min_speed_kmh: 3.0
   speed_check_delay_seconds: 0.3
 
 ego:
@@ -26,8 +28,11 @@ sweep:
         constraints:
           - type: turn_direction
             value: straight
-          # A stop line at its start, to measure the spawn from.
-          - type: has_stop_line
+          # A signal's stop line at its start, to measure the spawn from. A
+          # signalised junction only: every light is set green, so the ego
+          # never has to stop -- which min_speed_kmh asserts -- where at a
+          # stop sign it would.
+          - type: has_traffic_light_stop_line
           - type: not
             constraint:
               type: in_set
