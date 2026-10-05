@@ -176,12 +176,13 @@ def get_stop_line_linestrings_with_following(
     frontier = [lanelet]
     visited = {lanelet_id}
     for _ in range(depth):
-        frontier = [
-            fll
-            for current in frontier
-            for fll in routing_graph.following(current)
-            if fll.id not in visited and not visited.add(fll.id)
-        ]
+        following = []
+        for current in frontier:
+            for fll in routing_graph.following(current):
+                if fll.id not in visited:
+                    visited.add(fll.id)
+                    following.append(fll)
+        frontier = following
         all_results: list[tuple[int, Any]] = []
         for fll in frontier:
             fll_results = _collect_stop_lines_from_reg_elems(
