@@ -63,7 +63,7 @@ sumo = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.14.0",
+    "roadgen>=0.15.0",
 ]
 
 [tool.uv]
