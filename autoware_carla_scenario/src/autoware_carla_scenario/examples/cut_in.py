@@ -7,7 +7,7 @@ fails on a collision with it.
 
 ``side`` is the side of the ego the NPC comes from, so it changes lanes the
 other way. Its lanelet is the one beside the ego's, which a sweep binds with
-the ``neighbour`` binding.
+the ``adjacent`` binding.
 
 Typical usage
 -------------
@@ -24,20 +24,19 @@ import logging
 import carla
 
 from autoware_carla_scenario import (
-    EGO_ROLE_NAME,
     BaseScenario,
     CollisionCondition,
     EgoConfig,
     ElapsedTimeCondition,
-    EntityDistanceCondition,
+    EntityLanePositionCondition,
     EntityRole,
     GroundProjectionConfig,
     LaneChangeAction,
     LaneChangeDirection,
     Lanelet2Pose,
     PersistentCondition,
-    RelativeDistanceType,
     SpawnTransform,
+    StickyCondition,
     TimeoutCondition,
     TrafficLightTarget,
     TrafficSignalAction,
@@ -59,9 +58,6 @@ _CHANGE_TOWARDS_EGO: dict[str, LaneChangeDirection] = {
     "left": LaneChangeDirection.RIGHT,
     "right": LaneChangeDirection.LEFT,
 }
-
-#: Two vehicles this close sideways, across the ego's heading, share a lane (m).
-_SAME_LANE_M = 1.0
 
 
 class CutInScenario(BaseScenario):
@@ -91,7 +87,7 @@ class CutInScenario(BaseScenario):
         if cfg.side not in _CHANGE_TOWARDS_EGO:
             raise ValueError(f"cut_in side must be 'left' or 'right', got {cfg.side!r}")
 
-        self._setup_ego_spawn()
+        ego_lane = self._setup_ego_spawn()
         self.register_init(
             TrafficSignalAction(
                 state=carla.TrafficLightState.Green,
@@ -139,16 +135,13 @@ class CutInScenario(BaseScenario):
             )
         )
 
-        # In the ego's lane: next to nothing sideways of the ego's heading.
-        same_lane = EntityDistanceCondition(
-            EGO_ROLE_NAME,
-            CUT_IN_ROLE,
-            _SAME_LANE_M,
-            distance_type=RelativeDistanceType.LATERAL,
-            label="npc_in_ego_lane",
+        # Latched once the NPC is on the ego's OpenDRIVE lane, as lane_change
+        # checks its ego; then held for hold_seconds with no collision.
+        cut_in = StickyCondition(
+            EntityLanePositionCondition(CUT_IN_ROLE, ego_lane, label="npc_in_ego_lane")
         )
         self.register_pass_condition(
-            PersistentCondition(same_lane, cfg.hold_seconds, label="npc_cut_in_held")
+            PersistentCondition(cut_in, cfg.hold_seconds, label="npc_cut_in_held")
         )
         self.register_fail_condition(
             CollisionCondition(target=CUT_IN_ROLE, label="hit_cut_in_vehicle")

@@ -55,6 +55,11 @@ PEDESTRIAN_ROLE = EntityRole("pedestrian1")
 #: How close to the pass point the ego has to come (m): the width of a lane.
 _PASS_RADIUS_M = 3.0
 
+#: How far above the ground a pedestrian's spawn point is (m). CARLA places a
+#: walker by its middle; a point at the road's height puts its feet in a kerb
+#: that stands above the road, and the spawn is refused.
+_WALKER_SPAWN_HEIGHT_M = 1.0
+
 
 class PedestrianDartOutScenario(BaseScenario):
     """Spawn the ego and a pedestrian at the kerb ahead; it runs out as the ego nears."""
@@ -108,12 +113,19 @@ class PedestrianDartOutScenario(BaseScenario):
             heading=across,
         )
         # Not snapped to the road: snapping would put it in the carriageway.
+        at_kerb = to_carla_world(kerb).to_carla_transform()
+        lifted = carla.Transform(
+            carla.Location(
+                at_kerb.location.x,
+                at_kerb.location.y,
+                at_kerb.location.z + _WALKER_SPAWN_HEIGHT_M,
+            ),
+            at_kerb.rotation,
+        )
         pedestrian = PedestrianEntity(
             PedestrianEntityConfig(
                 role_name=PEDESTRIAN_ROLE,
-                spawn_location=SpawnTransform(
-                    to_carla_world(kerb).to_carla_transform()
-                ),
+                spawn_location=SpawnTransform(lifted),
                 walker_type=cfg.walker_type,
             )
         )
