@@ -272,7 +272,7 @@ def _prepared(
             enabled="period_s" in options, period_s=options.pop("period_s", None)
         ),
         traffic_light_authority="none",
-        warmup_s=0.0,
+        warmup_s=options.pop("warmup_s", 0.0),
         cache_dir=str(tmp_path / "cache"),
         **options,
     )
@@ -398,5 +398,31 @@ def test_by_default_the_scenarios_vehicles_stay_with_the_traffic_manager(
         backend.change_lane(entity, world, LaneChangeDirection.LEFT)
         assert not backend.lane_change_finished(entity, world)
         assert backend.port == SumoBackendConfig().tm_port
+    finally:
+        backend.close()
+
+
+class _Velocity:
+    def __init__(self, x: float) -> None:
+        self.x, self.y, self.z = x, 0.0, 0.0
+
+
+@needs_sumo
+def test_a_published_vehicle_keeps_its_speed_in_sumo_after_the_warm_up(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, npc, ego = _prepared(crossroads, tmp_path, warmup_s=2.0)
+    ego_id = next(iter(backend._external))
+    driven_id = next(iter(backend._driven))
+    ego.get_velocity = lambda: _Velocity(5.0)  # type: ignore[method-assign]
+    try:
+        for i in range(30):
+            loc = ego.transform.location
+            ego.transform = _carla_transform(loc.x + 0.25, loc.y, 0.0)
+            backend.tick(world, i * 0.05)
+        # SUMO sees the published ego moving at its CARLA speed, and the
+        # vehicle it drives was let go after the warm-up.
+        assert backend._traci.vehicle.getSpeed(ego_id) == pytest.approx(5.0, abs=0.1)
+        assert backend._traci.vehicle.getSpeed(driven_id) > 0.5
     finally:
         backend.close()

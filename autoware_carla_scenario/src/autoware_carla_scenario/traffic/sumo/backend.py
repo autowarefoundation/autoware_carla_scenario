@@ -769,8 +769,10 @@ class SumoTrafficBackend(TrafficBackend):
         if steps <= 0:
             return
         tc = self._traci
-        held = [*self._driven, *self._external]
-        for sumo_id in held:
+        # Only SUMO's own drivers are held: a published vehicle is pinned to its
+        # CARLA pose by moveToXY already, and a speed forced on it here would
+        # outlive the warm-up -- SUMO would report it standing still forever.
+        for sumo_id in self._driven:
             tc.vehicle.setSpeed(sumo_id, 0.0)
         for _ in range(steps):
             self._push_external()
