@@ -29,13 +29,17 @@ flowchart TB
     subgraph impls["Implementations"]
         TM["TrafficManagerBackend<br/>(default)"]
         NONE["NullTrafficBackend<br/>('none')"]
+        SUMO["SumoTrafficBackend<br/>('sumo')"]
         EXT["your backend<br/>(entry point)"]
     end
 
     BE --- TM
     BE --- NONE
+    BE --- SUMO
     BE --- EXT
     TM --> CTM["CARLA TrafficManager"]
+    SUMO --> LS["SUMO (libsumo)"]
+    SUMO -.->|"scenario vehicles"| TM
     EXT -.-> SIM["another traffic simulator"]
 ```
 
@@ -67,6 +71,7 @@ uv run scenario scenario=intersection_passing/left_turn traffic=none
 | --- | --- |
 | `traffic_manager` (default) | CARLA's TrafficManager drives every vehicle that is not under external control. |
 | `none` | Nothing is driven and no ambient vehicle is created. |
+| `sumo` | SUMO fills the road with its own traffic, co-simulated on the world's road network; see [The SUMO backend](#the-sumo-backend). Needs the `sumo` extra. |
 
 !!! warning "`traffic=none` and the default ego"
 
@@ -221,8 +226,70 @@ it possible without a second scenario framework: the same map, the same scenario
 document, the same conditions and the same result format, with the traffic model
 swapped.
 
-The SUMO backend is designed in `.spec-workflow/specs/traffic-simulation-backends/` in
-this repository. Its network comes from the scenario's own Lanelet2 map through
-[`lanelet2_to_sumo`](https://github.com/autowarefoundation/lanelet2_to_sumo) — the same
-map Autoware plans on — or from a `.net.xml` the run names directly when you already have
-one. No SUMO code is in the package yet.
+## The SUMO backend
+
+`traffic=sumo` co-simulates [SUMO](https://eclipse.dev/sumo/) with the CARLA
+world. It needs the `sumo` extra (`autoware-carla-scenario[sumo]`: SUMO,
+libsumo and roadgen, all wheels); without it the run is refused in `prepare()`,
+before anything is spawned.
+
+```bash
+uv run scenario scenario=lane_change/left map=town10hd_opt traffic=sumo
+uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
+uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
+uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/sumo/fcd.xml
+```
+
+**The network** is the world's own road network. The backend takes the
+OpenDRIVE the world runs (the file the run installed, or
+`world.get_map().to_opendrive()`), converts it with
+[roadgen](https://github.com/hakuturu583/hdmap_generator) into netconvert's
+plain-XML input and builds it with netconvert. The result is cached under
+`~/.cache/autoware_carla_scenario/sumo/`, keyed by the OpenDRIVE and the tool
+versions, so a map is converted once. roadgen writes the network without offset
+normalisation, so SUMO's x/y are OpenDRIVE's and CARLA's are the same with y
+mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
+
+!!! note
+    CARLA's maps bend the OpenDRIVE schema in a few places roadgen's strict
+    parser refuses (`<userData>` without `code`, `<roadMark>` without `color`,
+    objects of type `-1`, `<cornerLocal>` without `height`); the backend
+    strips or fills those before converting. An OpenDRIVE whose junctions name
+    connections to roads they do not list (the Nishishinjuku map's) is refused
+    by roadgen's validation.
+
+**Ownership** follows the seam's rule: the scenario owns what it authored.
+
+| Vehicle | Driven by | In SUMO |
+| --- | --- | --- |
+| Ego (`autoware`, `carla_driver`) | its entity | published: moved to its CARLA pose every tick |
+| Scenario NPCs, autopilot ego | the TrafficManager (`scenario_vehicles=traffic_manager`, default), or SUMO (`scenario_vehicles=sumo`) | published, or driven |
+| Ambient traffic (`randomTrips.py`) | SUMO | native; mirrored into CARLA |
+
+A published vehicle has SUMO's speed and lane-change control switched off, so
+SUMO traffic sees it where CARLA has it and reacts to it. With the default the
+scenario's NPCs behave exactly as under the `traffic_manager` backend, while
+SUMO fills the rest of the road.
+
+**Stepping**: one SUMO step per CARLA tick, with the step length set to the
+world's `fixed_delta_seconds` and the seed to the scenario's. CARLA poses are
+published before SUMO steps; SUMO's result is applied to the actors after it.
+A mirrored actor keeps its physics: each tick it is placed where its SUMO
+vehicle was at the start of the step and given SUMO's speed as a constant
+velocity, which carries it to where SUMO is at the end of it. CARLA reports no
+velocity for a physics-off actor, so this is what keeps `get_velocity()` --
+and every speed condition -- right for SUMO's vehicles.
+
+**Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
+signals the states of CARLA's lights every step, so a scenario that sets the
+lights sets them for SUMO's traffic too; `sumo` drives CARLA's lights from
+SUMO's programs; `none` leaves each alone. Lights and SUMO signal links are
+matched geometrically (a CARLA light's stop waypoints to the SUMO lane there).
+
+**Manoeuvres** of SUMO-driven vehicles become TraCI calls: `change_lane` →
+`changeLane` (SUMO obeys a solid line, and says so), `set_desired_speed` →
+`setSpeed`, `turn_at_junction` → a route onto the junction's outgoing edge in
+that direction. With the default, they go to the TrafficManager.
+
+The coupling follows [TeraSim](https://github.com/autowarefoundation/TeraSim)'s
+CARLA co-simulation; its adversarial behaviour generation is left to scenarios.

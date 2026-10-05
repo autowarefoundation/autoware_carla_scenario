@@ -1,0 +1,34 @@
+# @package _global_
+traffic:
+  # SUMO, co-simulated on the world's own road network: the world's OpenDRIVE
+  # is converted with roadgen (hakuturu583/hdmap_generator) and netconvert, and
+  # SUMO steps once per CARLA tick.  Needs the `sumo` extra.  SUMO fills the road
+  # with its own traffic; the scenario's vehicles stay with the TrafficManager
+  # and, like an Autoware ego, are published into SUMO so its traffic reacts.
+  backend: sumo
+  options:
+    # traffic_manager: the scenario's NPCs (and an autopilot ego) are driven as
+    # under the traffic_manager backend. sumo: SUMO drives them too.
+    scenario_vehicles: traffic_manager
+    # Where the TrafficManager is, as for the traffic_manager backend.
+    tm_port: ${oc.select:traffic_manager.port,null}
+    # carla: SUMO obeys CARLA's lights. sumo: CARLA's lights follow SUMO. none.
+    traffic_light_authority: carla
+    ambient:
+      enabled: true
+      vehicles_per_hour: 900
+    # SUMO seconds simulated before the scenario clock starts.
+    warmup_s: 30.0
+    # Mirror only the nearest SUMO vehicles into CARLA (null: all of them).
+    spawn_radius_m: null
+    max_vehicles: null
+    blueprint: vehicle.lincoln.mkz
+    # An existing .net.xml instead of converting the world's OpenDRIVE, and
+    # extra demand beside the ambient traffic.
+    net_path: null
+    route_path: null
+    # Record SUMO's floating car data to <output_dir>/sumo/fcd.xml.
+    fcd_output: false
+    use_libsumo: true
+    binary: sumo
+    sumo_args: []

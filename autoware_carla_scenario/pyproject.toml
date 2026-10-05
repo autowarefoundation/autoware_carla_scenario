@@ -54,6 +54,17 @@ carla-0-9-16 = ["carla==0.9.16"]
 codon = [
     "typesafe-carla>=0.1.0,<0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+# The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the
+# simulator, netconvert and randomTrips), driven in-process through libsumo,
+# and roadgen (hakuturu583/hdmap_generator), which converts the OpenDRIVE the
+# CARLA world runs into the network netconvert builds.
+sumo = [
+    "eclipse-sumo>=1.23",
+    "libsumo>=1.23",
+    "sumolib>=1.23",
+    "traci>=1.23",
+    "roadgen>=0.14.0",
+]
 
 [tool.uv]
 conflicts = [
