@@ -7,6 +7,7 @@ CARLA side faked: SUMO is the thing under test, not the simulator.
 
 from __future__ import annotations
 
+import fnmatch
 import importlib.util
 import itertools
 import math
@@ -162,9 +163,12 @@ class _Box:
 class _FakeActor:
     _next_id = 100
 
-    def __init__(self, transform: Any, role_name: str = "") -> None:
+    def __init__(
+        self, transform: Any, role_name: str = "", type_id: str = "vehicle.fake"
+    ) -> None:
         _FakeActor._next_id += 1
         self.id = _FakeActor._next_id
+        self.type_id = type_id
         self.attributes = {"role_name": role_name}
         self.bounding_box = _Box()
         self.transform = transform
@@ -226,7 +230,7 @@ class _Library:
 
 class _Actors(list):  # type: ignore[type-arg]
     def filter(self, pattern: str) -> list[Any]:
-        return list(self) if pattern == "vehicle.*" else []
+        return [a for a in self if fnmatch.fnmatch(a.type_id, pattern)]
 
 
 class _Stamp:
@@ -281,26 +285,31 @@ class _Entity:
         self.role_name = role_name
 
 
-@pytest.fixture(scope="module")
-def crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def _crossroads(directory: Path, *, sidewalks: bool) -> Path:
     """A four-arm crossroads, two lanes each way, as OpenDRIVE.
 
     Arm 0 comes from the west, arm 1 from the east, 2 from OpenDRIVE's south
-    and 3 from its north; each ends 15 m from the centre.
+    and 3 from its north; each ends 15 m from the centre.  With *sidewalks*,
+    a 2 m footway runs outside each carriageway.
     """
-    if not _HAS_SUMO:
-        pytest.skip("the `sumo` extra is not installed")
     import roadgen
 
     road_map = roadgen.Map()
 
     def lanes() -> list[Any]:
         # Broken lines: SUMO lets a vehicle change across those only.
-        return [
+        driving = [
             roadgen.Lane(
                 width=3.5, direction=d, left_marking="broken", right_marking="broken"
             )
             for d in ("backward", "backward", "forward", "forward")
+        ]
+        if not sidewalks:
+            return driving
+        return [
+            roadgen.Lane(width=2.0, direction="backward", type_="sidewalk"),
+            *driving,
+            roadgen.Lane(width=2.0, direction="forward", type_="sidewalk"),
         ]
 
     arms = [
@@ -314,9 +323,25 @@ def crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
     junction = road_map.add_junction("x")
     for a, b in itertools.combinations(arms, 2):
         road_map.connect(a, b, junction=junction, ends=("end", "end"))
-    path = tmp_path_factory.mktemp("sumo") / "crossroads.xodr"
+    path = directory / "crossroads.xodr"
     road_map.export_opendrive(str(path))
     return path
+
+
+@pytest.fixture(scope="module")
+def crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The crossroads, without footways."""
+    if not _HAS_SUMO:
+        pytest.skip("the `sumo` extra is not installed")
+    return _crossroads(tmp_path_factory.mktemp("sumo"), sidewalks=False)
+
+
+@pytest.fixture(scope="module")
+def crossroads_with_sidewalks(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The crossroads, with a footway along every carriageway."""
+    if not _HAS_SUMO:
+        pytest.skip("the `sumo` extra is not installed")
+    return _crossroads(tmp_path_factory.mktemp("sumo"), sidewalks=True)
 
 
 def _carla_transform(x: float, y: float, yaw: float) -> Any:
@@ -498,6 +523,87 @@ def test_a_published_vehicle_keeps_its_speed_in_sumo_after_the_warm_up(
         # vehicle it drives was let go after the warm-up.
         assert backend._traci.vehicle.getSpeed(ego_id) == pytest.approx(5.0, abs=0.1)
         assert backend._traci.vehicle.getSpeed(driven_id) > 0.5
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_sumo_traffic_stops_for_carlas_pedestrians_on_the_road(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, npc, _ego = _prepared(crossroads_with_sidewalks, tmp_path)
+    sumo_id = next(iter(backend._driven))
+    tc = backend._traci
+    # Two pedestrians across both eastbound lanes, 30 m ahead of the NPC, on
+    # the road and nowhere near a crossing.
+    walkers = [
+        _FakeActor(_carla_transform(-50.0, y, 90.0), type_id="walker.pedestrian.0001")
+        for y in (1.75, 5.25)
+    ]
+    for walker in walkers:
+        walker.bounding_box.extent = _Extent(0.2, 0.2)
+    world.actors.extend(walkers)
+    try:
+        for i in range(300):
+            backend.tick(world, i * 0.05)
+        persons = sorted(tc.person.getIDList())
+        assert persons == sorted(f"carla_walker{w.id}" for w in walkers)
+        # On the road lanes, not moved onto the footway.
+        lanes = {tc.person.getLaneID(p) for p in persons}
+        assert len(lanes) == 2
+        assert all(backend._net.getLane(lane).allows("passenger") for lane in lanes)
+        assert tc.vehicle.getSpeed(sumo_id) == pytest.approx(0.0, abs=0.05)
+        stopped_at = tc.vehicle.getPosition(sumo_id)[0]
+        assert -60.0 < stopped_at < -50.0
+
+        # Gone from CARLA, gone from SUMO -- and the road is free again.
+        world.actors[:] = [a for a in world.actors if a not in walkers]
+        for i in range(100):
+            backend.tick(world, 15.0 + i * 0.05)
+        assert tc.person.getIDList() == ()
+        assert tc.vehicle.getPosition(sumo_id)[0] > stopped_at + 5.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_pedestrians_can_be_left_out_of_sumo(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(
+        crossroads_with_sidewalks, tmp_path, publish_walkers=False
+    )
+    world.actors.append(
+        _FakeActor(
+            _carla_transform(-50.0, 1.75, 90.0), type_id="walker.pedestrian.0001"
+        )
+    )
+    try:
+        backend.tick(world, 0.0)
+        assert backend._traci.person.getIDList() == ()
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_pedestrian_with_no_footway_near_is_left_out(
+    crossroads: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # SUMO stops altogether when a person is moved off an edge with no footway,
+    # so on a network without any the pedestrian is not added at all.
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    world.actors.append(
+        _FakeActor(
+            _carla_transform(-50.0, 1.75, 90.0), type_id="walker.pedestrian.0001"
+        )
+    )
+    try:
+        with caplog.at_level("WARNING"):
+            for i in range(3):
+                backend.tick(world, i * 0.05)
+        assert backend._traci.person.getIDList() == ()
+        assert caplog.text.count("no footway") == 1
+        assert backend._running
     finally:
         backend.close()
 

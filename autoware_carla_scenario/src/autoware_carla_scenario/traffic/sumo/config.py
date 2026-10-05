@@ -91,6 +91,10 @@ class SumoBackendConfig:
             that sets them (``TrafficSignalAction``) sets them for SUMO too.
             ``sumo``: CARLA's lights follow SUMO's programs.  ``none``: each
             keeps its own.
+        publish_walkers: Put CARLA's pedestrians into SUMO as persons where
+            they stand, every step, so SUMO traffic sees them: a SUMO vehicle
+            brakes for a pedestrian on its lane -- on a crossing or anywhere
+            else on the road -- or changes lanes round it.
         curve_lateral_acceleration: Lateral acceleration (m/s²) SUMO traffic is
             held to in bends when the world's OpenDRIVE is converted: roadgen
             cuts each edge at its bends and gives every piece, and every path
@@ -134,6 +138,7 @@ class SumoBackendConfig:
     feedback_distance_m: float = 0.0
     resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
+    publish_walkers: bool = True
     curve_lateral_acceleration: Optional[float] = 3.0
     net_path: Optional[str] = None
     route_path: Optional[str] = None

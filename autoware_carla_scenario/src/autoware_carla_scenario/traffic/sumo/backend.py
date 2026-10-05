@@ -89,6 +89,12 @@ _TURNS = {TurnDirection.LEFT: ("l", "L"), TurnDirection.RIGHT: ("r", "R")}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
 _PUBLISHED_COLOR = (220, 30, 40, 255)
 _DRIVEN_COLOR = (30, 90, 220, 255)
+#: moveToXY's keepRoute for a person: placed exactly where it is (2), on
+#: whatever lane is there whoever may use it (4).  Without the 4 a pedestrian
+#: crossing the road is put on the nearest footway, where no vehicle sees it.
+_KEEP_ROUTE_ANYWHERE = 2 | 4
+#: How far from a pedestrian an edge to add its person on is looked for, m.
+_PERSON_EDGE_RADIUS_M = 50.0
 _CARLA_TO_SUMO_SIGNAL = {"Red": "r", "Yellow": "y", "Green": "G"}
 _SUMO_TO_CARLA_SIGNAL = {"r": "Red", "y": "Yellow", "g": "Green", "G": "Green"}
 
@@ -146,6 +152,10 @@ class SumoTrafficBackend(TrafficBackend):
         self._driven: dict[str, Any] = {}
         #: SUMO id -> the actor CARLA's side drives, published into SUMO.
         self._external: dict[str, Any] = {}
+        #: CARLA actor id -> the SUMO person standing for a CARLA pedestrian.
+        self._walkers: dict[int, str] = {}
+        #: CARLA pedestrians no edge was found near, so not yet in SUMO.
+        self._walkers_off_network: set[int] = set()
         #: SUMO id -> the CARLA actor mirroring an ambient SUMO vehicle.
         self._ambient: dict[str, Any] = {}
         #: SUMO id -> lane index a lane change aims for.
@@ -317,6 +327,7 @@ class SumoTrafficBackend(TrafficBackend):
             return
         try:
             self._push_external()
+            self._push_walkers(world)
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._traci.simulationStep()
@@ -371,6 +382,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._entities = []
         self._driven = {}
         self._external = {}
+        self._walkers = {}
+        self._walkers_off_network = set()
         self._ambient = {}
         self._lane_targets = {}
         self._signals = {}
@@ -394,6 +407,7 @@ class SumoTrafficBackend(TrafficBackend):
             out["network"] = str(self._network.net_file)
         out["scenario_vehicles"] = self._config.scenario_vehicles
         out["vehicle_control"] = self._config.vehicle_control
+        out["publish_walkers"] = self._config.publish_walkers
         if self._config.vehicle_control == "physics":
             out["feedback_distance_m"] = self._config.feedback_distance_m
         out["ambient_period_s"] = (
@@ -637,6 +651,69 @@ class SumoTrafficBackend(TrafficBackend):
             velocity = actor.get_velocity()
             speed = math.hypot(velocity.x, velocity.y)
             tc.vehicle.setPreviousSpeed(sumo_id, speed)
+
+    def _push_walkers(self, world: Any) -> None:
+        """Put every CARLA pedestrian into SUMO where it stands, as a person.
+
+        Placed again each step -- a person SUMO is not moving any more would
+        walk off on its own -- and removed once its actor is gone.
+        """
+        if not self._config.publish_walkers:
+            return
+        tc = self._traci
+        walkers = {a.id: a for a in world.get_actors().filter("walker.pedestrian.*")}
+        for actor_id in [i for i in self._walkers if i not in walkers]:
+            try:
+                tc.person.remove(self._walkers.pop(actor_id))
+            except Exception as exc:  # noqa: BLE001 - it may have left already
+                logger.debug("SUMO: removing a person: %s", exc)
+        for actor_id, actor in walkers.items():
+            tf = actor.get_transform()
+            pose = carla_to_sumo(
+                Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
+                0.0,
+                self._offset,
+            )
+            person = self._walkers.get(actor_id) or self._add_person(actor, pose)
+            if person is not None:
+                tc.person.moveToXY(
+                    person, "", pose.x, pose.y, pose.heading_deg, _KEEP_ROUTE_ANYWHERE
+                )
+
+    def _add_person(self, actor: Any, pose: Pose2D) -> Optional[str]:
+        """Add a person for *actor* on the nearest edge; ``None`` if none is near."""
+        edges = [
+            (distance, edge)
+            for edge, distance in self._net.getNeighboringEdges(
+                pose.x, pose.y, _PERSON_EDGE_RADIUS_M
+            )
+            # A person has to start where people walk: SUMO stops the whole
+            # simulation, not just the call, when it is moved off an edge with
+            # no footway.  moveToXY then puts it on the road as well.
+            if edge.getFunction() == "" and edge.allows("pedestrian")
+        ]
+        if not edges:
+            if actor.id not in self._walkers_off_network:
+                self._walkers_off_network.add(actor.id)
+                logger.warning(
+                    "SUMO: no footway within %.0f m of pedestrian %d; SUMO traffic "
+                    "will not see it",
+                    _PERSON_EDGE_RADIUS_M,
+                    actor.id,
+                )
+            return None
+        self._walkers_off_network.discard(actor.id)
+        person = f"carla_walker{actor.id}"
+        tc = self._traci
+        tc.person.add(person, min(edges, key=lambda e: e[0])[1].getID(), 0.0)
+        # Stands where it is put; moveToXY moves it every step.
+        tc.person.appendWaitingStage(person, 1e7)
+        extent = actor.bounding_box.extent
+        tc.person.setLength(person, max(2.0 * float(extent.x), 0.2))
+        tc.person.setWidth(person, max(2.0 * float(extent.y), 0.2))
+        tc.person.setColor(person, _PUBLISHED_COLOR)
+        self._walkers[actor.id] = person
+        return person
 
     def _follow(self, actor: Any, sumo_id: str, length: float) -> None:
         """Carry *actor* towards where its SUMO vehicle is after this step."""
@@ -1105,6 +1182,7 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.setSpeed(sumo_id, 0.0)
         for _ in range(steps):
             self._push_external()
+            self._push_walkers(world)
             tc.simulationStep()
         for sumo_id in self._driven:
             tc.vehicle.setSpeed(sumo_id, -1)  # back to SUMO's own speed

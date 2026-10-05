@@ -20,6 +20,9 @@ traffic:
     resync_distance_m: 8.0
     # Where the TrafficManager is, as for the traffic_manager backend.
     tm_port: ${oc.select:traffic_manager.port,null}
+    # Put CARLA's pedestrians into SUMO as persons, so SUMO traffic yields to
+    # them on the road as well as on crossings.
+    publish_walkers: true
     # Lateral acceleration (m/s^2) SUMO traffic is held to in bends when the
     # map is converted (roadgen cuts edges at bends and slows each piece and
     # each junction turn); null converts the map as it is.

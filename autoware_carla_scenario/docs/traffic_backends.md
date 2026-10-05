@@ -265,11 +265,20 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | Ego (`autoware`, `carla_driver`) | its entity | published: moved to its CARLA pose every tick |
 | Scenario NPCs, autopilot ego | the TrafficManager (`scenario_vehicles=traffic_manager`, default), or SUMO (`scenario_vehicles=sumo`) | published, or driven |
 | Ambient traffic (`randomTrips.py`) | SUMO | native; mirrored into CARLA |
+| Pedestrians (`walker.pedestrian.*`, e.g. `WalkStraightAction`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
 scenario's NPCs behave exactly as under the `traffic_manager` backend, while
 SUMO fills the rest of the road.
+
+A published pedestrian is a SUMO person moved to its CARLA pose every tick
+with `moveToXY` and `keepRoute` 6: placed exactly there, on whichever lane is
+there, footway or road. A SUMO vehicle brakes for a person on its lane, on a
+crossing or anywhere else, or changes lanes round it. A person has to be added
+on an edge with a footway -- SUMO aborts the whole simulation when one is moved
+off an edge without -- so a pedestrian with no footway within 50 m (or on a
+network with none) is left out, with a warning.
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the
 world's `fixed_delta_seconds` and the seed to the scenario's. CARLA poses are
