@@ -723,7 +723,7 @@ not needing to know which Python the target runs before exporting.
 | What | Pinned by |
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA |
-| `typesafe-carla` | the framework's own requirement (`>=0.2.0,<0.3`), locked in `uv.lock` like everything else |
+| `typesafe-carla` | the framework's own requirement (`>=0.3.0,<0.4`), locked in `uv.lock` like everything else |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |

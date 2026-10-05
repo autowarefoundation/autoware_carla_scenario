@@ -29,7 +29,7 @@ simulator binary itself.
 
 The Python client is
 [typesafe_carla](https://github.com/hakuturu583/typesafe_carla), a plain
-dependency of the package (`typesafe-carla>=0.2.0,<0.3`, from PyPI, Linux
+dependency of the package (`typesafe-carla>=0.3.0,<0.4`, from PyPI, Linux
 x86_64 only), imported as `import typesafe_carla.carla as carla`. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
@@ -137,7 +137,7 @@ requires the built CARLA client, a live CARLA server and a valid
 
 The package's runtime dependencies (declared in `pyproject.toml`):
 
-- `typesafe-carla>=0.2.0,<0.3` (Linux x86_64) — the CARLA client and its Codon
+- `typesafe-carla>=0.3.0,<0.4` (Linux x86_64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
 - `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)

@@ -16,7 +16,7 @@ dependencies = [
     # Codon library for the static check (typecheck/). It pulls in
     # typesafe-carla-toolchain, the pinned Codon the check needs. Both ship for
     # Linux x86_64 only, as CARLA's own client did.
-    "typesafe-carla>=0.2.0,<0.3; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "typesafe-carla>=0.3.0,<0.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "pyxodr>=0.1.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
