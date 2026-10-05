@@ -168,8 +168,8 @@ class CutInConfig:
     #: The NPC changes into the ego's lane this long after the start (s).
     cut_in_after_seconds: float = 2.0
 
-    #: The run passes once the NPC has been in the ego's lane, ahead of it, for
-    #: this long without a collision (s).
+    #: The run passes once the NPC has been on the ego's lane this long
+    #: without a collision (s).
     hold_seconds: float = 3.0
 
     #: Fail-safe timeout in seconds.
