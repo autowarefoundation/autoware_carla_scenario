@@ -37,14 +37,15 @@ def get_stop_line_linestrings(lanelet_id: int) -> list[Any]:
 
 
 def get_stop_line_linestrings_with_following(
-    lanelet_id: int,
+    lanelet_id: int, depth: int = 1
 ) -> list[tuple[int, Any]]:
-    """Return stop lines for *lanelet_id* and its successors in the loaded map.
+    """Return stop lines for *lanelet_id* and its successors in the loaded map,
+    up to *depth* steps of successors.
 
     Requires :class:`MapManager` to be initialised.
     """
     return _linestrings_of_with_following(
-        MapManager.get_instance().lanelet_map, lanelet_id
+        MapManager.get_instance().lanelet_map, lanelet_id, depth
     )
 
 
@@ -99,15 +100,18 @@ def get_stop_line_poses(lanelet_id: int) -> list[Lanelet2Pose]:
     return poses
 
 
-def get_stop_line_poses_with_following(lanelet_id: int) -> list[Lanelet2Pose]:
+def get_stop_line_poses_with_following(
+    lanelet_id: int, depth: int = 1
+) -> list[Lanelet2Pose]:
     """Return stop line poses searching the lanelet and its successors.
 
-    Searches the given lanelet first, then its immediate following lanelets
-    via the routing graph. Each stop line centroid is projected onto the
-    lanelet that owns the regulatory element.
+    Searches the given lanelet first, then its following lanelets via the
+    routing graph, up to *depth* steps. Each stop line centroid is projected
+    onto the lanelet that owns the regulatory element.
 
     Args:
         lanelet_id: The starting Lanelet2 lanelet ID.
+        depth: How many steps of successors to search.
 
     Returns:
         List of :class:`Lanelet2Pose` for each unique stop line found.
@@ -116,7 +120,7 @@ def get_stop_line_poses_with_following(lanelet_id: int) -> list[Lanelet2Pose]:
     Raises:
         ValueError: If the lanelet ID is not found in the map.
     """
-    results = get_stop_line_linestrings_with_following(lanelet_id)
+    results = get_stop_line_linestrings_with_following(lanelet_id, depth)
     if not results:
         return []
 
