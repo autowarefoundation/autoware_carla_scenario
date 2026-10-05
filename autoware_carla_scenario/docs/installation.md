@@ -45,7 +45,7 @@ Only where no matching prebuilt package exists -- typesafe_carla installed
 from a source checkout or an sdist, edited Codon sources, or a
 `typesafe-carla-toolchain` release other than the one the wheel was built
 with -- does the first `import typesafe_carla.carla` build it instead. That
-build takes 15 to 30 minutes and about 8 GB of RAM, needs a C compiler
+build takes 15 to 50 minutes and about 14 GB of RAM, needs a C compiler
 (`cc`), and lands in `~/.cache/typesafe_carla/pycarla`.
 
 ```bash

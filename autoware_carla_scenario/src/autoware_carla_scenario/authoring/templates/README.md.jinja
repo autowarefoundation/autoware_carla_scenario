@@ -28,8 +28,8 @@ a dependency of the framework, imported as `import typesafe_carla.carla as carla
 package prebuilt, for every Python 3.10+, so `uv sync` compiles nothing and
 needs no `cc`. Only where no matching prebuilt package exists (a
 `typesafe-carla-toolchain` other than the one the wheel was built with, or
-typesafe_carla from source) does the first import build it -- 15 to 30
-minutes, about 8 GB of RAM, `cc` -- into `~/.cache/typesafe_carla/pycarla`
+typesafe_carla from source) does the first import build it -- 15 to 50
+minutes, about 14 GB of RAM, `cc` -- into `~/.cache/typesafe_carla/pycarla`
 (`TYPESAFE_CARLA_PYCARLA_DIR` moves it); `uv run typesafe-codon pycarla` does
 that ahead of time, and reports that there is nothing to build otherwise.
 

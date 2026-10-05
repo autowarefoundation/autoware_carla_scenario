@@ -230,7 +230,7 @@ If pre-commit hooks fail:
   build for every Python 3.10+), so installing it compiles nothing and needs
   no `cc`. Only where no matching prebuilt package exists (a source checkout
   or sdist, edited Codon sources, a different typesafe-carla-toolchain) does
-  the first import build it (15-30 min, ~8 GB of memory, needs `cc`) into
+  the first import build it (15-50 min, ~14 GB of memory, needs `cc`) into
   `~/.cache/typesafe_carla/pycarla`; `typesafe-codon pycarla` does that ahead
   of time ("nothing to build" when the prebuilt one applies).
   `TYPESAFE_CARLA_PYCARLA_DIR` overrides the build directory (and wins over the

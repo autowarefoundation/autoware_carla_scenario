@@ -660,7 +660,7 @@ neither `cc` nor a build step. Only if that prebuilt package does not match
 the installation -- a `typesafe-carla-toolchain` other than the one the wheel
 was built with, say -- does the first `import typesafe_carla.carla`, the first
 scenario run, build it with the Codon compiler from the toolchain wheel (15 to
-30 minutes, about 8 GB of RAM, `cc`, but no network) into
+30 minutes, about 14 GB of RAM, `cc`, but no network) into
 `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` moves it);
 `typesafe-codon pycarla` does that ahead of time, and reports that there is
 nothing to build when the prebuilt package applies.

@@ -65,7 +65,7 @@ Neither the `venv` stage nor the runtime compiles anything, and neither
 installs a C compiler: the typesafe-carla wheel on PyPI carries typesafe_carla's
 CPython package prebuilt (`typesafe_carla/carla/_prebuilt`, one build for every
 Python 3.10+), so installing the wheel is all the client needs. typesafe_carla
-falls back to compiling that package on its first import (15-30 minutes, ~8 GB
+falls back to compiling that package on its first import (15-50 minutes, ~14 GB
 of memory, `cc`) only where no matching prebuilt one exists -- a typesafe-carla
 installed from source, or a typesafe-carla-toolchain other than the one the
 wheel was built with -- and the image rules that out: the build imports the

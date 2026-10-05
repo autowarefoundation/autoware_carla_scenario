@@ -41,8 +41,8 @@ package (``typesafe_carla.carla``) prebuilt, one build for every Python 3.10+,
 so an offline vehicle install is ``pip install`` and nothing else -- no
 ``cc``, no build step.  Only where that prebuilt package does not match (a
 ``typesafe-carla-toolchain`` other than the one the wheel was built with, for
-instance) does the first ``import typesafe_carla.carla`` build it (15 to 30
-minutes, about 8 GB of RAM, ``cc``), still without a network: the compiler is
+instance) does the first ``import typesafe_carla.carla`` build it (15 to 50
+minutes, about 14 GB of RAM, ``cc``), still without a network: the compiler is
 the toolchain wheel already in the directory.
 """
 

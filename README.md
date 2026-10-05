@@ -44,7 +44,7 @@ package prebuilt, for every Python 3.10+, so the sync above is the whole
 install: nothing is compiled and no `cc` is needed. Only where no matching
 prebuilt package exists (typesafe_carla from a source checkout, or a
 typesafe-carla-toolchain other than the one its wheel was built with) does the
-first import build it (15-30 min, ~8 GB of memory, `cc`);
+first import build it (15-50 min, ~14 GB of memory, `cc`);
 `uv run typesafe-codon pycarla` does that ahead of time, and says there is
 nothing to build when the prebuilt package applies. The official `carla`
 wheels, and CARLA 0.9.16 (UE4), are no longer used.
