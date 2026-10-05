@@ -9,8 +9,7 @@ on:
 jobs:
   test:
     # The whole supported range (`requires-python`). The floor is 3.10 because
-    # that is what Autoware's own environment is. The CARLA client is
-    # typesafe_carla, built for each interpreter by setup-env.
+    # that is what Autoware's own environment is.
     name: test (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -72,7 +71,6 @@ jobs:
       with:
         install-dev-deps: "true"
         run-precommit: "false"
-        build-carla-client: "false"
 
     - name: Check package can be built
       run: uv build --package autoware-carla-scenario
@@ -139,8 +137,6 @@ jobs:
       with:
         install-dev-deps: "true"
         run-precommit: "false"
-        # mkdocstrings reads the sources statically; nothing imports the client.
-        build-carla-client: "false"
 
     - name: Build carla-scenario documentation
       uses: ./.github/actions/build-docs
@@ -160,7 +156,7 @@ jobs:
   scenario-image:
     # Proves the packing action end-to-end: scaffold a scenario package the way
     # a user would, pack it, and let the action's smoke test confirm that the
-    # image really carries the compiled CARLA client and a registered scenario.
+    # image really carries the prebuilt CARLA client and a registered scenario.
     name: scenario image
     runs-on: ubuntu-latest
 
@@ -175,8 +171,6 @@ jobs:
         # weasyprint, mypy, ...) would be installed and never touched.
         sync-dev-group: "false"
         run-precommit: "false"
-        # The image compiles its own client; this job only scaffolds.
-        build-carla-client: "false"
 
     - name: Scaffold a scenario package
       run: uv run scenario-new ci_probe_package --output-dir "${RUNNER_TEMP}/packages"

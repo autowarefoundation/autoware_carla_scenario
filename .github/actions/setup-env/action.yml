@@ -24,14 +24,6 @@ inputs:
     description: Continue even if pre-commit fails (uses '|| true')
     required: false
     default: "false"
-  build-carla-client:
-    description: >
-      Build typesafe_carla's CPython package (`import typesafe_carla.carla as
-      carla`, the framework's CARLA client) after 'uv sync', restoring it from
-      the Actions cache when the lock has not moved. Building takes ~15 min;
-      the tests import it. Set to "false" for a job that never imports it.
-    required: false
-    default: "true"
   sync-dev-group:
     description: >
       Include the dev dependency group in 'uv sync'. Set to "false" for a job
@@ -91,39 +83,6 @@ runs:
           args+=(--dev)
         fi
         uv sync ${args[@]+"${args[@]}"}
-
-    # typesafe_carla's CPython package is compiled once per installation, not
-    # shipped in its wheel. It is keyed (inside typesafe_carla) by the
-    # installed typesafe-carla, Codon toolchain and native library path, all of
-    # which uv.lock and the checkout path fix; a stale restore is simply
-    # rebuilt. Saved right after the build rather than at the end of the job,
-    # so a failing test run does not throw away 15 minutes of compiling.
-    - name: Locate the CARLA client build
-      if: inputs.install-dev-deps == 'true' && inputs.build-carla-client == 'true'
-      shell: bash
-      run: echo "TYPESAFE_CARLA_PYCARLA_DIR=${RUNNER_TEMP}/typesafe-carla-pycarla" >> "${GITHUB_ENV}"
-
-    - name: Restore the CARLA client build
-      if: inputs.install-dev-deps == 'true' && inputs.build-carla-client == 'true'
-      id: carla-client
-      uses: actions/cache/restore@v4
-      with:
-        path: ${{ runner.temp }}/typesafe-carla-pycarla
-        key: typesafe-carla-pycarla-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ hashFiles('uv.lock') }}
-
-    - name: Build the CARLA client (typesafe_carla's CPython package)
-      if: inputs.install-dev-deps == 'true' && inputs.build-carla-client == 'true'
-      shell: bash
-      run: uv run typesafe-codon pycarla
-
-    - name: Save the CARLA client build
-      if: >-
-        inputs.install-dev-deps == 'true' && inputs.build-carla-client == 'true'
-        && steps.carla-client.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: ${{ runner.temp }}/typesafe-carla-pycarla
-        key: ${{ steps.carla-client.outputs.cache-primary-key }}
 
     - name: Run pre-commit hooks
       if: inputs.run-precommit == 'true' && inputs.precommit-continue-on-error == 'false'
