@@ -1,0 +1,48 @@
+# @package _global_
+# Logical: a vehicle in the lane on the ego's right cuts in just ahead of it,
+# on every lane of the map with a lane on its right, one concrete scenario each.
+#
+#   scenario-expand scenario=cut_in/right map=<map>
+#
+# The values outside `sweep:` are what a run without expanding uses: a fixed
+# Nishi-Shinjuku case. The lanelets are replaced per case.
+scenario:
+  name: cut_in
+  side: right
+  npc_lanelet_id: 20
+  # 10 m ahead in the next lane, both at 30 km/h; it changes lanes after 2 s.
+  npc_ahead_m: 10.0
+  npc_initial_speed_kmh: 30.0
+  cut_in_after_seconds: 2.0
+  hold_seconds: 3.0
+  timeout_seconds: 20.0
+
+ego:
+  initial_speed_kmh: 30.0
+  spawn_lanelet_id: 19
+  spawn_s: 5.0
+
+sweep:
+  constraints:
+    ego.spawn_lanelet_id:
+      - type: and
+        constraints:
+          # A lane on the right a vehicle may change in from.
+          - type: has_adjacent
+            value: right
+          - type: not
+            constraint:
+              type: is_junction
+          # The spawn, the NPC 10 m ahead, and room for the cut-in.
+          - type: lanelet_length
+            rule: greater_than_or_equal
+            value: 60.0
+          - type: not
+            constraint:
+              type: in_set
+              values: ${map.no_3d_model_lanelet_ids}
+  bindings:
+    # The NPC starts on that lane, beside the ego's.
+    scenario.npc_lanelet_id:
+      type: adjacent
+      side: right

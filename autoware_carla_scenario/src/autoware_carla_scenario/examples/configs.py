@@ -114,6 +114,69 @@ class LaneChangeConfig:
 
 
 @dataclass
+class PedestrianDartOutConfig:
+    """Parameters for the pedestrian dart-out scenario."""
+
+    name: str = "pedestrian_dart_out"
+
+    #: How far ahead of the ego's spawn, along its lanelet, the pedestrian
+    #: waits at the kerb (m).
+    pedestrian_ahead_m: float = 35.0
+
+    #: The pedestrian's offset from the lane's centreline (m, negative to the
+    #: right of the direction of travel): half a lane and a little more puts
+    #: it at the kerb of the rightmost lane.
+    pedestrian_offset_m: float = -3.0
+
+    #: The pedestrian steps out once the ego is this close to it (m).
+    trigger_distance_m: float = 20.0
+
+    #: Walking speed into the road (m/s); a run, not a stroll.
+    walk_speed_ms: float = 2.0
+
+    #: CARLA blueprint of the pedestrian.
+    walker_type: str = "walker.pedestrian.0001"
+
+    #: The run passes once the ego is this far past the pedestrian's crossing
+    #: line, on its own lanelet (m).
+    pass_beyond_m: float = 10.0
+
+    #: Fail-safe timeout in seconds.
+    timeout_seconds: float = 25.0
+
+
+@dataclass
+class CutInConfig:
+    """Parameters for the cut-in scenario."""
+
+    name: str = "cut_in"
+
+    #: The side of the ego the NPC comes from (``"left"`` or ``"right"``).
+    side: str = "left"
+
+    #: The lanelet beside the ego's spawn lanelet the NPC starts on.  A sweep
+    #: binds it to the pick's neighbour (``neighbour`` binding).
+    npc_lanelet_id: int = 0
+
+    #: How far ahead of the ego the NPC starts, along its lanelet (m).
+    npc_ahead_m: float = 10.0
+
+    #: NPC blueprint and starting speed.
+    npc_vehicle_type: str = "vehicle.mini.cooper"
+    npc_initial_speed_kmh: float = 30.0
+
+    #: The NPC changes into the ego's lane this long after the start (s).
+    cut_in_after_seconds: float = 2.0
+
+    #: The run passes once the NPC has been in the ego's lane, ahead of it, for
+    #: this long without a collision (s).
+    hold_seconds: float = 3.0
+
+    #: Fail-safe timeout in seconds.
+    timeout_seconds: float = 20.0
+
+
+@dataclass
 class TemporaryStopConfig:
     """Parameters for the temporary-stop scenario."""
 
@@ -157,6 +220,8 @@ class ScenarioRunConfig:
         | LaneChangeConfig
         | TrafficLightComplianceConfig
         | TemporaryStopConfig
+        | PedestrianDartOutConfig
+        | CutInConfig
     ) = field(default_factory=IntersectionPassingConfig)
     sweep: SweepConfig = field(default_factory=SweepConfig)
     #: Static check before the run: ``auto``, ``required`` or ``off``
