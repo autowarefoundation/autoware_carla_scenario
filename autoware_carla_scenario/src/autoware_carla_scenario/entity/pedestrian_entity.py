@@ -40,7 +40,9 @@ def _carla_version() -> tuple[int, int]:
         return (0, 9)
 
 
-def walker_speed_command(speed_ms: float, version: tuple[int, int] | None = None) -> float:
+def walker_speed_command(
+    speed_ms: float, version: tuple[int, int] | None = None
+) -> float:
     """The ``WalkerControl`` speed that moves a walker at *speed_ms* on this CARLA."""
     if (version or _carla_version()) < (0, 10):
         return speed_ms
