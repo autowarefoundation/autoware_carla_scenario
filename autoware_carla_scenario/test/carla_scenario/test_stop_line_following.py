@@ -11,7 +11,9 @@ from autoware_carla_scenario.utils.stop_line import (  # noqa: E402
 )
 
 
-def _road_with_stop_line_on(index: int, count: int = 3) -> tuple[object, list[int], int]:
+def _road_with_stop_line_on(
+    index: int, count: int = 3
+) -> tuple[object, list[int], int]:
     """*count* 10 m lanelets end to end, a traffic light's stop line at the
     start of lanelet *index*."""
     from lanelet2.core import (
@@ -28,13 +30,22 @@ def _road_with_stop_line_on(index: int, count: int = 3) -> tuple[object, list[in
     left = [Point3d(getId(), 10.0 * i, 1.75, 0.0) for i in range(count + 1)]
     right = [Point3d(getId(), 10.0 * i, -1.75, 0.0) for i in range(count + 1)]
     lanelets = [
-        Lanelet(getId(), LineString3d(getId(), left[i : i + 2]), LineString3d(getId(), right[i : i + 2]))
+        Lanelet(
+            getId(),
+            LineString3d(getId(), left[i : i + 2]),
+            LineString3d(getId(), right[i : i + 2]),
+        )
         for i in range(count)
     ]
-    stop_line = LineString3d(getId(), [left[index], right[index]], AttributeMap({"type": "stop_line"}))
+    stop_line = LineString3d(
+        getId(), [left[index], right[index]], AttributeMap({"type": "stop_line"})
+    )
     light = LineString3d(
         getId(),
-        [Point3d(getId(), 10.0 * index + 5, 1.0, 5.0), Point3d(getId(), 10.0 * index + 5, -1.0, 5.0)],
+        [
+            Point3d(getId(), 10.0 * index + 5, 1.0, 5.0),
+            Point3d(getId(), 10.0 * index + 5, -1.0, 5.0),
+        ],
         AttributeMap({"type": "traffic_light"}),
     )
     regulatory_element = TrafficLight(getId(), AttributeMap(), [light], stop_line)

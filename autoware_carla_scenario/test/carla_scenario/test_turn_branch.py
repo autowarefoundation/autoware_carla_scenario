@@ -16,7 +16,11 @@ def _wp(yaw: float) -> SimpleNamespace:
 
 # Heading east (yaw 0); CARLA's yaw grows clockwise seen from above, so a
 # left turn ends at -90 and a right turn at +90.
-_BRANCHES = {"left": [_wp(0.0), _wp(-88.0)], "straight": [_wp(0.0), _wp(3.0)], "right": [_wp(0.0), _wp(91.0)]}
+_BRANCHES = {
+    "left": [_wp(0.0), _wp(-88.0)],
+    "straight": [_wp(0.0), _wp(3.0)],
+    "right": [_wp(0.0), _wp(91.0)],
+}
 
 
 @pytest.mark.parametrize("direction", list(TurnDirection))

@@ -79,11 +79,15 @@ from .configs import (
     IntersectionPassingConfig,
     LaneChangeConfig,
     TemporaryStopConfig,
+    PedestrianDartOutConfig,
+    CutInConfig,
     TrafficLightComplianceConfig,
 )
 from .intersection_passing import IntersectionPassingScenario
 from .lane_change import LaneChangeScenario
 from .temporary_stop import TemporaryStopScenario
+from .pedestrian_dart_out import PedestrianDartOutScenario
+from .cut_in import CutInScenario
 from .traffic_light_compliance import TrafficLightComplianceScenario
 
 logger = logging.getLogger(__name__)
@@ -115,6 +119,10 @@ register_scenario(
 )
 register_scenario("lane_change", LaneChangeScenario, LaneChangeConfig)
 register_scenario("temporary_stop", TemporaryStopScenario, TemporaryStopConfig)
+register_scenario(
+    "pedestrian_dart_out", PedestrianDartOutScenario, PedestrianDartOutConfig
+)
+register_scenario("cut_in", CutInScenario, CutInConfig)
 
 
 # ---------------------------------------------------------------------------
