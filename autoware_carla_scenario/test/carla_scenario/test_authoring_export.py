@@ -986,9 +986,9 @@ class TestExportSelfCheck:
                 check=False,
                 timeout=900,
             )
-            assert installed.returncode == 0, (
-                f"Python {interpreter}: {installed.stdout}{installed.stderr}"
-            )
+            assert (
+                installed.returncode == 0
+            ), f"Python {interpreter}: {installed.stdout}{installed.stderr}"
 
             # The document and the Hydra config have to be *in* the wheel: an
             # installed scenario has no project directory to read them out of.
