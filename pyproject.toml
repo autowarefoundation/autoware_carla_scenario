@@ -30,6 +30,12 @@ dev = [
     # typesafe_carla and its pinned Codon, for the static check of scenarios and
     # its tests (the `codon` extra).
     "typesafe-carla>=0.1.0,<0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # The SUMO traffic backend and its tests (the `sumo` extra).
+    "eclipse-sumo>=1.23",
+    "libsumo>=1.23",
+    "sumolib>=1.23",
+    "traci>=1.23",
+    "roadgen>=0.14.0",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",
