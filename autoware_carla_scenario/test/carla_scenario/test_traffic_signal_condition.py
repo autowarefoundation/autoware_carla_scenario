@@ -7,6 +7,7 @@ from typing import List
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typesafe_carla.carla as carla
 
 from autoware_carla_scenario.conditions.traffic_signal import (
     TrafficSignalCondition,
@@ -241,8 +242,8 @@ class TestTrafficSignalConditionMultipleActors:
         assert result.passed is True
 
     def test_partial_mismatch_returns_failed(self) -> None:
-        expected = MagicMock(name="Green")
-        actual_wrong = MagicMock(name="Red")
+        expected = int(carla.TrafficLightState.Green)
+        actual_wrong = int(carla.TrafficLightState.Red)
         tl1 = _FakeTrafficLight(opendrive_id="sig_1", state=expected)
         tl2 = _FakeTrafficLight(opendrive_id="sig_2", state=actual_wrong)
         world = _FakeWorld([tl1, tl2])
@@ -260,6 +261,7 @@ class TestTrafficSignalConditionMultipleActors:
 
         assert result is not None
         assert result.passed is False
+        assert "expected Green, got sig_2=Red" in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -334,16 +336,15 @@ class TestTrafficSignalConditionGetDetails:
     """Tests for structured detail reporting."""
 
     def test_get_details_before_resolution(self) -> None:
-        expected = MagicMock(name="Green")
         cond = TrafficSignalCondition(
             lanelet2_regulatory_element_id=242,
-            expected_state=expected,
+            expected_state=carla.TrafficLightState.Green,
             label="details_test",
         )
         details = cond.get_details()
 
         assert details["lanelet2_regulatory_element_id"] == 242
-        assert details["expected_state"] == str(expected)
+        assert details["expected_state"] == "Green"
         assert details["cached_signal_ids"] is None
 
     def test_get_details_after_resolution(self) -> None:

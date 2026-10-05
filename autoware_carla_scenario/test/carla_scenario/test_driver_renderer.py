@@ -14,6 +14,7 @@ from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest
+import typesafe_carla.carla as carla
 
 from autoware_carla_scenario.driver._proto import carla_driver_pb2
 from autoware_carla_scenario.driver.base import DriverClientConfig
@@ -57,7 +58,8 @@ def _light(state: str = "Red", stop_x: float = 30.0, light_id: int = 7) -> Magic
     """A traffic light whose stop waypoint sits at *stop_x*, junction just past."""
     light = MagicMock()
     light.id = light_id
-    light.get_state.return_value = state
+    # A plain int, as typesafe_carla's TrafficLight.get_state() returns.
+    light.get_state.return_value = int(getattr(carla.TrafficLightState, state, 99))
     light.type_id = "traffic.traffic_light"
     light.get_stop_waypoints.return_value = [
         _waypoint(stop_x, junction_at=stop_x + 5.0)

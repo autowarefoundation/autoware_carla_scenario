@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
+from ..utils.traffic_light import traffic_light_state_name
 from ._proto import carla_driver_pb2, common_pb2
 from .base import DriverClientConfig
 from .geometry import Pose
@@ -289,7 +290,8 @@ class RendererDataBuilder:
         if light is None:
             return carla_driver_pb2.TRAFFIC_LIGHT_STATE_NONE
         return _LIGHT_STATES.get(
-            str(light.get_state()), carla_driver_pb2.TRAFFIC_LIGHT_STATE_UNKNOWN
+            traffic_light_state_name(light.get_state()),
+            carla_driver_pb2.TRAFFIC_LIGHT_STATE_UNKNOWN,
         )
 
     def _light_distance(self, light: Optional[Any], ego_pose: Pose) -> float:

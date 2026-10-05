@@ -9,6 +9,7 @@ from ..coordinate.traffic_light import (
     get_signal_ids_for_controller,
     lanelet2_traffic_light_id_to_opendrive_controller_id,
 )
+from ..utils.traffic_light import traffic_light_state_name
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
@@ -125,13 +126,14 @@ class TrafficSignalCondition(BaseCondition):
 
         if mismatches:
             mismatch_details = ", ".join(
-                f"{sig_id}={state}" for sig_id, state in mismatches
+                f"{sig_id}={traffic_light_state_name(state)}"
+                for sig_id, state in mismatches
             )
             return ScenarioResult(
                 passed=False,
                 message=(
                     f"TrafficSignalCondition [{self.label}]: "
-                    f"state mismatch — expected {self._expected_state}, "
+                    f"state mismatch — expected {traffic_light_state_name(self._expected_state)}, "
                     f"got {mismatch_details}"
                 ),
                 elapsed_seconds=elapsed,
@@ -142,7 +144,7 @@ class TrafficSignalCondition(BaseCondition):
             message=(
                 f"TrafficSignalCondition [{self.label}]: "
                 f"all {match_count} actor(s) in expected state "
-                f"{self._expected_state}"
+                f"{traffic_light_state_name(self._expected_state)}"
             ),
             elapsed_seconds=elapsed,
         )
@@ -151,7 +153,7 @@ class TrafficSignalCondition(BaseCondition):
         """Return structured details about this condition's configuration."""
         return {
             "lanelet2_regulatory_element_id": self._lanelet2_id,
-            "expected_state": str(self._expected_state),
+            "expected_state": traffic_light_state_name(self._expected_state),
             "cached_signal_ids": (
                 sorted(self._cached_signal_ids)
                 if self._cached_signal_ids is not None
