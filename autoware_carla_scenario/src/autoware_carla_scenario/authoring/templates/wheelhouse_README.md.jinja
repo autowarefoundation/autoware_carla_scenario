@@ -28,10 +28,10 @@ Then run the scenario:
 | --- | --- |
 | Distribution | `{{ distribution }}=={{ version }}` |
 | Wheels | {{ wheel_count }} |
-| Python | {{ python }} |
+| Python | {{ pythons | join(", ") }} |
 
 `manifest.yaml` records what this was built from -- the framework's commit, the
-interpreter, the uv version, and any caveat the export raised.
+interpreters, the uv version, and any caveat the export raised.
 
 The scenario document and its Hydra config travel **inside** the scenario's own
 wheel, so the installed package is the scenario -- there is no directory that
@@ -39,9 +39,12 @@ has to be kept next to it.
 
 ## What it is not
 
-A wheelhouse is resolved for one interpreter on one platform: these wheels were
-selected by Python {{ python }} on the machine that exported the package, and
-the CARLA client in particular is a compiled extension with one wheel per
-interpreter. Installing them under a different Python or on a different platform
-will fail on the first wheel that has no matching tag -- re-export on a matching
+A wheelhouse is resolved for **one platform**. These wheels were selected on the
+machine that exported the package, so installing them on a different platform
+fails on the first wheel that has no matching tag -- re-export on a matching
 machine instead.
+
+The interpreter is the one axis it covers more than one of: the directory was
+resolved once per Python in the table above{% if pythons | length > 1 %}, so the compiled extensions -- the
+CARLA client among them -- are in here once per interpreter and pip takes the
+tag it can install{% endif %}. A Python outside that list has no wheels here.

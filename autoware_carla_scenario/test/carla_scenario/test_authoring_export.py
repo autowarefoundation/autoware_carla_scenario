@@ -298,7 +298,7 @@ class TestGeneratedPackage:
 
     def test_manifest_records_only_observed_values(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
-        assert manifest["format_version"] == 2
+        assert manifest["format_version"] == 3
         assert manifest["scenario"]["id"] == "cut_in"
         assert manifest["runtime"]["python"]
         assert "uv" in manifest["runtime"]
@@ -711,6 +711,148 @@ class TestWheelhouseRefusals:
         assert any("No wheelhouse was built" in w for w in result.warnings)
 
 
+class TestWheelhouseInterpreters:
+    """A wheelhouse covers every interpreter the package can run under.
+
+    Humble's Python is 3.10 and Jazzy's is 3.12. A wheelhouse resolved for one
+    of them is a wheelhouse the other cannot install, and Ubuntu 22.04 has no
+    `python3.12` to install out of the archive -- so the directory holds both.
+    """
+
+    def test_the_vendored_clients_say_which_interpreters_are_supported(
+        self, tmp_path: Path
+    ) -> None:
+        """The CARLA client is the one dependency with a per-interpreter ceiling."""
+        from autoware_carla_scenario.authoring.wheelhouse import supported_pythons
+
+        wheels = tmp_path / "carla_wheels"
+        wheels.mkdir()
+        for tag in ("cp312", "cp310", "cp311"):
+            (wheels / f"carla-0.10.0-{tag}-{tag}-linux_x86_64.whl").write_text("")
+        # Neither of these names an interpreter to build for.
+        (wheels / "carla-0.10.0-py3-none-any.whl").write_text("")
+        (wheels / "README.md").write_text("")
+
+        assert supported_pythons(tmp_path) == ["3.10", "3.11", "3.12"]
+
+    def test_a_package_vendoring_nothing_says_nothing(self, tmp_path: Path) -> None:
+        """0.9.16 comes from PyPI, so there is no vendored tag to read."""
+        from autoware_carla_scenario.authoring.wheelhouse import supported_pythons
+
+        assert supported_pythons(tmp_path) == []
+
+    def test_one_resolution_pass_is_made_per_interpreter(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Markers and wheel tags are both resolved by the running interpreter.
+
+        One pass cannot produce a directory that installs under another Python,
+        so the passes -- not just the recorded tags -- are what this checks.
+        """
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        wheels = tmp_path / "carla_wheels"
+        wheels.mkdir()
+        for tag in ("cp310", "cp312"):
+            (wheels / f"carla-0.10.0-{tag}-{tag}-linux_x86_64.whl").write_text("")
+
+        built: list[str] = []
+        filled: list[Path] = []
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            built.append(python)
+            return parent / f"builder-{python}", ""
+
+        def _download(venv: Path, *_args: Any) -> str:
+            filled.append(venv)
+            return ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", _download)
+
+        wheelhouse = build_wheelhouse(
+            tmp_path,
+            tmp_path / "out",
+            distribution="nothing",
+            version="0.1.0",
+            run_command="scenario scenario=nothing",
+        )
+
+        assert built == ["3.10", "3.12"]
+        assert wheelhouse.python_tags == ("3.10", "3.12")
+        # Each pass fills the one directory from its own environment; a shared
+        # builder venv would mean the second pass resolved nothing new.
+        assert len(set(filled)) == 2
+        assert "3.10, 3.12" in (wheelhouse.root / "README.md").read_text()
+
+    def test_an_explicit_interpreter_overrides_what_is_vendored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Building for one Python stays possible -- it is just not the default."""
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        wheels = tmp_path / "carla_wheels"
+        wheels.mkdir()
+        for tag in ("cp310", "cp312"):
+            (wheels / f"carla-0.10.0-{tag}-{tag}-linux_x86_64.whl").write_text("")
+
+        built: list[str] = []
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            built.append(python)
+            return parent, ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", lambda *_a: "")
+
+        wheelhouse = build_wheelhouse(
+            tmp_path,
+            tmp_path / "out",
+            distribution="nothing",
+            version="0.1.0",
+            run_command="scenario scenario=nothing",
+            pythons=("3.11",),
+        )
+        assert built == ["3.11"]
+        assert wheelhouse.python_tags == ("3.11",)
+
+    def test_without_a_vendored_client_the_recorded_interpreter_is_used(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A package resolving its client from an index records one interpreter."""
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        (tmp_path / ".python-version").write_text("3.12\n", encoding="utf-8")
+
+        built: list[str] = []
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            built.append(python)
+            return parent, ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", lambda *_a: "")
+
+        wheelhouse = build_wheelhouse(
+            tmp_path,
+            tmp_path / "out",
+            distribution="nothing",
+            version="0.1.0",
+            run_command="scenario scenario=nothing",
+        )
+        assert built == ["3.12"]
+        assert wheelhouse.python_tags == ("3.12",)
+
+
 @pytest.fixture(scope="module")
 def exported(tmp_path_factory: pytest.TempPathFactory) -> ExportResult:
     """One real export, shared by the checks below.
@@ -797,6 +939,12 @@ class TestExportSelfCheck:
         ``--no-index`` is what makes this a real check rather than a slow way of
         installing from PyPI: if a single wheel were missing, pip has nowhere
         else to look and the install fails.
+
+        Done once per interpreter the wheelhouse claims, because that claim is
+        the feature: a directory that installs under 3.10 and 3.12 is what lets
+        one export run on Humble and on Jazzy. Checking only the exporting
+        machine's Python would pass just as happily on a wheelhouse missing
+        every other one's wheels.
         """
         import subprocess
 
@@ -805,56 +953,60 @@ class TestExportSelfCheck:
 
         result = exported
         assert result.wheelhouse is not None, result.log
+        assert result.wheelhouse.python_tags, result.log
 
-        # `uv venv --seed` rather than the stdlib `venv`: the consumer's venv
-        # needs pip in it, and uv is already required by this test.
-        target = tmp_path / "venv"
-        created = run_uv(
-            tmp_path,
-            "venv",
-            str(target),
-            "--python",
-            result.wheelhouse.python_tag,
-            "--seed",
-            timeout=300,
-        )
-        assert created.returncode == 0, created.stdout + created.stderr
-        python = venv_python(target)
-        installed = subprocess.run(  # noqa: S603
-            [
-                str(python),
-                "-m",
-                "pip",
-                "install",
-                "--no-index",
-                "--find-links",
-                str(result.wheelhouse.root),
-                result.wheelhouse.distribution,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=900,
-        )
-        assert installed.returncode == 0, installed.stdout + installed.stderr
+        for interpreter in result.wheelhouse.python_tags:
+            # `uv venv --seed` rather than the stdlib `venv`: the consumer's
+            # venv needs pip in it, and uv is already required by this test.
+            target = tmp_path / f"venv-{interpreter}"
+            created = run_uv(
+                tmp_path,
+                "venv",
+                str(target),
+                "--python",
+                interpreter,
+                "--seed",
+                timeout=300,
+            )
+            assert created.returncode == 0, created.stdout + created.stderr
+            python = venv_python(target)
+            installed = subprocess.run(  # noqa: S603
+                [
+                    str(python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-index",
+                    "--find-links",
+                    str(result.wheelhouse.root),
+                    result.wheelhouse.distribution,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=900,
+            )
+            assert installed.returncode == 0, (
+                f"Python {interpreter}: {installed.stdout}{installed.stderr}"
+            )
 
-        # The document and the Hydra config have to be *in* the wheel: an
-        # installed scenario has no project directory to read them out of.
-        probe = subprocess.run(  # noqa: S603
-            [
-                str(python),
-                "-c",
-                "import cut_in_scenario as p;"
-                "assert p.DOCUMENT_PATH.is_file(), p.DOCUMENT_PATH;"
-                "assert p.CONF_DIR.is_dir(), p.CONF_DIR",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=300,
-        )
-        assert probe.returncode == 0, probe.stdout + probe.stderr
-        assert (venv_python(target).parent / "scenario").exists()
+            # The document and the Hydra config have to be *in* the wheel: an
+            # installed scenario has no project directory to read them out of.
+            probe = subprocess.run(  # noqa: S603
+                [
+                    str(python),
+                    "-c",
+                    "import cut_in_scenario as p;"
+                    "assert p.DOCUMENT_PATH.is_file(), p.DOCUMENT_PATH;"
+                    "assert p.CONF_DIR.is_dir(), p.CONF_DIR",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=300,
+            )
+            assert probe.returncode == 0, probe.stdout + probe.stderr
+            assert (venv_python(target).parent / "scenario").exists()
 
 
 class TestFreeFormTextReachesTheManifest:

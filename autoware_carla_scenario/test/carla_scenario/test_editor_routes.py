@@ -108,7 +108,7 @@ def offline_export(monkeypatch: pytest.MonkeyPatch) -> None:
             version="0.1.0",
             wheels=(wheel,),
             size_bytes=0,
-            python_tag="3.10",
+            python_tags=("3.10",),
         )
 
     monkeypatch.setattr(module, "_lock", _lock)
