@@ -320,3 +320,34 @@ class TestHydraSwitch:
             a for a in scenario._pre_tick_actions if isinstance(a, TrafficSourceAction)
         ]
         assert isinstance(source._until, ElapsedTimeCondition)
+
+
+class TestConstraintsFromText:
+    """How the scenario editor hands a source or sink its constraints."""
+
+    def test_a_yaml_list_is_read_as_the_constraints(self) -> None:
+        text = "- type: not\n  constraint:\n    type: is_junction\n"
+        assert background_traffic.constraints_from_text(text) == _NOT_JUNCTION
+
+    def test_a_single_mapping_is_a_list_of_one(self) -> None:
+        text = "type: lanelet_length\nrule: greater_than_or_equal\nvalue: 20.0\n"
+        assert background_traffic.constraints_from_text(text) == [
+            {"type": "lanelet_length", "rule": "greater_than_or_equal", "value": 20.0}
+        ]
+
+    def test_an_unknown_constraint_is_refused_when_read(self) -> None:
+        with pytest.raises(Exception):
+            background_traffic.constraints_from_text("- type: no_such_constraint\n")
+
+    def test_empty_text_is_refused(self) -> None:
+        with pytest.raises(ValueError):
+            background_traffic.constraints_from_text("  ")
+
+    @pytest.mark.parametrize("type_id", ["traffic_source", "traffic_sink"])
+    def test_the_editor_defaults_are_valid_constraints(self, type_id: str) -> None:
+        from autoware_carla_scenario.authoring.registry import get_action_spec
+
+        spec = get_action_spec(type_id)
+        assert spec is not None
+        (field,) = [f for f in spec.fields if f.name == "constraints"]
+        assert background_traffic.constraints_from_text(field.default)

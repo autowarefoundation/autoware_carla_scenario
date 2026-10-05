@@ -880,6 +880,119 @@ register_action_spec(
     )
 )
 
+_BACKGROUND_CONSTRAINTS_HELP = (
+    "Lanelet constraints, as a sweep writes them, in one line of YAML: "
+    "a list, every item of which has to hold."
+)
+_NOT_IN_A_JUNCTION = "[{type: not, constraint: {type: is_junction}}]"
+_ROAD_ENDS = (
+    "[{type: not, constraint: {type: previous_of, constraints: "
+    "[{type: lanelet_length, rule: greater_than_or_equal, value: 0.0}]}}]"
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="traffic_source",
+        title="Traffic Source",
+        category="Environment",
+        builder="build_traffic_source_action",
+        target="..actions:TrafficSourceAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="constraints",
+                target="..actions.background_traffic:constraints_from_text",
+                parts=(BuiltPart(args=(("text", "constraints"),)),),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="constraints",
+                label="Where vehicles appear",
+                kind="text",
+                default=_NOT_IN_A_JUNCTION,
+                help=_BACKGROUND_CONSTRAINTS_HELP,
+            ),
+            FieldSpec(
+                name="initial_vehicles",
+                label="Vehicles at start",
+                kind="int",
+                default=10,
+                help="Placed at once, on the first tick it runs.",
+            ),
+            FieldSpec(
+                name="vehicles_per_minute",
+                label="Then, per minute",
+                kind="number",
+                default=0.0,
+                help="Added while it runs; 0 places only the ones at start.",
+            ),
+            FieldSpec(
+                name="max_vehicles",
+                label="At most on the road",
+                kind="int",
+                default=None,
+                required=False,
+                help="Every background vehicle counts, whichever source made it.",
+            ),
+            FieldSpec(
+                name="speed_kmh",
+                label="Speed",
+                kind="number",
+                default=30.0,
+                unit="km/h",
+            ),
+            FieldSpec(
+                name="min_gap_m",
+                label="Least gap",
+                kind="number",
+                default=15.0,
+                unit="m",
+            ),
+            FieldSpec(name="seed", label="Seed", kind="int", default=0),
+        ),
+        description=(
+            "Background traffic, as OpenSCENARIO's TrafficSourceAction, placed "
+            "on the lanelets the constraints match.  The traffic backend drives "
+            "it.  Runs until its end condition fires, or the scenario ends."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="traffic_sink",
+        title="Traffic Sink",
+        category="Environment",
+        builder="build_traffic_sink_action",
+        target="..actions:TrafficSinkAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="constraints",
+                target="..actions.background_traffic:constraints_from_text",
+                parts=(BuiltPart(args=(("text", "constraints"),)),),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="constraints",
+                label="Where vehicles disappear",
+                kind="text",
+                default=_ROAD_ENDS,
+                help=_BACKGROUND_CONSTRAINTS_HELP,
+            ),
+        ),
+        description=(
+            "Removes background traffic on the lanelets the constraints match, "
+            "as OpenSCENARIO's TrafficSinkAction.  Runs until its end condition "
+            "fires, or the scenario ends."
+        ),
+    )
+)
+
 register_action_spec(
     ActionSpec(
         type_id="walk_straight",

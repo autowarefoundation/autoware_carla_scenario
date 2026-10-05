@@ -45,7 +45,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["LaneletRegion", "TrafficSinkAction", "TrafficSourceAction"]
+__all__ = [
+    "LaneletRegion",
+    "TrafficSinkAction",
+    "TrafficSourceAction",
+    "constraints_from_text",
+]
 
 #: A spawn point is kept this far from either end of its lanelet, metres.
 _END_MARGIN_M = 3.0
@@ -53,6 +58,29 @@ _END_MARGIN_M = 3.0
 _SPAWN_ATTEMPTS = 8
 
 ConstraintSpec = Union[Mapping[str, Any], Any]
+
+
+def constraints_from_text(text: str) -> list[dict[str, Any]]:
+    """Sweep constraints written as YAML (or JSON): a list, or a single mapping.
+
+    How the scenario editor hands a source or sink its constraints -- the same
+    text a sweep's ``constraints:`` holds.  Each is parsed once here, so a
+    constraint the sweeper does not know is refused when the scenario is built
+    rather than when the first vehicle is due.
+    """
+    import yaml  # noqa: PLC0415
+
+    from ..sweeper.constraints import parse_constraint  # noqa: PLC0415
+
+    loaded = yaml.safe_load(text) if text and text.strip() else None
+    if isinstance(loaded, Mapping):
+        loaded = [loaded]
+    if not isinstance(loaded, list) or not loaded:
+        raise ValueError(f"expected a list of lanelet constraints, got {text!r}")
+    constraints = [dict(item) for item in loaded]
+    for item in constraints:
+        parse_constraint(item)
+    return constraints
 
 
 class LaneletRegion:
