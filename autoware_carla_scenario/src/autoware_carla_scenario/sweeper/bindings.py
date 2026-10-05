@@ -29,13 +29,15 @@ class BindingResult:
     """Result of resolving a binding.
 
     Attributes:
-        value: The computed parameter value (e.g. ``spawn_s``).
+        value: The computed parameter value (e.g. ``spawn_s``).  A number for
+            a scalar parameter, or a list for one that takes a sequence
+            (``scenario.expected_route_lanelet_ids``, say).
         lanelet_id_override: If set, the spawn lanelet should be changed
             to this lanelet because the original lanelet did not have
             enough distance to satisfy the offset.
     """
 
-    value: float
+    value: float | int | list[int]
     lanelet_id_override: int | None = None
 
 
@@ -260,8 +262,60 @@ class StopLineOffsetBinding:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-_BINDING_REGISTRY: dict[str, type[StopLineOffsetBinding]] = {
+
+@dataclass
+class RouteThroughBinding:
+    """The lanelets a case drives, starting from the one the sweep picked.
+
+    The picked lanelet is what the case is *about* -- the right-turn lanelet of
+    a junction, say -- and the route is that lanelet plus the ``depth``
+    lanelets that follow it.  A scenario asserts on those, and for an ego that
+    plans for itself the last of them is where it is sent::
+
+        bindings:
+          scenario.expected_route_lanelet_ids:
+            type: route_through
+            depth: 1
+
+    Where the graph forks, the lowest lanelet ID is taken, so the same map
+    always expands to the same cases.  A pick the route cannot be walked from
+    raises, and the caller (:func:`~autoware_carla_scenario.sweeper.expand.expand_sweep`)
+    drops that case.
+    """
+
+    target_key: str
+    depth: int = 1
+
+    def __post_init__(self) -> None:
+        if self.depth < 1:
+            raise ValueError(f"route_through depth must be >= 1, got {self.depth}")
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the picked lanelet and the ``depth`` lanelets after it."""
+        from .constraints import create_routing_graph
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        route = [lanelet_id]
+        current = lanelet_map.laneletLayer[lanelet_id]
+        for _ in range(self.depth):
+            following = sorted(routing_graph.following(current), key=lambda ll: ll.id)
+            if not following:
+                raise ValueError(
+                    f"[{self.target_key}] lanelet {current.id} has no following "
+                    f"lanelet; cannot walk a route of depth {self.depth} from "
+                    f"lanelet {lanelet_id}."
+                )
+            current = following[0]
+            route.append(current.id)
+        return BindingResult(value=route)
+
+
+_BINDING_REGISTRY: dict[str, type] = {
     "stop_line_offset": StopLineOffsetBinding,
+    "route_through": RouteThroughBinding,
 }
 
 

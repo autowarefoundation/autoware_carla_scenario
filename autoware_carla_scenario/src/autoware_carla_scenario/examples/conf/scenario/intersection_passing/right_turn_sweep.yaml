@@ -1,0 +1,48 @@
+# @package _global_
+# Logical: every signalised right turn of the map, one concrete scenario each.
+#
+#   scenario-expand scenario=intersection_passing/right_turn_sweep map=<map>
+#
+# Nothing here names an intersection. The sweep picks the right-turn lanelets,
+# walks the spawn back onto the lane that approaches each one, and reads the
+# route off the routing graph, so the same file runs on any map.
+#
+# The values outside `sweep:` are what a run without expanding would use -- the
+# fixed right_turn.yaml case. Every one of them is replaced per case.
+scenario:
+  name: intersection_passing
+  turn_direction: right
+  expected_route_lanelet_ids: [502, 193]
+  # A turn from a standstill at the stop line, unlike right_turn.yaml's flying
+  # start, so the ego has to pull away as well as steer.
+  timeout_seconds: 60.0
+
+ego:
+  initial_speed_kmh: 0.0
+  spawn_lanelet_id: 206
+  spawn_s: 25.0
+
+sweep:
+  constraints:
+    # The right turns CARLA can place: inside a junction (turn_direction) and
+    # signalised (a traffic-light stop line, which is what CARLA matches a
+    # junction on).
+    ego.spawn_lanelet_id:
+      - type: and
+        constraints:
+          - type: turn_direction
+            value: right
+          - type: has_traffic_light_stop_line
+  bindings:
+    # A junction lanelet's stop line sits at its start, so asking for 25 m
+    # before it falls short on that lanelet and the binding walks back to the
+    # approach lane -- which is where the turn is driven from. The spawn
+    # lanelet moves with it.
+    ego.spawn_s:
+      type: stop_line_offset
+      offset: 25.0
+    # The turn itself, then the lane it comes out on: what the run asserts on,
+    # and where an ego that plans for itself is sent.
+    scenario.expected_route_lanelet_ids:
+      type: route_through
+      depth: 1
