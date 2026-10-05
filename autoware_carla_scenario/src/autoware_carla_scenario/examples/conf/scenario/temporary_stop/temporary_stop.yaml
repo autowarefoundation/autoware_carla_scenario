@@ -12,7 +12,9 @@ scenario:
   speed_threshold: 0.1
   stop_duration: 0.3
   restart_speed_kmh: 3.0
-  timeout_seconds: 5.0
+  # From a standstill 15 m short of the line, as a swept case starts: about
+  # 5 s to reach it, the stop, and the restart.
+  timeout_seconds: 12.0
 
 ego:
   initial_speed_kmh: 0.0
