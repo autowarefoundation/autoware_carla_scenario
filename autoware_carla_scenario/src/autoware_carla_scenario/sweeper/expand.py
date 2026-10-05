@@ -92,9 +92,7 @@ def expand_sweep(
                     exc_info=True,
                 )
                 break
-            overrides.append(
-                f"{binding.target_key}={_override_value(result.value)}"
-            )
+            overrides.append(f"{binding.target_key}={_override_value(result.value)}")
             if result.lanelet_id_override is not None:
                 overrides[0] = f"{target_key}={result.lanelet_id_override}"
         else:

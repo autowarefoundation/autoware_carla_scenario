@@ -262,6 +262,7 @@ class StopLineOffsetBinding:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RouteThroughBinding:
     """The lanelets a case drives, starting from the one the sweep picked.
