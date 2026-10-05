@@ -299,6 +299,7 @@ class _Sources:
     problems: list[Diagnostic] = field(default_factory=list)
 
 
+@lru_cache(maxsize=4)
 def _linked(codon_path: Path) -> frozenset[str]:
     """Top-level modules of typesafe_carla's CODON_PATH directory: not
     modelled here but linked into the workspace (``_build_workspace``), so a

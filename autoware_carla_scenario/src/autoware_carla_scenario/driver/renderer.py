@@ -56,7 +56,7 @@ _NO_STOP_LINE_M: float = -1.0
 #: CARLA reports posted speed limits in km/h.
 _KMH_TO_MPS: float = 1.0 / 3.6
 
-#: ``carla.TrafficLightState`` stringifies to these names.
+#: Proto states by :func:`traffic_light_state_name`.
 _LIGHT_STATES: Dict[str, "carla_driver_pb2.TrafficLightState"] = {
     "Red": carla_driver_pb2.TRAFFIC_LIGHT_STATE_RED,
     "Yellow": carla_driver_pb2.TRAFFIC_LIGHT_STATE_YELLOW,
@@ -64,7 +64,7 @@ _LIGHT_STATES: Dict[str, "carla_driver_pb2.TrafficLightState"] = {
     "Off": carla_driver_pb2.TRAFFIC_LIGHT_STATE_OFF,
 }
 
-#: Weather fields, read defensively because CARLA 0.10 dropped some of 0.9's.
+#: Weather fields, read defensively in case a CARLA build lacks one.
 _WEATHER_FIELDS = (
     "cloudiness",
     "precipitation",

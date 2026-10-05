@@ -13,9 +13,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-#: ``carla.TrafficLightState`` member names, by value.
-_STATE_NAMES = ("Red", "Yellow", "Green", "Off", "Unknown")
-
 
 def traffic_light_state_name(state: Any) -> str:
     """Return the member name ("Red", "Green", ...) of a traffic light state.
@@ -23,13 +20,14 @@ def traffic_light_state_name(state: Any) -> str:
     typesafe_carla's ``TrafficLight.get_state()`` and ``.state`` give a plain
     int, whose ``str()`` is its value ("2"), so the name is looked up from the
     value; an enum member (``carla.TrafficLightState.Green``) works too.
-    Anything out of range is ``"Unknown"``.
+    Anything else is ``"Unknown"``.
     """
+    import typesafe_carla.carla as carla  # noqa: PLC0415 -- this helper is CARLA-side by definition
+
     try:
-        index = int(state)
+        return carla.TrafficLightState(int(state)).name
     except (TypeError, ValueError):
         return "Unknown"
-    return _STATE_NAMES[index] if 0 <= index < len(_STATE_NAMES) else "Unknown"
 
 
 def lanelet2_traffic_light_id_to_opendrive_controller_id(

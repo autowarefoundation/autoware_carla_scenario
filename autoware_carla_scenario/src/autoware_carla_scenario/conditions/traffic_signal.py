@@ -44,6 +44,7 @@ class TrafficSignalCondition(BaseCondition):
         super().__init__(label=label)
         self._lanelet2_id = lanelet2_regulatory_element_id
         self._expected_state = expected_state
+        self._expected_name = traffic_light_state_name(expected_state)
         self._cached_signal_ids: Optional[set[str]] = None
 
     # ------------------------------------------------------------------
@@ -133,7 +134,7 @@ class TrafficSignalCondition(BaseCondition):
                 passed=False,
                 message=(
                     f"TrafficSignalCondition [{self.label}]: "
-                    f"state mismatch — expected {traffic_light_state_name(self._expected_state)}, "
+                    f"state mismatch — expected {self._expected_name}, "
                     f"got {mismatch_details}"
                 ),
                 elapsed_seconds=elapsed,
@@ -144,7 +145,7 @@ class TrafficSignalCondition(BaseCondition):
             message=(
                 f"TrafficSignalCondition [{self.label}]: "
                 f"all {match_count} actor(s) in expected state "
-                f"{traffic_light_state_name(self._expected_state)}"
+                f"{self._expected_name}"
             ),
             elapsed_seconds=elapsed,
         )
@@ -153,7 +154,7 @@ class TrafficSignalCondition(BaseCondition):
         """Return structured details about this condition's configuration."""
         return {
             "lanelet2_regulatory_element_id": self._lanelet2_id,
-            "expected_state": traffic_light_state_name(self._expected_state),
+            "expected_state": self._expected_name,
             "cached_signal_ids": (
                 sorted(self._cached_signal_ids)
                 if self._cached_signal_ids is not None
