@@ -14,6 +14,9 @@ traffic:
     # vehicle physics, steered and driven along SUMO's trajectory. teleport:
     # placed where SUMO has them every tick.
     vehicle_control: physics
+    # physics: a car this far off its SUMO vehicle moves the SUMO vehicle to it
+    # (so SUMO keeps its gaps to the real car); 0 never does.
+    feedback_distance_m: 0.0
     resync_distance_m: 8.0
     # Where the TrafficManager is, as for the traffic_manager backend.
     tm_port: ${oc.select:traffic_manager.port,null}

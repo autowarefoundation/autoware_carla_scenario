@@ -286,10 +286,15 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   throttle and brake), and its steering input maps onto the wheels roughly as
   51° × steer² rather than linearly (so the steer command inverts that and
   closes a loop on the car's measured curvature). A car further than
-  `resync_distance_m` from its SUMO vehicle is put back on it. SUMO does not see
-  where physics actually put the car (TeraSim feeds that back with a patched
-  SUMO), so gaps SUMO keeps are kept to within the tracking error -- on Town10
-  p95 1.1 m.
+  `resync_distance_m` from its SUMO vehicle is put back on it. By default SUMO
+  does not see where physics actually put the car, so gaps SUMO keeps are kept
+  to within the tracking error -- on Town10 p95 1.1 m. `feedback_distance_m`
+  (off by default) moves a SUMO vehicle to its car when the two are further
+  apart than that, with SUMO's own `moveTo`, which takes effect at once and
+  leaves SUMO planning the next step (TeraSim patches SUMO for an XY variant
+  of it); inside junctions nothing is corrected. On Town10 it did not reduce
+  contacts: a SUMO vehicle moved back to a lagging car is re-planned from a
+  state its own model would not have reached.
 - `teleport` places it where its SUMO vehicle was at the start of the step and
   gives it SUMO's speed as a constant velocity (`enable_constant_velocity`),
   which carries it to where SUMO is at the end of it: exact, but the car is not

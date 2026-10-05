@@ -161,6 +161,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._physics: dict[int, dict[str, Any]] = {}
         #: Commands for this tick, sent in one batch.
         self._commands: list[Any] = []
+        #: How often a SUMO vehicle was moved to its car (physics feedback).
+        self._feedback_count = 0
 
     @property
     def port(self) -> int:
@@ -372,8 +374,14 @@ class SumoTrafficBackend(TrafficBackend):
         self._signals = {}
         self._ego_actor = None
         self._failures = 0
+        if self._feedback_count:
+            logger.info(
+                "SUMO: moved SUMO vehicles to where CARLA had them %d time(s) this run",
+                self._feedback_count,
+            )
         self._physics = {}
         self._commands = []
+        self._feedback_count = 0
 
     def describe(self) -> dict[str, Any]:
         """The backend, its seed, network and demand, for the result record."""
@@ -384,6 +392,8 @@ class SumoTrafficBackend(TrafficBackend):
             out["network"] = str(self._network.net_file)
         out["scenario_vehicles"] = self._config.scenario_vehicles
         out["vehicle_control"] = self._config.vehicle_control
+        if self._config.vehicle_control == "physics":
+            out["feedback_distance_m"] = self._config.feedback_distance_m
         out["ambient_period_s"] = (
             self._config.ambient.period() if self._config.ambient.enabled else None
         )
@@ -818,6 +828,9 @@ class SumoTrafficBackend(TrafficBackend):
             ]
             state["steer"], state["integral"], state["steer_integral"] = None, 0.0, 0.0
             return
+        feedback = self._config.feedback_distance_m
+        if feedback > 0 and math.hypot(long_error, side_error) > feedback:
+            self._move_sumo_to_car(sumo_id, tf, speed, length)
         curvature = pursuit_curvature(
             x=tf.location.x,
             y=tf.location.y,
@@ -866,6 +879,36 @@ class SumoTrafficBackend(TrafficBackend):
                 ),
             )
         )
+
+    def _move_sumo_to_car(
+        self, sumo_id: str, tf: Any, speed: float, length: float
+    ) -> None:
+        """Move a SUMO vehicle to where its car really is, keeping its speed.
+
+        ``moveTo`` along a lane of the vehicle's route takes effect at once and
+        SUMO plans the vehicle's next step from there.  Inside a junction, or
+        off the route, nothing is corrected: ``moveToXY`` would re-route the
+        vehicle every tick it fired, and SUMO's plan through the junction would
+        come apart.
+        """
+        tc = self._traci
+        pose = carla_to_sumo(
+            Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
+            length,
+            self._offset,
+        )
+        try:
+            edge, pos, lane = tc.simulation.convertRoad(
+                pose.x, pose.y, False, "passenger"
+            )
+            if edge.startswith(":") or edge not in tc.vehicle.getRoute(sumo_id):
+                return
+            tc.vehicle.moveTo(sumo_id, f"{edge}_{lane}", pos)
+            tc.vehicle.setPreviousSpeed(sumo_id, speed)
+        except Exception as exc:  # noqa: BLE001 - SUMO refused: leave it be
+            logger.debug("SUMO: could not move %s to its car: %s", sumo_id, exc)
+            return
+        self._feedback_count += 1
 
     def _teleport(self, actor: Any, sumo_id: str, length: float) -> None:
         """Put *actor* where its SUMO vehicle was at the start of this step.

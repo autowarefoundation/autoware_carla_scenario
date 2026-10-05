@@ -77,8 +77,14 @@ class SumoBackendConfig:
             throttle/brake controller.
             ``teleport``: put where SUMO has it every tick, with SUMO's speed as
             a constant velocity.
-        resync_distance_m: With ``physics``, a vehicle further than this from
-            its SUMO vehicle (after a collision, say) is put back on it.
+        feedback_distance_m: With ``physics``, a car further than this from its
+            SUMO vehicle moves the SUMO vehicle to where the car really is, so
+            the gaps SUMO keeps are kept to the car CARLA has.  ``moveTo``
+            takes effect at once and leaves SUMO planning the vehicle's next
+            step; inside a junction nothing is corrected.  ``0`` never
+            corrects SUMO.
+        resync_distance_m: With ``physics``, a car further than this from its
+            SUMO vehicle (after a collision, say) is put back on it in CARLA.
         traffic_light_authority: Which simulator's signals the other follows.
             ``carla``: SUMO's signals take the states of CARLA's lights every
             step, so SUMO traffic obeys the lights the ego sees and a scenario
@@ -115,6 +121,7 @@ class SumoBackendConfig:
     scenario_vehicles: str = "traffic_manager"
     tm_port: int = DEFAULT_TM_PORT
     vehicle_control: str = "physics"
+    feedback_distance_m: float = 0.0
     resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
     net_path: Optional[str] = None

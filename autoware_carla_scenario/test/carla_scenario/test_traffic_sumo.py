@@ -610,3 +610,34 @@ def test_physics_mode_drives_sumos_vehicles_with_throttle_brake_and_steer(
         assert npc.constant_velocity is None
     finally:
         backend.close()
+
+
+@needs_sumo
+def test_feedback_moves_the_sumo_vehicle_to_where_its_car_really_is(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    client = _BatchClient()
+    _CLIENT["client"] = client
+    try:
+        backend, world, npc, _ego = _prepared(
+            crossroads, tmp_path, vehicle_control="physics", feedback_distance_m=2.0
+        )
+    finally:
+        _CLIENT.clear()
+    sumo_id = next(iter(backend._driven))
+    try:
+        for i in range(5):
+            backend.tick(world, i * 0.05)
+        # The car has fallen 4 m behind its SUMO vehicle, on the same lane.
+        sx, _sy = backend._traci.vehicle.getPosition(sumo_id)
+        npc.transform = _carla_transform(sx - 2.3 - 4.0, 5.25, 0.0)
+        backend.tick(world, 0.3)
+        # moveTo took effect at once: SUMO now has it where CARLA does.  (Its
+        # lane position, which moveTo sets; getPosition is cached until the
+        # next step.)  The arm starts at x = -120, so the bumper's x is
+        # -120 + lane position.
+        lane_pos = backend._traci.vehicle.getLanePosition(sumo_id)
+        assert -120.0 + lane_pos == pytest.approx(sx - 4.0, abs=0.5)
+        assert backend._feedback_count == 1
+    finally:
+        backend.close()
