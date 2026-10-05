@@ -130,15 +130,20 @@ def get_stop_line_linestrings(lanelet_map: Any, lanelet_id: int) -> list[Any]:
 def get_stop_line_linestrings_with_following(
     lanelet_map: Any,
     lanelet_id: int,
+    depth: int = 1,
 ) -> list[tuple[int, Any]]:
-    """Return stop line linestrings from the lanelet and its immediate successors.
+    """Return stop line linestrings from the lanelet and its successors.
 
     Searches the given lanelet first, then its ``following`` lanelets in the
-    routing graph. Returns as soon as stop lines are found on any lanelet.
+    routing graph one step at a time, up to *depth* steps. Returns the stop
+    lines of the first step that has any.
 
     Args:
         lanelet_map: The loaded Lanelet2 map to search.
         lanelet_id: The starting Lanelet2 lanelet ID.
+        depth: How many steps of successors to search.  A spawn walked back
+            from a stop line can be more than one lanelet short of it, when
+            the lane before the line is short.
 
     Returns:
         List of ``(owner_lanelet_id, linestring)`` tuples.
@@ -168,13 +173,22 @@ def get_stop_line_linestrings_with_following(
         lanelet2.traffic_rules.Participants.Vehicle,
     )
     routing_graph = lanelet2.routing.RoutingGraph(lanelet_map, traffic_rules)
-    following = routing_graph.following(lanelet)
-
-    all_results: list[tuple[int, Any]] = []
-    for fll in following:
-        fll_results = _collect_stop_lines_from_reg_elems(
-            fll.regulatoryElements, seen_ids
-        )
-        all_results.extend((fll.id, ls) for ls in fll_results)
-
-    return all_results
+    frontier = [lanelet]
+    visited = {lanelet_id}
+    for _ in range(depth):
+        following = []
+        for current in frontier:
+            for fll in routing_graph.following(current):
+                if fll.id not in visited:
+                    visited.add(fll.id)
+                    following.append(fll)
+        frontier = following
+        all_results: list[tuple[int, Any]] = []
+        for fll in frontier:
+            fll_results = _collect_stop_lines_from_reg_elems(
+                fll.regulatoryElements, seen_ids
+            )
+            all_results.extend((fll.id, ls) for ls in fll_results)
+        if all_results:
+            return all_results
+    return []

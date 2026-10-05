@@ -1,12 +1,54 @@
 # @package _global_
+# Logical: every straight-through movement of the map, one concrete scenario each.
+#
+#   scenario-expand scenario=intersection_passing/straight map=<map>
+#
+# The values outside `sweep:` are what a run without expanding uses: the fixed
+# Nishi-Shinjuku case. Every lanelet value is replaced per case.
 scenario:
   name: intersection_passing
+  # Straight on: the TrafficManager's autopilot would otherwise pick any way
+  # out of the junction.
+  turn_direction: straight
   expected_route_lanelet_ids: [460, 265]
-  timeout_seconds: 5.0
-  min_speed_kmh: 5.0
+  # 25 m to the stop line, the junction, and onto the lane beyond it.
+  timeout_seconds: 15.0
+  # Below the 5 km/h it starts at: "does not stop", not "never dips at all".
+  min_speed_kmh: 3.0
   speed_check_delay_seconds: 0.3
 
 ego:
   initial_speed_kmh: 5.0
   spawn_lanelet_id: 242
   spawn_s: 25.0
+
+sweep:
+  constraints:
+    # The straight-through movements of the map: junction lanelets whose turn_direction says so.
+    # Nothing names an intersection, so the same file expands on any map.
+    ego.spawn_lanelet_id:
+      - type: and
+        constraints:
+          - type: turn_direction
+            value: straight
+          # A signal's stop line at its start, to measure the spawn from. A
+          # signalised junction only: every light is set green, so the ego
+          # never has to stop -- which min_speed_kmh asserts -- where at a
+          # stop sign it would.
+          - type: has_traffic_light_stop_line
+          - type: not
+            constraint:
+              type: in_set
+              values: ${map.no_3d_model_lanelet_ids}
+  bindings:
+    # A junction lanelet's stop line sits at its start, so 25 m before it
+    # falls on the lane that approaches the junction, where the run starts;
+    # the spawn lanelet moves with it.
+    ego.spawn_s:
+      type: stop_line_offset
+      offset: 25.0
+    # The junction lanelet, then the lane it comes out on: what the run asserts
+    # on, and where an ego that plans for itself is sent.
+    scenario.expected_route_lanelet_ids:
+      type: route_through
+      depth: 1

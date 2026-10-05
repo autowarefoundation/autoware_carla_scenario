@@ -105,6 +105,9 @@ class TurnDirection(enum.Enum):
 
     LEFT = "left"
     RIGHT = "right"
+    #: Straight on through the junction: what a vehicle left to choose for
+    #: itself (the TrafficManager's autopilot) may not do.
+    STRAIGHT = "straight"
 
 
 @runtime_checkable

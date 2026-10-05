@@ -277,6 +277,9 @@ class RouteThroughBinding:
             type: route_through
             depth: 1
 
+    With ``last_only: true`` only the last lanelet is returned, as an ID, which
+    is what ``ego.goal_lanelet_id`` takes.
+
     Where the graph forks, the lowest lanelet ID is taken, so the same map
     always expands to the same cases.  A pick the route cannot be walked from
     raises, and the caller (:func:`~autoware_carla_scenario.sweeper.expand.expand_sweep`)
@@ -285,6 +288,8 @@ class RouteThroughBinding:
 
     target_key: str
     depth: int = 1
+    #: Only the route's last lanelet, as an ID rather than a list: a goal.
+    last_only: bool = False
 
     def __post_init__(self) -> None:
         if self.depth < 1:
@@ -310,6 +315,8 @@ class RouteThroughBinding:
                 )
             current = following[0]
             route.append(current.id)
+        if self.last_only:
+            return BindingResult(value=route[-1])
         return BindingResult(value=route)
 
 

@@ -8,6 +8,7 @@ class TurnDirection:
     value: str
     LEFT: ClassVar[TurnDirection] = TurnDirection("left")
     RIGHT: ClassVar[TurnDirection] = TurnDirection("right")
+    STRAIGHT: ClassVar[TurnDirection] = TurnDirection("straight")
 
 
 @tuple
