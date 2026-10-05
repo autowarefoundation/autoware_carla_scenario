@@ -14,8 +14,11 @@
 # `turn_direction` -- 86 of the 168 -- so a scenario can say "a lanelet in an
 # intersection" on this town at all, and carries CARLA's 15 signals and 3 stop
 # signs as regulatory elements with stop lines, so it can also say "the
-# approach to a signalised junction" or "a stop sign's stop line". Node, way
-# and lanelet ids of the original map are unchanged; only elements were added.
+# approach to a signalised junction" or "a stop sign's stop line". Its lane
+# boundaries carry the markings CARLA paints, so a lane change is legal where
+# the line is broken -- `has_adjacent` and lane_change / cut_in expand here.
+# Node, way and lanelet ids of the original map are unchanged; only elements
+# and tags were added.
 #
 # The revision is pinned to a commit rather than a branch so that two runs of
 # the same scenario are two runs against the same map. Move the pin
@@ -28,7 +31,7 @@
 # beside the map the first time a run loads the world.
 map:
   name: Town10HD_Opt
-  source: "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@031e04c1ed8fab244945b24de6e08bf0b63f7023#autoware_maps/Town10HD_Opt"
+  source: "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@5058c6683a1077a99aa5fdca5e6ecff9d71fcfb1#autoware_maps/Town10HD_Opt"
   # Lanelet IDs to exclude from scenario sweeps. Empty until a sweep on this
   # map turns up lanelets CARLA cannot spawn on -- see
   # autoware_carla_scenario.tools.detect_no_3d_model_lanelets.
