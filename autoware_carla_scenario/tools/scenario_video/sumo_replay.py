@@ -123,6 +123,13 @@ def main() -> None:
                 traci.vehicle.setColor(vid, (230, 40, 40, 255))
                 if vid.lower().startswith("ego"):
                     ego = vid
+                    # Follow the ego from the start of the replay's lead-in, a
+                    # second before the first screenshot: sumo-gui applies a
+                    # view change on a later redraw, so one made in the same
+                    # step as a screenshot is not in it.
+                    traci.gui.setSchema("View #0", "real world")
+                    traci.gui.trackVehicle("View #0", ego)
+                    traci.gui.setZoom("View #0", 450)
             vehicles.add(vid)
         for pid, person in here_p.items():
             if pid in persons:
@@ -168,10 +175,6 @@ def main() -> None:
                 print("person", pid, exc)
         key = round(t, 2)
         if key in wanted:
-            if ego:
-                traci.gui.setSchema("View #0", "real world")
-                traci.gui.trackVehicle("View #0", ego)
-                traci.gui.setZoom("View #0", 450)
             traci.gui.screenshot("View #0", str(out / f"sumo_{wanted[key]:010.3f}.png"))
         element.clear()
     traci.simulationStep()
