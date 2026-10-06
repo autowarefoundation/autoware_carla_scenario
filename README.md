@@ -91,3 +91,7 @@ from the old merge commit.
 The version line continues from `autoware_lanelet2_to_opendrive`, where this
 package started: it was split out at 2.62.0, so the first release here is
 2.62.1. The workflow pushes with the `GH_PAT` repository secret.
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).
