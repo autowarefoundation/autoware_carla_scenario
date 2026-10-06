@@ -366,10 +366,62 @@ class AdjacentBinding:
         return BindingResult(value=beside.id)
 
 
+@dataclass
+class MatchedBinding:
+    """The lanelet the sweep picked, by ID: another place on the same lane::
+
+        bindings:
+          scenario.spawn_overrides.npc1.lanelet_id:
+            type: matched
+
+    What a case means by "the ego's lane" when the ego's own spawn has been
+    walked back off it by ``stop_line_offset``, and how a second slot -- a
+    pedestrian's spawn, the ego's goal -- follows the pick.
+    """
+
+    target_key: str
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the pick itself."""
+        del lanelet_map, routing_graph
+        return BindingResult(value=lanelet_id)
+
+
+@dataclass
+class StopLineApproachBinding:
+    """The lanelet ``stop_line_offset`` with the same offset spawns on, by ID::
+
+        bindings:
+          scenario.param_overrides.p_stop.lanelet_id:
+            type: stop_line_approach
+            offset: 15.0
+
+    The pick when the offset fits on it, else the predecessor it walks back
+    to: the lanelet a spawn *offset* metres before the stop line is on, which
+    is where a search for that stop line has to start from.
+    """
+
+    target_key: str
+    offset: float = 15.0
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the lanelet the offset lands on."""
+        landed = StopLineOffsetBinding(self.target_key, self.offset).resolve(
+            lanelet_id, lanelet_map, routing_graph
+        )
+        return BindingResult(value=landed.lanelet_id_override or lanelet_id)
+
+
 _BINDING_REGISTRY: dict[str, type] = {
     "stop_line_offset": StopLineOffsetBinding,
     "route_through": RouteThroughBinding,
     "adjacent": AdjacentBinding,
+    "matched": MatchedBinding,
+    "stop_line_approach": StopLineApproachBinding,
 }
 
 

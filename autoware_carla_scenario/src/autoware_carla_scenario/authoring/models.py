@@ -83,7 +83,8 @@ EntityKind = Literal["ego", "vehicle", "pedestrian"]
 DEFAULT_MODELS: dict[str, str] = {
     "ego": "vehicle.mini.cooper",
     "vehicle": "vehicle.mini.cooper",
-    "pedestrian": "walker.pedestrian.0001",
+    # 0001-0014 are gone from CARLA 0.10; 0015 is in every release.
+    "pedestrian": "walker.pedestrian.0015",
 }
 #: Which stack drives the ego, rendered as the framework's ``ego.entity`` key.
 #:
@@ -98,10 +99,13 @@ EgoDriver = Literal["autopilot", "autoware"]
 #:
 #: ``fixed`` pins the id the document carries.  ``constraint_search`` states a
 #: property of the lanelet instead and leaves finding it to the existing
-#: lanelet-constraint sweeper, which runs the scenario once per match.  The
-#: pair is the same wherever a lanelet is named -- a spawn, a goal, the lanelet
-#: a condition watches -- so it is one type rather than one per site.
-LaneletMode = Literal["fixed", "constraint_search"]
+#: lanelet-constraint sweeper, which runs the scenario once per match.
+#: ``derived`` follows that search: a binding works the lanelet out from the
+#: one the sweep picked -- the lane beside it, the lanelet after it, the pick
+#: itself.  The choice is the same wherever a lanelet is named -- a spawn, a
+#: goal, the lanelet a condition watches -- so it is one type rather than one
+#: per site.
+LaneletMode = Literal["fixed", "constraint_search", "derived"]
 #: The spawn's own name for :data:`LaneletMode`, kept because documents,
 #: forms and tests spell the spawn's mode with it.
 SpawnMode = LaneletMode
@@ -193,6 +197,11 @@ class ConstraintNode(_Node):
 
         out: dict[str, Any] = {"type": self.type}
         out.update(self.params)
+        # The editor's text field hands an id over as a string, and the sweeper
+        # compares it with an integer id: "222" would match no lanelet at all.
+        value = out.get("value")
+        if self.type == "equals" and isinstance(value, str) and value.isdigit():
+            out["value"] = int(value)
         if not self.constraints:
             return out
         spec = get_constraint_spec(self.type)
@@ -270,11 +279,20 @@ class LaneletChoice(_Node):
 
     mode: LaneletMode = "fixed"
     constraints: list[ConstraintNode] = Field(default_factory=list)
+    #: How a ``derived`` lanelet follows the pick -- a ``sweep.bindings`` entry
+    #: that produces a lanelet.  Kept when the mode flips away, as the
+    #: constraints are.
+    binding: Optional[BindingRef] = None
 
     @property
     def searching(self) -> bool:
         """Whether the lanelet is left to the sweeper rather than pinned."""
         return self.mode == "constraint_search"
+
+    @property
+    def deriving(self) -> bool:
+        """Whether the lanelet is worked out from the sweep's pick."""
+        return self.mode == "derived"
 
     def sweep_constraint_dicts(self) -> list[dict[str, Any]]:
         """Return the constraint tree in ``sweep.constraints`` YAML form.
@@ -313,6 +331,17 @@ class SpawnSpec(LaneletChoice):
 
     lanelet_id: int = 0
     s: SValue = Field(default_factory=SValue)
+    #: Lateral offset from the lanelet's centreline, positive to its left.  A
+    #: vehicle is snapped to the road after it, so only a pedestrian -- which
+    #: is not -- really stands off the lane: at the kerb, say.
+    t: float = 0.0
+    #: Yaw relative to the lanelet's direction of travel, in radians, positive
+    #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
+    heading: float = 0.0
+    #: Lift above the spawn point, in metres.  CARLA refuses a walker whose
+    #: capsule starts inside the kerb, so a pedestrian at the roadside needs
+    #: one.  A vehicle is set on the road surface it is snapped to instead.
+    z_offset: float = 0.0
 
 
 class GoalSpec(LaneletChoice):
@@ -836,6 +865,11 @@ class LaneletSlot:
         return self.choice.searching
 
     @property
+    def deriving(self) -> bool:
+        """Whether the lanelet is worked out from the sweep's pick."""
+        return self.choice.deriving
+
+    @property
     def lanelet_id(self) -> int:
         """The pinned id, or the default a searched slot falls back to."""
         if isinstance(self.holder, (SpawnSpec, GoalSpec)):
@@ -1024,6 +1058,10 @@ class ScenarioDocument(_Node):
     def searched_lanelet_slots(self) -> "list[LaneletSlot]":
         """Return the slots whose lanelet is left to the constraint sweeper."""
         return [slot for slot in self.lanelet_slots() if slot.searching]
+
+    def derived_lanelet_slots(self) -> "list[LaneletSlot]":
+        """Return the slots whose lanelet a binding derives from the sweep's pick."""
+        return [slot for slot in self.lanelet_slots() if slot.deriving]
 
     # -- layout ---------------------------------------------------------
 

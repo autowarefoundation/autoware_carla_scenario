@@ -9,6 +9,7 @@ only way to catch a template that renders but shows the wrong thing.
 from __future__ import annotations
 
 import io
+import math
 import re
 import zipfile
 from pathlib import Path
@@ -2285,3 +2286,80 @@ class TestTheJunctionEditor:
 
         report = validate_document(_document(store, draft_id))
         assert any("movements as crossing" in i.message for i in report.errors)
+
+
+class TestDerivedLanelets:
+    """A lanelet worked out from the one the search picks."""
+
+    def test_deriving_starts_from_the_pick_itself(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": "ego.spawn", "mode": "derived"},
+        )
+        spawn = _entity(store, draft_id, "ego").spawn
+        assert spawn.mode == "derived"
+        assert spawn.binding is not None and spawn.binding.type == "matched"
+
+    def test_a_derived_lanelet_reaches_the_sweeper_as_a_binding(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The starter searches NPC1's spawn; the ego follows it, one lane over."""
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_scenario_config,
+        )
+
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": "ego.spawn", "mode": "derived"},
+        )
+        client.post(
+            f"/draft/{draft_id}/lanelet-binding",
+            data={"slot": "ego.spawn", "binding_type": "adjacent"},
+        )
+        client.post(
+            f"/draft/{draft_id}/lanelet-binding",
+            data={
+                "slot": "ego.spawn",
+                "binding_type": "adjacent",
+                "binding_side": "right",
+            },
+        )
+        sweep = build_scenario_config(_document(store, draft_id))["sweep"]
+        assert sweep["bindings"]["ego.spawn_lanelet_id"] == {
+            "type": "adjacent",
+            "side": "right",
+        }
+
+    def test_a_binding_that_works_out_an_offset_is_not_offered_for_a_lanelet(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/lanelet-mode",
+            data={"slot": "ego.spawn", "mode": "derived"},
+        )
+        client.post(
+            f"/draft/{draft_id}/lanelet-binding",
+            data={"slot": "ego.spawn", "binding_type": "stop_line_offset"},
+        )
+        binding = _entity(store, draft_id, "ego").spawn.binding
+        assert binding is not None and binding.type == "matched"
+
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        chooser = body.split('name="binding_type"', 1)[1].split("</select>", 1)[0]
+        assert 'value="adjacent"' in chooser
+        assert 'value="stop_line_offset"' not in chooser
+
+    def test_a_spawn_can_stand_off_the_lane_turned_and_lifted(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A pedestrian at the kerb, facing across the road."""
+        client.post(
+            f"/draft/{draft_id}/entity/npc1",
+            data={"spawn_t": "-3", "spawn_heading_deg": "90", "spawn_z_offset": "1"},
+        )
+        spawn = _entity(store, draft_id, "npc1").spawn
+        assert spawn.t == -3.0
+        assert spawn.heading == pytest.approx(math.pi / 2)
+        assert spawn.z_offset == 1.0

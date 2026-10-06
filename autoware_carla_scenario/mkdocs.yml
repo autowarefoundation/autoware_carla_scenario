@@ -79,6 +79,14 @@ nav:
   - Tutorial: tutorial.md
   - Usage: usage.md
   - Scenario Editor: scenario_editor.md
+  - Example Scenarios:
+      - Overview: scenarios/index.md
+      - Traffic Light Compliance: scenarios/traffic_light_compliance.md
+      - Temporary Stop: scenarios/temporary_stop.md
+      - Intersection Passing: scenarios/intersection_passing.md
+      - Lane Change: scenarios/lane_change.md
+      - Pedestrian Dart-out: scenarios/pedestrian_dart_out.md
+      - Cut-in: scenarios/cut_in.md
   - HD Maps: maps.md
   - External Driver Interface: driver_interface.md
   - Traffic Backends: traffic_backends.md

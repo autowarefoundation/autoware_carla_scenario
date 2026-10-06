@@ -418,6 +418,9 @@ class BindingSpec:
     title: str
     fields: tuple[FieldSpec, ...] = ()
     description: str = ""
+    #: What the binding works out: a spawn's ``s``, or a lanelet id for a
+    #: ``derived`` lanelet slot.  The editor offers each only where it fits.
+    produces: Literal["s", "lanelet"] = "s"
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +485,12 @@ TRAFFIC_LIGHT_STATES: tuple[SelectOption, ...] = (
 _DIRECTIONS: tuple[SelectOption, ...] = (
     SelectOption("left", "Left"),
     SelectOption("right", "Right"),
+)
+
+#: A junction is also driven straight through, which a lane is not changed.
+_TURN_DIRECTIONS: tuple[SelectOption, ...] = (
+    *_DIRECTIONS,
+    SelectOption("straight", "Straight"),
 )
 
 
@@ -864,7 +873,7 @@ register_action_spec(
                 label="Direction",
                 kind="select",
                 default="left",
-                options=_DIRECTIONS,
+                options=_TURN_DIRECTIONS,
             ),
             FieldSpec(
                 name="search_distance",
@@ -1900,6 +1909,74 @@ register_condition_spec(
     )
 )
 
+#: The lanes :class:`EntityLaneOfCondition` can mean.  Spelled out rather than
+#: imported -- the conditions package pulls in CARLA -- and checked against the
+#: runtime's own ``LANE_RELATIONS`` by ``test_authoring_registry``.
+_LANE_RELATIONS: tuple[SelectOption, ...] = (
+    SelectOption("same", "Same lane"),
+    SelectOption("left", "Lane to its left"),
+    SelectOption("right", "Lane to its right"),
+    SelectOption("any", "Any lane of its road"),
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="entity_lane_of",
+        title="Lane of a position",
+        category="Entity",
+        builder="build_entity_lane_of_condition",
+        target="..conditions:EntityLaneOfCondition",
+        argmap=(("entity", "entity_name"),),
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Lane of",
+            subject="entity",
+            target="lanelet_id",
+            target_prefix="Lanelet",
+            details=("s", "lane"),
+            value_label="on",
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="Where the reference position is -- a spawn, a junction's "
+                "start.",
+            ),
+            FieldSpec(
+                name="s",
+                label="At s",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lanelet, from its start.",
+            ),
+            FieldSpec(
+                name="lane",
+                label="Lane",
+                kind="select",
+                default="same",
+                options=_LANE_RELATIONS,
+            ),
+        ),
+        description=(
+            "The entity is on the OpenDRIVE lane under a Lanelet2 position, the "
+            "lane beside it, or any lane of its road -- anywhere along the "
+            "road, not only within the lanelet.  Beside a spawn is where a lane "
+            "change from it ends."
+        ),
+    )
+)
+
 # A separate condition rather than a coordinate-system switch on the one above:
 # the two frames need different fields, and offering both at once is what let a
 # Lanelet2 lanelet and an OpenDRIVE lane be set to contradict each other.
@@ -2372,6 +2449,80 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="temporary_stop_at_stop_lines",
+        title="Temporary stop at stop lines",
+        category="Entity",
+        builder="build_temporary_stop_at_stop_lines_condition",
+        target="..conditions:TemporaryStopCondition",
+        argmap=(("entity", "entity_name"),),
+        builds=(
+            BuiltArgument(
+                kwarg="stop_positions",
+                target="..coordinate:get_stop_line_poses_with_following",
+                parts=(
+                    BuiltPart(
+                        args=(("lanelet_id", "from_lanelet"), ("depth", "depth"))
+                    ),
+                ),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Stops at",
+            subject="entity",
+            target="from_lanelet",
+            target_prefix="Stop lines from",
+            value="stop_duration",
+            unit="s",
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="from_lanelet",
+                label="Search from",
+                kind="lanelet",
+                default=0,
+                help="The stop lines on this lanelet and the ones after it.",
+            ),
+            FieldSpec(
+                name="depth",
+                label="Steps on",
+                kind="int",
+                default=1,
+                help="How many steps of following lanelets to search.",
+            ),
+            FieldSpec(
+                name="s_margin",
+                label="Margin",
+                kind="number",
+                default=5.0,
+                unit="m",
+                help="How far either side of a stop line still counts.",
+            ),
+            FieldSpec(
+                name="stop_duration",
+                label="Held for",
+                kind="number",
+                default=1.0,
+                unit="s",
+            ),
+            FieldSpec(
+                name="speed_threshold",
+                label="Counts as stopped below",
+                kind="number",
+                default=0.1,
+                unit="m/s",
+            ),
+        ),
+        description=(
+            "The entity came to a stop at one of the map's stop lines, found "
+            "from a lanelet onwards.  Temporary stop, with the positions read "
+            "off the map rather than given."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="always_true",
         title="Always",
         category="World",
@@ -2455,6 +2606,26 @@ register_constraint_spec(
         title="Is junction",
         category="Topology",
         description="The lanelet carries a turn_direction tag.",
+    )
+)
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="turn_direction",
+        title="Turn direction",
+        category="Topology",
+        fields=(
+            FieldSpec(
+                name="value",
+                label="Direction",
+                kind="select",
+                default="left",
+                options=_TURN_DIRECTIONS,
+            ),
+        ),
+        description=(
+            "A junction lanelet whose turn_direction tag is this: the "
+            "movements of a junction, on any map."
+        ),
     )
 )
 register_constraint_spec(
@@ -2546,6 +2717,84 @@ register_binding_spec(
         description=(
             "Place the entity a fixed distance upstream of the nearest stop "
             "line, walking back through predecessor lanelets when needed."
+        ),
+    )
+)
+
+register_binding_spec(
+    BindingSpec(
+        type_id="matched",
+        title="The matched lanelet",
+        produces="lanelet",
+        description=(
+            "The lanelet the search picked -- before a spawn's offset walks "
+            "back off it."
+        ),
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="adjacent",
+        title="Beside the matched lanelet",
+        produces="lanelet",
+        fields=(
+            FieldSpec(
+                name="side",
+                label="Side",
+                kind="select",
+                default="left",
+                options=_DIRECTIONS,
+            ),
+        ),
+        description=(
+            "The lane beside the pick a vehicle may change into from it.  Pair "
+            "it with Has adjacent lane on the search, or picks without one are "
+            "dropped."
+        ),
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="route_through",
+        title="Along the route from the matched lanelet",
+        produces="lanelet",
+        fields=(
+            FieldSpec(
+                name="depth",
+                label="Steps on",
+                kind="int",
+                default=1,
+                help="1 is the lanelet after the pick; where the road forks, "
+                "the lowest id.",
+            ),
+            FieldSpec(
+                name="last_only",
+                label="Only the last",
+                kind="bool",
+                default=True,
+                help="A lanelet slot takes one id, so this stays on.",
+            ),
+        ),
+        description="The lanelet that many steps on from the pick.",
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="stop_line_approach",
+        title="Lanelet before the stop line",
+        produces="lanelet",
+        fields=(
+            FieldSpec(
+                name="offset",
+                label="Distance before the stop line",
+                kind="number",
+                default=15.0,
+                unit="m",
+            ),
+        ),
+        description=(
+            "The lanelet a spawn that far before the pick's stop line is on: "
+            "the pick, or the predecessor Before stop line walks back to."
         ),
     )
 )

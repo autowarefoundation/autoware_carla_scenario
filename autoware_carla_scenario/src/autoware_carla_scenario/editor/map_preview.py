@@ -503,3 +503,42 @@ def evaluate_slot(
         loaded.matches.popitem(last=False)
     result.matched_ids = list(matched)
     return result
+
+
+def derive_lanelet(
+    document: ScenarioDocument,
+    slot: LaneletSlot,
+    picked_id: int,
+    *,
+    paths: Optional[MapPaths] = None,
+) -> Optional[int]:
+    """Return the lanelet a derived *slot* works out from the pick *picked_id*.
+
+    The sweeper's own binding does the working out, so the map draws the
+    lanelet a run would get.  ``None`` when the map is not loaded yet, the slot
+    has no binding, or the pick has no such lanelet -- a run would drop that
+    case.
+    """
+    binding = slot.choice.binding
+    if binding is None:
+        return None
+    resolved = map_paths(document) if paths is None else paths
+    if not is_map_loaded(document, resolved):
+        return None
+    try:
+        loaded = _load(document, resolved)
+    except (FileNotFoundError, RuntimeError):
+        return None
+
+    from ..sweeper.bindings import parse_binding  # noqa: PLC0415
+
+    try:
+        value = (
+            parse_binding(slot.key, binding.to_sweep_dict())
+            .resolve(picked_id, loaded.lanelet_map, loaded.routing_graph)
+            .value
+        )
+    except Exception as exc:  # noqa: BLE001 -- shown as "not derived", not raised
+        logger.info("Binding for %s did not resolve: %s", slot.key, exc)
+        return None
+    return value if isinstance(value, int) else None

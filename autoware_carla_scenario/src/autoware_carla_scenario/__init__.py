@@ -107,6 +107,7 @@ if TYPE_CHECKING:
         EntityDistanceCondition as EntityDistanceCondition,
         RelativeDistanceType as RelativeDistanceType,
         EntityExistenceCondition as EntityExistenceCondition,
+        EntityLaneOfCondition as EntityLaneOfCondition,
         EntityLanePositionCondition as EntityLanePositionCondition,
         EntityPositionDistanceCondition as EntityPositionDistanceCondition,
         NotCondition as NotCondition,
@@ -293,6 +294,7 @@ __all__ = [
     "CollisionTargetType",
     "ComparisonRule",
     "ElapsedTimeCondition",
+    "EntityLaneOfCondition",
     "EntityLanePositionCondition",
     "EntityPositionDistanceCondition",
     "NotCondition",
@@ -440,6 +442,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "CollisionTargetType": (".conditions", "CollisionTargetType"),
     "ComparisonRule": (".conditions", "ComparisonRule"),
     "ElapsedTimeCondition": (".conditions", "ElapsedTimeCondition"),
+    "EntityLaneOfCondition": (".conditions", "EntityLaneOfCondition"),
     "EntityLanePositionCondition": (".conditions", "EntityLanePositionCondition"),
     "EntityPositionDistanceCondition": (
         ".conditions",

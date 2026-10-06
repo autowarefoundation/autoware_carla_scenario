@@ -273,7 +273,13 @@
       {% if subject_action %}{{ action_ref(subject_action, document) }}
       {% elif subject %}{{ entity_ref(subject, document) }}{% endif %}
       {% if subject and target is not none %}<span class="cond-arrow">&#8594;</span>{% endif %}
-      {% if target is not none %}{{ entity_ref(target, document, visual.target_prefix) }}{% endif %}
+      {%- set target_choice = node.searches.get(visual.target) if visual.target else none -%}
+      {% if target_choice and target_choice.deriving %}
+        {%- set derived_spec = get_binding_spec(target_choice.binding.type) if target_choice.binding else none -%}
+        <span class="cond-ref"><span class="cond-frame">{{ visual.target_prefix }}</span> {{ derived_spec.title|lower if derived_spec else 'derived' }}</span>
+      {% elif target_choice and target_choice.searching %}
+        <span class="cond-ref"><span class="cond-frame">{{ visual.target_prefix }}</span> searched</span>
+      {% elif target is not none %}{{ entity_ref(target, document, visual.target_prefix) }}{% endif %}
       {% if not subject and target is none %}
         {% if declares_ref %}
           <span class="cond-unset">

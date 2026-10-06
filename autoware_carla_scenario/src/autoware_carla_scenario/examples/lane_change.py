@@ -54,6 +54,8 @@ from autoware_carla_scenario import (
     TrafficSignalAction,
 )
 
+from autoware_carla_scenario.conditions import beside_lane_id
+
 from .configs import LaneChangeConfig
 
 logger = logging.getLogger(__name__)
@@ -62,20 +64,6 @@ _DIRECTION_MAP: dict[str, LaneChangeDirection] = {
     "left": LaneChangeDirection.LEFT,
     "right": LaneChangeDirection.RIGHT,
 }
-
-#: OpenDRIVE lane-ID offset per direction on a negative (right-hand) lane:
-#: LEFT moves toward the centre (id + 1), RIGHT away from it (id - 1).  A
-#: positive lane runs the other way, so the offsets flip.
-_LANE_ID_DELTA: dict[LaneChangeDirection, int] = {
-    LaneChangeDirection.LEFT: 1,
-    LaneChangeDirection.RIGHT: -1,
-}
-
-
-def _target_lane_id(lane_id: int, direction: LaneChangeDirection) -> int:
-    """The OpenDRIVE lane a change *direction* from *lane_id* ends on."""
-    delta = _LANE_ID_DELTA[direction]
-    return lane_id + delta if lane_id < 0 else lane_id - delta
 
 
 class LaneChangeScenario(BaseScenario):
@@ -133,7 +121,7 @@ class LaneChangeScenario(BaseScenario):
 
         # --- Conditions based on expected outcome ---
         # Target lane ID is derived from spawn lane ID + direction delta.
-        target_lane_id = _target_lane_id(od_pose.lane_id, direction)
+        target_lane_id = beside_lane_id(od_pose.lane_id, cfg.direction)
         expect_fail = cfg.expect == "fail"
         logger.info(
             "Expecting lane change: road='%s' lane %d -> %d (%s) [expect=%s]",

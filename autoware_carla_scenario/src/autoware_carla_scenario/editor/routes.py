@@ -470,6 +470,20 @@ async def set_lanelet_mode(request: Request, draft_id: str) -> HTMLResponse:
     )
 
 
+@router.post("/draft/{draft_id}/lanelet-binding", response_class=HTMLResponse)
+async def set_lanelet_binding(request: Request, draft_id: str) -> HTMLResponse:
+    """Say how a lanelet derived from the search follows the lanelet it picks."""
+    form = dict(await request.form())
+    slot_key = str(form.get("slot", ""))
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        slot_key.rpartition(".")[0],
+        lambda doc: service.set_lanelet_binding(doc, slot_key, form),
+    )
+
+
 @router.post("/draft/{draft_id}/constraint", response_class=HTMLResponse)
 async def add_constraint(request: Request, draft_id: str) -> HTMLResponse:
     """Add a constraint to the search that chooses one lanelet."""

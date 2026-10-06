@@ -13,6 +13,7 @@ registered primitive is editable with no change to this module.
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import tempfile
 import zipfile
@@ -28,6 +29,7 @@ from ..authoring.models import (
     EgoDriver,
     Entity,
     GoalSpec,
+    LaneletMode,
     LaneletSlot,
     MapRef,
     ScenarioDocument,
@@ -827,6 +829,16 @@ class EditorService:
                 spawn.s.mode = s_mode  # type: ignore[assignment]
         if "spawn_s" in form:
             spawn.s.value = _as_float(form["spawn_s"], "Offset", spawn.s.value)
+        if "spawn_t" in form:
+            spawn.t = _as_float(form["spawn_t"], "Lateral offset", spawn.t)
+        if "spawn_heading_deg" in form:
+            spawn.heading = math.radians(
+                _as_float(
+                    form["spawn_heading_deg"], "Heading", math.degrees(spawn.heading)
+                )
+            )
+        if "spawn_z_offset" in form:
+            spawn.z_offset = _as_float(form["spawn_z_offset"], "Lift", spawn.z_offset)
 
         # Only a derived offset needs a binding, and switching back to Fixed
         # leaves the old one in place: it is inert (nothing emits it) and it
@@ -912,10 +924,44 @@ class EditorService:
             The id of the object the inspector should show, so the picker
             re-opens on the thing that was just edited.
         """
-        if mode not in ("fixed", "constraint_search"):
+        if mode not in get_args(LaneletMode):
             raise EditorError(f"Unknown lanelet mode {mode!r}.")
         slot = self.require_slot(document, slot_key)
-        slot.attach().mode = mode  # type: ignore[assignment]
+        choice = slot.attach()
+        choice.mode = mode  # type: ignore[assignment]
+        if mode == "derived" and choice.binding is None:
+            choice.binding = BindingRef(type="matched")
+        return slot.owner_id
+
+    def set_lanelet_binding(
+        self, document: ScenarioDocument, slot_key: str, form: Mapping[str, Any]
+    ) -> str:
+        """Say how a derived lanelet slot follows the search's pick.
+
+        A change of type starts from the new type's defaults; the same type
+        keeps what was set and takes the form's fields over it.
+
+        Returns:
+            The id of the object the inspector should show.
+
+        Raises:
+            EditorError: If the type is unknown or does not produce a lanelet.
+        """
+        slot = self.require_slot(document, slot_key)
+        choice = slot.attach()
+        binding_type = str(form.get("binding_type") or "").strip() or "matched"
+        spec = get_binding_spec(binding_type)
+        if spec is None or spec.produces != "lanelet":
+            raise EditorError(f"{binding_type!r} does not work out a lanelet.")
+        existing = choice.binding
+        params = dict(
+            existing.params
+            if existing is not None and existing.type == binding_type
+            else default_params(spec.fields)
+        )
+        if existing is not None and existing.type == binding_type:
+            params.update(_parse(spec.fields, form, prefix="binding_"))
+        choice.binding = BindingRef(type=binding_type, params=params)
         return slot.owner_id
 
     def add_constraint(
