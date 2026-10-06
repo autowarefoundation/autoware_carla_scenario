@@ -1,0 +1,122 @@
+# Deploys the documentation to GitHub Pages with mike, outside of a release.
+#
+# The release workflow publishes each release's docs as `X.Y.Z` and moves
+# `latest` to it. Until the first release, and between releases, that leaves
+# Pages empty or behind master, so this workflow keeps two things up to date:
+#
+#   push to master     The docs as they stand on master, as the version `dev`.
+#                      While no release has published `latest`, `dev` is also
+#                      made the default, so the site is never a 404.
+#   workflow_dispatch  With a `version`, publish the selected ref's docs as that
+#                      version and move `latest` to it -- for a version whose
+#                      release never deployed its docs (3.1.2, the last release
+#                      before the move to autowarefoundation, is one). The ref's
+#                      package version must match. Without a `version`, the
+#                      same as a push.
+#
+# Pages must be set, once, to deploy from the `gh-pages` branch (Settings ->
+# Pages -> Build and deployment -> Deploy from a branch). This workflow creates
+# that branch on its first run.
+
+name: Docs
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "autoware_carla_scenario/docs/**"
+      - "autoware_carla_scenario/mkdocs.yml"
+      - "autoware_carla_scenario/overrides/**"
+      # mkdocstrings renders the API reference from the sources.
+      - "autoware_carla_scenario/src/**"
+      - ".github/actions/build-docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >
+          Publish the selected ref's docs as this version (e.g. 3.1.2) and move
+          `latest` to it. Leave empty to deploy master's docs as `dev`.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+# mike commits to gh-pages; two deploys racing would have one rejected.
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy the documentation
+    runs-on: ubuntu-latest
+    env:
+      REQUESTED: ${{ inputs.version }}
+      CONFIG: autoware_carla_scenario/mkdocs.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The git-revision-date plugin reads each page's history.
+          fetch-depth: 0
+
+      - name: resolve the version to deploy
+        id: v
+        run: |
+          set -euo pipefail
+          pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
+          if [ -z "${REQUESTED}" ]; then
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Deploying ${GITHUB_REF_NAME} (package ${pkg}) as dev"
+            exit 0
+          fi
+          version="${REQUESTED#v}"
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'${REQUESTED}' is not a version like 3.1.2"
+            exit 1
+          fi
+          if [ "${pkg}" != "${version}" ]; then
+            echo "::error::${GITHUB_REF_NAME} carries version ${pkg}, not ${version}; run this from the v${version} tag or its release commit"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "Deploying ${GITHUB_REF_NAME} as ${version} (latest)"
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+        with:
+          install-dev-deps: "true"
+
+      # Builds once to fail early, and injects the version string into mkdocs.yml,
+      # which mike's own build below then picks up -- as the release workflow does.
+      - name: Build carla-scenario documentation
+        uses: ./.github/actions/build-docs
+        with:
+          package-dir: autoware_carla_scenario
+
+      - name: Deploy to GitHub Pages with mike
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          RELEASE: ${{ steps.v.outputs.release }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages --depth=1 || true
+
+          if [ "${RELEASE}" = "true" ]; then
+            uv run mike deploy --push --update-aliases --config-file "${CONFIG}" "${VERSION}" latest
+            uv run mike set-default --push --config-file "${CONFIG}" latest
+            exit 0
+          fi
+
+          uv run mike deploy --push --title "dev (master)" --config-file "${CONFIG}" dev
+          # Point the site root at dev only while there is no release to point at.
+          if ! uv run mike list --json --config-file "${CONFIG}" \
+              | jq -e 'any(.[]; .aliases | index("latest"))' >/dev/null; then
+            uv run mike set-default --push --config-file "${CONFIG}" dev
+          fi
