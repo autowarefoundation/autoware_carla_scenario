@@ -43,4 +43,4 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 <video controls muted playsinline width="100%" src="../media/traffic_light_compliance.mp4"></video>
 
-*Town10HD_Opt, the first case: the search matched lanelet 719, where the ego starts. Result: PASSED.*
+*Town10HD_Opt, the first case: the search matched lanelet 719, where the ego starts. Result: PASSED. Recorded with `scenario.moving_speed_kmh=15`, so the run ends once the ego is visibly pulling away on green rather than at its first 1 km/h; the same threshold then applies while the light is red.*
