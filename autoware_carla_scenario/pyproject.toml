@@ -3,6 +3,10 @@ name = "autoware-carla-scenario"
 version = "3.1.2"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
+license = "Apache-2.0"
+# A copy of the repository's LICENSE: license files have to live inside the
+# package directory to reach the sdist and wheel.
+license-files = ["LICENSE"]
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
 ]

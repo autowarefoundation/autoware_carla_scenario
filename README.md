@@ -129,3 +129,7 @@ The version line continues from `autoware_lanelet2_to_opendrive`, where this
 package started: it was split out at 2.62.0, so the first release was 2.62.1.
 Development moved from `hakuturu583/autoware_carla_scenario` to
 `autowarefoundation/autoware_carla_scenario` after 3.1.2.
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).
