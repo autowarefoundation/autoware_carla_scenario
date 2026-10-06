@@ -277,6 +277,9 @@ class RouteThroughBinding:
             type: route_through
             depth: 1
 
+    With ``last_only: true`` only the last lanelet is returned, as an ID, which
+    is what ``ego.goal_lanelet_id`` takes.
+
     Where the graph forks, the lowest lanelet ID is taken, so the same map
     always expands to the same cases.  A pick the route cannot be walked from
     raises, and the caller (:func:`~autoware_carla_scenario.sweeper.expand.expand_sweep`)
@@ -285,6 +288,8 @@ class RouteThroughBinding:
 
     target_key: str
     depth: int = 1
+    #: Only the route's last lanelet, as an ID rather than a list: a goal.
+    last_only: bool = False
 
     def __post_init__(self) -> None:
         if self.depth < 1:
@@ -310,12 +315,61 @@ class RouteThroughBinding:
                 )
             current = following[0]
             route.append(current.id)
+        if self.last_only:
+            return BindingResult(value=route[-1])
         return BindingResult(value=route)
+
+
+@dataclass
+class AdjacentBinding:
+    """The lanelet beside the pick that a vehicle may change into from it, by
+    ID: where another vehicle drives alongside the ego::
+
+        bindings:
+          scenario.npc_lanelet_id:
+            type: adjacent
+            side: left
+
+    The lane ``has_adjacent`` asks about, from the routing graph's ``left`` /
+    ``right``. A pick with no such lane on that side raises, and the case is
+    dropped.
+    """
+
+    target_key: str
+    side: str = "left"
+
+    def __post_init__(self) -> None:
+        if self.side not in ("left", "right"):
+            raise ValueError(
+                f"adjacent side must be 'left' or 'right', got {self.side!r}"
+            )
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the ID of the lanelet beside the pick."""
+        from .constraints import create_routing_graph
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        lanelet = lanelet_map.laneletLayer[lanelet_id]
+        beside = (
+            routing_graph.left(lanelet)
+            if self.side == "left"
+            else routing_graph.right(lanelet)
+        )
+        if beside is None:
+            raise ValueError(
+                f"[{self.target_key}] lanelet {lanelet_id} has no lane to change "
+                f"into on its {self.side}."
+            )
+        return BindingResult(value=beside.id)
 
 
 _BINDING_REGISTRY: dict[str, type] = {
     "stop_line_offset": StopLineOffsetBinding,
     "route_through": RouteThroughBinding,
+    "adjacent": AdjacentBinding,
 }
 
 

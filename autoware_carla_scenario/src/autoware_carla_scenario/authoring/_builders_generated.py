@@ -59,6 +59,8 @@ __all__ = [
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
+    "build_traffic_sink_action",
+    "build_traffic_source_action",
     "build_walk_straight_action",
     "build_lane_change_action",
     "build_routing_action",
@@ -708,6 +710,58 @@ def build_environment_action(
         condition=condition,
         timing=timing,
         label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_traffic_sink_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`TrafficSinkAction`."""
+    from ..actions import TrafficSinkAction  # noqa: PLC0415
+    from ..actions.background_traffic import constraints_from_text  # noqa: PLC0415
+
+    params = compiled.params
+    constraints = constraints_from_text(
+        text=params["constraints"],
+    )
+    return TrafficSinkAction(
+        constraints=constraints,
+        label=compiled.label,
+        condition=condition,
+        timing=timing,
+        once=compiled.node.once,
+    )
+
+
+def build_traffic_source_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`TrafficSourceAction`."""
+    from ..actions import TrafficSourceAction  # noqa: PLC0415
+    from ..actions.background_traffic import constraints_from_text  # noqa: PLC0415
+
+    params = compiled.params
+    constraints = constraints_from_text(
+        text=params["constraints"],
+    )
+    return TrafficSourceAction(
+        constraints=constraints,
+        initial_vehicles=params["initial_vehicles"],
+        vehicles_per_minute=params["vehicles_per_minute"],
+        max_vehicles=params["max_vehicles"],
+        speed_kmh=params["speed_kmh"],
+        min_gap_m=params["min_gap_m"],
+        seed=params["seed"],
+        label=compiled.label,
+        condition=condition,
+        timing=timing,
         once=compiled.node.once,
     )
 

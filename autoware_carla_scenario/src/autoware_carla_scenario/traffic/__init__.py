@@ -25,6 +25,9 @@ Built-in backends:
 ``none``
     No traffic model at all: only the ego and whatever the scenario drives
     itself move.
+``sumo``
+    SUMO, co-simulated on the world's own road network (the ``sumo`` extra);
+    see :mod:`autoware_carla_scenario.traffic.sumo`.
 """
 
 from __future__ import annotations
@@ -74,6 +77,7 @@ __all__ = [
     "TurnDirection",
     "build_traffic_manager",
     "build_none",
+    "build_sumo",
     "register_builtin_backends",
     "TurningAtJunctions",
     "TRAFFIC_BACKEND_ENTRY_POINT_GROUP",
@@ -100,6 +104,18 @@ def build_none(options: Mapping[str, Any]) -> TrafficBackend:
     return NullTrafficBackend()
 
 
+def build_sumo(options: Mapping[str, Any]) -> TrafficBackend:
+    """Build the SUMO backend from its options mapping.
+
+    SUMO itself is loaded when the backend prepares a run, so naming it costs
+    nothing without the ``sumo`` extra installed.
+    """
+    from .sumo.backend import SumoTrafficBackend  # noqa: PLC0415
+    from .sumo.config import SumoBackendConfig  # noqa: PLC0415
+
+    return SumoTrafficBackend(SumoBackendConfig.from_mapping(options))
+
+
 def register_builtin_backends() -> None:
     """Register the backends this package ships.
 
@@ -109,6 +125,7 @@ def register_builtin_backends() -> None:
     """
     register_backend("traffic_manager", build_traffic_manager)
     register_backend("none", build_none)
+    register_backend("sumo", build_sumo)
 
 
 register_builtin_backends()

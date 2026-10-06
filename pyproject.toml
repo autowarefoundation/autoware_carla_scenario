@@ -24,6 +24,12 @@ dev = [
     "pytest>=9.0.3",
     "pytest-testmon>=2.2.0",
     "pytest-xdist>=3.8.0",
+    # The SUMO traffic backend and its tests (the `sumo` extra).
+    "eclipse-sumo>=1.23",
+    "libsumo>=1.23",
+    "sumolib>=1.23",
+    "traci>=1.23",
+    "roadgen>=0.14.0",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",

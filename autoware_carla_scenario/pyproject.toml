@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "2.65.0"
+version = "2.69.0"
 description = "CARLA scenario testing framework for Autoware"
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
@@ -50,6 +50,19 @@ dependencies = [
     # `alpasim-grpc`; proto/README.md says why.
     "grpcio>=1.60",
     "protobuf>=4.25.0,<5.0.0",
+]
+
+[project.optional-dependencies]
+# The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the
+# simulator, netconvert and randomTrips), driven in-process through libsumo,
+# and roadgen (hakuturu583/hdmap_generator), which converts the OpenDRIVE the
+# CARLA world runs into the network netconvert builds.
+sumo = [
+    "eclipse-sumo>=1.23",
+    "libsumo>=1.23",
+    "sumolib>=1.23",
+    "traci>=1.23",
+    "roadgen>=0.15.0",
 ]
 
 [build-system]

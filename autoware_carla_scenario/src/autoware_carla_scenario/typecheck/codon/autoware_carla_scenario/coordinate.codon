@@ -154,11 +154,15 @@ def frame_of(pose) -> CoordinateFrame:
     raise NotImplementedError()
 
 
-def to_carla_world(pose: Lanelet2Pose) -> CarlaWorldPose:
-    raise NotImplementedError()
-
-
-def to_carla_world(pose: OpenDrivePose) -> CarlaWorldPose:
+def to_carla_world(pose) -> CarlaWorldPose:
+    # A Lanelet2Pose or an OpenDrivePose. One definition: of two typed
+    # overloads Codon tries only the last, which refused a Lanelet2Pose.
+    if isinstance(pose, Lanelet2Pose):
+        pass
+    elif isinstance(pose, OpenDrivePose):
+        pass
+    else:
+        compile_error("to_carla_world takes a Lanelet2Pose or an OpenDrivePose")
     raise NotImplementedError()
 
 
@@ -208,7 +212,8 @@ def get_stop_line_poses(lanelet_id: int) -> List[Lanelet2Pose]:
     raise NotImplementedError()
 
 
-def get_stop_line_poses_with_following(lanelet_id: int) -> List[Lanelet2Pose]:
+def get_stop_line_poses_with_following(lanelet_id: int, depth: int = 1
+                                       ) -> List[Lanelet2Pose]:
     raise NotImplementedError()
 
 

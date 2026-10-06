@@ -7,10 +7,13 @@ via TrafficManager when the trigger condition is met.
 
 The pass condition is derived automatically from the spawn pose and the
 requested direction.  A lane change stays on the same OpenDRIVE road and
-shifts the lane ID by one:
+shifts the lane ID by one, towards the centre line for a left change under
+right-hand traffic.  Which way that is depends on the side of the reference
+line the lane is on: negative IDs (right of it, driving along it) count up to
+the centre, positive IDs (left of it, driving against it) count down:
 
-- **LEFT**  → ``lane_id + 1`` (toward the centre line)
-- **RIGHT** → ``lane_id - 1`` (away from the centre line)
+- **LEFT**  → ``lane_id + 1`` on a negative lane, ``lane_id - 1`` on a positive one
+- **RIGHT** → ``lane_id - 1`` on a negative lane, ``lane_id + 1`` on a positive one
 
 The scenario checks that the ego's lane ID changes as expected.
 
@@ -60,13 +63,19 @@ _DIRECTION_MAP: dict[str, LaneChangeDirection] = {
     "right": LaneChangeDirection.RIGHT,
 }
 
-#: OpenDRIVE lane-ID offset per direction.
-#: Right-side driving lanes have negative IDs; LEFT moves toward the
-#: centre (id + 1), RIGHT moves away (id - 1).
+#: OpenDRIVE lane-ID offset per direction on a negative (right-hand) lane:
+#: LEFT moves toward the centre (id + 1), RIGHT away from it (id - 1).  A
+#: positive lane runs the other way, so the offsets flip.
 _LANE_ID_DELTA: dict[LaneChangeDirection, int] = {
     LaneChangeDirection.LEFT: 1,
     LaneChangeDirection.RIGHT: -1,
 }
+
+
+def _target_lane_id(lane_id: int, direction: LaneChangeDirection) -> int:
+    """The OpenDRIVE lane a change *direction* from *lane_id* ends on."""
+    delta = _LANE_ID_DELTA[direction]
+    return lane_id + delta if lane_id < 0 else lane_id - delta
 
 
 class LaneChangeScenario(BaseScenario):
@@ -124,7 +133,7 @@ class LaneChangeScenario(BaseScenario):
 
         # --- Conditions based on expected outcome ---
         # Target lane ID is derived from spawn lane ID + direction delta.
-        target_lane_id = od_pose.lane_id + _LANE_ID_DELTA[direction]
+        target_lane_id = _target_lane_id(od_pose.lane_id, direction)
         expect_fail = cfg.expect == "fail"
         logger.info(
             "Expecting lane change: road='%s' lane %d -> %d (%s) [expect=%s]",

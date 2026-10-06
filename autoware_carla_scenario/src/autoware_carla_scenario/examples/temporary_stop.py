@@ -94,7 +94,9 @@ class TemporaryStopScenario(BaseScenario):
 
         # --- Auto-detect stop line from spawn lanelet + following lanelets ---
         spawn_lanelet_id = self._spawn_pose.lanelet_id
-        stop_poses = get_stop_line_poses_with_following(spawn_lanelet_id)
+        # A swept spawn is walked back from the stop line and can sit more
+        # than one lanelet short of it.
+        stop_poses = get_stop_line_poses_with_following(spawn_lanelet_id, depth=3)
         if not stop_poses:
             msg = (
                 f"No stop lines found on lanelet {spawn_lanelet_id} "

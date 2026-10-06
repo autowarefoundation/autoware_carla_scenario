@@ -1,0 +1,46 @@
+# @package _global_
+# Logical: a pedestrian runs out in front of the ego, on every lane at the
+# right-hand edge of the map's roads, one concrete scenario each.
+#
+#   scenario-expand scenario=pedestrian_dart_out/pedestrian_dart_out map=<map>
+#
+# The values outside `sweep:` are what a run without expanding uses: a fixed
+# Nishi-Shinjuku case. The lanelet is replaced per case.
+scenario:
+  name: pedestrian_dart_out
+  # At the kerb 35 m ahead, half a lane and a bit off the lane's centre.
+  pedestrian_ahead_m: 35.0
+  pedestrian_offset_m: -3.0
+  # Runs out at 2 m/s once the ego is within 20 m.
+  trigger_distance_m: 20.0
+  walk_speed_ms: 2.0
+  pass_beyond_m: 10.0
+  timeout_seconds: 25.0
+
+ego:
+  initial_speed_kmh: 30.0
+  spawn_lanelet_id: 20
+  spawn_s: 5.0
+
+sweep:
+  constraints:
+    ego.spawn_lanelet_id:
+      - type: and
+        constraints:
+          # The rightmost lane: no lane on its right, so the pedestrian
+          # steps straight off the kerb into it.
+          - type: not
+            constraint:
+              type: has_adjacent
+              value: right
+          - type: not
+            constraint:
+              type: is_junction
+          # The spawn, 35 m to the pedestrian, 10 m past it, and a margin.
+          - type: lanelet_length
+            rule: greater_than_or_equal
+            value: 55.0
+          - type: not
+            constraint:
+              type: in_set
+              values: ${map.no_3d_model_lanelet_ids}

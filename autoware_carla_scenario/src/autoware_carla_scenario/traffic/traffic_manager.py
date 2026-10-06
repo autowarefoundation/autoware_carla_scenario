@@ -54,6 +54,17 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: left-handed and clockwise-positive seen from above.
 _LEFT_TARGET_DEG: float = -90.0
 _RIGHT_TARGET_DEG: float = 90.0
+#: The heading change each direction aims for through a junction.
+_TARGET_DEG: dict[TurnDirection, float] = {
+    TurnDirection.LEFT: _LEFT_TARGET_DEG,
+    TurnDirection.RIGHT: _RIGHT_TARGET_DEG,
+    TurnDirection.STRAIGHT: 0.0,
+}
+
+
+#: The blueprint a background vehicle gets when none is asked for: one CARLA
+#: 0.9 and 0.10 both ship.
+_BACKGROUND_BLUEPRINT = "vehicle.lincoln.mkz*"
 
 
 class TrafficManagerBackend(TrafficBackend):
@@ -91,6 +102,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._client = client
         self._random_seed: Optional[int] = None
         self._closed = False
+        #: Handle -> actor of every background vehicle spawned this run.
+        self._background: dict[str, Any] = {}
+        self._background_count = 0
+        self._started = False
 
     # ------------------------------------------------------------------
     # Properties
@@ -125,6 +140,7 @@ class TrafficManagerBackend(TrafficBackend):
 
     def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
         """Hand every vehicle that is not driven elsewhere to the TrafficManager."""
+        self._started = True
         skip = set(skip_actor_ids)
         enabled = 0
         for actor in world.get_actors().filter("vehicle.*"):
@@ -147,6 +163,14 @@ class TrafficManagerBackend(TrafficBackend):
         and safe to call after a failed :meth:`prepare`, because teardown runs
         whatever happened during the run.
         """
+        for actor in self._background.values():
+            try:
+                actor.destroy()
+            except RuntimeError:
+                pass
+        self._background = {}
+        self._background_count = 0
+        self._started = False
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -164,6 +188,81 @@ class TrafficManagerBackend(TrafficBackend):
             "port": self.port,
             "random_seed": self._random_seed,
         }
+
+    # ------------------------------------------------------------------
+    # Background traffic
+    # ------------------------------------------------------------------
+
+    def spawn_background(
+        self,
+        world: Any,
+        transform: Any,
+        *,
+        speed_kmh: float,
+        blueprint: Optional[str] = None,
+    ) -> Optional[str]:
+        """Spawn a CARLA vehicle at *transform* and give it to the TrafficManager.
+
+        One spawned before :meth:`start` is put on autopilot there, with every
+        other vehicle; one spawned during the run is put on it at once.
+        """
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        library = world.get_blueprint_library()
+        found = library.filter(blueprint or _BACKGROUND_BLUEPRINT)
+        if not found:
+            logger.warning("No vehicle blueprint %r for background traffic", blueprint)
+            return None
+        self._background_count += 1
+        handle = f"background{self._background_count}"
+        chosen = found[0]
+        if chosen.has_attribute("role_name"):
+            chosen.set_attribute("role_name", handle)
+        lifted = carla.Transform(
+            carla.Location(
+                transform.location.x, transform.location.y, transform.location.z + 0.5
+            ),
+            transform.rotation,
+        )
+        actor = world.try_spawn_actor(chosen, lifted)
+        if actor is None:
+            return None  # The spot is taken; the caller tries elsewhere.
+        self._background[handle] = actor
+        speed = max(speed_kmh, 0.0) / 3.6
+        forward = lifted.get_forward_vector()
+        actor.set_target_velocity(
+            carla.Vector3D(forward.x * speed, forward.y * speed, 0.0)
+        )
+        if self._started:
+            actor.set_autopilot(True, self.port)
+        tm = self._require_tm("spawn_background")
+        if tm is not None:
+            tm.set_desired_speed(actor, max(speed_kmh, 1.0))
+        return handle
+
+    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+        """Every background vehicle still in the world, at its ``(x, y)``."""
+        del world
+        out: dict[str, tuple[float, float]] = {}
+        for handle, actor in list(self._background.items()):
+            try:
+                location = actor.get_location()
+            except RuntimeError:
+                self._background.pop(handle)  # Destroyed by something else.
+                continue
+            out[handle] = (location.x, location.y)
+        return out
+
+    def remove_background(self, world: Any, handle: str) -> None:
+        """Destroy the background vehicle *handle*."""
+        del world
+        actor = self._background.pop(handle, None)
+        if actor is None:
+            return
+        try:
+            actor.destroy()
+        except RuntimeError:
+            pass
 
     # ------------------------------------------------------------------
     # Manoeuvres
@@ -508,9 +607,10 @@ def _pick_branch(
 
     - Left turn  ≈ −90° heading change
     - Right turn ≈ +90° heading change
+    - Straight on ≈ 0°
     """
     entry_yaw = pre_junction_wp.transform.rotation.yaw
-    target = _LEFT_TARGET_DEG if direction is TurnDirection.LEFT else _RIGHT_TARGET_DEG
+    target = _TARGET_DEG[direction]
 
     best: Optional[List[Any]] = None
     best_score = float("inf")
