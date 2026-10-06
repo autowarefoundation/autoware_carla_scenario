@@ -1,0 +1,14 @@
+# name|scenario|ego spawn lanelet on Town10HD_Opt|title|extra overrides
+traffic_light_compliance|traffic_light_compliance/traffic_light_compliance|719|Traffic light compliance|scenario.moving_speed_kmh=15.0
+temporary_stop|temporary_stop/temporary_stop|3095|Temporary stop|
+intersection_left_turn|intersection_passing/left_turn|5975|Intersection: left turn|
+intersection_right_turn|intersection_passing/right_turn|3235|Intersection: right turn|
+intersection_right_turn_sweep|intersection_passing/right_turn_sweep|3235|Intersection: right turn from a standstill|
+intersection_straight|intersection_passing/straight|860|Intersection: straight|
+lane_change_left|lane_change/left|324|Lane change left|
+lane_change_right|lane_change/right|446|Lane change right|
+lane_change_fail_left|lane_change_fail/left|446|Refused lane change left|scenario.timeout_seconds=8.0
+lane_change_fail_right|lane_change_fail/right|31|Refused lane change right|scenario.timeout_seconds=8.0
+pedestrian_dart_out|pedestrian_dart_out/pedestrian_dart_out|324|Pedestrian dart-out|
+cut_in_left|cut_in/left|324|Cut-in from the left|
+cut_in_right|cut_in/right|446|Cut-in from the right|
