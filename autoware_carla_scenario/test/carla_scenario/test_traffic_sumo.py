@@ -14,6 +14,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from types import SimpleNamespace
+
 import pytest
 
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
@@ -186,12 +188,12 @@ class _FakeActor:
         self.transform = transform
 
     def get_velocity(self) -> Any:
-        import carla
+        import typesafe_carla.carla as carla
 
         return carla.Vector3D(0.0, 0.0, 0.0)
 
     def get_angular_velocity(self) -> Any:
-        import carla
+        import typesafe_carla.carla as carla
 
         return carla.Vector3D(0.0, 0.0, 0.0)
 
@@ -345,7 +347,7 @@ def crossroads_with_sidewalks(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _carla_transform(x: float, y: float, yaw: float) -> Any:
-    import carla
+    import typesafe_carla.carla as carla
 
     return carla.Transform(carla.Location(x, y, 0.0), carla.Rotation(yaw=yaw))
 
@@ -818,10 +820,19 @@ def test_the_speed_controller_catches_up_holds_and_stops() -> None:
 
 @needs_sumo
 def test_physics_mode_drives_sumos_vehicles_with_throttle_brake_and_steer(
-    crossroads: Path, tmp_path: Path
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import carla
+    import typesafe_carla.carla as carla
 
+    # typesafe_carla's commands are opaque (no actor_id / control to read
+    # back), so record what the backend builds them from.
+    controls: list[SimpleNamespace] = []
+
+    def apply_vehicle_control(actor_id: int, control: Any) -> SimpleNamespace:
+        controls.append(SimpleNamespace(actor_id=actor_id, control=control))
+        return controls[-1]
+
+    monkeypatch.setattr(carla.command, "ApplyVehicleControl", apply_vehicle_control)
     client = _BatchClient()
     _CLIENT["client"] = client
     try:
@@ -833,11 +844,9 @@ def test_physics_mode_drives_sumos_vehicles_with_throttle_brake_and_steer(
     try:
         for i in range(20):
             backend.tick(world, i * 0.05)
-        commands = [c for batch in client.batches for c in batch]
-        controls = [
-            c for c in commands if isinstance(c, carla.command.ApplyVehicleControl)
-        ]
-        assert controls and all(c.actor_id == npc.id for c in controls)
+        sent = [c for batch in client.batches for c in batch]
+        assert controls and all(c in sent for c in controls)
+        assert all(c.actor_id == npc.id for c in controls)
         # SUMO pulls away, so the car is given throttle -- and is not teleported.
         assert max(c.control.throttle for c in controls) > 0.0
         assert npc.constant_velocity is None
@@ -874,3 +883,33 @@ def test_feedback_moves_the_sumo_vehicle_to_where_its_car_really_is(
         assert backend._feedback_count == 1
     finally:
         backend.close()
+
+
+def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
+    """typesafe_carla's ``TrafficLight.get_state()`` gives a plain int."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    class _Lights:
+        def __init__(self) -> None:
+            self.states = {"tls": "rrrr"}
+
+        def getRedYellowGreenState(self, tls: str) -> str:
+            return self.states[tls]
+
+        def setRedYellowGreenState(self, tls: str, state: str) -> None:
+            self.states[tls] = state
+
+    def light(state: Any) -> SimpleNamespace:
+        return SimpleNamespace(get_state=lambda: int(state))
+
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(trafficlight=_Lights())
+    backend._signals = {
+        ("tls", 0): light(carla.TrafficLightState.Green),
+        ("tls", 1): light(carla.TrafficLightState.Yellow),
+        ("tls", 3): light(carla.TrafficLightState.Off),  # no SUMO state: kept
+    }
+    backend._signals_to_sumo()
+    assert backend._traci.trafficlight.states["tls"] == "Gyrr"

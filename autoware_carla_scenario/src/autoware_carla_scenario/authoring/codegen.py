@@ -51,6 +51,9 @@ __all__ = ["GenerationError", "diff_against_disk", "generate", "main"]
 
 #: Where the rendered module lands, and the template that renders it.
 _HERE = Path(__file__).parent
+
+#: The CARLA client module, as the runtime imports it (``import ... as carla``).
+_CARLA_MODULE = "typesafe_carla.carla"
 TEMPLATES_DIR = _HERE / "templates"
 OUTPUT_PATH = _HERE / "_builders_generated.py"
 TEMPLATE_NAME = "builders.py.jinja"
@@ -93,12 +96,11 @@ def _import_localns() -> dict[str, Any]:
     Several constructors annotate a type they only import under
     ``TYPE_CHECKING`` -- ``carla.TrafficLightState``, ``BaseAction`` -- so
     :func:`typing.get_type_hints` cannot resolve them from module globals
-    alone.  Handing it the framework's public names, and CARLA, closes that gap
-    without asking the runtime to import anything it does not need.
+    alone.  Handing it the framework's public names, and CARLA (typesafe_carla's
+    ``typesafe_carla.carla``, under the name the runtime imports it as), closes
+    that gap without asking the runtime to import anything it does not need.
     """
-    namespace: dict[str, Any] = {}
-    for module_name in ("carla",):
-        namespace[module_name] = importlib.import_module(module_name)
+    namespace: dict[str, Any] = {"carla": importlib.import_module(_CARLA_MODULE)}
     for module_name in (
         "autoware_carla_scenario.actions",
         "autoware_carla_scenario.conditions",
@@ -196,12 +198,13 @@ def _enum_expression(
     the enums impossible to drift apart: an option matching neither is an error
     now, where before it only surfaced as a ``KeyError`` at build time.
     """
-    if not (isinstance(enum_type, type) and issubclass(enum_type, enum.Enum)):
-        # Boost.Python enums (``carla.TrafficLightState``) are plain classes
-        # whose members are attributes, so they are read with ``getattr`` and
-        # checked with ``hasattr``.  Checking matters most here: this is the
-        # mirror the registry cannot import, and an option that no longer names
-        # a member would otherwise raise only against a live simulator.
+    if _is_carla_type(enum_type):
+        # CARLA's enums (``carla.TrafficLightState``) are read off the module
+        # the runtime imports with ``getattr`` and checked with ``hasattr``,
+        # whatever kind of class the client makes them.  Checking matters most
+        # here: this is the mirror the registry cannot import, and an option
+        # that no longer names a member would otherwise raise only against a
+        # live simulator.
         unknown = [option for option in options if not hasattr(enum_type, option)]
         if unknown:
             raise GenerationError(
@@ -210,7 +213,7 @@ def _enum_expression(
             )
         return (
             f"getattr(carla.{enum_type.__name__}, str({source}))",
-            "import carla",
+            f"import {_CARLA_MODULE} as carla",
         )
 
     name = enum_type.__name__
@@ -361,15 +364,13 @@ class RenderedBuilder:
 
 
 def _is_carla_type(annotation: type) -> bool:
-    """Whether *annotation* comes from the CARLA client library.
+    """Whether *annotation* comes from the CARLA client library,
+    typesafe_carla's ``typesafe_carla.carla``.
 
-    Asked of the module rather than read off ``__module__``, which spells
-    itself differently between clients -- ``carla`` in 0.10.0,
-    ``carla.libcarla`` in 0.9.16.  Reading the string would make the generated
-    file depend on which CARLA is installed when it is generated, and the
-    committed one is checked against a freshly generated one on both.
+    Asked of the module rather than read off ``__module__``, so the generated
+    file does not depend on how the client spells its own module name.
     """
-    module = importlib.import_module("carla")
+    module = importlib.import_module(_CARLA_MODULE)
     return getattr(module, annotation.__name__, None) is annotation
 
 

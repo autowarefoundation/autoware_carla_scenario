@@ -37,7 +37,9 @@ import logging
 from pathlib import Path
 from typing import IO, Any
 
-import carla
+import typesafe_carla.carla as carla
+
+from .utils.traffic_light import traffic_light_state_name
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ def _light_record(tl: Any) -> dict[str, Any]:
 
 
 def _light_state(tl: Any) -> str:
-    return str(tl.state).rsplit(".", 1)[-1]
+    return traffic_light_state_name(tl.state)
 
 
 class TrajectoryRecorder:

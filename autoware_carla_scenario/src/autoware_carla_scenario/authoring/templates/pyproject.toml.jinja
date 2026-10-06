@@ -2,8 +2,9 @@
 name = "{{ distribution_name }}"
 version = "{{ package_version }}"
 description = {{ description | toml_string }}
-# Matches the framework's own requirement: the CARLA client wheel is what caps
-# the interpreter, so a scenario package cannot be looser than the framework.
+# Matches the framework's own requirement -- the interpreters its CI tests --
+# so a scenario package cannot be looser than the framework it runs on. The
+# wheelhouse is resolved for each of them.
 requires-python = "{{ requires_python }}"
 dependencies = [
     # {{ pin_note }}
@@ -35,16 +36,11 @@ testpaths = ["tests"]
 # installed scenario that left them behind would have no scenario in it.
 module-name = ["{{ package_name }}"]
 
-[tool.uv]
 {% if uv_required_version %}
+[tool.uv]
 # The uv that produced uv.lock. Resolving with a different uv can produce a
 # different lock, so the version that generated this package is required.
 required-version = "=={{ uv_required_version }}"
-{% endif %}
-{% if vendored_wheels %}
-# The CARLA client is not published to any index, so the wheel travels with the
-# package. The path is relative: the package resolves wherever it is copied.
-find-links = ["{{ vendored_wheels }}"]
 {% endif %}
 {% if sources %}
 

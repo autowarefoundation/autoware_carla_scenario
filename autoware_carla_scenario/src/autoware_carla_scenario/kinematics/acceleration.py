@@ -24,7 +24,7 @@ from .frames import CoordinateFrame, FrameMismatchError
 from .vector import Vector3
 
 if TYPE_CHECKING:
-    import carla  # noqa: F401
+    import typesafe_carla.carla as carla  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

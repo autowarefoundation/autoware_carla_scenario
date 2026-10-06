@@ -8,7 +8,8 @@ This package provides a framework for creating and running automated scenario te
 
 ## Features
 
-- Automated scenario execution in CARLA simulator (UE5 / `0.10.0` and legacy `0.9.16`)
+- Automated scenario execution in CARLA simulator (UE5: `0.10.0` and `ue5-dev`),
+  through the statically typed [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) client
 - Configurable scenarios using Hydra `compose` + structured configs
 - Glob-pattern batch execution of multiple scenarios in a single CARLA session
 - Condition-based scenario evaluation: timing, collisions, traffic signals,
@@ -41,7 +42,7 @@ This package provides a framework for creating and running automated scenario te
 - **Repository**: [hakuturu583/autoware_carla_scenario](https://github.com/hakuturu583/autoware_carla_scenario)
 - **Release Notes**: [View all releases on GitHub](https://github.com/hakuturu583/autoware_carla_scenario/releases)
 - **License**: Check the repository for license information
-- **Python Version**: 3.10 - 3.12 (`>=3.10,<3.13`; the ceiling is CARLA's bindings, which publish no wheel above cp312)
+- **Python Version**: 3.10 - 3.12 (`>=3.10,<3.13`, the interpreters CI tests)
 
 ## Getting Help
 

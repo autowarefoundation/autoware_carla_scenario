@@ -15,7 +15,7 @@ import math
 from dataclasses import dataclass
 from typing import Union, overload
 
-import carla
+import typesafe_carla.carla as carla
 
 from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 

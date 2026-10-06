@@ -46,10 +46,10 @@ from autoware_carla_scenario.authoring.package_export import (
 )
 from autoware_carla_scenario.authoring.starter import new_document
 from autoware_carla_scenario.authoring.wheelhouse import (
+    TESTED_PYTHONS,
     WheelhouseError,
     build_wheelhouse,
-    carla_extra,
-    carla_wheels,
+    supported_pythons,
 )
 
 
@@ -416,112 +416,67 @@ class TestExportRefusals:
         assert list(tmp_path.iterdir()) == []
 
 
-class TestVendoredCarlaClient:
-    """The client is on no index, so a package that does not carry it cannot run."""
+class TestCarlaClient:
+    """The client is typesafe_carla, a plain dependency of the framework."""
 
-    def test_the_repositorys_wheel_is_found_and_matches_the_extra(self) -> None:
-        wheels = carla_wheels()
-        if not wheels:
-            pytest.skip("no CARLA wheel is vendored in this checkout")
-        assert all(wheel.suffix == ".whl" for wheel in wheels)
-        # Exactly one client: the repository also vendors the legacy 0.9.16
-        # wheel, and two mutually exclusive clients in one wheelhouse is not a
-        # wheelhouse anybody can install.
-        assert len({wheel.name.split("-")[1] for wheel in wheels}) == 1
+    def test_an_export_asks_for_no_extra_and_vendors_nothing(
+        self, package: Path
+    ) -> None:
+        """typesafe-carla is on PyPI and the framework depends on it directly.
 
-    def test_the_vendored_wheels_cover_the_declared_python_range(self) -> None:
-        """`requires-python` claims to stop where the client stops. Check it.
-
-        The ceiling is a hand-written number in one file and the wheels it
-        describes are files in another, and nothing but this makes them move
-        together. Widen the range without vendoring a wheel and the failure
-        lands on whoever installs the export, not on whoever widened it.
+        No client extra to request, and no wheel that has to travel with the
+        package -- so no relative find-links and no vendored directory.
         """
-        import re
+        data = tomllib.loads((package / "pyproject.toml").read_text())
+        requirements = data["project"]["dependencies"]
+        assert not [r for r in requirements if r.startswith(f"{DISTRIBUTION}[")]
+        assert "find-links" not in data.get("tool", {}).get("uv", {})
+        assert not (package / "carla_wheels").exists()
 
+    def test_the_readme_names_the_client_and_its_prebuilt_package(
+        self, package: Path
+    ) -> None:
+        """The client is typesafe_carla, whose wheel carries its CPython package.
+
+        The README has to name the import a scenario uses -- never the official
+        `carla` package -- and tell an offline installer that nothing has to be
+        built on the target, so nobody installs `cc` or runs a build for nothing.
+        """
+        readme = (package / "README.md").read_text()
+        assert "import typesafe_carla.carla as carla" in readme
+        assert "prebuilt" in readme
+        assert "carla-*.whl" not in readme
+        assert "extra" not in readme
+
+    def test_tested_pythons_match_the_frameworks_requires_python(self) -> None:
+        """Three hand-written statements of one range; nothing else ties them.
+
+        A generated package inherits the framework's `requires-python`, the
+        wheelhouse is resolved for each of :data:`TESTED_PYTHONS` it admits, and
+        CI's test matrix is what "tested" means. Widen one without the others
+        and the wheelhouse silently covers fewer interpreters than the package
+        claims to support, or more than CI tests.
+        """
         from autoware_carla_scenario.authoring.framework_pin import (
             framework_source_root,
         )
 
-        wheels = carla_wheels()
         pyproject = framework_source_root() / "pyproject.toml"
-        if not wheels or not pyproject.is_file():
-            pytest.skip("not a source checkout with vendored CARLA wheels")
+        if not pyproject.is_file():
+            pytest.skip("not a source checkout")
+        from packaging.specifiers import SpecifierSet
 
         declared = tomllib.loads(pyproject.read_text())["project"]["requires-python"]
-        floor = re.search(r">=\s*3\.(\d+)", declared)
-        ceiling = re.search(r"<\s*3\.(\d+)", declared)
-        assert floor and ceiling, declared
+        admitted = [
+            f"3.{minor}"
+            for minor in range(6, 30)
+            if SpecifierSet(declared).contains(f"3.{minor}")
+        ]
+        assert admitted == list(TESTED_PYTHONS), declared
 
-        supported = {
-            f"cp3{minor}" for minor in range(int(floor.group(1)), int(ceiling.group(1)))
-        }
-        vendored = {wheel.name.split("-")[2] for wheel in wheels}
-        assert vendored == supported, (
-            f"{declared} says {sorted(supported)}, carla_wheels/ has "
-            f"{sorted(vendored)} -- vendor the wheel or narrow the range"
-        )
-
-    def test_an_export_vendors_it_and_asks_for_it(self, package: Path) -> None:
-        if not carla_wheels():
-            pytest.skip("no CARLA wheel is vendored in this checkout")
-        data = tomllib.loads((package / "pyproject.toml").read_text())
-        assert f"{DISTRIBUTION}[{carla_extra()}]" in data["project"]["dependencies"]
-        # Relative, so the package resolves wherever it is copied.
-        assert data["tool"]["uv"]["find-links"] == ["carla_wheels"]
-        assert list((package / "carla_wheels").glob("carla-*.whl"))
-
-    def test_a_client_no_extra_pins_is_said_out_loud(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Defaulting is fine; defaulting silently is not.
-
-        A client an extra names exactly, and no client at all, both have a
-        right answer. Anything else -- 0.9.15, say -- means the export is
-        about to request a different client from the one the scenario was
-        authored against.
-        """
-        import autoware_carla_scenario.authoring.wheelhouse as module
-
-        monkeypatch.setattr(module, "_installed_carla", lambda: "0.9.15")
-        result = export_package(new_document(), tmp_path, **OFFLINE)
-        assert any("CARLA 0.9.15 is installed" in w for w in result.warnings)
-
-    def test_a_locally_built_client_is_the_client_it_was_built_from(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """`0.10.0+custom` is 0.10.0, compiled elsewhere -- not a mismatch."""
-        import autoware_carla_scenario.authoring.wheelhouse as module
-
-        monkeypatch.setattr(module, "_installed_carla", lambda: "0.10.0+custom")
-        assert module.carla_extra() == "carla"
-        assert module.unpinned_carla_client() is None
-
-    def test_the_extra_is_asked_for_even_with_no_wheel_to_vendor(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Vendoring answers *where from*, not *whether*.
-
-        The legacy client is published to PyPI, so nothing has to be vendored
-        for it -- and an export that dropped the extra because it found no
-        local wheel would build a wheelhouse with no `carla` in it and report
-        success. A scenario that cannot import carla cannot run.
-        """
-        import autoware_carla_scenario.authoring.package_export as module
-
-        monkeypatch.setattr(module, "carla_wheels", lambda _extra: [])
-        result = export_package(new_document(), tmp_path, **OFFLINE)
-        data = tomllib.loads((result.root / "pyproject.toml").read_text())
-        assert f"{DISTRIBUTION}[{carla_extra()}]" in data["project"]["dependencies"]
-        # Nothing to point a relative find-links at.
-        assert "find-links" not in data.get("tool", {}).get("uv", {})
-        assert any("No local wheel was vendored" in w for w in result.warnings)
-        # ...and the README must not tell the reader to install a client that
-        # the package installs for them.
-        readme = (result.root / "README.md").read_text()
-        assert f"`{carla_extra()}` extra" in readme
-        assert "comes from an index" in readme
-        assert "not** installed by this package" not in readme
+        ci = framework_source_root().parent / ".github" / "workflows" / "ci.yml"
+        matrix = yaml.safe_load(ci.read_text())["jobs"]["test"]["strategy"]["matrix"]
+        assert matrix["python-version"] == list(TESTED_PYTHONS)
 
 
 class TestShippedRequirements:
@@ -711,6 +666,14 @@ class TestWheelhouseRefusals:
         assert any("No wheelhouse was built" in w for w in result.warnings)
 
 
+def _write_pyproject(root: Path, requires_python: str) -> None:
+    """A minimal package at *root* declaring *requires_python*."""
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "nothing"\nrequires-python = "{requires_python}"\n',
+        encoding="utf-8",
+    )
+
+
 class TestWheelhouseInterpreters:
     """A wheelhouse covers every interpreter the package can run under.
 
@@ -719,26 +682,36 @@ class TestWheelhouseInterpreters:
     `python3.12` to install out of the archive -- so the directory holds both.
     """
 
-    def test_the_vendored_clients_say_which_interpreters_are_supported(
+    def test_requires_python_picks_the_tested_interpreters(
         self, tmp_path: Path
     ) -> None:
-        """The CARLA client is the one dependency with a per-interpreter ceiling."""
-        from autoware_carla_scenario.authoring.wheelhouse import supported_pythons
-
-        wheels = tmp_path / "carla_wheels"
-        wheels.mkdir()
-        for tag in ("cp312", "cp310", "cp311"):
-            (wheels / f"carla-0.10.0-{tag}-{tag}-linux_x86_64.whl").write_text("")
-        # Neither of these names an interpreter to build for.
-        (wheels / "carla-0.10.0-py3-none-any.whl").write_text("")
-        (wheels / "README.md").write_text("")
-
+        """The tested interpreters the package's `requires-python` admits."""
+        _write_pyproject(tmp_path, ">=3.10,<3.13")
         assert supported_pythons(tmp_path) == ["3.10", "3.11", "3.12"]
 
-    def test_a_package_vendoring_nothing_says_nothing(self, tmp_path: Path) -> None:
-        """0.9.16 comes from PyPI, so there is no vendored tag to read."""
-        from autoware_carla_scenario.authoring.wheelhouse import supported_pythons
+    def test_an_open_range_stops_at_what_ci_tests(self, tmp_path: Path) -> None:
+        """`>=3.11` is not a list: nothing past the tested range is built for."""
+        _write_pyproject(tmp_path, ">=3.11")
+        assert supported_pythons(tmp_path) == [
+            version for version in TESTED_PYTHONS if version != "3.10"
+        ]
 
+    @pytest.mark.parametrize(
+        "pyproject",
+        [
+            None,
+            '[project]\nname = "nothing"\n',
+            '[project]\nname = "nothing"\nrequires-python = "not a specifier"\n',
+            '[project]\nname = "nothing"\nrequires-python = ">=4"\n',
+            "this is not toml = = =",
+        ],
+    )
+    def test_nothing_to_read_says_nothing(
+        self, tmp_path: Path, pyproject: str | None
+    ) -> None:
+        """The caller falls back to `.python-version` on an empty answer."""
+        if pyproject is not None:
+            (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
         assert supported_pythons(tmp_path) == []
 
     def test_one_resolution_pass_is_made_per_interpreter(
@@ -752,10 +725,7 @@ class TestWheelhouseInterpreters:
         import autoware_carla_scenario.authoring.wheelhouse as module
 
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
-        wheels = tmp_path / "carla_wheels"
-        wheels.mkdir()
-        for tag in ("cp310", "cp312"):
-            (wheels / f"carla-0.10.0-{tag}-{tag}-linux_x86_64.whl").write_text("")
+        _write_pyproject(tmp_path, ">=3.10,!=3.11.*")
 
         built: list[str] = []
         filled: list[Path] = []
@@ -788,17 +758,14 @@ class TestWheelhouseInterpreters:
         assert len(set(filled)) == 2
         assert "3.10, 3.12" in (wheelhouse.root / "README.md").read_text()
 
-    def test_an_explicit_interpreter_overrides_what_is_vendored(
+    def test_an_explicit_interpreter_overrides_requires_python(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Building for one Python stays possible -- it is just not the default."""
         import autoware_carla_scenario.authoring.wheelhouse as module
 
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
-        wheels = tmp_path / "carla_wheels"
-        wheels.mkdir()
-        for tag in ("cp310", "cp312"):
-            (wheels / f"carla-0.10.0-{tag}-{tag}-linux_x86_64.whl").write_text("")
+        _write_pyproject(tmp_path, ">=3.10,!=3.11.*")
 
         built: list[str] = []
 
@@ -822,10 +789,10 @@ class TestWheelhouseInterpreters:
         assert built == ["3.11"]
         assert wheelhouse.python_tags == ("3.11",)
 
-    def test_without_a_vendored_client_the_recorded_interpreter_is_used(
+    def test_without_requires_python_the_recorded_interpreter_is_used(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A package resolving its client from an index records one interpreter."""
+        """A package that declares no range is built for its `.python-version`."""
         import autoware_carla_scenario.authoring.wheelhouse as module
 
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
@@ -887,13 +854,14 @@ class TestExportSelfCheck:
         wheelhouse = result.wheelhouse
         assert wheelhouse is not None, result.log
         assert wheelhouse.root.is_dir()
-        # The scenario's own wheel, the framework and the client -- the three
-        # that are not on any index between them.
+        # The scenario's own wheel and the framework -- the two that are not
+        # on any index -- and the CARLA client with the Codon toolchain it
+        # pins, without which the scenario cannot import carla.
         names = " ".join(wheelhouse.wheels)
         assert "cut_in_scenario-" in names
         assert "autoware_carla_scenario-" in names
-        if carla_wheels():
-            assert "carla-" in names
+        assert "typesafe_carla-" in names
+        assert "typesafe_carla_toolchain-" in names
         assert (wheelhouse.root / "requirements.txt").is_file()
         readme = (wheelhouse.root / "README.md").read_text()
         # The venv layout is the exporting platform's, because that is the only

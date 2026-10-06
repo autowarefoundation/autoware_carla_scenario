@@ -24,7 +24,7 @@ from .poses import AnyPose
 from .transform import to_carla_location
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 def find_nearest_traffic_light(

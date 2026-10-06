@@ -29,13 +29,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
+from ..utils.traffic_light import traffic_light_state_name
 from ._proto import carla_driver_pb2, common_pb2
 from .base import DriverClientConfig
 from .geometry import Pose
 from .observation import to_local_pose, to_local_vector
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ _NO_STOP_LINE_M: float = -1.0
 #: CARLA reports posted speed limits in km/h.
 _KMH_TO_MPS: float = 1.0 / 3.6
 
-#: ``carla.TrafficLightState`` stringifies to these names.
+#: Proto states by :func:`traffic_light_state_name`.
 _LIGHT_STATES: Dict[str, "carla_driver_pb2.TrafficLightState"] = {
     "Red": carla_driver_pb2.TRAFFIC_LIGHT_STATE_RED,
     "Yellow": carla_driver_pb2.TRAFFIC_LIGHT_STATE_YELLOW,
@@ -63,7 +64,7 @@ _LIGHT_STATES: Dict[str, "carla_driver_pb2.TrafficLightState"] = {
     "Off": carla_driver_pb2.TRAFFIC_LIGHT_STATE_OFF,
 }
 
-#: Weather fields, read defensively because CARLA 0.10 dropped some of 0.9's.
+#: Weather fields, read defensively in case a CARLA build lacks one.
 _WEATHER_FIELDS = (
     "cloudiness",
     "precipitation",
@@ -289,7 +290,8 @@ class RendererDataBuilder:
         if light is None:
             return carla_driver_pb2.TRAFFIC_LIGHT_STATE_NONE
         return _LIGHT_STATES.get(
-            str(light.get_state()), carla_driver_pb2.TRAFFIC_LIGHT_STATE_UNKNOWN
+            traffic_light_state_name(light.get_state()),
+            carla_driver_pb2.TRAFFIC_LIGHT_STATE_UNKNOWN,
         )
 
     def _light_distance(self, light: Optional[Any], ego_pose: Pose) -> float:

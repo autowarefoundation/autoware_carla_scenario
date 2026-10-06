@@ -26,7 +26,7 @@ from .base import EgoObservation
 from .geometry import Pose, Trajectory
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 logger = logging.getLogger(__name__)

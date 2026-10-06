@@ -14,8 +14,9 @@ The runner does this for every scenario registered with
 :func:`~autoware_carla_scenario.register_scenario` (the ``typecheck`` config
 key), and ``scenario-check`` does it without running anything.  The CARLA
 API is checked against `typesafe_carla <https://github.com/hakuturu583/typesafe_carla>`_,
-the statically typed CARLA client the framework is moving to: for the check,
-``import carla`` is typesafe_carla's Codon library.
+the statically typed CARLA client the framework runs on: scenarios import it
+as ``import typesafe_carla.carla as carla``, which is its CPython package at
+run time and its Codon library for the check.
 """
 
 from .check import (

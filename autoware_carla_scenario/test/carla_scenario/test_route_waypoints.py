@@ -107,7 +107,7 @@ class TestDerivingThemFromTheRoute:
 
 def _scenario():
     """A minimal concrete scenario; only its ego config is exercised here."""
-    import carla
+    import typesafe_carla.carla as carla
 
     from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
 

@@ -4,7 +4,7 @@
 # subclass that reads or writes another one of BaseScenario's attributes fails
 # the check, as it would break when the base class changes.
 
-import carla
+import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only, _expect_int_sequence
 from .actions import BaseAction, _expect_action

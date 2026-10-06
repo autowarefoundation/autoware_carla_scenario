@@ -43,7 +43,7 @@ from pathlib import Path
 import os
 import shutil
 
-import carla
+import typesafe_carla.carla as carla
 import lanelet2.geometry
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm

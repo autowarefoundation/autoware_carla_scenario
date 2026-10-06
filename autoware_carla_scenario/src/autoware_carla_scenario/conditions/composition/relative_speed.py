@@ -12,7 +12,7 @@ from .base import CompositionCondition, entity_axes
 from .speed import SpeedDirection
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 class RelativeSpeedCondition(CompositionCondition):

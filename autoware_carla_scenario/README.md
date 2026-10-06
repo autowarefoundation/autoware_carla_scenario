@@ -6,7 +6,7 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 
 ## Features
 
-- Automated scenario execution against CARLA UE5 (`0.10.0`) and legacy UE4 (`0.9.16`) — selected via mutually exclusive `carla` / `carla-0-9-16` extras.
+- Automated scenario execution against CARLA UE5 (`0.10.0` and `ue5-dev`), through the statically typed [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) client.
 - [Hydra](https://hydra.cc/)-composed configurations for map, server, ego, entities, and scenario.
 - Glob-pattern batch execution of multiple scenarios in a single CARLA session.
 - Condition system: timing, collisions, traffic signals, speed/standstill, lane/area position, waypoint crossing, plus logical (`And`/`Or`/`Not`), latching (`Sticky`), and persistent combinators.
@@ -20,21 +20,14 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 
 ## Installation
 
-Python 3.10 to 3.12 (`>=3.10,<3.13`; the ceiling is CARLA's bindings, which ship no wheel above cp312). Install via the workspace root:
+Python 3.10 to 3.12 (`>=3.10,<3.13`, the interpreters CI tests), Linux x86_64. Install via the workspace root:
 
 ```bash
-# From the repository root — installs the package without the optional CARLA bindings
+# From the repository root
 uv sync --dev
 ```
 
-CARLA Python bindings are exposed as optional extras and must be requested explicitly. Use the local wheels under `carla_wheels/` for either the default UE5 build or the legacy UE4 build:
-
-```bash
-uv sync --dev --extra carla            # CARLA 0.10.0 (default, UE5)
-uv sync --dev --extra carla-0-9-16     # CARLA 0.9.16 (legacy, UE4)
-```
-
-The two CARLA extras are declared as conflicting and cannot be installed simultaneously. CARLA's simulator binary itself must be installed separately — see the [CARLA installation guide](https://carla.readthedocs.io/) and the per-package [installation docs](docs/installation.md).
+The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) (`typesafe-carla` on PyPI), a plain dependency — no extra to request — imported as `import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython package prebuilt, so the sync above compiles nothing ([installation](docs/installation.md) has the cases that build it instead). The official `carla` wheels, and CARLA 0.9.16 (UE4), are no longer supported. CARLA's simulator binary itself must be installed separately — see the [CARLA installation guide](https://carla.readthedocs.io/) and the per-package [installation docs](docs/installation.md).
 
 ## Quick usage
 

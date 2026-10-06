@@ -13,7 +13,7 @@ from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 class EntityPositionDistanceCondition(CompositionCondition):

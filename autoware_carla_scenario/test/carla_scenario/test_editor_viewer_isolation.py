@@ -8,6 +8,7 @@ touch the viewer" a checkable claim rather than a promise.
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -113,13 +114,26 @@ class TestSharedRuntime:
         assert "from ..sweeper.constraints import" in source
 
     def test_authoring_stays_importable_without_carla(self) -> None:
-        """The editor process has no simulator; keep its imports light."""
-        for module in (
+        """The editor process has no simulator; keep its imports light.
+
+        Imported for real, in a fresh interpreter, so a transitive import of
+        the CARLA client counts too, not only one written in these modules.
+        """
+        modules = (
             "autoware_carla_scenario.authoring.models",
             "autoware_carla_scenario.authoring.registry",
             "autoware_carla_scenario.authoring.compiler",
             "autoware_carla_scenario.authoring.validator",
             "autoware_carla_scenario.authoring.builders",
             "autoware_carla_scenario.authoring.hydra_config",
-        ):
-            assert "\nimport carla" not in _source_of(module), module
+        )
+        program = (
+            "import importlib, sys\n"
+            f"for m in {modules!r}:\n"
+            "    importlib.import_module(m)\n"
+            "print(sorted(m for m in sys.modules if m.startswith('typesafe_carla.carla')))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program], capture_output=True, text=True, check=True
+        )
+        assert result.stdout.strip() == "[]", result.stdout

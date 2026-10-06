@@ -23,7 +23,7 @@ import numpy as np
 from .geometry import Pose, Trajectory
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 __all__ = ["ControlConfig", "TrajectoryFollower", "VehicleCommand"]
@@ -127,7 +127,7 @@ class VehicleCommand:
 
     def to_carla_control(self) -> "carla.VehicleControl":
         """Return the equivalent :class:`carla.VehicleControl`."""
-        import carla as _carla  # noqa: PLC0415
+        import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         return _carla.VehicleControl(
             throttle=float(self.throttle),

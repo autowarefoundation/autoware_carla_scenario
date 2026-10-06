@@ -9,7 +9,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Optional
 
-import carla
+import typesafe_carla.carla as carla
 import pytest
 
 from autoware_carla_scenario import (

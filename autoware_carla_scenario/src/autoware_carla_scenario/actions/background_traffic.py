@@ -39,7 +39,7 @@ from ..conditions import BaseCondition, ScenarioResult
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
     from ..traffic import TrafficBackend
 

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
     from .entity.pedestrian_entity import PedestrianEntity
 
-import carla
+import typesafe_carla.carla as carla
 
 from .actions import BaseAction, RoutingAction
 from .conditions import BaseCondition, find_actor_by_role_name

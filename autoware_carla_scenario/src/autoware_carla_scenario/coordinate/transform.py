@@ -32,7 +32,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
-import carla
+import typesafe_carla.carla as carla
 import numpy as np
 
 if TYPE_CHECKING:

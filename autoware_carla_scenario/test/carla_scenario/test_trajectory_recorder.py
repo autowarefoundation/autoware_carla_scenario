@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import typesafe_carla.carla as carla
+
 from autoware_carla_scenario.trajectory_recorder import TrajectoryRecorder
 
 
@@ -46,7 +48,8 @@ class _ActorSnapshot:
 class _Light:
     def __init__(self, light_id: int) -> None:
         self.id = light_id
-        self.state = "TrafficLightState.Red"
+        # A plain int, as typesafe_carla's TrafficLight.state gives.
+        self.state = int(carla.TrafficLightState.Red)
 
     def get_location(self) -> SimpleNamespace:
         return _vec(10.0, 20.0, 0.0)
@@ -109,7 +112,7 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     recorder.record(world, 0.0)
     world.frame += 1
     world.snapshot = [_ActorSnapshot(1, 0.5, 10.0), _ActorSnapshot(2, 0.5, 10.0)]
-    world.light.state = "TrafficLightState.Green"
+    world.light.state = int(carla.TrafficLightState.Green)
     recorder.record(world, 0.05)
     recorder.close()
 

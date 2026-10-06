@@ -291,7 +291,6 @@ jobs:
         uses: ./.github/actions/setup-env
         with:
           install-dev-deps: "true"
-          carla-extra: "carla"
 
       - name: Build carla-scenario documentation with PDF
         if: steps.version.outputs.release == 'true'

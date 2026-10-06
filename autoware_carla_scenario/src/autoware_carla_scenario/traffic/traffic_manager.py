@@ -206,7 +206,7 @@ class TrafficManagerBackend(TrafficBackend):
         One spawned before :meth:`start` is put on autopilot there, with every
         other vehicle; one spawned during the run is put on it at once.
         """
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         library = world.get_blueprint_library()
         found = library.filter(blueprint or _BACKGROUND_BLUEPRINT)

@@ -12,7 +12,7 @@ from ..action_state import ActionState
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
     from ..actions import BaseAction
 

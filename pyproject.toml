@@ -1,6 +1,3 @@
-[tool.uv]
-find-links = ["carla_wheels"]
-
 [tool.uv.workspace]
 members = [
     "autoware_carla_scenario",
@@ -27,9 +24,6 @@ dev = [
     "pytest>=9.0.3",
     "pytest-testmon>=2.2.0",
     "pytest-xdist>=3.8.0",
-    # typesafe_carla and its pinned Codon, for the static check of scenarios and
-    # its tests (the `codon` extra).
-    "typesafe-carla>=0.1.0,<0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     # The SUMO traffic backend and its tests (the `sumo` extra).
     "eclipse-sumo>=1.23",
     "libsumo>=1.23",

@@ -112,7 +112,7 @@ def _from_server(
             cannot be reached, or it does not have that map.
     """
     try:
-        import carla  # noqa: PLC0415 -- optional, and heavy
+        import typesafe_carla.carla as carla  # noqa: PLC0415 -- optional, and heavy
     except ImportError as exc:  # pragma: no cover -- depends on the extra
         raise OpenDriveUnavailable(
             "The CARLA Python client is not installed, so OpenDRIVE cannot be "

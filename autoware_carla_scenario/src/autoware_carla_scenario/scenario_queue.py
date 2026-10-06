@@ -372,7 +372,7 @@ class ScenarioQueue:
             from autoware_carla_scenario import (
                 CarlaScenarioFixture, EgoConfig, ScenarioQueue, SpawnTransform,
             )
-            import carla
+            import typesafe_carla.carla as carla
 
             ego = EgoConfig(
                 spawn_location=SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.5))),

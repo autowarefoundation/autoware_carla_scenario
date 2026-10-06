@@ -18,7 +18,7 @@ CARLA session cannot be established.
 
 from __future__ import annotations
 
-import carla as _carla
+import typesafe_carla.carla as _carla
 
 from autoware_carla_scenario import (
     BaseScenario,

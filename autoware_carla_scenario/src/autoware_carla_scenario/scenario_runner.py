@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-import carla
+import typesafe_carla.carla as carla
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
@@ -426,7 +426,7 @@ class ScenarioRunner:
     @staticmethod
     def _release_vehicles(world: "carla.World") -> None:
         """Let go of the brakes the init phase held on."""
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         released = carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False)
         for actor in world.get_actors().filter("vehicle.*"):

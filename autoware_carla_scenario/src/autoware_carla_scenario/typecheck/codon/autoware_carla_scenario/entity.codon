@@ -5,7 +5,7 @@
 # SpawnLocation (Union[SpawnPointIndex, SpawnTransform] in Python) is the base
 # class of the two here.
 
-import carla
+import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only
 from .constants import EGO_ROLE_NAME

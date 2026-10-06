@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from ..entity_role import EntityRole
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 def find_actor_in_list(

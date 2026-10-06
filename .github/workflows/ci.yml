@@ -8,18 +8,14 @@ on:
 
 jobs:
   test:
-    # The whole supported range, on both clients. The ceiling is the CARLA
-    # client and nothing else: 0.10.0 ships wheels up to cp312 (vendored in
-    # carla_wheels/) and 0.9.16 publishes up to cp312, so `requires-python`
-    # says `<3.13`. The floor is 3.10 because that is what Autoware's own
-    # environment is.
-    name: test (${{ matrix.python-version }}, ${{ matrix.carla-extra }})
+    # The whole supported range (`requires-python`). The floor is 3.10 because
+    # that is what Autoware's own environment is.
+    name: test (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-        carla-extra: ["carla", "carla-0-9-16"]
 
     steps:
     - uses: actions/checkout@v4
@@ -30,20 +26,17 @@ jobs:
         python-version: ${{ matrix.python-version }}
         install-dev-deps: "true"
         run-precommit: "false"
-        carla-extra: ${{ matrix.carla-extra }}
 
     # The slow tests are the 'slow-tests' job below: four of them build a
     # ~160 MB wheelhouse over the network and take longer than the other 1600
-    # put together, which is not something to do six times.
+    # put together, which is not something to do three times over.
     - name: Run tests
       run: uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
 
   slow-tests:
     # What the fast matrix leaves out: a real export, a real wheelhouse, and a
     # real 'pip install --no-index' of it. Interpreter-sensitive -- a wheelhouse
-    # is built for one interpreter -- so it runs across the range; not
-    # client-sensitive beyond which wheel gets vendored, which the fast tests
-    # already assert, so it runs on one.
+    # is built for one interpreter -- so it runs across the range.
     name: slow tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -60,15 +53,14 @@ jobs:
         python-version: ${{ matrix.python-version }}
         install-dev-deps: "true"
         run-precommit: "false"
-        carla-extra: "carla"
 
     - name: Run the slow tests
       run: uv run pytest -v --tb=short -o addopts= -m slow
 
   build:
     # The package builds to 'py3-none-any' with uv_build, so the artifact
-    # depends on neither the interpreter nor the CARLA extra. Building it in
-    # every matrix leg reported one break as six red jobs.
+    # does not depend on the interpreter. Building it in every matrix leg
+    # reported one break as three red jobs.
     name: build the package
     runs-on: ubuntu-latest
     steps:
@@ -94,7 +86,6 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "true"
         precommit-continue-on-error: "false"
-        carla-extra: "carla"
 
   auto-format:
     name: Auto-fix formatting
@@ -118,7 +109,6 @@ jobs:
         with:
           install-dev-deps: "true"
           run-precommit: "false"
-          carla-extra: "carla"
 
       - name: Run pre-commit auto-fix
         run: uv run pre-commit run --all-files || true
@@ -147,7 +137,6 @@ jobs:
       with:
         install-dev-deps: "true"
         run-precommit: "false"
-        carla-extra: "carla"
 
     - name: Build carla-scenario documentation
       uses: ./.github/actions/build-docs
@@ -167,13 +156,9 @@ jobs:
   scenario-image:
     # Proves the packing action end-to-end: scaffold a scenario package the way
     # a user would, pack it, and let the action's smoke test confirm that the
-    # image really carries the pinned CARLA client and a registered scenario.
-    name: scenario image (CARLA ${{ matrix.carla-version }})
+    # image really carries the prebuilt CARLA client and a registered scenario.
+    name: scenario image
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        carla-version: ["0.10.0", "0.9.16"]
 
     steps:
     - uses: actions/checkout@v4
@@ -196,7 +181,6 @@ jobs:
       with:
         scenario-package-path: ${{ runner.temp }}/packages/ci_probe_package
         image: ci-probe-scenario
-        carla-version: ${{ matrix.carla-version }}
         push: "false"
 
     - name: Report the image size
@@ -211,17 +195,14 @@ jobs:
     # every consumer starts pulling the whole virtualenv again, and nothing
     # else in this suite would notice.
     - name: Scaffold a second scenario package
-      if: matrix.carla-version == '0.10.0'
       run: uv run scenario-new ci_probe_variant --output-dir "${RUNNER_TEMP}/packages"
 
     - name: Pack the second package
-      if: matrix.carla-version == '0.10.0'
       uses: ./.github/actions/pack-scenario-image
       id: pack-variant
       with:
         scenario-package-path: ${{ runner.temp }}/packages/ci_probe_variant
         image: ci-probe-scenario-variant
-        carla-version: ${{ matrix.carla-version }}
         push: "false"
         # The first image already proved the runtime works; this one is here
         # for its layers.
@@ -232,7 +213,6 @@ jobs:
         cache-scope: ${{ steps.pack.outputs.cache-scope }}
 
     - name: Check the two images share everything but the scenario layer
-      if: matrix.carla-version == '0.10.0'
       env:
         FIRST: ${{ steps.pack.outputs.image-ref }}
         SECOND: ${{ steps.pack-variant.outputs.image-ref }}

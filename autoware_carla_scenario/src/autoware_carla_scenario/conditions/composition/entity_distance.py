@@ -13,7 +13,7 @@ from .base import CompositionCondition, DistanceCoordinateSystem
 from .distance_measure import RelativeDistanceType, separation
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 class EntityDistanceCondition(CompositionCondition):

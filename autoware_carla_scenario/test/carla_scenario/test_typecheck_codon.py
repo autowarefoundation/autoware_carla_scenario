@@ -1,7 +1,7 @@
 """The static check with Codon: correct scenarios compile, wrong ones are refused.
 
-Skipped where no Codon compiler is installed (the ``codon`` extra, which the
-dev group includes on Linux x86_64).
+Skipped where no Codon compiler is installed (typesafe-carla's toolchain, a
+dependency on Linux x86_64).
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import logging
 
-import carla
+import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,

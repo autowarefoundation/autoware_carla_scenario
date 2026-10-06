@@ -10,7 +10,7 @@ from ..base import ScenarioResult, find_actor_by_role_name
 from .base import CompositionCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 
 class WaypointCheckType(Enum):

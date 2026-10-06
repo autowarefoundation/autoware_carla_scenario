@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
 from ...constants import EGO_ROLE_NAME
+from ...utils.traffic_light import traffic_light_state_name
 from ..base import (
     LaneChangeDirection,
     TrafficBackend,
@@ -946,7 +947,7 @@ class SumoTrafficBackend(TrafficBackend):
         length = 2.0 * float(actor.bounding_box.extent.x)
         wheel_base, rear_offset, max_steer = 0.58 * length, -0.29 * length, 70.0
         try:
-            import carla  # noqa: PLC0415
+            import typesafe_carla.carla as carla  # noqa: PLC0415
 
             physics = actor.get_physics_control()
             wheels = physics.wheels
@@ -998,7 +999,7 @@ class SumoTrafficBackend(TrafficBackend):
         that has drifted further than ``resync_distance_m`` (a collision, a kerb)
         is put back on its SUMO vehicle.
         """
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         tc = self._traci
         state = self._geometry(actor)
@@ -1138,7 +1139,7 @@ class SumoTrafficBackend(TrafficBackend):
         With SUMO's speed as a constant velocity for the tick to come (see the
         module docstring for why not a physics-off actor).
         """
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         tc = self._traci
         speed = float(tc.vehicle.getSpeed(sumo_id))
@@ -1199,7 +1200,7 @@ class SumoTrafficBackend(TrafficBackend):
         return ids
 
     def _sync_ambient(self, world: Any) -> None:
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         tc = self._traci
         wanted = self._ambient_ids()
@@ -1290,7 +1291,9 @@ class SumoTrafficBackend(TrafficBackend):
         for tls, lights in by_tls.items():
             state = list(tc.trafficlight.getRedYellowGreenState(tls))
             for index, light in lights.items():
-                char = _CARLA_TO_SUMO_SIGNAL.get(str(light.get_state()))
+                char = _CARLA_TO_SUMO_SIGNAL.get(
+                    traffic_light_state_name(light.get_state())
+                )
                 if char is None:
                     continue
                 if char == "G" and state[index] == "g":
@@ -1299,7 +1302,7 @@ class SumoTrafficBackend(TrafficBackend):
             tc.trafficlight.setRedYellowGreenState(tls, "".join(state))
 
     def _signals_to_carla(self) -> None:
-        import carla  # noqa: PLC0415
+        import typesafe_carla.carla as carla  # noqa: PLC0415
 
         tc = self._traci
         states: dict[str, str] = {}

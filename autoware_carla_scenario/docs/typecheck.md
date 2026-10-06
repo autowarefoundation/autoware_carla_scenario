@@ -15,10 +15,12 @@ autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenari
 
 The scenario still runs as Python, exactly as before: the check compiles the
 same source, never runs what it compiled, and changes nothing at run time.
-The CARLA API a scenario calls is checked against
+The CARLA API a scenario calls is
 [typesafe_carla](https://github.com/hakuturu583/typesafe_carla), the statically
-typed CARLA client for Codon this framework is moving to as its backend: for
-the check, `import carla` is typesafe_carla.
+typed CARLA client this framework runs on. A scenario imports it as
+`import typesafe_carla.carla as carla`: at run time that is typesafe_carla's
+CPython package, and for the check it is typesafe_carla's Codon library, so
+the same names are checked that run.
 
 ## Running it
 
@@ -63,10 +65,9 @@ how it is constructed.
 
 The check needs typesafe_carla (the `typesafe-carla` package, from PyPI) and
 the Codon compiler it pins (`typesafe-carla-toolchain`, 0.19, which
-typesafe-carla depends on). Both ship for Linux x86_64 only. `uv sync --dev`
-installs them; elsewhere install the `codon` extra
-(`autoware-carla-scenario[codon]`). Neither is a run-time dependency, so a
-scenario image does not carry them.
+typesafe-carla depends on). Both ship for Linux x86_64 only, and both are
+run-time dependencies of the framework anyway: typesafe_carla is its CARLA
+client (see [installation](installation.md)).
 
 The checker finds Codon the way typesafe_carla's `typesafe-codon` launcher
 does (it calls typesafe_carla's own lookup), so one setup serves both:
@@ -105,9 +106,10 @@ other `register_*` methods, the `check()` of a custom condition and the
 everything a scenario imports from `autoware_carla_scenario`: the conditions,
 actions, poses and coordinate functions, entities, `BaseScenario`, the shared
 config dataclasses, with their static types. The CARLA API is not modelled:
-`codon/carla` is `from typesafe_carla import *`, and the checker puts
-typesafe_carla's Codon library next to it, the way `typesafe-codon` puts it on
-`CODON_PATH`, so a scenario is checked against the whole typed CARLA API.
+the checker puts typesafe_carla's Codon library next to the model, the way
+`typesafe-codon` puts it on `CODON_PATH`, and `import typesafe_carla.carla as
+carla` (the import the runtime uses) resolves to it, so a scenario is checked
+against the whole typed CARLA API.
 typesafe_carla's Python-API compatibility shortcuts (such as calling a
 `Vehicle` method on a plain `Actor`) compile, as they do outside strict mode.
 Nothing in the model runs; `test_typecheck_model.py` keeps every declaration

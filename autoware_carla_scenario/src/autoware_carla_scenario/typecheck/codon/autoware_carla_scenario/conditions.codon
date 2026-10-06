@@ -4,7 +4,7 @@
 # CompositionCondition layer in between is left out (Codon miscompiles class
 # hierarchies two levels deep, and nothing a scenario writes names it).
 
-import carla
+import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only, _expect_float, _Required, _required_str
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,

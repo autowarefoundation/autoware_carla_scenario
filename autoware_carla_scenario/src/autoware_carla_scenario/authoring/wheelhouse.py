@@ -8,8 +8,8 @@ built from ``python3-venv`` and ``python3-pip`` -- both rosdep-resolvable --
 and has no ``uv``, no ``git`` and, on a vehicle, no network.  Handing that
 environment a uv project asks it for all three; handing it the package's wheel
 alone is no better, because ``[tool.uv.sources]`` is not written into wheel
-metadata, so pip goes looking on PyPI for a framework and a CARLA client that
-are not published there.
+metadata, so pip goes looking on PyPI for a framework at a commit that is not
+published there -- and, on a vehicle, cannot reach PyPI at all.
 
 A wheelhouse is the same dependency graph with the resolution already done:
 every wheel the lock names, in one directory, installable with nothing but pip::
@@ -30,8 +30,20 @@ wheelhouse rather than of this code:
   lets the same wheelhouse install under ROS 2 Humble's Python 3.10 and
   Jazzy's 3.12, which is the difference between a scenario that runs on a
   vehicle and one that needs a PPA first;
-* it is **large** -- the CARLA client, OpenCV and the lanelet2 bindings alone
-  are most of a hundred megabytes.  That is the cost of not needing a network.
+* it is **large** -- the CARLA client (``typesafe-carla`` and the Codon
+  compiler it pins, ``typesafe-carla-toolchain``), OpenCV and the lanelet2
+  bindings alone are well over a hundred megabytes.  That is the cost of not
+  needing a network.
+
+The CARLA client needs nothing beyond its wheels either: the released
+``typesafe-carla`` wheel the wheelhouse holds carries typesafe_carla's CPython
+package (``typesafe_carla.carla``) prebuilt, one build for every Python 3.10+,
+so an offline vehicle install is ``pip install`` and nothing else -- no
+``cc``, no build step.  Only where that prebuilt package does not match (a
+``typesafe-carla-toolchain`` other than the one the wheel was built with, for
+instance) does the first ``import typesafe_carla.carla`` build it (15 to 50
+minutes, about 14 GB of RAM, ``cc``), still without a network: the compiler is
+the toolchain wheel already in the directory.
 """
 
 from __future__ import annotations
@@ -41,6 +53,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -49,39 +62,38 @@ from typing import Optional
 
 from jinja2 import TemplateError
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
 from ..templating import code_environment
-from .framework_pin import DISTRIBUTION, framework_source_root
 from .uv_tool import UvUnavailable, run_uv
+
+# tomllib landed in 3.11, and 3.10 is still the floor of the supported range.
+# Branching on sys.version_info rather than catching ImportError keeps mypy from
+# reading the fallback as a redefinition when it checks against 3.11+.
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - only taken on 3.10
+    import tomli as tomllib
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CARLA_WHEELS_ENV",
-    "DEFAULT_CARLA_EXTRA",
+    "TESTED_PYTHONS",
     "Wheelhouse",
     "WheelhouseError",
     "build_wheelhouse",
-    "carla_extra",
-    "carla_wheels",
     "supported_pythons",
-    "unpinned_carla_client",
     "venv_python",
 ]
 
 #: Directory holding the ``*.jinja`` templates for a generated package.
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
-#: The framework extra to fall back on when no CARLA client is installed to
-#: read the answer off.  Neither client is published to PyPI, so the only copies
-#: that exist are the wheels vendored in this repository.
-DEFAULT_CARLA_EXTRA = "carla"
-
-#: Overrides where the vendored CARLA wheels are looked for.
-CARLA_WHEELS_ENV = "SCENARIO_EXPORT_CARLA_WHEELS"
-
-#: Name of the directory a package vendors its CARLA wheel into.  Relative, so
-#: the package stays self-contained wherever it is copied.
-VENDORED_WHEELS_DIR = "carla_wheels"
+#: The interpreters CI tests the framework under, oldest first.  A wheelhouse
+#: is resolved for each of them the package's ``requires-python`` admits -- see
+#: :func:`supported_pythons`.  Raise it together with CI's interpreter matrix
+#: and the framework's ``requires-python`` (a test checks the two agree).
+TESTED_PYTHONS: tuple[str, ...] = ("3.10", "3.11", "3.12")
 
 _EXPORT_TIMEOUT_SECONDS = 300
 _BUILD_TIMEOUT_SECONDS = 900
@@ -132,156 +144,50 @@ class Wheelhouse:
 
 
 # ---------------------------------------------------------------------------
-# The CARLA client
+# Interpreters
 # ---------------------------------------------------------------------------
 
 
-def _carla_pins() -> dict[str, str]:
-    """Return the client version each of the framework's CARLA extras pins.
-
-    Read from the framework's own metadata rather than hard-coded here, so the
-    two cannot disagree about which client a scenario runs against.
-    """
-    from importlib import metadata  # noqa: PLC0415
-
-    try:
-        requirements = metadata.requires(DISTRIBUTION) or []
-    except metadata.PackageNotFoundError:  # pragma: no cover - always installed
-        return {}
-    pins: dict[str, str] = {}
-    for requirement in requirements:
-        pinned = re.match(r"\s*carla\s*==\s*([0-9][^\s;]*)", requirement)
-        extra = re.search(r"extra\s*==\s*[\"']([^\"']+)[\"']", requirement)
-        if pinned and extra:
-            pins[extra.group(1)] = pinned.group(1)
-    return pins
-
-
-def _installed_carla() -> Optional[str]:
-    """Return the CARLA client version installed here, or ``None``."""
-    from importlib import metadata  # noqa: PLC0415
-
-    try:
-        return metadata.version("carla")
-    except metadata.PackageNotFoundError:
+def _declared_requires_python(package_root: Path) -> Optional[str]:
+    """Return the ``requires-python`` the package at *package_root* declares."""
+    pyproject = Path(package_root) / "pyproject.toml"
+    if not pyproject.is_file():
         return None
-
-
-def _release(version: str) -> str:
-    """Return *version* without its local segment, e.g. ``0.10.0+build`` -> ``0.10.0``.
-
-    A locally built client is the same client: ``0.10.0+custom`` is the release
-    the ``carla`` extra pins, compiled somewhere else.
-    """
-    return version.split("+", 1)[0]
-
-
-def carla_extra() -> str:
-    """Return the framework extra that installs the client this export needs.
-
-    The framework declares two mutually exclusive clients -- ``carla`` for
-    0.10.0 and ``carla-0-9-16`` for the legacy one -- and a scenario was
-    authored against whichever of them is installed here.  Naming a fixed one
-    would hand somebody working on the legacy client an export that installs
-    cleanly and cannot run, with nothing saying why.
-
-    Falls back to :data:`DEFAULT_CARLA_EXTRA` when no client is installed to
-    read the answer off, and when one is installed that no extra pins -- see
-    :func:`unpinned_carla_client`, which is how the caller says so out loud.
-    """
-    installed = _installed_carla()
-    if installed is None:
-        return DEFAULT_CARLA_EXTRA
-    for extra, pinned in _carla_pins().items():
-        if pinned == _release(installed):
-            return extra
-    return DEFAULT_CARLA_EXTRA
-
-
-def unpinned_carla_client() -> Optional[str]:
-    """Return the installed client's version when no extra pins it.
-
-    ``None`` covers both the cases there is nothing to say about: no client
-    installed, or one that an extra names exactly.  Anything else -- 0.9.15,
-    say -- means the export is about to request a *different* client from the
-    one the scenario was authored and validated against, which is worth saying
-    rather than defaulting quietly.
-    """
-    installed = _installed_carla()
-    if installed is None or _release(installed) in set(_carla_pins().values()):
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
         return None
-    return installed
-
-
-def _wheel_search_root() -> Optional[Path]:
-    """Return the directory the vendored CARLA wheels live in, if it exists."""
-    override = os.environ.get(CARLA_WHEELS_ENV)
-    if override:
-        candidate = Path(override).expanduser()
-        return candidate if candidate.is_dir() else None
-
-    # <repo>/autoware_carla_scenario -> <repo>/carla_wheels.  An installed
-    # framework has no repository above it and so has no vendored wheels.
-    candidate = framework_source_root().parent / VENDORED_WHEELS_DIR
-    return candidate if candidate.is_dir() else None
-
-
-def carla_wheels(extra: str = "") -> list[Path]:
-    """Return the vendored CARLA wheels for *extra*, defaulting to this export's.
-
-    One version, every interpreter tag of it. Only the one version, because the
-    framework's two client extras are mutually exclusive and shipping both
-    would put two CARLA clients that cannot coexist in the same wheelhouse.
-
-    Returns:
-        The matching wheels, or an empty list when none can be found -- which is
-        the normal case for a framework installed from a wheel rather than run
-        out of its repository.
-    """
-    version = _carla_pins().get(extra or carla_extra())
-    root = _wheel_search_root()
-    if version is None or root is None:
-        return []
-    # Every interpreter's wheel, not just the running one. A package vendoring
-    # only its own tag looks tidier and does not lock: the generated package
-    # inherits the framework's whole `requires-python`, and `uv lock` resolves
-    # the client across all of it. The wheelhouse built from the lock still
-    # holds exactly one -- pip takes the tag it can install.
-    return sorted(root.glob(f"carla-{version}-*.whl"))
-
-
-#: An interpreter tag in a wheel filename, e.g. ``cp310``.
-_CPYTHON_TAG = re.compile(r"cp3(\d+)$")
+    value = data.get("project", {}).get("requires-python")
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def supported_pythons(package_root: Path) -> list[str]:
-    """Return every interpreter the package at *package_root* can install under.
+    """Return every interpreter the package at *package_root* is built for.
 
-    Read off the CARLA wheels the package vendors, because the client is the
-    one dependency with a per-interpreter ceiling -- everything else either
-    ships a wheel for the whole of ``requires-python`` or is pure Python.  A
-    package vendoring cp310, cp311 and cp312 is a package whose wheelhouse
-    should hold all three, which is what makes one export serve both ROS 2
-    distributions.
+    The interpreters of :data:`TESTED_PYTHONS` that the package's own
+    ``requires-python`` admits.  A generated package inherits the framework's
+    ``requires-python``, which is CI's tested range, so this is normally all
+    of them -- and a wheelhouse resolved for 3.10, 3.11 and 3.12 is what lets
+    one export serve both ROS 2 distributions.
+
+    Intersected rather than taken from ``requires-python`` alone, because a
+    specifier is not a list: ``>=3.10`` admits interpreters nobody has tested
+    and that a builder environment may not even exist for.
 
     Returns:
         The versions in ascending order, e.g. ``["3.10", "3.11", "3.12"]``, or
-        an empty list when the package vendors nothing to read them from --
-        the client came from an index, and the caller falls back to the
-        interpreter the package recorded.
+        an empty list when the package declares no ``requires-python`` (or
+        one that admits none of them) -- the caller then falls back to the
+        interpreter the package recorded in ``.python-version``.
     """
-    versions = set()
-    for wheel in (Path(package_root) / VENDORED_WHEELS_DIR).glob("carla-*.whl"):
-        # `name-version-[build-]python-abi-platform`; the python tag is the
-        # third field, and a wheel for several interpreters dots them together.
-        fields = wheel.stem.split("-")
-        if len(fields) < 5:
-            continue
-        for tag in fields[-3].split("."):
-            matched = _CPYTHON_TAG.match(tag)
-            if matched:
-                versions.add(f"3.{matched.group(1)}")
-    return sorted(versions, key=lambda version: int(version.split(".")[1]))
+    declared = _declared_requires_python(package_root)
+    if declared is None:
+        return []
+    try:
+        specifier = SpecifierSet(declared)
+    except InvalidSpecifier:
+        return []
+    return [version for version in TESTED_PYTHONS if specifier.contains(version)]
 
 
 # ---------------------------------------------------------------------------
@@ -390,9 +296,7 @@ def _builder_environment(parent: Path, python: str) -> tuple[Path, str]:
     return venv, log
 
 
-def _download_wheels(
-    venv: Path, requirements: Path, destination: Path, find_links: list[Path]
-) -> str:
+def _download_wheels(venv: Path, requirements: Path, destination: Path) -> str:
     """Fill *destination* with a wheel for every pinned requirement.
 
     ``--no-deps`` is not a shortcut: the requirements file is the whole locked
@@ -413,8 +317,6 @@ def _download_wheels(
         "--wheel-dir",
         str(destination),
     ]
-    for link in find_links:
-        command += ["--find-links", str(link)]
     result = subprocess.run(  # noqa: S603
         command,
         capture_output=True,
@@ -455,11 +357,11 @@ def build_wheelhouse(
         run_command: The command that runs the scenario once installed, for the
             directory's own README.
         pythons: Interpreter versions to resolve the wheels for, e.g.
-            ``("3.10", "3.12")``.  Defaults to every interpreter the package's
-            vendored CARLA wheels cover -- see :func:`supported_pythons` --
-            and falls back to the package's ``.python-version`` when it
-            vendors none.  One pass is made per interpreter into the same
-            directory.
+            ``("3.10", "3.12")``.  Defaults to every tested interpreter the
+            package's ``requires-python`` admits -- see
+            :func:`supported_pythons` -- and falls back to the package's
+            ``.python-version`` when that yields none.  One pass is made per
+            interpreter into the same directory.
 
     Returns:
         The :class:`Wheelhouse` describing what was built.
@@ -512,10 +414,6 @@ def build_wheelhouse(
 
         log += _build_project_wheel(package_root, destination)
 
-        # The package vendors its CARLA wheel; pip has to be told where, since
-        # `[tool.uv] find-links` means nothing to it.
-        vendored = package_root / VENDORED_WHEELS_DIR
-        find_links = [vendored] if vendored.is_dir() else []
         # A pass per interpreter, all into the same directory. pip resolves the
         # requirements file against the interpreter that runs it -- markers and
         # wheel tags both -- so this is the only way to end up with a directory
@@ -524,7 +422,7 @@ def build_wheelhouse(
         for interpreter in targets:
             venv, venv_log = _builder_environment(scratch, interpreter)
             log += venv_log
-            log += _download_wheels(venv, pinned, destination, find_links)
+            log += _download_wheels(venv, pinned, destination)
 
         # Inside the guard: the last two files are small, but the disk they go
         # on has just taken 160 MB of wheels, and a wheelhouse missing its

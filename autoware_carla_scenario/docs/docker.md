@@ -2,7 +2,10 @@
 
 A scenario package created with `scenario-new` is a normal Python
 distribution, so it can be shipped as a container image that carries the
-framework, the scenario, its configs, and a **fixed** CARLA client.
+framework, the scenario, its configs, and its CARLA client --
+[typesafe_carla](https://github.com/hakuturu583/typesafe_carla), whose released
+wheel carries its CPython package **prebuilt**, so nothing is compiled at build
+time or in a container.
 
 The image is built by the `pack-scenario-image` composite action. Everything it
 needs lives in the action's own directory, so it is meant to be referenced from
@@ -24,8 +27,8 @@ Only installed code:
 
 | Present | Absent |
 | --- | --- |
-| `/opt/venv` — the framework, the scenario package, their dependencies, and one pinned CARLA client | Source trees, `pyproject.toml`, tests, docs, git history |
-| `ffmpeg`, when asked for | `uv`, wheels, build caches, a compiler, any apt package at all |
+| `/opt/venv` — the framework, the scenario package, their dependencies (typesafe-carla, with its prebuilt CPython package, and its Codon toolchain among them) | Source trees, `pyproject.toml`, tests, docs, git history |
+| `ffmpeg`, when asked for | `uv`, wheels, build caches, a C compiler, any apt package at all |
 
 The entry point is the `scenario` CLI and the working directory is `/work`,
 where Hydra writes its run directory.
@@ -52,12 +55,24 @@ flowchart LR
 build` emits `py3-none-any` wheels for all three packages — so the stage needs
 neither glibc nor a compiler, and nothing but the wheels survives it.
 
-The runtime is **not** Alpine, and cannot be. The CARLA client (the vendored
-0.10.0 wheel and the PyPI 0.9.16 one alike), `opencv-python-headless` and
-`simple-lanelet2` publish manylinux wheels only. There is no musllinux wheel to
-fall back to, so a musl runtime cannot install them at all; the CARLA extension
-module additionally links glibc 2.34+ symbols directly, so even a forced
-install would not import. Debian slim is the smallest base that runs the code.
+The runtime is **not** Alpine, and cannot be. `typesafe-carla` and its Codon
+toolchain, `opencv-python-headless` and `simple-lanelet2` publish manylinux
+wheels only. There is no musllinux wheel to fall back to, so a musl runtime
+cannot install them at all. Debian slim is the smallest base that runs the
+code.
+
+Neither the `venv` stage nor the runtime compiles anything, and neither
+installs a C compiler: the typesafe-carla wheel on PyPI carries typesafe_carla's
+CPython package prebuilt (`typesafe_carla/carla/_prebuilt`, one build for every
+Python 3.10+), so installing the wheel is all the client needs. typesafe_carla
+falls back to compiling that package on its first import (15-50 minutes, ~14 GB
+of memory, `cc`) only where no matching prebuilt one exists -- a typesafe-carla
+installed from source, or a typesafe-carla-toolchain other than the one the
+wheel was built with -- and the image rules that out: the build imports the
+client from the finished virtualenv with `TYPESAFE_CARLA_PYCARLA_BUILD=0`, and
+the runtime sets the same variable, so a prebuilt package that does not apply
+is an `ImportError`, at build time or on the first run, rather than a
+half-hour compile inside a container.
 
 ## Layer layout
 
@@ -68,26 +83,29 @@ again. The Dockerfile therefore installs `/opt/venv` in four steps and ships
 each step as its own layer, ordered from the input that changes least often to
 the one that changes on every commit:
 
-| # | Layer | Holds | Rebuilt when | Size |
-| --- | --- | --- | --- | --- |
-| 1 | `carla` | The virtualenv itself and the pinned CARLA client | `carla-version`, `python-version` or the base image changes | ~12 MB |
-| 2 | `deps` | The framework's third-party dependency closure — OpenCV, scipy, numpy, the matplotlib stack, … | `uv.lock` changes | ~400 MB |
-| 3 | `framework` | `autoware-carla-scenario` | Framework code changes | ~2 MB |
-| 4 | `scenario` | The scenario wheel, plus any dependency it adds of its own | The scenario package changes | ~80 kB |
+| # | Layer | Holds | Rebuilt when |
+| --- | --- | --- | --- |
+| 1 | `client` | The virtualenv, typesafe-carla with its prebuilt CPython package (`import typesafe_carla.carla as carla`) and its Codon toolchain (typesafe-carla-toolchain), at the versions `uv.lock` pins | `uv.lock` moves typesafe-carla or its toolchain, or `python-version` or the base image changes |
+| 2 | `deps` | The rest of the framework's third-party dependency closure — OpenCV, scipy, numpy, the matplotlib stack, … | `uv.lock`, `python-version` or the base image changes |
+| 3 | `framework` | `autoware-carla-scenario` | Framework code changes |
+| 4 | `scenario` | The scenario wheel, plus any dependency it adds of its own | The scenario package changes |
 
-(Sizes are approximate, for a scaffolded package with CARLA 0.10.0.)
+(Before the move to typesafe_carla the dependency layer was ~400 MB and the
+two framework and scenario layers ~2 MB and ~80 kB; the client layer, with
+the Codon toolchain in it, has not been measured in an image yet.)
 
-Layer 1 is installed on its own, before anything else and without a
-constraints file: the CARLA client declares no dependencies, so the layer is a
-function of the client version and the base image alone. Two images built for
-the same client share it whatever else they contain — which is what the
-`carla<version>` tag has always promised and now also means on the wire.
+The client comes first because it depends on nothing else: layer 1 installs
+typesafe-carla alone, constrained to the lock's versions, so its content is a
+function of the typesafe-carla and typesafe-carla-toolchain versions and the
+base image and nothing more. Two images built for the same client share that
+layer whatever else they contain, and a lock change that leaves the client
+alone moves only the dependency layer behind it.
 
 So editing a scenario and rebuilding transfers the fourth layer. Bumping the
-framework transfers the third and fourth. Only a lock change moves the ~400 MB
-of dependencies, and only a client bump moves everything. The push is
-incremental for the same reason: a registry that already holds a blob is sent
-the new layer and nothing else.
+framework transfers the third and fourth. A lock change moves the dependency
+layer, and the client layer only when it moves typesafe-carla or its
+toolchain. The push is incremental for the same reason: a registry that
+already holds a blob is sent the new layer and nothing else.
 
 ### What makes it hold
 
@@ -99,7 +117,8 @@ so two things could quietly defeat the split:
   `venv-layer.sh` therefore stamps every exported file with one fixed timestamp
   (`LAYER_MTIME`, 2020-01-01 by default) as it captures it, and re-stamps
   afterwards whatever the slim pass rewrote. A rebuild from a cold cache
-  reproduces layers 1–3 byte for byte.
+  reproduces all four layers byte for byte: every one of them, the client
+  included, is installed from wheels, and nothing in the image is compiled.
 - **The layers underneath.** A layer can only be reused together with its whole
   parent chain, so anything that varies has to sit *behind* the virtualenv
   rather than in front of it. The runtime stage therefore copies the four
@@ -119,10 +138,10 @@ split fails the build rather than the container.
 ### Sharing the build cache
 
 Layers are about the pull; `cache-scope` is the same idea for the build. It
-defaults to one scope per image and CARLA version, but images that share a
-client and framework are the same build up to their scenario layer, so pointing
-several of them at one scope lets the later ones restore the client and
-dependency stages instead of resolving them again. The action reports the scope
+defaults to one scope per image, but images that share a lock and framework
+are the same build up to their scenario layer, so pointing several of them at
+one scope lets the later ones restore the client and dependency stages instead
+of resolving and installing them again. The action reports the scope
 it used, so a second build in the same workflow can just name the first's:
 
 ```yaml
@@ -141,7 +160,9 @@ it used, so a second build in the same workflow can just name the first's:
 
 ## Keeping the image small
 
-Two things do the work, measured on a scaffolded package with CARLA 0.10.0:
+Two things do the work, measured on a scaffolded package with the official
+CARLA 0.10.0 client (before the move to typesafe_carla, whose Codon toolchain
+adds to these totals):
 
 | | virtualenv |
 | --- | --- |
@@ -183,23 +204,22 @@ scipy, numpy, and the matplotlib stack that `pyxodr` requires.
 
 ## Pinning the CARLA client — and everything else
 
-`carla-version` is resolved once, during the build, and asserted before the
-image is finished. `0.10.0` is not on PyPI and comes from the local
-`carla_wheels/` directory; versions that are published (for example `0.9.16`)
-come from the index. Nothing in the image can change the client afterwards, and
-the version is recorded twice — in the default tag (`:carla0.10.0`) and in the
-`io.autoware.carla-scenario.carla-version` label:
+The client is the `typesafe-carla` that `uv.lock` pins (CARLA UE5: the wheel's
+LibCarla is built from a CARLA ref, which the build prints), with the CPython
+package that wheel carries prebuilt, loaded before the image is finished. Nothing in the image
+can change it afterwards. The default tags are `:latest` and the commit
+(`:<sha>`); to see which client an image carries:
 
 ```bash
-docker image inspect --format '{{ index .Config.Labels "io.autoware.carla-scenario.carla-version" }}' \
-  ghcr.io/tier4/my-scenario:carla0.10.0
+docker run --rm --entrypoint python ghcr.io/tier4/my-scenario:latest -c \
+  "from importlib.metadata import version; from typesafe_carla import paths; print(version('typesafe-carla'), paths.native_info()['carla_git_ref'])"
 ```
 
-The rest of the dependency tree is pinned too, so the same ref rebuilt months
+The whole dependency tree is pinned, so the same ref rebuilt months
 apart gives the same image: the build context carries `uv.lock`, the wheelhouse
 stage exports it as a requirements file with `uv export --frozen`, and that
-file is both what the dependency layer installs and what constrains the two
-installs after it. This buys reproducibility rather than size — and, with the
+file is what constrains the client install, what the dependency layer
+installs, and what constrains the two installs after it. This buys reproducibility rather than size — and, with the
 timestamps normalised, it is what lets an unchanged dependency layer keep its
 digest across rebuilds. Constraints only bound what is resolved, so a scenario
 package that brings dependencies of its own still installs — they are the one
@@ -229,7 +249,6 @@ jobs:
         with:
           scenario-package-path: packages/my_scenario_package
           image: ghcr.io/${{ github.repository_owner }}/my-scenario
-          carla-version: "0.10.0"
           push: "true"
 ```
 
@@ -244,11 +263,10 @@ explaining further:
 | Input | Meaning |
 | --- | --- |
 | `scenario-package-path` | The generated package — the directory with its `pyproject.toml`. Required, and may sit outside this repository. |
-| `carla-version` | The client baked into the image. `0.10.0` resolves from `carla-wheel-dir`, published versions (e.g. `0.9.16`) from the index. |
 | `framework-path` | uv workspace root supplying the framework. Defaults to the action's own checkout, which is what makes the pinned ref the framework version. Its members are read from `[tool.uv.workspace] members`, globs included. |
 | `with-ffmpeg` | Installs ffmpeg for `CameraRecorder`. The only input that adds an apt layer. |
 | `slim` | Strips the virtualenv (see above). On by default. |
-| `cache-scope` | Cache key namespace. Defaults to one scope per image and CARLA version, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. |
+| `cache-scope` | Cache key namespace. Defaults to one scope per image, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. |
 
 Outputs: `image-ref`, `tags`, `digest` (pushed images only), `cache-scope`.
 
@@ -257,7 +275,9 @@ Outputs: `image-ref`, `tags`, `digest` (pushed images only), `cache-scope`.
 With `smoke-test: "true"` the action runs its `smoke-test.py` inside the
 freshly built image and checks that
 
-1. the installed CARLA client is exactly `carla-version`,
+1. typesafe_carla's prebuilt CPython package loads without compiling
+   anything (`TYPESAFE_CARLA_PYCARLA_BUILD=0`), and the official `carla`
+   package is not installed,
 2. the scenario package's `autoware_carla_scenario.scenarios` entry point loads
    and registers at least one scenario,
 3. Hydra discovers `AutowareScenarioSearchPathPlugin`, so the package's
@@ -278,16 +298,16 @@ ACTION=.github/actions/pack-scenario-image
   --scenario ../my_scenario_package \
   --out /tmp/scenario-ctx
 
-# 2. Build.
+# 2. Build. Nothing is compiled: the CARLA client's CPython package comes
+#    prebuilt in the typesafe-carla wheel.
 docker build \
   --file "$ACTION/Dockerfile" \
-  --build-arg CARLA_VERSION=0.10.0 \
-  --tag my-scenario:carla0.10.0 \
+  --tag my-scenario:latest \
   /tmp/scenario-ctx
 
 # 3. Verify.
 docker run --rm -i --entrypoint python \
-  my-scenario:carla0.10.0 - 0.10.0 < "$ACTION/smoke-test.py"
+  my-scenario:latest - < "$ACTION/smoke-test.py"
 ```
 
 ## Running a scenario
@@ -302,7 +322,7 @@ docker run --rm \
   --volume "$PWD/outputs:/work/outputs" \
   --env NISHISHINJUKU_XODR_PATH=/maps/nishishinjuku_carla.xodr \
   --env NISHISHINJUKU_LANELET2_PATH=/maps/nishishinjuku.osm \
-  my-scenario:carla0.10.0 \
+  my-scenario:latest \
   scenario=my_scenario/default map=nishishinjuku
 ```
 

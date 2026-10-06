@@ -2,9 +2,11 @@
 #
 # Split an installed virtualenv into the layers of the runtime image.
 #
-# The Dockerfile next to this script fills /opt/venv in four steps -- the CARLA
-# client, the framework's third-party dependency closure, the framework wheels,
-# the scenario wheel -- and calls `capture` after each one.  Everything the step
+# The Dockerfile next to this script fills /opt/venv in four steps -- the
+# CARLA client (typesafe-carla, with its prebuilt CPython package, and its
+# Codon toolchain), the rest of the framework's third-party dependency
+# closure, the framework wheels, the scenario wheel -- and calls `capture`
+# after each one.  Everything the step
 # added to (or rewrote in) the virtualenv is exported into <export-root>/<name>,
 # and the runtime stage lays those trees back on top of one another with one
 # COPY, and so one layer, each.  `stack` does the same reassembly on disk, which
@@ -12,7 +14,7 @@
 #
 # The point of the split is the pull rather than the build.  A layer whose
 # inputs did not change keeps its digest, so a client that already holds an
-# image built for the same CARLA client and framework downloads only the
+# image built from the same lock and framework downloads only the
 # scenario layer -- a few hundred kB instead of the whole virtualenv.  For that
 # to hold across rebuilds, identical content has to carry identical metadata, so
 # every exported file is stamped with LAYER_MTIME instead of the time it

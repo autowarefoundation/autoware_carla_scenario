@@ -627,7 +627,7 @@ def build_traffic_signal_condition(
 ) -> "BaseCondition":
     """Build a :class:`TrafficSignalCondition`."""
     from ..conditions import TrafficSignalCondition  # noqa: PLC0415
-    import carla  # noqa: PLC0415
+    import typesafe_carla.carla as carla  # noqa: PLC0415
 
     params = compiled.params
     return TrafficSignalCondition(
@@ -666,7 +666,7 @@ def build_traffic_signal_action(
     """Build a :class:`TrafficSignalAction`."""
     from ..actions import TrafficSignalAction  # noqa: PLC0415
     from ..actions import TrafficLightTarget  # noqa: PLC0415
-    import carla  # noqa: PLC0415
+    import typesafe_carla.carla as carla  # noqa: PLC0415
 
     params = compiled.params
     lanelet2_traffic_light_ids: Any

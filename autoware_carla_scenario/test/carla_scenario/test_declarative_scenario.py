@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 
-import carla
+import typesafe_carla.carla as carla
 import pytest
 
 from autoware_carla_scenario import (

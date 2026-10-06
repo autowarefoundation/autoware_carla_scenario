@@ -5,13 +5,18 @@ description = "CARLA scenario testing framework for Autoware"
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
 ]
-# Capped by the CARLA client, which is the only dependency here with a ceiling
-# at all: 0.10.0 is not published to PyPI, and the wheels it ships -- vendored
-# in carla_wheels/, taken from the Linux shipping package -- stop at cp312.
-# 0.9.16 stops there too. Raise this when a client for a newer interpreter
-# exists, and vendor its wheel in the same commit.
+# The interpreters CI tests. The ceiling came from the official CARLA client
+# (its wheels stopped at cp312), which the framework no longer uses: the CARLA
+# client is typesafe_carla, whose wheel carries its CPython package prebuilt
+# for any Python 3.10+. Raise it together with CI's interpreter matrix.
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    # The CARLA client: `import typesafe_carla.carla as carla` at run time (its
+    # CPython package, prebuilt in the wheel; docs/installation.md), and its
+    # Codon library for the static check (typecheck/). It pulls in
+    # typesafe-carla-toolchain, the pinned Codon the check needs. Both ship for
+    # Linux x86_64 only, as CARLA's own client did.
+    "typesafe-carla>=0.3.0,<0.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "pyxodr>=0.1.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
@@ -34,6 +39,10 @@ dependencies = [
     # requires this to read a request body as a form -- urlencoded included.
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
+    # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
+    # to choose the interpreters its wheelhouse is built for.
+    "packaging>=23.0",
+    "tomli>=1.1.0; python_version < '3.11'",
     "pydantic>=2.0.0",
     "ffmpeg-python>=0.2.0",
     # Speaks the alpasim `egodriver` gRPC contract to an external driver policy.
@@ -44,16 +53,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-carla = ["carla==0.10.0"]
-carla-0-9-16 = ["carla==0.9.16"]
-# The static check (autoware_carla_scenario.typecheck) compiles scenarios
-# against typesafe_carla's Codon library with its pinned Codon compiler
-# (typesafe-carla-toolchain, which typesafe-carla depends on). Both ship for
-# Linux x86_64 only; without this extra the runner skips the check with a
-# warning (`typecheck: auto`).
-codon = [
-    "typesafe-carla>=0.1.0,<0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
-]
 # The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the
 # simulator, netconvert and randomTrips), driven in-process through libsumo,
 # and roadgen (hakuturu583/hdmap_generator), which converts the OpenDRIVE the
@@ -64,14 +63,6 @@ sumo = [
     "sumolib>=1.23",
     "traci>=1.23",
     "roadgen>=0.15.0",
-]
-
-[tool.uv]
-conflicts = [
-    [
-        { extra = "carla" },
-        { extra = "carla-0-9-16" },
-    ],
 ]
 
 [build-system]

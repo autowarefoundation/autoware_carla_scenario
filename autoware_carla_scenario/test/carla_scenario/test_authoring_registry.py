@@ -194,7 +194,7 @@ class TestOptionSets:
         }
 
     def test_traffic_light_states_match_carla(self) -> None:
-        carla = pytest.importorskip("carla")
+        carla = pytest.importorskip("typesafe_carla.carla")
         declared = {o.value for o in registry.TRAFFIC_LIGHT_STATES}
         available = {
             name

@@ -10,7 +10,7 @@ from ..signals.registry import find_signal_controller
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

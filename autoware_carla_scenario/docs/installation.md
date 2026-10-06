@@ -6,31 +6,57 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### Operating System
 
-- **Linux** (Ubuntu 22.04 is the reference; CI runs on `ubuntu-latest`).
-  Nothing is compiled at install time — every dependency resolves to a wheel.
+- **Linux x86_64** (Ubuntu 22.04 is the reference; CI runs on
+  `ubuntu-latest`). Every dependency resolves to a wheel, the CARLA client's
+  CPython package included (see [CARLA client](#carla-client)), so nothing
+  is compiled on install.
 
 ### Python Version
 
 - **Python 3.10 – 3.12** — `pyproject.toml` declares
-  `requires-python = ">=3.10,<3.13"`. The ceiling is the `carla` wheels, which
-  are built for CPython 3.12 and below; nothing else here has one. Check your
-  version with `python --version`.
+  `requires-python = ">=3.10,<3.13"`: the interpreters CI tests. No
+  dependency caps it any more; it is raised together with CI's interpreter
+  matrix. Check your version with `python --version`.
 
 ### CARLA Simulator
 
-The package supports two CARLA Python API versions, exposed as Hydra
-extras in `pyproject.toml`:
+The framework targets CARLA UE5 (`0.10.0` and `ue5-dev`). CARLA 0.9.x (UE4)
+is not supported. Follow the
+[CARLA installation guide](https://carla.readthedocs.io/) to set up the
+simulator binary itself.
 
-| Extra | CARLA version | Notes |
-|-------|---------------|-------|
-| `carla` | `0.10.0` | Default. CARLA UE5 build. |
-| `carla-0-9-16` | `0.9.16` | Legacy CARLA UE4 build. |
+### CARLA client
 
-The two extras are declared as conflicting under `[tool.uv].conflicts`
-and cannot be installed simultaneously.
+The Python client is
+[typesafe_carla](https://github.com/hakuturu583/typesafe_carla), a plain
+dependency of the package (`typesafe-carla>=0.3.0,<0.4`, from PyPI, Linux
+x86_64 only), imported as `import typesafe_carla.carla as carla`. It also
+provides the Codon library the static check compiles scenarios against, and
+pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
+`carla` wheels are not used, and no extra has to be requested.
 
-Follow the [CARLA installation guide](https://carla.readthedocs.io/) to
-set up the simulator binary itself.
+The released wheel on PyPI carries its CPython package prebuilt
+(`typesafe_carla/carla/_prebuilt`), one build that serves every Python 3.10+,
+so `uv sync` (or `pip install`) is the whole installation: nothing is
+compiled, no C compiler is needed, and nothing is fetched beyond the install
+itself.
+
+Only where no matching prebuilt package exists -- typesafe_carla installed
+from a source checkout or an sdist, edited Codon sources, or a
+`typesafe-carla-toolchain` release other than the one the wheel was built
+with -- does the first `import typesafe_carla.carla` build it instead. That
+build takes 15 to 50 minutes and about 14 GB of RAM, needs a C compiler
+(`cc`), and lands in `~/.cache/typesafe_carla/pycarla`.
+
+```bash
+uv run typesafe-codon pycarla
+```
+
+runs it ahead of time, and reports that there is nothing to build when the
+prebuilt package applies. Set `TYPESAFE_CARLA_PYCARLA_DIR` to put the build
+elsewhere (a directory set this way is used in preference to the prebuilt
+package), and `TYPESAFE_CARLA_PYCARLA_BUILD=0` to make a missing build an
+`ImportError` instead of starting one.
 
 ### Package Manager
 
@@ -64,23 +90,21 @@ converter separately when you need to generate a map.
     cd autoware_carla_scenario
     ```
 
-2. Sync dependencies from the lock file (uses CARLA `0.10.0` by default):
+2. Sync dependencies from the lock file:
 
     ```bash
     uv sync
     ```
 
-3. (Optional) To target legacy CARLA `0.9.16`:
-
-    ```bash
-    uv sync --extra carla-0-9-16
-    ```
+    The CARLA client arrives with its CPython package prebuilt; nothing more
+    to build (see [CARLA client](#carla-client)).
 
 !!! note
     The Lanelet2 binding comes from
     [`simple-lanelet2`](https://github.com/hakuturu583/simple_lanelet2)
     as a prebuilt wheel, so `uv sync` needs no apt packages and no C++
-    toolchain on any host.
+    toolchain on any host, and the CARLA client's prebuilt CPython package
+    means no `cc` either.
 
 ## Environment Configuration
 
@@ -106,12 +130,15 @@ python -c "import autoware_carla_scenario; print('Installation successful!')"
 ```
 
 This works without CARLA — running an actual scenario additionally
-requires a live CARLA server and a valid `CARLA_EXECUTABLE`.
+requires the built CARLA client, a live CARLA server and a valid
+`CARLA_EXECUTABLE`.
 
 ## Dependencies
 
 The package's runtime dependencies (declared in `pyproject.toml`):
 
+- `typesafe-carla>=0.3.0,<0.4` (Linux x86_64) — the CARLA client and its Codon
+  library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
 - `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)
 - `numpy>=1.21`
@@ -125,8 +152,6 @@ The package's runtime dependencies (declared in `pyproject.toml`):
   result viewer
 - `pyyaml>=6.0`, `pydantic>=2.0.0`
 - `ffmpeg-python>=0.2.0` — H.264 encoder driver for video recording
-
-Plus one of the `carla` / `carla-0-9-16` extras.
 
 ## Troubleshooting
 

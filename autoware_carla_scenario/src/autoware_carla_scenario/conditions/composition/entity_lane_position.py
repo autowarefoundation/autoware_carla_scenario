@@ -18,7 +18,7 @@ from ..comparison import ScalarComparisonRule
 from .base import CompositionCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

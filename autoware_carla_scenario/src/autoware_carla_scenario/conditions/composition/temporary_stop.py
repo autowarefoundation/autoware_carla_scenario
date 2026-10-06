@@ -29,7 +29,7 @@ from .entity_lane_position import EntityLanePositionCondition
 from .speed import SpeedCondition
 
 if TYPE_CHECKING:
-    import carla
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 

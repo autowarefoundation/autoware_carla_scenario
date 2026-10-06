@@ -36,3 +36,4 @@ scenario_outputs
 # destination is ignored here rather than tracked by accident.
 scenario_drafts/
 scenario_packages/
+.lycheecache
