@@ -416,6 +416,9 @@ class Entity(_Node):
     #: only an ``autoware`` ego is a validation error for: it plans its own
     #: route and will not move without one.
     goal: Optional[GoalSpec] = None
+    #: Left out of the world until a ``spawn_entity`` action brings it in,
+    #: rather than spawned when the run starts.  The ego always starts it.
+    deferred: bool = False
 
     @field_validator("id")
     @classmethod

@@ -65,6 +65,9 @@ CTX_PARAMS: dict[str, str] = {
     # The live mapping, not a copy: an ``action_completed`` condition may name
     # an action that is instantiated after it.
     "actions": "ctx.actions",
+    # The live scenario, for an action that asks it to do something only it
+    # knows how to: spawn one of its entities.
+    "scenario": "ctx.scenario",
 }
 
 #: Field kinds holding text the document supplies, as opposed to a number or a

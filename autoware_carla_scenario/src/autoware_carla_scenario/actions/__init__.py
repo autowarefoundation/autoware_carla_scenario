@@ -6,6 +6,7 @@ from .keep_relative_position import KeepRelativePositionAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
 from .routing import RoutingAction
 from .set_speed import SetSpeedAction
+from .spawn_entity import SpawnEntityAction
 from .traffic_signal import TrafficLightTarget, TrafficSignalAction
 from .traffic_signal_controller import TrafficSignalControllerAction
 from .turn import TurnAction, TurnDirection
@@ -20,6 +21,7 @@ __all__ = [
     "LaneChangeDirection",
     "RoutingAction",
     "SetSpeedAction",
+    "SpawnEntityAction",
     "TickTiming",
     "TrafficLightTarget",
     "TrafficSignalAction",

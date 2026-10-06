@@ -314,27 +314,71 @@ class DeclarativeScenario(BaseScenario):
     # ------------------------------------------------------------------
 
     def _spawn_npcs(self) -> None:
-        """Spawn every non-ego entity at its document spawn position."""
-        world = self.world
-        for entity in self._compiled.npcs:
-            if entity.kind == "pedestrian":
-                walker = self._build_pedestrian(entity, world)
-                walker.spawn(world)
-                self.register_pedestrian(walker)
-            else:
-                npc_entity = self._build_npc(entity, world)
-                npc_entity.spawn(world)
-                self.register_entity(npc_entity)
-            logger.info(
-                "Spawned %s %s (%s) on lanelet %d at s=%.1f",
-                entity.kind,
-                entity.id,
-                self._compiled.role_of(entity.id),
-                entity.spawn.lanelet_id,
-                entity.spawn.s.value,
-            )
+        """Spawn every non-ego entity that starts the run, at its document spawn.
 
-    def _build_pedestrian(self, entity: Entity, world: "object") -> PedestrianEntity:
+        An entity marked ``deferred`` is left out: a ``spawn_entity`` action
+        brings it in later, through :meth:`spawn_entity`.
+        """
+        for entity in self._compiled.npcs:
+            if not entity.deferred:
+                self._spawn(entity, self.world, _spawn_pose(entity))
+
+    def spawn_entity(
+        self, role_name: str, world: "object", pose: Optional[Lanelet2Pose] = None
+    ) -> None:
+        """Spawn the entity *role_name* names, mid-run.
+
+        Args:
+            role_name: The entity's role, as the compiler assigned it.
+            world: The CARLA world.
+            pose: Where, as a lanelet and an ``s``; its ``t`` and heading are
+                replaced by the entity's authored ones.  ``None`` spawns it
+                where it was authored to.
+
+        Raises:
+            LookupError: If no entity has that role.
+        """
+        entity = next(
+            (
+                e
+                for e in self._compiled.npcs
+                if self._compiled.role_of(e.id) == role_name
+            ),
+            None,
+        )
+        if entity is None:
+            raise LookupError(f"no entity has the role {role_name!r}")
+        authored = _spawn_pose(entity)
+        if pose is not None:
+            authored = Lanelet2Pose(
+                lanelet_id=pose.lanelet_id,
+                s=pose.s,
+                t=authored.t,
+                heading=authored.heading,
+            )
+        self._spawn(entity, world, authored)
+
+    def _spawn(self, entity: Entity, world: "object", pose: Lanelet2Pose) -> None:
+        if entity.kind == "pedestrian":
+            walker = self._build_pedestrian(entity, world, pose)
+            walker.spawn(world)
+            self.register_pedestrian(walker)
+        else:
+            npc_entity = self._build_npc(entity, world, pose)
+            npc_entity.spawn(world)
+            self.register_entity(npc_entity)
+        logger.info(
+            "Spawned %s %s (%s) on lanelet %d at s=%.1f",
+            entity.kind,
+            entity.id,
+            self._compiled.role_of(entity.id),
+            pose.lanelet_id,
+            pose.s,
+        )
+
+    def _build_pedestrian(
+        self, entity: Entity, world: "object", pose: Lanelet2Pose
+    ) -> PedestrianEntity:
         """Return the :class:`PedestrianEntity` for *entity*.
 
         Deliberately **not** snapped to the road.  ``snap_to_carla_road`` puts a
@@ -355,17 +399,18 @@ class DeclarativeScenario(BaseScenario):
             PedestrianEntityConfig(
                 role_name=self._compiled.role_of(entity.id),
                 spawn_location=SpawnTransform(
-                    to_carla_world(_spawn_pose(entity)).to_carla_transform()
+                    to_carla_world(pose).to_carla_transform()
                 ),
                 walker_type=entity.vehicle_type,
             )
         )
 
-    def _build_npc(self, entity: Entity, world: "object") -> VehicleEntity:
-        """Return the :class:`VehicleEntity` for *entity*, snapped to the road."""
+    def _build_npc(
+        self, entity: Entity, world: "object", pose: Lanelet2Pose
+    ) -> VehicleEntity:
+        """Return the :class:`VehicleEntity` for *entity* at *pose*, snapped to the road."""
         from .coordinate.transform import to_opendrive  # noqa: PLC0415
 
-        pose = _spawn_pose(entity)
         # Snapped as the Lanelet2 pose it was authored as; the OpenDRIVE pose is
         # carried on to the entity only to enable the spawn retries (which
         # offset the snapped transform, not this pose).

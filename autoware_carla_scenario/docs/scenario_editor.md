@@ -600,6 +600,23 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
+## Entities that arrive later
+
+Every entity enters the world when the run starts unless it is marked
+**Deferred** (`deferred: true`). A deferred entity is out of the world until a
+**Spawn** card (`spawn_entity`) on its track fires, and nothing that names it
+-- a condition, another card -- does anything until then.
+
+| Spawn field | Meaning |
+| --- | --- |
+| Relative to (`anchor`) | Empty: spawn where the entity was authored to, a searched or derived spawn included. An entity: place it relative to where *that* entity is when the card fires. |
+| Gap (`gap_m`) | Along the road from the anchor, positive ahead. |
+| Lane (`side`) | `same`, `left`, `right` or `opposite`, beside the anchor's lane. |
+
+A relative spawn keeps the entity's authored lateral offset and heading. The
+validator refuses a deferred entity with no Spawn card, more than one, a card
+on an entity that already starts the run, a repeating card, and a deferred ego.
+
 ## Ego: who drives, and where to
 
 The ego's inspector opens with **Driven by** — the stack that drives it, exported

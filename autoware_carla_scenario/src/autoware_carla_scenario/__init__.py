@@ -86,6 +86,7 @@ if TYPE_CHECKING:
         RoutingAction as RoutingAction,
         KeepRelativePositionAction as KeepRelativePositionAction,
         SetSpeedAction as SetSpeedAction,
+        SpawnEntityAction as SpawnEntityAction,
         TrafficSignalAction as TrafficSignalAction,
         TrafficSignalControllerAction as TrafficSignalControllerAction,
         TurnAction as TurnAction,
@@ -377,6 +378,7 @@ __all__ = [
     "RoutingAction",
     "KeepRelativePositionAction",
     "SetSpeedAction",
+    "SpawnEntityAction",
     "TrafficSignalAction",
     "TrafficSignalControllerAction",
     "TrafficSignalCondition",
@@ -411,6 +413,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "RoutingAction": (".actions", "RoutingAction"),
     "KeepRelativePositionAction": (".actions", "KeepRelativePositionAction"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
+    "SpawnEntityAction": (".actions", "SpawnEntityAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),
     "TrafficSignalControllerAction": (
         ".actions",

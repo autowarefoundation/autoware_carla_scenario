@@ -174,6 +174,16 @@ class KeepRelativePositionAction(BaseAction):
         super().__init__(label, condition, timing, once=once)
 
 
+class SpawnEntityAction(BaseAction):
+    def __init__(self, entity_name, scenario, anchor = None, gap_m: float = 0.0,
+                 side: str = "same", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "spawn_entity", once: bool = True):
+        _keyword_only(_kw, "SpawnEntityAction(): label and once")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+
 class TrafficSignalAction(BaseAction):
     def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,

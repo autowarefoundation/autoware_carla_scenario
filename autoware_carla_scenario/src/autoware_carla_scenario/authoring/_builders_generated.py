@@ -68,6 +68,7 @@ __all__ = [
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
+    "build_spawn_entity_action",
     "build_turn_action",
 ]
 
@@ -924,6 +925,30 @@ def build_set_speed_action(
         entity_name=compiled.actor_role,
         target_speed_kmh=params["target_speed_kmh"],
         rate_kmh_s=params["rate_kmh_s"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_spawn_entity_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`SpawnEntityAction`."""
+    from ..actions import SpawnEntityAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return SpawnEntityAction(
+        entity_name=compiled.actor_role,
+        scenario=ctx.scenario,
+        anchor=(str(params["anchor"]) if params["anchor"] is not None else None),
+        gap_m=params["gap_m"],
+        side=str(params["side"]),
         condition=condition,
         timing=timing,
         label=compiled.label,

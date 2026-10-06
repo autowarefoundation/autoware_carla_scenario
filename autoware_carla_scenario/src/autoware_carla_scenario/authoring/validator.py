@@ -716,6 +716,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_untriggered_actions(out, document)
     _check_init_triggers(out, document)
     _check_duplicate_ego_routing(out, document)
+    _check_deferred_spawns(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)
@@ -741,6 +742,53 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_signal_controllers(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
+
+
+def _check_deferred_spawns(out: _Collector, document: ScenarioDocument) -> None:
+    """Check every deferred entity is spawned once, and only those are.
+
+    A deferred entity with no ``spawn_entity`` card never enters the world, so
+    everything naming it silently never fires; a card on an entity the run
+    already started with would put a second copy of it on the road.
+    """
+    spawns: dict[str, int] = {}
+    for index, action in enumerate(document.actions):
+        if action.type != "spawn_entity" or not action.actor:
+            continue
+        spawns[action.actor] = spawns.get(action.actor, 0) + 1
+        if not action.once:
+            out.error(
+                f"actions[{index}].once",
+                "A Spawn card fires once: every repeat would add another copy.",
+                action.id,
+            )
+        entity = document.entity(action.actor)
+        if entity is not None and not entity.deferred:
+            out.error(
+                f"actions[{index}]",
+                f"{entity.display_name} is spawned when the run starts; mark it "
+                "Deferred for a Spawn card to bring it in.",
+                action.id,
+            )
+    for index, entity in enumerate(document.entities):
+        if not entity.deferred:
+            continue
+        path = f"entities[{index}].deferred"
+        if entity.kind == "ego":
+            out.error(path, "The ego starts the run; it cannot be deferred.", entity.id)
+        elif spawns.get(entity.id, 0) == 0:
+            out.error(
+                path,
+                f"{entity.display_name} is deferred but no Spawn card brings it in.",
+                entity.id,
+            )
+        elif spawns[entity.id] > 1:
+            out.error(
+                path,
+                f"{entity.display_name} has {spawns[entity.id]} Spawn cards; it "
+                "can enter the world once.",
+                entity.id,
+            )
 
 
 def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:

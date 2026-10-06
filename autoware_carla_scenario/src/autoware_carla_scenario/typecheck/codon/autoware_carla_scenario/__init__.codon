@@ -8,7 +8,7 @@
 
 from .actions import (BaseAction, EnvironmentAction, KeepRelativePositionAction,
                       LaneChangeAction, RoutingAction,
-                      SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
+                      SetSpeedAction, SpawnEntityAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
 from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,

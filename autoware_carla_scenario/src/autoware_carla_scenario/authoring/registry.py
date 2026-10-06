@@ -1201,6 +1201,49 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="spawn_entity",
+        title="Spawn",
+        category="Vehicle / Motion",
+        builder="build_spawn_entity_action",
+        target="..actions:SpawnEntityAction",
+        actor_kinds=("vehicle", "pedestrian"),
+        visual_kind="instant",
+        fields=(
+            _entity_field("anchor", "Relative to", required=False),
+            FieldSpec(
+                name="gap_m",
+                label="Gap",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help=(
+                    "Along the road from where that entity is when this fires: "
+                    "positive ahead.  Ignored without one."
+                ),
+            ),
+            FieldSpec(
+                name="side",
+                label="Lane",
+                kind="select",
+                default="same",
+                options=(
+                    SelectOption("same", "Same lane"),
+                    *_DIRECTIONS,
+                    SelectOption("opposite", "Oncoming lane"),
+                ),
+            ),
+        ),
+        description=(
+            "Bring an entity marked Deferred into the world when this fires: "
+            "where it was authored to spawn, or relative to where another "
+            "entity is at that moment.  Until then it is not in the world, and "
+            "nothing that names it fires."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="routing",
         title="Set Goal",
         category="Vehicle / Motion",
