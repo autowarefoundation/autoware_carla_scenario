@@ -883,3 +883,33 @@ def test_feedback_moves_the_sumo_vehicle_to_where_its_car_really_is(
         assert backend._feedback_count == 1
     finally:
         backend.close()
+
+
+def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
+    """typesafe_carla's ``TrafficLight.get_state()`` gives a plain int."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    class _Lights:
+        def __init__(self) -> None:
+            self.states = {"tls": "rrrr"}
+
+        def getRedYellowGreenState(self, tls: str) -> str:
+            return self.states[tls]
+
+        def setRedYellowGreenState(self, tls: str, state: str) -> None:
+            self.states[tls] = state
+
+    def light(state: Any) -> SimpleNamespace:
+        return SimpleNamespace(get_state=lambda: int(state))
+
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(trafficlight=_Lights())
+    backend._signals = {
+        ("tls", 0): light(carla.TrafficLightState.Green),
+        ("tls", 1): light(carla.TrafficLightState.Yellow),
+        ("tls", 3): light(carla.TrafficLightState.Off),  # no SUMO state: kept
+    }
+    backend._signals_to_sumo()
+    assert backend._traci.trafficlight.states["tls"] == "Gyrr"

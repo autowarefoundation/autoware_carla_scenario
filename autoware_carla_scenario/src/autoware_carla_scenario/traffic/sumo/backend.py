@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
 from ...constants import EGO_ROLE_NAME
+from ...utils.traffic_light import traffic_light_state_name
 from ..base import (
     LaneChangeDirection,
     TrafficBackend,
@@ -1290,7 +1291,9 @@ class SumoTrafficBackend(TrafficBackend):
         for tls, lights in by_tls.items():
             state = list(tc.trafficlight.getRedYellowGreenState(tls))
             for index, light in lights.items():
-                char = _CARLA_TO_SUMO_SIGNAL.get(str(light.get_state()))
+                char = _CARLA_TO_SUMO_SIGNAL.get(
+                    traffic_light_state_name(light.get_state())
+                )
                 if char is None:
                     continue
                 if char == "G" and state[index] == "g":
