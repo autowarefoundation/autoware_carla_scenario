@@ -116,6 +116,12 @@ class EqualsConstraint:
 
     value: int | str = 0
 
+    def __post_init__(self) -> None:
+        # An id written as a string -- quoted in YAML, or typed into the
+        # editor's text field -- still names a lanelet.
+        if isinstance(self.value, str) and self.value.isdigit():
+            object.__setattr__(self, "value", int(self.value))
+
     def evaluate(self, lanelet: Any) -> bool:
         if self.value == "any":
             return True

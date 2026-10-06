@@ -147,8 +147,12 @@ class EntityLanePositionCondition(CompositionCondition):
             rules,
             label=label,
         )
-        condition._lane_id = None
+        condition._match_any_lane()
         return condition
+
+    def _match_any_lane(self) -> None:
+        """Match on the road alone, whichever of its lanes the entity is in."""
+        self._lane_id = None
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
@@ -374,7 +378,7 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
         super().__init__(entity_name, address, label=label)
         self._relation = lane
         if lane == "any":
-            self._lane_id = None
+            self._match_any_lane()
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()

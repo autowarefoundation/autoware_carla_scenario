@@ -2351,15 +2351,15 @@ class TestDerivedLanelets:
         assert 'value="adjacent"' in chooser
         assert 'value="stop_line_offset"' not in chooser
 
-    def test_a_spawn_can_stand_off_the_lane_turned_and_lifted(
+    def test_a_spawn_can_stand_off_the_lane_and_turned(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
         """A pedestrian at the kerb, facing across the road."""
         client.post(
             f"/draft/{draft_id}/entity/npc1",
-            data={"spawn_t": "-3", "spawn_heading_deg": "90", "spawn_z_offset": "1"},
+            data={"spawn_t": "-3", "spawn_heading_deg": "90"},
         )
         spawn = _entity(store, draft_id, "npc1").spawn
         assert spawn.t == -3.0
         assert spawn.heading == pytest.approx(math.pi / 2)
-        assert spawn.z_offset == 1.0
+        assert spawn.heading_deg == pytest.approx(90.0)

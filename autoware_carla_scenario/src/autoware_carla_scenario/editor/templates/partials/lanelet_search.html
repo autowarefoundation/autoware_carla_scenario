@@ -54,8 +54,6 @@
   </div>
 
   {% if slot.deriving %}
-    {% set binding = slot.choice.binding %}
-    {% set binding_spec = get_binding_spec(binding.type) if binding else none %}
     <p class="ed-help">
       Worked out from the lanelet the search picks, case by case: the lane
       beside it, the lanelet after it, the pick itself. The pinned ID stays as
@@ -64,22 +62,7 @@
     <form hx-post="/draft/{{ draft.id }}/lanelet-binding"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
       <input type="hidden" name="slot" value="{{ slot.key }}">
-      <div class="ed-field">
-        <label class="ed-label">Derived as</label>
-        <select name="binding_type" class="ed-input">
-          {% for spec in binding_specs() if spec.produces == 'lanelet' %}
-            <option value="{{ spec.type_id }}" {% if binding and spec.type_id == binding.type %}selected{% endif %}>
-              {{ spec.title }}
-            </option>
-          {% endfor %}
-        </select>
-        {% if binding_spec and binding_spec.description %}
-          <p class="ed-help">{{ binding_spec.description }}</p>
-        {% endif %}
-      </div>
-      {% if binding_spec %}
-        {{ f.fields(binding_spec.fields, binding.params, document, 'binding_', draft) }}
-      {% endif %}
+      {{ f.binding_picker('lanelet', slot.choice.binding, 'matched', 'Derived as', document, draft) }}
     </form>
   {% elif not slot.searching %}
     <p class="ed-help">

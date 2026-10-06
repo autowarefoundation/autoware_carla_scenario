@@ -275,8 +275,7 @@
       {% if subject and target is not none %}<span class="cond-arrow">&#8594;</span>{% endif %}
       {%- set target_choice = node.searches.get(visual.target) if visual.target else none -%}
       {% if target_choice and target_choice.deriving %}
-        {%- set derived_spec = get_binding_spec(target_choice.binding.type) if target_choice.binding else none -%}
-        <span class="cond-ref"><span class="cond-frame">{{ visual.target_prefix }}</span> {{ derived_spec.title|lower if derived_spec else 'derived' }}</span>
+        <span class="cond-ref"><span class="cond-frame">{{ visual.target_prefix }}</span> {{ (target_choice.binding_title or 'derived')|lower }}</span>
       {% elif target_choice and target_choice.searching %}
         <span class="cond-ref"><span class="cond-frame">{{ visual.target_prefix }}</span> searched</span>
       {% elif target is not none %}{{ entity_ref(target, document, visual.target_prefix) }}{% endif %}
@@ -381,4 +380,29 @@
   {%- else -%}
     <span>{{ entity_label(value, document) }}</span>
   {%- endif -%}
+{% endmacro %}
+
+
+{# The choice of binding and its fields: how a derived value -- a spawn's
+   offset, or a lanelet -- is worked out from the lanelet a search picks.
+   `produces` narrows the choice to the bindings that work one out. #}
+{% macro binding_picker(produces, binding, default_type, label, document, draft) %}
+  {%- set binding_type = binding.type if binding else default_type -%}
+  {%- set spec = get_binding_spec(binding_type) -%}
+  <div class="ed-field">
+    <label class="ed-label">{{ label }}</label>
+    <select name="binding_type" class="ed-input">
+      {% for option in binding_specs(produces) %}
+        <option value="{{ option.type_id }}" {% if option.type_id == binding_type %}selected{% endif %}>
+          {{ option.title }}
+        </option>
+      {% endfor %}
+    </select>
+    {% if spec and spec.description %}
+      <p class="ed-help">{{ spec.description }}</p>
+    {% endif %}
+  </div>
+  {% if spec %}
+    {{ fields(spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
+  {% endif %}
 {% endmacro %}

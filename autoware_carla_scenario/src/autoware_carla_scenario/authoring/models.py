@@ -23,6 +23,7 @@ be loaded, validated and compiled anywhere.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, cast, get_args
@@ -197,11 +198,6 @@ class ConstraintNode(_Node):
 
         out: dict[str, Any] = {"type": self.type}
         out.update(self.params)
-        # The editor's text field hands an id over as a string, and the sweeper
-        # compares it with an integer id: "222" would match no lanelet at all.
-        value = out.get("value")
-        if self.type == "equals" and isinstance(value, str) and value.isdigit():
-            out["value"] = int(value)
         if not self.constraints:
             return out
         spec = get_constraint_spec(self.type)
@@ -241,8 +237,15 @@ class BindingRef(_Node):
     params: dict[str, Any] = Field(default_factory=dict)
 
     def to_sweep_dict(self) -> dict[str, Any]:
-        """Return this binding in ``sweep.bindings`` YAML form."""
-        return {"type": self.type, **self.params}
+        """Return this binding in ``sweep.bindings`` YAML form.
+
+        With the parameters its spec fixes, which the editor does not offer.
+        """
+        from .registry import get_binding_spec  # noqa: PLC0415
+
+        spec = get_binding_spec(self.type)
+        fixed = dict(spec.fixed) if spec else {}
+        return {"type": self.type, **self.params, **fixed}
 
 
 class SValue(_Node):
@@ -294,6 +297,14 @@ class LaneletChoice(_Node):
         """Whether the lanelet is worked out from the sweep's pick."""
         return self.mode == "derived"
 
+    @property
+    def binding_title(self) -> Optional[str]:
+        """The title of the binding a derived lanelet follows, if it has one."""
+        from .registry import get_binding_spec  # noqa: PLC0415
+
+        spec = get_binding_spec(self.binding.type) if self.binding else None
+        return spec.title if spec else None
+
     def sweep_constraint_dicts(self) -> list[dict[str, Any]]:
         """Return the constraint tree in ``sweep.constraints`` YAML form.
 
@@ -338,10 +349,11 @@ class SpawnSpec(LaneletChoice):
     #: Yaw relative to the lanelet's direction of travel, in radians, positive
     #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
     heading: float = 0.0
-    #: Lift above the spawn point, in metres.  CARLA refuses a walker whose
-    #: capsule starts inside the kerb, so a pedestrian at the roadside needs
-    #: one.  A vehicle is set on the road surface it is snapped to instead.
-    z_offset: float = 0.0
+
+    @property
+    def heading_deg(self) -> float:
+        """:attr:`heading` in degrees, as the editor shows it."""
+        return math.degrees(self.heading)
 
 
 class GoalSpec(LaneletChoice):

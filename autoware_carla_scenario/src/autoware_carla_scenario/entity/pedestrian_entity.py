@@ -18,10 +18,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PedestrianEntity", "PedestrianEntityConfig"]
 
-#: Metres the spawn point is raised before the walker is placed.  A pose taken
-#: off the map sits exactly on the surface, and a walker spawned flush with it
-#: is rejected as colliding with the ground.
-_SPAWN_LIFT_M = 0.3
+#: Metres the spawn point is raised before the walker is placed, tried in turn
+#: until CARLA accepts one.  A pose taken off the map sits exactly on the
+#: surface, and a walker spawned flush with it is rejected as colliding with
+#: the ground; one at the roadside starts inside the kerb unless it is lifted
+#: clear of it, by more than the ground needs.
+_SPAWN_LIFTS_M = (0.3, 0.8, 1.3)
 
 #: CARLA 0.10 (UE5) moves a walker at about 1/20.5 of the ``WalkerControl``
 #: speed it is given, whatever the step length -- measured on 0.10.0: 2 -> 0.098
@@ -150,8 +152,12 @@ class PedestrianEntity:
         if blueprint.has_attribute("is_invincible"):
             blueprint.set_attribute("is_invincible", "false")
 
-        transform = self._lifted_transform()
-        walker = world.try_spawn_actor(blueprint, transform)
+        walker = None
+        for lift in _SPAWN_LIFTS_M:
+            transform = self._lifted_transform(lift)
+            walker = world.try_spawn_actor(blueprint, transform)
+            if walker is not None:
+                break
         if walker is None:
             raise RuntimeError(
                 f"could not spawn pedestrian {self._config.role_name!r} at "
@@ -198,14 +204,14 @@ class PedestrianEntity:
     # Internals
     # ------------------------------------------------------------------
 
-    def _lifted_transform(self) -> "carla.Transform":
-        """Return the spawn transform raised clear of the ground."""
+    def _lifted_transform(self, lift: float) -> "carla.Transform":
+        """Return the spawn transform raised *lift* metres."""
         transform = self._config.spawn_location.value
         return carla.Transform(
             carla.Location(
                 x=transform.location.x,
                 y=transform.location.y,
-                z=transform.location.z + _SPAWN_LIFT_M,
+                z=transform.location.z + lift,
             ),
             transform.rotation,
         )

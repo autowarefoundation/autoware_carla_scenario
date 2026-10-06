@@ -421,6 +421,8 @@ class BindingSpec:
     #: What the binding works out: a spawn's ``s``, or a lanelet id for a
     #: ``derived`` lanelet slot.  The editor offers each only where it fits.
     produces: Literal["s", "lanelet"] = "s"
+    #: Parameters the binding is always given and the editor does not offer.
+    fixed: tuple[tuple[str, Any], ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -584,6 +586,34 @@ def _entity_field(name: str, label: str, *, required: bool = True) -> FieldSpec:
     )
 
 
+def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
+    """Return what makes a temporary stop: how near *place*, how still, how long."""
+    return (
+        FieldSpec(
+            name="s_margin",
+            label="Margin",
+            kind="number",
+            default=5.0,
+            unit="m",
+            help=f"How far either side of {place} still counts.",
+        ),
+        FieldSpec(
+            name="stop_duration",
+            label="Held for",
+            kind="number",
+            default=1.0,
+            unit="s",
+        ),
+        FieldSpec(
+            name="speed_threshold",
+            label="Counts as stopped below",
+            kind="number",
+            default=0.1,
+            unit="m/s",
+        ),
+    )
+
+
 def _extent_fields(noun: str) -> tuple[FieldSpec, ...]:
     """Return the s/t range fields that bound a position along *noun*.
 
@@ -686,9 +716,16 @@ def constraint_specs() -> list[ConstraintSpec]:
     return sorted(_CONSTRAINT_SPECS.values(), key=lambda s: (s.category, s.title))
 
 
-def binding_specs() -> list[BindingSpec]:
-    """Return every registered binding spec, ordered by title."""
-    return sorted(_BINDING_SPECS.values(), key=lambda s: s.title)
+def binding_specs(produces: Optional[str] = None) -> list[BindingSpec]:
+    """Return the registered binding specs, ordered by title.
+
+    *produces* narrows them to the ones that work out an ``s`` or a lanelet,
+    which is what decides where each one may be offered.
+    """
+    return sorted(
+        (s for s in _BINDING_SPECS.values() if produces in (None, s.produces)),
+        key=lambda s: s.title,
+    )
 
 
 def get_action_spec(type_id: str) -> Optional[ActionSpec]:
@@ -2416,28 +2453,7 @@ register_condition_spec(
                 default=[],
                 help="Stopping at any one of them is enough.",
             ),
-            FieldSpec(
-                name="s_margin",
-                label="Margin",
-                kind="number",
-                default=5.0,
-                unit="m",
-                help="How far either side of a lanelet's start still counts.",
-            ),
-            FieldSpec(
-                name="stop_duration",
-                label="Held for",
-                kind="number",
-                default=1.0,
-                unit="s",
-            ),
-            FieldSpec(
-                name="speed_threshold",
-                label="Counts as stopped below",
-                kind="number",
-                default=0.1,
-                unit="m/s",
-            ),
+            *_temporary_stop_fields("a lanelet's start"),
         ),
         description=(
             "The entity came to a stop at one of these lanelets.  The editor "
@@ -2490,28 +2506,7 @@ register_condition_spec(
                 default=1,
                 help="How many steps of following lanelets to search.",
             ),
-            FieldSpec(
-                name="s_margin",
-                label="Margin",
-                kind="number",
-                default=5.0,
-                unit="m",
-                help="How far either side of a stop line still counts.",
-            ),
-            FieldSpec(
-                name="stop_duration",
-                label="Held for",
-                kind="number",
-                default=1.0,
-                unit="s",
-            ),
-            FieldSpec(
-                name="speed_threshold",
-                label="Counts as stopped below",
-                kind="number",
-                default=0.1,
-                unit="m/s",
-            ),
+            *_temporary_stop_fields("a stop line"),
         ),
         description=(
             "The entity came to a stop at one of the map's stop lines, found "
@@ -2767,14 +2762,9 @@ register_binding_spec(
                 help="1 is the lanelet after the pick; where the road forks, "
                 "the lowest id.",
             ),
-            FieldSpec(
-                name="last_only",
-                label="Only the last",
-                kind="bool",
-                default=True,
-                help="A lanelet slot takes one id, so this stays on.",
-            ),
         ),
+        # A lanelet slot takes one id: the route's last lanelet.
+        fixed=(("last_only", True),),
         description="The lanelet that many steps on from the pick.",
     )
 )

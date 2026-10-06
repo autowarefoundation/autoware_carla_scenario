@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Sequence, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Optional, Sequence, get_args
 
 from ..authoring.models import (
     ActionNode,
@@ -833,33 +833,16 @@ class EditorService:
             spawn.t = _as_float(form["spawn_t"], "Lateral offset", spawn.t)
         if "spawn_heading_deg" in form:
             spawn.heading = math.radians(
-                _as_float(
-                    form["spawn_heading_deg"], "Heading", math.degrees(spawn.heading)
-                )
+                _as_float(form["spawn_heading_deg"], "Heading", spawn.heading_deg)
             )
-        if "spawn_z_offset" in form:
-            spawn.z_offset = _as_float(form["spawn_z_offset"], "Lift", spawn.z_offset)
 
         # Only a derived offset needs a binding, and switching back to Fixed
         # leaves the old one in place: it is inert (nothing emits it) and it
         # means flipping the radio back does not lose what was configured.
         if spawn.s.mode == "derived":
-            binding_type = str(form.get("binding_type") or "").strip()
-            if not binding_type and spawn.s.binding is not None:
-                binding_type = spawn.s.binding.type
-            if not binding_type:
-                binding_type = "stop_line_offset"
-            spec = get_binding_spec(binding_type)
-            if spec is None:
-                raise EditorError(f"Unknown binding type {binding_type!r}.")
-            existing = (
-                spawn.s.binding.params
-                if spawn.s.binding is not None and spawn.s.binding.type == binding_type
-                else default_params(spec.fields)
+            spawn.s.binding = _merge_binding(
+                spawn.s.binding, form, produces="s", default="stop_line_offset"
             )
-            params = dict(existing)
-            params.update(_parse(spec.fields, form, prefix="binding_"))
-            spawn.s.binding = BindingRef(type=binding_type, params=params)
 
     @staticmethod
     def _update_goal(entity: Entity, form: Mapping[str, Any]) -> None:
@@ -949,19 +932,9 @@ class EditorService:
         """
         slot = self.require_slot(document, slot_key)
         choice = slot.attach()
-        binding_type = str(form.get("binding_type") or "").strip() or "matched"
-        spec = get_binding_spec(binding_type)
-        if spec is None or spec.produces != "lanelet":
-            raise EditorError(f"{binding_type!r} does not work out a lanelet.")
-        existing = choice.binding
-        params = dict(
-            existing.params
-            if existing is not None and existing.type == binding_type
-            else default_params(spec.fields)
+        choice.binding = _merge_binding(
+            choice.binding, form, produces="lanelet", default="matched"
         )
-        if existing is not None and existing.type == binding_type:
-            params.update(_parse(spec.fields, form, prefix="binding_"))
-        choice.binding = BindingRef(type=binding_type, params=params)
         return slot.owner_id
 
     def add_constraint(
@@ -1382,6 +1355,36 @@ def condition_actions(node: ConditionNode) -> list[str]:
     that moving a card could invent or erase.
     """
     return condition_refs(node, "action")
+
+
+def _merge_binding(
+    existing: Optional[BindingRef],
+    form: Mapping[str, Any],
+    *,
+    produces: str,
+    default: str,
+) -> BindingRef:
+    """Return the binding a form asks for, from the one already there.
+
+    The form's ``binding_type`` picks the type -- the existing one, else
+    *default*, when it says none.  The same type keeps what was set and takes
+    the form's fields over it; a change of type starts from the new type's
+    defaults, since the fields the form carries are the old type's.
+
+    Raises:
+        EditorError: If the type is unknown or does not work out a *produces*.
+    """
+    binding_type = str(form.get("binding_type") or "").strip() or (
+        existing.type if existing is not None else default
+    )
+    spec = get_binding_spec(binding_type)
+    if spec is None or spec.produces != produces:
+        raise EditorError(f"{binding_type!r} does not work out a {produces}.")
+    if existing is not None and existing.type == binding_type:
+        params = {**existing.params, **_parse(spec.fields, form, prefix="binding_")}
+    else:
+        params = default_params(spec.fields)
+    return BindingRef(type=binding_type, params=params)
 
 
 def _purge_references(document: ScenarioDocument, kind: str, target: str) -> None:

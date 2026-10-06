@@ -18,7 +18,7 @@ uv run scenario scenario=pedestrian_dart_out/pedestrian_dart_out map=<map>
 | | |
 |---|---|
 | **Ego** | Constraint search: a lane with no lane on its right, not in a junction, at least 55 m long, excluding the map's lanelets with no 3D model. 5 m along it, 30 km/h. Goal *from the search*: 50 m along the matched lanelet, past the crossing. |
-| **Pedestrian** | On *the matched lanelet* -- the ego's -- 40 m along it, 3 m to the right of its centre, turned 90&deg; to face across the lane, and lifted 1 m so CARLA does not refuse it in the kerb. |
+| **Pedestrian** | On *the matched lanelet* -- the ego's -- 40 m along it, 3 m to the right of its centre, turned 90&deg; to face across the lane. A walker CARLA refuses inside the kerb is tried again higher up. |
 | **Initialization** | Every traffic light green. |
 | **Pedestrian, once the ego is within 20 m** | Walk straight ahead at 2 m/s. |
 | **Pass** | The ego has come within 3 m of the point 50 m along its lane, 10 m past the crossing. |

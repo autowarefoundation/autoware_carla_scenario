@@ -343,25 +343,17 @@ class DeclarativeScenario(BaseScenario):
         The cost is that a pedestrian's z comes from the Lanelet2 map rather
         than from CARLA's mesh, so a map whose footway heights are wrong puts
         the walker slightly above or below the pavement.  That is visible and
-        fixable; a pedestrian standing in the road is neither.  The spawn's
-        ``z_offset`` lifts it clear of a kerb CARLA would otherwise refuse.
+        fixable; a pedestrian standing in the road is neither.
         """
-        import carla  # noqa: PLC0415
-
         from .coordinate.transform import to_carla_world  # noqa: PLC0415
 
         del world
-        at = to_carla_world(_spawn_pose(entity)).to_carla_transform()
-        lifted = carla.Transform(
-            carla.Location(
-                at.location.x, at.location.y, at.location.z + entity.spawn.z_offset
-            ),
-            at.rotation,
-        )
         return PedestrianEntity(
             PedestrianEntityConfig(
                 role_name=self._compiled.role_of(entity.id),
-                spawn_location=SpawnTransform(lifted),
+                spawn_location=SpawnTransform(
+                    to_carla_world(_spawn_pose(entity)).to_carla_transform()
+                ),
                 walker_type=entity.vehicle_type,
             )
         )

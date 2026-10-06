@@ -42,9 +42,7 @@ class TestValidation:
     def test_a_lanelet_derived_from_the_search_is_valid(self) -> None:
         document = _with_ego_goal(
             new_document(),
-            GoalSpec(
-                lanelet_id=141, **_derived("route_through", depth=1, last_only=True)
-            ),
+            GoalSpec(lanelet_id=141, **_derived("route_through", depth=1)),
         )
         assert _messages(document) == []
 
@@ -65,13 +63,13 @@ class TestValidation:
         assert any("not a lanelet" in m for m in _messages(document))
 
     def test_a_lanelet_takes_only_the_last_of_a_route(self) -> None:
-        document = _with_ego_goal(
-            new_document(),
-            GoalSpec(
-                lanelet_id=141, **_derived("route_through", depth=2, last_only=False)
-            ),
-        )
-        assert any("only its last lanelet" in m for m in _messages(document))
+        """A slot holds one id, so the route always gives its last lanelet."""
+        binding = BindingRef(type="route_through", params={"depth": 2})
+        assert binding.to_sweep_dict() == {
+            "type": "route_through",
+            "depth": 2,
+            "last_only": True,
+        }
 
 
 class TestHydraConfig:
@@ -96,13 +94,19 @@ class TestHydraConfig:
         assert config["sweep"]["bindings"][key] == {"type": "matched"}
 
 
-def test_an_equals_id_typed_into_the_editor_reaches_the_sweeper_as_an_id() -> None:
+def test_an_equals_id_written_as_a_string_still_names_the_lanelet() -> None:
+    """As the editor's text field hands it over, or a quoted YAML value."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.sweeper.constraints import parse_constraint
+
     node = ConstraintNode(type="equals", params={"value": "222"})
-    assert node.to_sweep_dict() == {"type": "equals", "value": 222}
-    assert ConstraintNode(type="equals", params={"value": "any"}).to_sweep_dict() == {
-        "type": "equals",
-        "value": "any",
-    }
+    constraint = parse_constraint(node.to_sweep_dict())
+    assert constraint.evaluate(SimpleNamespace(id=222))
+    assert not constraint.evaluate(SimpleNamespace(id=223))
+    assert parse_constraint({"type": "equals", "value": "any"}).evaluate(
+        SimpleNamespace(id=1)
+    )
 
 
 def test_a_pedestrian_defaults_to_a_walker_every_carla_has() -> None:
@@ -115,7 +119,7 @@ def test_the_spawn_pose_carries_its_offsets() -> None:
     entity = Entity(
         id="p",
         kind="pedestrian",
-        spawn=SpawnSpec(lanelet_id=20, t=-3.0, heading=math.pi / 2, z_offset=1.0),
+        spawn=SpawnSpec(lanelet_id=20, t=-3.0, heading=math.pi / 2),
     )
     entity.spawn.s.value = 40.0
     pose = _spawn_pose(entity)

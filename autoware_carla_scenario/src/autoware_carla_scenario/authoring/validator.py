@@ -448,9 +448,7 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
         )
 
     if spawn.s.mode == "derived":
-        _check_binding(
-            out, f"{path}.spawn.s.binding", spawn.s.binding, "s", "offset", entity.id
-        )
+        _check_binding(out, f"{path}.spawn.s.binding", spawn.s.binding, "s", entity.id)
 
 
 def _check_binding(
@@ -458,10 +456,10 @@ def _check_binding(
     path: str,
     binding: Optional[BindingRef],
     produces: str,
-    noun: str,
     owner_id: str,
 ) -> None:
     """Check a binding exists, is known, works out a *produces*, and is filled in."""
+    noun = "offset" if produces == "s" else produces
     if binding is None:
         out.error(path, f"A derived {noun} needs a binding.", owner_id)
         return
@@ -479,12 +477,6 @@ def _check_binding(
         return
     for field_spec in binding_spec.fields:
         _check_field(out, path, field_spec, binding.params, _NO_REFS, owner_id)
-    if binding.type == "route_through" and not binding.params.get("last_only", True):
-        out.error(
-            path,
-            "A lanelet takes one id: the route has to give only its last lanelet.",
-            owner_id,
-        )
 
 
 def _check_model(out: _Collector, path: str, entity: Entity) -> None:
@@ -745,8 +737,9 @@ def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
     a run that does not sweep -- so they are asked once here rather than at each
     of the three sites, which is how the goal came to have no answer at all.
     """
-    searched = bool(document.searched_lanelet_slots())
-    for slot in document.lanelet_slots():
+    slots = document.lanelet_slots()
+    searched = any(slot.searching for slot in slots)
+    for slot in slots:
         choice = slot.choice
         if choice.deriving:
             _check_derived_slot(out, slot, searched=searched)
@@ -781,7 +774,6 @@ def _check_derived_slot(out: _Collector, slot: LaneletSlot, *, searched: bool) -
         out,
         f"{slot.key}.binding",
         slot.choice.binding,
-        "lanelet",
         "lanelet",
         slot.owner_id,
     )
