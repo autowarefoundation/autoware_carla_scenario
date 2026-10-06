@@ -1,0 +1,1993 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/3.1.2/traffic_backends/">
+      
+      
+        <link rel="prev" href="../driver_interface/">
+      
+      
+        <link rel="next" href="../typecheck/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Traffic Backends - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#traffic-backends" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Traffic Backends
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selecting-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a backend
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing a backend">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#answering-manoeuvre-intents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answering manoeuvre intents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-a-backend-from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using a backend from Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-traffic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background traffic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-sumo-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The SUMO backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selecting-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a backend
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing a backend">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#answering-manoeuvre-intents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answering manoeuvre intents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-a-backend-from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using a backend from Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-traffic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background traffic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-sumo-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The SUMO backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="traffic-backends">Traffic Backends<a class="headerlink" href="#traffic-backends" title="Permanent link">&para;</a></h1>
+<p>The vehicles in a scenario come from three places, and only two of them are the
+scenario's own:</p>
+<ul>
+<li>the <strong>ego</strong>, driven by its entity — see <a href="../driver_interface/">External Driver Interface</a>;</li>
+<li>the <strong>authored NPCs</strong> a scenario spawns in <code>setup()</code>;</li>
+<li>the <strong>ambient traffic</strong> that fills the rest of the road network.</li>
+</ul>
+<p>A <strong>traffic backend</strong> owns the third kind outright and answers the manoeuvre
+intents asked of the second. CARLA's TrafficManager is one such backend and is
+the default. This page describes the seam, how to select a backend, and how to
+write one — a microscopic traffic simulator such as SUMO, a replay of recorded
+traffic, or anything else that can put vehicles on a road.</p>
+<h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TB
+    subgraph run["Scenario process"]
+        SR["ScenarioRunner&lt;br/&gt;owns the world and the tick loop"]
+        SC["BaseScenario&lt;br/&gt;ego + authored NPCs"]
+        BE["TrafficBackend"]
+        SR --&gt;|"prepare / start / tick / close"| BE
+        SC --&gt;|"change_lane, turn_at_junction"| BE
+        SR --&gt; SC
+    end
+
+    subgraph impls["Implementations"]
+        TM["TrafficManagerBackend&lt;br/&gt;(default)"]
+        NONE["NullTrafficBackend&lt;br/&gt;('none')"]
+        SUMO["SumoTrafficBackend&lt;br/&gt;('sumo')"]
+        EXT["your backend&lt;br/&gt;(entry point)"]
+    end
+
+    BE --- TM
+    BE --- NONE
+    BE --- SUMO
+    BE --- EXT
+    TM --&gt; CTM["CARLA TrafficManager"]
+    SUMO --&gt; LS["SUMO (libsumo)"]
+    SUMO -.-&gt;|"scenario vehicles"| TM
+    EXT -.-&gt; SIM["another traffic simulator"]</code></pre>
+<p>Two rules hold for every backend:</p>
+<p><strong>One authority per vehicle.</strong> A vehicle a backend owns is not driven by anything
+else. <code>ScenarioRunner</code> passes the actors that are under external control — an
+Autoware ego, a policy-driven ego — to <code>start()</code> as <code>skip_actor_ids</code>, so the rule
+is data the backend is given rather than a special case it has to know about.</p>
+<p><strong>An intent is not a mechanism.</strong> <code>change_lane</code> is what the <em>scenario</em> means;
+<code>tm.force_lane_change</code> and <code>traci.vehicle.changeLane</code> are what two backends do
+about it. Entities ask for the first and never name the second, which is why
+actions work unchanged whatever drives the vehicle.</p>
+<h2 id="selecting-a-backend">Selecting a backend<a class="headerlink" href="#selecting-a-backend" title="Permanent link">&para;</a></h2>
+<p>The <code>traffic</code> config group chooses one:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># CARLA's TrafficManager (the default — nothing to pass)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># No traffic model at all: only the ego and the scenario's own cars move</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>none
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>traffic_manager</code> (default)</td>
+<td>CARLA's TrafficManager drives every vehicle that is not under external control.</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>Nothing is driven and no ambient vehicle is created.</td>
+</tr>
+<tr>
+<td><code>sumo</code></td>
+<td>SUMO fills the road with its own traffic, co-simulated on the world's road network; see <a href="#the-sumo-backend">The SUMO backend</a>. Needs the <code>sumo</code> extra.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title"><code>traffic=none</code> and the default ego</p>
+<p><code>ego.entity=autopilot</code> (the default) means <em>the traffic backend drives the
+ego</em>, so under <code>traffic=none</code> the ego does not move and the run ends on its
+timeout. Pair <code>traffic=none</code> with an ego that drives itself —
+<code>ego.entity=autoware</code> or <code>ego.entity=carla_driver</code> — or with a scenario that
+steers its vehicles itself. The backend logs how many vehicles it is leaving
+standing, so the log says why nothing moved.</p>
+</div>
+<p>A backend's own settings live under <code>traffic.options</code> and are passed to it
+verbatim, so a backend from another package needs no change to this package's
+config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">traffic</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">traffic_manager</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">options</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8100</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># 8101 rather than the default 8100: a second TrafficManager, so two runs</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># can share one machine without steering each other's traffic.</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>traffic.options.port<span class="o">=</span><span class="m">8101</span>
+</code></pre></div>
+<p><code>traffic_manager.port</code> — where the port lived before this group existed, and what
+exported scenario packages still set — keeps deciding the port when
+<code>traffic.options.port</code> is left unset.</p>
+<h2 id="the-lifecycle">The lifecycle<a class="headerlink" href="#the-lifecycle" title="Permanent link">&para;</a></h2>
+<p><code>ScenarioRunner</code> calls these at fixed points of a run, beside the ego entity's
+own hooks:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prepare(context)</code></td>
+<td>Before <code>setup()</code>, nothing spawned yet. Put a simulator in step, seed it, or refuse the run.</td>
+</tr>
+<tr>
+<td><code>adopt(entity)</code></td>
+<td>As the ego and each authored NPC join the run. The vehicle stays the scenario's.</td>
+</tr>
+<tr>
+<td><code>start(world, skip_actor_ids=…)</code></td>
+<td>After warm-up and the init phase, immediately before the scenario clock starts.</td>
+</tr>
+<tr>
+<td><code>tick(world, elapsed)</code></td>
+<td>Once per <code>world.tick()</code>. A backend driving a second simulator steps it exactly once here.</td>
+</tr>
+<tr>
+<td><code>close()</code></td>
+<td>During teardown, while the world is still alive. Called even when the run failed.</td>
+</tr>
+</tbody>
+</table>
+<p>One backend serves a whole queue: <code>ScenarioQueue</code> builds one runner, so over a
+batch the real sequence is <code>prepare … close, prepare … close</code>, with a different
+scenario — and possibly a different map — each time. <code>close()</code> is the end of a
+<em>run</em>, not the end of the object: forget every vehicle created and every entity
+adopted, and be ready to <code>prepare()</code> again.</p>
+<p><code>TrafficContext</code>, handed to <code>prepare()</code>, carries the CARLA client and world, the
+map name, the OpenDRIVE the run installed, the simulation step, the scenario's
+random seed and the run's output directory — everything a second simulator needs
+to line itself up with the CARLA one.</p>
+<p>Two promises matter:</p>
+<ul>
+<li><code>prepare()</code> is the place to <strong>fail loudly</strong>. Raise <code>TrafficBackendUnavailable</code>
+  when the simulator behind the backend is not installed, naming the extra that
+  installs it; nothing has been spawned yet, so the run costs nothing.</li>
+<li><code>tick()</code> and the manoeuvres must <strong>never raise</strong>. A traffic model that cannot
+  do something logs a warning; an exception there would end a scenario that is
+  otherwise perfectly valid. The base class's defaults already behave this way.</li>
+</ul>
+<h2 id="writing-a-backend">Writing a backend<a class="headerlink" href="#writing-a-backend" title="Permanent link">&para;</a></h2>
+<p>Subclass <code>TrafficBackend</code>, override what you actually do, and register a factory
+under a name:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Collection</span><span class="p">,</span> <span class="n">Mapping</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">TrafficBackend</span><span class="p">,</span> <span class="n">TrafficContext</span><span class="p">,</span> <span class="n">register_backend</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">MySimulatorBackend</span><span class="p">(</span><span class="n">TrafficBackend</span><span class="p">):</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_simulator"</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_address</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"address"</span><span class="p">,</span> <span class="s2">"localhost:9999"</span><span class="p">)</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">prepare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">TrafficContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>        <span class="c1"># Match the simulation step so the two clocks cannot drift, and derive</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>        <span class="c1"># the road network from the OpenDRIVE the CARLA world is running.</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>        <span class="c1"># The map of the run: `xodr_path` is the OpenDRIVE CARLA is running, and Phase B</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        <span class="c1"># adds `lanelet2_path` for a backend whose own network is built from Lanelet2.</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_connect</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">fixed_delta_seconds</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">xodr_path</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">random_seed</span><span class="p">)</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">skip_actor_ids</span><span class="p">:</span> <span class="n">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">())</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_externally_driven</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">skip_actor_ids</span><span class="p">)</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tick</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">elapsed</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_publish_carla_vehicles</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>   <span class="c1"># so my traffic reacts to the ego</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_step_once</span><span class="p">()</span>                      <span class="c1"># exactly one step per world tick</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_mirror_into_carla</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_disconnect</span><span class="p">()</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>    <span class="n">register_backend</span><span class="p">(</span><span class="s2">"my_simulator"</span><span class="p">,</span> <span class="n">MySimulatorBackend</span><span class="p">)</span>
+</code></pre></div>
+<p>From your own package, advertise it so <code>traffic.backend=my_simulator</code> resolves
+without an import anywhere in this repository:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[project.entry-points.</span><span class="s2">"autoware_carla_scenario.traffic_backends"</span><span class="k">]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">my_simulator</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my_package:register"</span>
+</code></pre></div>
+<h3 id="answering-manoeuvre-intents">Answering manoeuvre intents<a class="headerlink" href="#answering-manoeuvre-intents" title="Permanent link">&para;</a></h3>
+<p>A backend that can steer the vehicles it drives overrides the three intent
+methods. They receive the entity, so a backend can read the actor and record its
+own bookkeeping on the vehicle rather than in a table of its own:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">change_lane</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">lane_change_finished</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">turn_at_junction</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><code>direction</code> is <code>LaneChangeDirection</code> or <code>TurnDirection</code> — intents, not CARLA
+values. A backend that has no answer for one simply does not override it: the
+base class logs that the intent is unavailable and the vehicle keeps doing what
+it was doing, which is also what <code>LaneChangeAction</code> sees when it asks whether the
+manoeuvre finished.</p>
+<h2 id="using-a-backend-from-python">Using a backend from Python<a class="headerlink" href="#using-a-backend-from-python" title="Permanent link">&para;</a></h2>
+<p>A scenario run built in code takes the backend the same way it takes the ego:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">NullTrafficBackend</span><span class="p">,</span> <span class="n">ScenarioQueue</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">queue</span> <span class="o">=</span> <span class="n">ScenarioQueue</span><span class="p">(</span><span class="n">map_name</span><span class="o">=</span><span class="s2">"Town10HD_Opt"</span><span class="p">,</span> <span class="n">traffic_backend</span><span class="o">=</span><span class="n">NullTrafficBackend</span><span class="p">())</span>
+</code></pre></div>
+<p><code>ScenarioQueue</code> passes it to the <code>ScenarioRunner</code> it builds, and one backend
+serves every scenario in the queue — the same way one CARLA server does.</p>
+<h2 id="background-traffic">Background traffic<a class="headerlink" href="#background-traffic" title="Permanent link">&para;</a></h2>
+<p>Vehicles no scenario entity stands for are created and removed by two actions
+modelled on OpenSCENARIO's <code>TrafficSourceAction</code> and <code>TrafficSinkAction</code>. Where
+OpenSCENARIO gives a source or sink a position and a radius, these take
+<strong>lanelet constraints</strong> -- the vocabulary a sweep picks its cases with -- so the
+same action means "every lane outside a junction" on any map:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ElapsedTimeCondition</span><span class="p">,</span> <span class="n">TrafficSinkAction</span><span class="p">,</span> <span class="n">TrafficSourceAction</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">not_in_junction</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"not"</span><span class="p">,</span> <span class="s2">"constraint"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"is_junction"</span><span class="p">}}]</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># Placed during initialization, then no more: register_init runs once.</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_init</span><span class="p">(</span><span class="n">TrafficSourceAction</span><span class="p">(</span><span class="n">not_in_junction</span><span class="p">,</span> <span class="n">initial_vehicles</span><span class="o">=</span><span class="mi">20</span><span class="p">))</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="c1"># Six a minute during the first 30 s of the run, at most 30 on the road.</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="n">TrafficSourceAction</span><span class="p">(</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>        <span class="n">not_in_junction</span><span class="p">,</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>        <span class="n">vehicles_per_minute</span><span class="o">=</span><span class="mf">6.0</span><span class="p">,</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>        <span class="n">max_vehicles</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>        <span class="n">until</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">30.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"first_30s"</span><span class="p">),</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    <span class="p">)</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="p">)</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="c1"># Removed at the ends of the map's roads for the whole run.</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>    <span class="n">TrafficSinkAction</span><span class="p">(</span>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>        <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"not"</span><span class="p">,</span> <span class="s2">"constraint"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"previous_of"</span><span class="p">,</span>
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>          <span class="s2">"constraints"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"lanelet_length"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}]}}]</span>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>    <span class="p">)</span>
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong>When they act</strong> is the trigger (<code>condition</code>) and the end condition
+  (<code>until</code>), as for every action. With no <code>until</code> a source or sink runs until
+  the scenario ends, as OpenSCENARIO's do; with one, it stops on the first tick
+  <code>until</code> fires. Registered with <code>register_init</code>, a source places its
+  <code>initial_vehicles</code> once, during initialization, and never again.</li>
+<li><strong>Who drives them</strong> is the backend: <code>spawn_background</code>, <code>background_vehicles</code>
+  and <code>remove_background</code> on <code>TrafficBackend</code>. Under <code>traffic=sumo</code> they are
+  SUMO vehicles that wander the network (a random way out at each junction) and
+  are mirrored into CARLA like the rest of SUMO's traffic; ones placed during
+  initialization have SUMO's warm-up to spread out. Under
+  <code>traffic=traffic_manager</code> they are CARLA vehicles on autopilot. <code>none</code> creates
+  none, with a warning.</li>
+<li><strong><code>speed_kmh</code></strong> is the speed they drive at, at most. <strong><code>max_vehicles</code></strong> counts
+  every background vehicle on the road, whichever source made it.</li>
+</ul>
+<p>The examples take all of this from the config, for any scenario:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c1"># Only what initialization places:</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.vehicles_per_minute<span class="o">=</span><span class="m">0</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="c1"># Keep adding for the first 20 s only:</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.stop_after_seconds<span class="o">=</span><span class="m">20</span>
+</code></pre></div>
+<p><code>background_traffic</code> (in <code>examples/conf/config.yaml</code>) is off by default, and the
+SUMO backend's own <code>ambient</code> randomTrips demand is off in
+<code>conf/traffic/sumo.yaml</code>, so an example runs with no traffic but its own unless
+asked.</p>
+<h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
+<p>CARLA's TrafficManager is a good default for a handful of scripted NPCs and the
+wrong tool for dense, demand-driven flow. Microscopic traffic simulators model
+car-following, gap acceptance and route choice in ways it does not, and "does the
+stack merge into a saturated flow at this intersection?" is a question about
+traffic rather than about three scripted cars. The seam is what makes answering
+it possible without a second scenario framework: the same map, the same scenario
+document, the same conditions and the same result format, with the traffic model
+swapped.</p>
+<h2 id="the-sumo-backend">The SUMO backend<a class="headerlink" href="#the-sumo-backend" title="Permanent link">&para;</a></h2>
+<p><code>traffic=sumo</code> co-simulates <a href="https://eclipse.dev/sumo/">SUMO</a> with the CARLA
+world. It needs the <code>sumo</code> extra (<code>autoware-carla-scenario[sumo]</code>: SUMO,
+libsumo and roadgen, all wheels); without it the run is refused in <code>prepare()</code>,
+before anything is spawned.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
+</code></pre></div>
+<p><strong>The network</strong> is the world's own road network. The backend takes the
+OpenDRIVE the world runs (the file the run installed, or
+<code>world.get_map().to_opendrive()</code>), converts it with
+<a href="https://github.com/hakuturu583/hdmap_generator">roadgen</a> into netconvert's
+plain-XML input and builds it with netconvert. The result is cached under
+<code>~/.cache/autoware_carla_scenario/sumo/</code>, keyed by the OpenDRIVE and the tool
+versions, so a map is converted once. roadgen writes the network without offset
+normalisation, so SUMO's x/y are OpenDRIVE's and CARLA's are the same with y
+mirrored. <code>traffic.options.net_path</code> runs on an existing <code>.net.xml</code> instead.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>CARLA's maps bend the OpenDRIVE schema in a few places roadgen's strict
+parser refuses (<code>&lt;userData&gt;</code> without <code>code</code>, <code>&lt;roadMark&gt;</code> without <code>color</code>,
+objects of type <code>-1</code>, <code>&lt;cornerLocal&gt;</code> without <code>height</code>); the backend
+strips or fills those before converting. An OpenDRIVE whose junctions name
+connections to roads they do not list (the Nishishinjuku map's) is refused
+by roadgen's validation.</p>
+</div>
+<p><strong>Ownership</strong> follows the seam's rule: the scenario owns what it authored.</p>
+<table>
+<thead>
+<tr>
+<th>Vehicle</th>
+<th>Driven by</th>
+<th>In SUMO</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ego (<code>autoware</code>, <code>carla_driver</code>)</td>
+<td>its entity</td>
+<td>published: moved to its CARLA pose every tick</td>
+</tr>
+<tr>
+<td>Scenario NPCs, autopilot ego</td>
+<td>the TrafficManager (<code>scenario_vehicles=traffic_manager</code>, default), or SUMO (<code>scenario_vehicles=sumo</code>)</td>
+<td>published, or driven</td>
+</tr>
+<tr>
+<td>Ambient traffic (<code>randomTrips.py</code>)</td>
+<td>SUMO</td>
+<td>native; mirrored into CARLA</td>
+</tr>
+<tr>
+<td>Pedestrians (<code>walker.pedestrian.*</code>, e.g. <code>WalkStraightAction</code>)</td>
+<td>CARLA</td>
+<td>published as SUMO persons (<code>publish_walkers</code>, on by default)</td>
+</tr>
+</tbody>
+</table>
+<p>A published vehicle has SUMO's speed and lane-change control switched off, so
+SUMO traffic sees it where CARLA has it and reacts to it. With the default the
+scenario's NPCs behave exactly as under the <code>traffic_manager</code> backend, while
+SUMO fills the rest of the road.</p>
+<p>A published pedestrian is a SUMO person moved to its CARLA pose every tick
+with <code>moveToXY</code> and <code>keepRoute</code> 6: placed exactly there, on whichever lane is
+there, footway or road. A SUMO vehicle brakes for a person on its lane, on a
+crossing or anywhere else, or changes lanes round it. A person has to be added
+on an edge with a footway -- SUMO aborts the whole simulation when one is moved
+off an edge without -- so a pedestrian with no footway within 50 m (or on a
+network with none) is left out, with a warning.</p>
+<p><strong>Stepping</strong>: one SUMO step per CARLA tick, with the step length set to the
+world's <code>fixed_delta_seconds</code> and the seed to the scenario's. CARLA poses are
+published before SUMO steps; SUMO's result is applied to the actors after it.
+How a CARLA vehicle follows its SUMO vehicle is <code>vehicle_control</code>:</p>
+<ul>
+<li><code>physics</code> (default) drives it with CARLA's vehicle physics, as TeraSim's
+  <code>ackermann_physics</code> mode does. SUMO plans; each tick the car is steered towards
+  a point 4-10 m ahead on SUMO's lanes (pure pursuit, offset by SUMO's lateral
+  position mid lane change), and a PI throttle/brake controller with SUMO's
+  acceleration as feedforward drives it at SUMO's speed, corrected by how far it
+  is behind or ahead. Two CARLA 0.10 quirks are handled: its Ackermann
+  controller's speed loop oscillates (so speed is controlled here and sent as
+  throttle and brake), and its steering input maps onto the wheels roughly as
+  51° × steer² rather than linearly (so the steer command inverts that and
+  closes a loop on the car's measured curvature). A car further than
+  <code>resync_distance_m</code> from its SUMO vehicle is put back on it. By default SUMO
+  does not see where physics actually put the car, so gaps SUMO keeps are kept
+  to within the tracking error -- on Town10 p95 1.1 m. <code>feedback_distance_m</code>
+  (off by default) moves a SUMO vehicle to its car when the two are further
+  apart than that, with SUMO's own <code>moveTo</code>, which takes effect at once and
+  leaves SUMO planning the next step (TeraSim patches SUMO for an XY variant
+  of it); inside junctions nothing is corrected. On Town10 it did not reduce
+  contacts: a SUMO vehicle moved back to a lagging car is re-planned from a
+  state its own model would not have reached.
+  SUMO's car-following models read no curvature, so a vehicle takes a bend at
+  the speed limit -- on Town10 up to ~10 m/s² sideways, more than a car under
+  physics can follow. <code>curve_lateral_acceleration</code> (3.0 m/s² by default) has
+  roadgen cut each edge at its bends and give every piece, and every path
+  across a junction, the speed <code>sqrt(a / curvature)</code> its sharpest point allows;
+  SUMO's vehicles then brake for a bend before they reach it. The pieces keep
+  the edge's id on the first and <code>&lt;edge&gt;.p1</code>, <code>&lt;edge&gt;.p2</code>, … after it, and
+  roadgen's trace has every one.</li>
+<li><code>teleport</code> places it where its SUMO vehicle was at the start of the step and
+  gives it SUMO's speed as a constant velocity (<code>enable_constant_velocity</code>),
+  which carries it to where SUMO is at the end of it: exact, but the car is not
+  driven by its physics.</li>
+</ul>
+<p><strong>Traffic lights</strong> (<code>traffic_light_authority</code>): <code>carla</code> (default) gives SUMO's
+signals the states of CARLA's lights every step, so a scenario that sets the
+lights sets them for SUMO's traffic too; <code>sumo</code> drives CARLA's lights from
+SUMO's programs; <code>none</code> leaves each alone. CARLA's lights are applied while
+SUMO warms up too, so the queues it starts with are the ones they would build.</p>
+<p>Which SUMO signal links a CARLA light switches is read off roadgen's traces,
+written beside the network when it is built: the light is the OpenDRIVE signal
+of its <code>get_opendrive_id()</code>, roadgen records which map element that signal
+became when it reads the OpenDRIVE (<code>map.xodr.trace.json</code>), and which SUMO links
+of the junction's program that element became when it writes the network
+(<code>network.sumo.trace.json</code>). A light whose signal reached no link is named in a
+warning, and SUMO keeps its own program there. A network given as <code>net_path</code>
+has no traces, and its links are matched geometrically instead: a light's stop
+waypoints to the SUMO lane there.</p>
+<p>On Town10HD_Opt all 15 lights match, 56 links between them; SUMO's only other
+signal links are on emergency-only shoulder lanes.</p>
+<p><strong>Manoeuvres</strong> of SUMO-driven vehicles become TraCI calls: <code>change_lane</code> →
+<code>changeLane</code> (SUMO obeys a solid line, and says so), <code>set_desired_speed</code> →
+<code>setSpeed</code>, <code>turn_at_junction</code> → a route onto the junction's outgoing edge in
+that direction. With the default, they go to the TrafficManager.</p>
+<p>The coupling follows <a href="https://github.com/autowarefoundation/TeraSim">TeraSim</a>'s
+CARLA co-simulation; its adversarial behaviour generation is left to scenarios.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 6, 2026 01:47:57 UTC"><span class="timeago" datetime="2026-10-06T01:47:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 6, 2026 01:47:57 UTC">2026-10-06</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 16, 2026 10:31:41 UTC"><span class="timeago" datetime="2026-09-16T10:31:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 16, 2026 10:31:41 UTC">2026-09-16</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>

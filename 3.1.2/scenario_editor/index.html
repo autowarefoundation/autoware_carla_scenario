@@ -1,0 +1,2857 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/3.1.2/scenario_editor/">
+      
+      
+        <link rel="prev" href="../usage/">
+      
+      
+        <link rel="next" href="../scenarios/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Scenario Editor - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#scenario-editor" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Scenario Editor
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-edits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it edits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-map-the-map-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which map: the Map library
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-happens-the-places-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it happens: the places panel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where it happens: the places panel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#an-abstract-scenario-draws-one-bound-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An abstract scenario draws one bound pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-a-pin-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where a pin goes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-canvas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The canvas
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The canvas">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-track-an-action-belongs-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which track an action belongs to
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-step-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a step is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#action-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Action states
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#position-pick-a-frame-not-a-mixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Position: pick a frame, not a mixture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lanelet2-ids-are-picked-never-typed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lanelet2 ids are picked, never typed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed-or-searched-every-lanelet-one-question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed or searched: every lanelet, one question
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fixed or searched: every lanelet, one question">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-map-is-parsed-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map is parsed once
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#derived-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derived offsets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ego-who-drives-and-where-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ego: who drives, and where to
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata-driven-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata-driven GUI
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata-driven GUI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-map-path-is-a-document-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map path is a document field
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#save-draft-vs-export-wheelhouse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Save Draft vs Export Wheelhouse
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Save Draft vs Export Wheelhouse">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-wheelhouse-is-built-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the wheelhouse is built from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-platform-every-supported-interpreter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One platform, every supported interpreter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reproducibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-is-atomic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export is atomic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-an-authored-scenario" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running an authored scenario
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#offline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Offline
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-edits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it edits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-map-the-map-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which map: the Map library
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-happens-the-places-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it happens: the places panel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where it happens: the places panel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#an-abstract-scenario-draws-one-bound-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An abstract scenario draws one bound pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-a-pin-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where a pin goes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-canvas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The canvas
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The canvas">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-track-an-action-belongs-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which track an action belongs to
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-step-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a step is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#action-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Action states
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#position-pick-a-frame-not-a-mixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Position: pick a frame, not a mixture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lanelet2-ids-are-picked-never-typed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lanelet2 ids are picked, never typed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed-or-searched-every-lanelet-one-question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed or searched: every lanelet, one question
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fixed or searched: every lanelet, one question">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-map-is-parsed-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map is parsed once
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#derived-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derived offsets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ego-who-drives-and-where-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ego: who drives, and where to
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata-driven-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata-driven GUI
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata-driven GUI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-map-path-is-a-document-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map path is a document field
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#save-draft-vs-export-wheelhouse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Save Draft vs Export Wheelhouse
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Save Draft vs Export Wheelhouse">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-wheelhouse-is-built-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the wheelhouse is built from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-platform-every-supported-interpreter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One platform, every supported interpreter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reproducibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-is-atomic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export is atomic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-an-authored-scenario" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running an authored scenario
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#offline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Offline
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="scenario-editor">Scenario Editor<a class="headerlink" href="#scenario-editor" title="Permanent link">&para;</a></h1>
+<p>The Scenario Editor is a web UI for authoring scenarios declaratively and
+exporting them as self-contained <strong>wheelhouses</strong>. It runs as its own
+application:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-editor<span class="w">          </span><span class="c1"># http://localhost:9100</span>
+</code></pre></div>
+<p>It is deliberately <strong>separate from the Scenario Result Viewer</strong>
+(<code>uv run viewer</code>). Neither mounts the other, and running one does not start the
+other; integrating the two is a later phase.</p>
+<h2 id="what-it-edits">What it edits<a class="headerlink" href="#what-it-edits" title="Permanent link">&para;</a></h2>
+<p>The editor never edits Python. Its canonical representation is the <strong>Scenario
+IR</strong> -- a <code>ScenarioDocument</code> stored as YAML -- which the framework compiles into
+the <em>existing</em> runtime primitives:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ScenarioDocument -&gt; ScenarioCompiler -&gt; BaseAction / BaseCondition -&gt; BaseScenario
+</code></pre></div>
+<p>There is no editor-only runtime. Every action a document names is built by
+<code>autoware_carla_scenario.actions</code>, every condition by
+<code>autoware_carla_scenario.conditions</code>, and every spawn constraint is evaluated by
+the same <code>sweeper.constraints</code> engine a <code>--multirun</code> sweep uses.</p>
+<h2 id="which-map-the-map-library">Which map: the Map library<a class="headerlink" href="#which-map-the-map-library" title="Permanent link">&para;</a></h2>
+<p>A scenario's map is named by a <strong>source URI</strong> pointing at a git repository, and
+the editor fetches and caches it. <strong>Map library</strong> in the header browses a
+repository -- HuggingFace, GitHub, your own -- and lists every map in it; the
+Scenario inspector shows, per scenario, whether the map is downloaded and
+whether its revision is pinned.</p>
+<p>See <a href="../maps/">HD Maps from a Git Repository</a>. Two things are worth knowing here:
+a map Autoware's own setup already downloaded is used as it sits, and OpenDRIVE
+is not needed to author a scenario -- lanelets are.</p>
+<h2 id="where-it-happens-the-places-panel">Where it happens: the places panel<a class="headerlink" href="#where-it-happens-the-places-panel" title="Permanent link">&para;</a></h2>
+<p>One map carries every lanelet the scenario names -- each entity's spawn, the
+ego's goal, and the lanelet every condition watches. The canvas says <em>what</em>
+happens and in what order; it has no way to say <em>where</em>, and until this panel
+existed the answer was a scatter of ids across lane heads and condition cards
+that only meant something with the map open in another window.</p>
+<p>It sits at the top of the right-hand rail, over the inspector:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>+------------------------------------------+---------------------------+
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>| Arrangement (the timeline, full width)    | Places      &lt; 1/133 &gt;     |
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>| ACTOR | Init | 1  | 2  | 3  | 4  | 5      |   (o) NPC1 spawn BOUND    |
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>| Ego   |      | [] |    |    |    |        |   (o) Ego goal            |
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>| NPC1  |      | [] | [] |    |    |        |   (o) Ego spawn           |
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>| Env   |      |    | [] |    |    |        | [Ego spawn][Ego goal][..] |
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>| PASS  | ...                               +---------------------------+
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>| FAIL  | ...                               | Inspector                 |
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>+------------------------------------------+---------------------------+
+</code></pre></div>
+<p>Three things had to be true at once -- the map, the timeline and the inspector
+all on screen without scrolling -- and this is the arrangement that gets there
+without taking width from the thing that needs it. The timeline's axis <em>is</em>
+width: a card further right is later in the story, so narrowing it costs steps
+you can see. The map is roughly square and the inspector is a column, so both
+fit the rail; and "where" then sits directly over "what", which is what makes
+clicking a place and reading its object one movement of the eye.</p>
+<p>The whole editor is one CSS grid (<code>.ed-stage</code>) for that reason. <code>#editor-body</code>
+stays the single htmx swap target and simply does not draw a box -- <code>display:
+contents</code> lifts the timeline and the inspector into that grid -- so the map can
+sit beside either of them while every edit still re-renders one element. Moving
+the panel is a change to one block of <code>editor.css</code>, not to a template.</p>
+<p>Which glyph a place gets is the <strong>field's own declaration</strong>, not a guess from
+whatever holds it: <code>FieldSpec.place</code> is <code>spawn</code>, <code>goal</code> or <code>watched</code>, so the
+<code>Set Goal</code> action's lanelet draws as a destination exactly as the ego's own goal
+does. A primitive that registers a new lanelet field is drawn without the map
+learning anything about it.</p>
+<p>Each place is a <strong>pin in its actor's track colour</strong> -- the same hue that actor's
+lane head and every condition naming it already wear -- with a glyph for what
+the place is: a target for a spawn, a flag for a goal, an eye for a lanelet
+something watches. The viewer has one highlight channel, so the outline says
+"this scenario touches here" and the pins say which of them is which.</p>
+<p>Under the map the same places are chips, in document order. Clicking one opens
+the object that named it in the inspector <em>and</em> points the map at it; clicking a
+place on the map does the same, because the overview draws places the document
+already names and the only thing a click there can mean is "show me what named
+this". Nothing is edited here -- a lanelet is still set where it is written, in
+the picker its own field opens.</p>
+<p>A label reads away from its dot, except on the right half of the map, where it
+reads back towards the middle: that edge is also where the viewer keeps its own
+zoom buttons, and a label running under them is a label nobody can read.</p>
+<h3 id="an-abstract-scenario-draws-one-bound-pattern">An abstract scenario draws one bound pattern<a class="headerlink" href="#an-abstract-scenario-draws-one-bound-pattern" title="Permanent link">&para;</a></h3>
+<p>A scenario whose lanelet is a constraint search does not name a place: it names
+a <strong>set</strong>, and the sweeper runs it once per member. Outlining all 133 matches
+draws the <em>search</em>, and none of those 133 runs looks like that picture. So one
+match is <strong>bound</strong> -- through the same <code>swept_slot</code> the exported config sweeps
+and the same constraint engine the sweep evaluates -- and the panel says which
+of how many is on screen. The arrows step through the runs a <code>--multirun</code> sweep
+would perform, one concrete scenario at a time.</p>
+<p>Everything else keeps the id stored beside it, because that is exactly what a
+run that does not sweep uses: the sweeper enumerates a single target key, so at
+most one lanelet in a document is ever bound.</p>
+<p>Binding means parsing the map on the server, which is measured in seconds, so it
+is a button (<strong>Bind a pattern</strong>) rather than something every page load pays for.
+Once the map is cached every later render binds without being asked, including
+the panel's own refresh after an edit.</p>
+<h3 id="where-a-pin-goes">Where a pin goes<a class="headerlink" href="#where-a-pin-goes" title="Permanent link">&para;</a></h3>
+<p>The labels are the server's -- rendered with the panel, beside the list that
+repeats them -- and only the <em>coordinates</em> are the viewer's. <code>editor.js</code> asks it
+through its public API: <code>focusOn(id)</code> centres the view on a primitive, so
+focusing one and reading <code>getView()</code> back reports that lanelet's centre in the
+map's own coordinates, and the view is then put back where it was. The
+alternative was projecting the <code>.osm</code> a second time in JavaScript, which is a
+second answer to "where is this" that can disagree with the drawing it is laid
+over. Each lanelet is measured once and kept on the frame, which is the frame
+<code>reuseMap()</code> parks across a re-render, so an edit re-places the pins without
+asking the map anything.</p>
+<p>The panel frames itself on the places rather than on the whole city when the map
+loads, and a pan or zoom after that is the person's: a re-render carries it
+across, exactly as the picker's does. Tilted into the viewer's 3D view the pins
+hide themselves, because <code>getView()</code> then reports drawing coordinates and a
+point on a hill and the ground behind it are drawn in the same place.</p>
+<p>This is a second parse of the same <code>.osm</code> while a picker is open, which is the
+cost the inspector's own map was removed to avoid. It is a different drawing
+rather than the same one twice: the picker answers "which lanelet is this
+field", and the overview answers "where is this scenario" -- a question nothing
+else on the page answers at all.</p>
+<h2 id="the-canvas">The canvas<a class="headerlink" href="#the-canvas" title="Permanent link">&para;</a></h2>
+<p>The main view is a <strong>swimlane DAG drawn as a DAW arrangement</strong>: one track per
+actor, with the horizontal axis reading as <em>scenario progression</em>, not time.
+Under the actors sits the <strong>Environment</strong> track, for actions no vehicle
+performs.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>STEP &gt;      | 1          | 2                 | 3
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>------------+------------+-------------------+------------------
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Ego         | Drive      |                   |
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>------------+------------+-------------------+------------------
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>NPC1        | Follow     |                   | # Lane Change Left
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>            |            |                   |         ^
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>            |            |                   |   +-----+-----+
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>            |            |                   |   |    ALL    |
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>            |            |                   |  NPC1-&gt;Ego  NPC1-&gt;Ego
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>            |            |                   |  Distance   TTC
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>            |            |                   |  &lt; 20 m     &lt; 4 s
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>------------+------------+-------------------+------------------
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>Environment |            | Set Traffic Signal|
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>------------+------------+-------------------+------------------
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>PASS        | NPC1 enters the ego lane
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>FAIL        | Collision  | Timeout 30 s
+</code></pre></div>
+<h3 id="which-track-an-action-belongs-to">Which track an action belongs to<a class="headerlink" href="#which-track-an-action-belongs-to" title="Permanent link">&para;</a></h3>
+<p>The <strong>action type</strong> decides, never the author. <code>ActionSpec.scope</code> is either
+<code>actor</code> or <code>environment</code>, and an environment action -- setting traffic lights,
+for instance -- is drawn in the Environment track whatever its <code>actor</code> field
+says. Nothing reads that field when such an action is built, so honouring it
+put the card in some vehicle's lane and claimed a relationship the run does not
+have. The editor no longer offers the field for one, refuses it on the way in,
+and drops a stale value on the next save; each track's <em>+ action</em> menu offers
+only the actions that belong in it.</p>
+<p>The Environment track is drawn even when it is empty, because it is where you
+go to add the first one. An action that merely has no actor <em>yet</em> is drawn
+there too: it is invalid, and a card nothing draws cannot be corrected.</p>
+<p>The sequencer furniture is what makes the direction readable: track headers
+down the left, a numbered ruler across the top, a bar line before every slot
+and every other slot shaded. The ruler counts <strong>steps and not seconds</strong>, which
+is the whole reason it is a step ruler -- see the first rule below.</p>
+<h3 id="what-a-step-is">What a step is<a class="headerlink" href="#what-a-step-is" title="Permanent link">&para;</a></h3>
+<p>Nothing in Python has a "step". The runtime arms <strong>every</strong> action from the
+first tick and ticks them all every frame:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">for</span> <span class="n">action</span> <span class="ow">in</span> <span class="n">scenario</span><span class="o">.</span><span class="n">_pre_tick_actions</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">action</span><span class="o">.</span><span class="n">tick</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="n">elapsed</span><span class="p">)</span>
+</code></pre></div>
+<p>An action fires when its own trigger says so, not when its column comes up, and
+an action with no trigger gets <code>AlwaysTrueCondition</code> -- so it fires on tick 1
+however far right it is drawn. <code>column_hint</code> is read by nothing outside this
+editor: <code>compiler.py</code>, <code>declarative.py</code> and the exporters contain no reference
+to <code>ui</code> at all.</p>
+<p>So a step is not a point in time. It is <strong>a set of actions nothing orders</strong>,
+and the canvas draws it that way:</p>
+<ul>
+<li><strong>Several actions can share one step</strong>, stacked in the same column. That is
+  the honest picture of two actions that are both armed and neither waiting on
+  the other -- spreading them across two columns would draw a sequence the
+  runtime does not have.</li>
+<li><strong>An action may not share a step with anything its trigger waits on.</strong> Within
+  a step nothing is ordered, so a dependency has to be visibly earlier. Adding
+  an <code>action_state</code> trigger pushes the dependent right on the spot, moving a
+  dependency right carries its dependents with it, and a move that would break
+  the rule is repaired rather than refused -- the card lands as close to where
+  it was aimed as its dependencies allow. <code>validator.py</code> reports a hand-edited
+  <code>ui</code> block that says otherwise.</li>
+</ul>
+<p>That makes the step axis mean exactly one thing: <strong>left of</strong> is "already
+finished, and something here is waiting on it". It still says nothing about
+<em>how much</em> earlier.</p>
+<p>A step number means the same column on every lane, so there is no leading
+column an actor track has and the Environment or verdict lanes do not. A spawn is not
+a step -- it is the state a track starts in -- so it is stated in the lane head
+rather than given a slot on the ruler.</p>
+<p><strong>An action with no trigger fires on the first tick, wherever it is drawn.</strong>
+<code>BaseAction</code> defaults to <code>AlwaysTrueCondition</code>, so a card in step 5 with an
+empty trigger runs immediately and its position is simply wrong about it. The
+canvas writes "fires immediately" under the card, and the validator warns --
+never errors, because a position is presentation.</p>
+<p>Three rules make it readable:</p>
+<ul>
+<li><strong>The distance between cards means nothing.</strong> Column position is
+  <code>ui.column_hint</code>, which is presentation only and never reaches the runtime.
+  A clip in step 3 may only start after one in step 2 if something says so;
+  how much later is not on screen because the document does not know.</li>
+<li><strong>There is no separate event lane.</strong> A condition is a <em>trigger</em>, drawn under
+  the action it fires and joined to it by a solid line, so cause and effect are
+  next to each other instead of being correlated across the screen.</li>
+<li><strong>One actor reacting to another is a reference, not a coincidence.</strong>
+  "Swerve once NPC1 has cut in" is a <code>Lane Change</code> clip on the ego track whose
+  trigger is an <strong>Action state</strong> condition naming NPC1's cut-in and the state
+  <code>completeState</code>. That reference lives in the document
+  (<code>params: {action: a_..., state: completeState}</code>), so it is a fact the
+  scenario contains rather than something the canvas infers.</li>
+</ul>
+<p>The canvas draws that reference as a <strong>dashed line in the causing actor's track
+colour</strong>, running from the action to the condition waiting on it. The cut-in
+example reads as one chain across two tracks:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>NPC1   ... [Cut in] ......
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>                     :         &lt;- dashed: Cut in -&gt; the condition waiting on it
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>Ego    ..............:...  [Evade right]
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>                          ^ Cut in · NPC1 | Action | completeState
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>                            solid: fires this action
+</code></pre></div>
+<p>Both line types are named in the legend above the canvas, because a dash
+pattern is not self-explanatory. Crucially the dashed line is drawn <strong>only</strong>
+from <code>data-caused-by</code>, the document's own reference -- never from where two
+cards happen to sit. Moving a clip can therefore neither invent a causal link
+nor erase one, and a condition that names no action (a distance check, say) is
+never drawn as caused by anything.</p>
+<h3 id="action-states">Action states<a class="headerlink" href="#action-states" title="Permanent link">&para;</a></h3>
+<p>The states are ASAM OpenSCENARIO 1.2's <code>StoryboardElementState</code>, applied to a
+single action:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>standbyState</code></td>
+<td>Instantiated, waiting for its start trigger</td>
+</tr>
+<tr>
+<td><code>startTransition</code></td>
+<td>The trigger fired and <code>execute()</code> ran -- held for one tick</td>
+</tr>
+<tr>
+<td><code>runningState</code></td>
+<td>The work is under way</td>
+</tr>
+<tr>
+<td><code>endTransition</code></td>
+<td>The completion criteria were met -- held for one tick</td>
+</tr>
+<tr>
+<td><code>completeState</code></td>
+<td>Finished (a repeating action returns to <code>standbyState</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>completeState</code> is the one that makes "after the cut-in" verifiable. A forced
+lane change stays in <code>runningState</code> until the vehicle has actually <strong>settled
+onto the next lane</strong> -- a different lane id, within
+<code>LANE_CHANGE_CENTER_TOLERANCE_M</code> of its centre and
+<code>LANE_CHANGE_HEADING_TOLERANCE_DEG</code> of its heading. A lane id change alone is
+not enough: a car whose centre has just crossed the boundary is still diagonal,
+and a reaction triggered on that would fire mid-manoeuvre.</p>
+<p>There is deliberately <strong>no failure state and no action-level timeout</strong>, because
+OpenSCENARIO has neither. A manoeuvre that never happens stays in
+<code>runningState</code> forever, so <code>completeState</code> cannot be reached by a lane change
+that did not occur; ending such a run is the scenario timeout's job, which is
+already a FAIL condition. The two transition states are each held for exactly
+one tick, so a condition watching <code>startTransition</code> sees it.</p>
+<p>Which is also why a card can be moved into an <strong>empty</strong> step rather than only
+swapped with its neighbour: a reaction has to be placeable to the right of the
+cause on another track, and its own track is usually empty in between.</p>
+<p>Every condition reads as <code>subject -&gt; target | metric | rule value</code>, e.g.
+<code>NPC1 -&gt; Ego | Distance | &lt; 20 m</code> or <code>Ego -&gt; Lanelet 183 | Position | inside</code>.</p>
+<p>A target that is not an actor is <strong>named for the coordinate system it is in</strong>.
+This framework speaks both Lanelet2 and OpenDRIVE and their ids are written the
+same way, so <code>Ego -&gt; 183</code> would say nothing about which <code>183</code> is meant.</p>
+<h3 id="position-pick-a-frame-not-a-mixture">Position: pick a frame, not a mixture<a class="headerlink" href="#position-pick-a-frame-not-a-mixture" title="Permanent link">&para;</a></h3>
+<p>There are two position conditions, one per coordinate system, because the two
+need different fields:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Address</th>
+<th>Reads as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Position (Lanelet2)</strong></td>
+<td>a lanelet</td>
+<td><code>NPC1 -&gt; Lanelet 183 \| Position \| inside</code></td>
+</tr>
+<tr>
+<td><strong>Position (OpenDRIVE)</strong></td>
+<td>a road, optionally a lane</td>
+<td><code>NPC1 -&gt; Road 80 \| Position \| lane 2 \| inside</code></td>
+</tr>
+</tbody>
+</table>
+<p>Either can be narrowed to <strong>a stretch of that lane</strong> with <code>s from</code> / <code>s to</code> and
+<code>t from</code> / <code>t to</code>. The runtime has always accepted these comparisons; the editor
+used to discard them. They are the abstract way to say "in the last 20 m before
+the junction": unlike an absolute region, <code>s</code> and <code>t</code> are measured along and
+across the lane, so the condition keeps its meaning wherever a constraint sweep
+puts the entity.</p>
+<p>A <strong>lanelet already names one lane</strong>, so the Lanelet2 condition resolves it to
+an OpenDRIVE road <em>and</em> lane and there is nothing further to pin. An
+<strong>OpenDRIVE road does not</strong>: a road carries several lanes, so road and lane
+together are what address a place uniquely, and a road left without a lane says
+so on the card (<code>any lane</code>) rather than looking like a precise address.</p>
+<h3 id="lanelet2-ids-are-picked-never-typed">Lanelet2 ids are picked, never typed<a class="headerlink" href="#lanelet2-ids-are-picked-never-typed" title="Permanent link">&para;</a></h3>
+<p>Every field naming a Lanelet2 lanelet is edited <strong>only on the map</strong>. The number beside it is a
+readout, not an input: nobody knows lanelet ids by heart, so typing one is
+guesswork the map answers exactly, and making the map the single editor leaves
+one path a value can arrive by instead of two to keep in step. <strong>Edit</strong> opens
+the viewer over the whole window -- the inspector column is 384px wide, and a
+city map that size cannot be picked from -- and clicking a lanelet fills the
+field and closes it. This comes from the field's declared kind (<code>lanelet</code>), so
+any field naming a lanelet gets the picker without touching a template.</p>
+<p>There is no "type it instead" fallback for a viewer that will not load, for the
+same reason the SVG map fallback was removed: the page fetches htmx from a CDN
+too, so an editor that cannot reach the network has no working controls at all.</p>
+<p>Three fields still take typed ids, each because their value is <strong>not only</strong> a
+lanelet id, and a test in <code>test_authoring_registry.py</code> fails if a new one
+appears without being listed there with its reason:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Why it is not picked</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>equals.value</code> (spawn constraint)</td>
+<td><code>any</code> matches every lanelet -- a sentinel the sweeper parses, not an id</td>
+</tr>
+<tr>
+<td><code>in_set.values</code> (spawn constraint)</td>
+<td>accepts <code>${map.no_3d_model_lanelet_ids}</code>, a reference resolved at sweep time</td>
+</tr>
+<tr>
+<td><code>traffic_signal</code> regulatory element ids</td>
+<td>the viewer's <code>regulatory</code> layer reports the id of the <em>linestring</em> that draws a sign, not of the regulatory element -- a picker there would save a confidently wrong number</td>
+</tr>
+</tbody>
+</table>
+<p>Two implementation notes, both of which cost an afternoon to find:</p>
+<ul>
+<li>The picker is <strong>moved to <code>&lt;body&gt;</code></strong> before it is shown. The inspector sits
+  inside a <code>position: sticky</code> wrapper, and sticky creates a stacking context
+  whatever its own <code>z-index</code> is -- so a <code>z-index</code> left in place ranks only
+  against its siblings, and the canvas lanes (<code>z-index: 2</code>) paint straight over
+  a modal asking for 80.</li>
+<li>A <strong>set</strong> of lanelets works the same way, toggling on each click, and saves
+  when the picker is closed -- sending the form on every toggle would re-render
+  the inspector and tear the map down mid-selection.</li>
+<li>Which viewer layers a click may land on is part of the field's declaration
+  (<code>FieldSpec.picks</code>). The layers overlap: a click on a road usually lands on
+  the direction arrow, and a hair to the side lands on a <code>bound</code>, <strong>which
+  reports the id of a linestring, not of either lanelet it separates</strong>. Only
+  the layers whose id is the lanelet's own are accepted.</li>
+<li><code>/static</code> is served with <code>Cache-Control: no-cache</code>. <code>StaticFiles</code> sends an
+  <code>ETag</code> but no <code>Cache-Control</code>, which lets a browser invent a freshness
+  lifetime and keep running an old <code>editor.js</code> <strong>without asking</strong> -- an editor
+  visibly missing a feature the server is already serving. The <code>ETag</code> still
+  makes the check a 304.</li>
+</ul>
+<p>They are separate conditions rather than one with a coordinate-system switch
+because offering a lanelet and a lane on the same condition is what let the two
+contradict each other: on the nishishinjuku map lanelets 183 and 184 are lanes
+2 and 1 of road 80, so pinning lanelet 183 and lane 1 asked for a place that
+does not exist.
+Compose them with <code>ALL</code>, <code>ANY</code>, <code>NOT</code>, <code>Sticky</code> and <code>Persistent</code>, which map onto
+<code>AndCondition</code>, <code>OrCondition</code>, <code>NotCondition</code>, <code>StickyCondition</code> and
+<code>PersistentCondition</code>.</p>
+<h2 id="fixed-or-searched-every-lanelet-one-question">Fixed or searched: every lanelet, one question<a class="headerlink" href="#fixed-or-searched-every-lanelet-one-question" title="Permanent link">&para;</a></h2>
+<p><strong>Edit</strong> on any lanelet field opens the map, and the panel beside it asks the
+same thing wherever you opened it from — <strong>Fixed</strong> or <strong>Constraint search</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Where a lanelet is named</th>
+<th>Slot</th>
+<th>Hydra key a sweep writes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>An entity's spawn</td>
+<td><code>ego.spawn</code>, <code>npc1.spawn</code></td>
+<td><code>ego.spawn_lanelet_id</code>, <code>scenario.spawn_overrides.npc1.lanelet_id</code></td>
+</tr>
+<tr>
+<td>The ego's goal</td>
+<td><code>ego.goal</code></td>
+<td><code>ego.goal_lanelet_id</code></td>
+</tr>
+<tr>
+<td>A <code>lanelet</code> parameter of an action or a condition</td>
+<td><code>&lt;node id&gt;.&lt;field&gt;</code></td>
+<td><code>scenario.param_overrides.&lt;node id&gt;.&lt;field&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>A constraint is a statement about the map, so it is written with the map it
+searches in view, and the matches are outlined on that same map as they are
+counted. That is why the choice is in the picker and not in the 384px inspector
+column, which only states which mode is in force and offers Edit.</p>
+<p>A <strong>set</strong> of lanelets — <code>stop_lanelets</code>, the map's exclusion list — is picked by
+hand and gets no such panel: a search names <em>one</em> lanelet per run, because that
+is what the sweeper enumerates, so offering the choice there would promise that
+a search fills the whole set.</p>
+<p><strong>Fixed</strong> pins the lanelet the field shows. For a spawn that is a lanelet and an
+offset:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lanelet ID</td>
+<td>183</td>
+<td>the picker, by clicking the map</td>
+</tr>
+<tr>
+<td>Offset</td>
+<td>12.5 m</td>
+<td>the picker, under the same heading</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraint search</strong> hands the choice to the existing lanelet-constraint
+sweeper. The tree is edited in the picker, each node with its own parameters —
+the inspector column is behind the map while it is open — with the match count
+beside it outlining what it found on that same map, and is serialised straight
+into <code>sweep.constraints</code> under whichever key addresses the slot:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">sweep</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">constraints</span><span class="p">:</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">ego.spawn_lanelet_id</span><span class="p">:</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">and</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">        </span><span class="nt">constraints</span><span class="p">:</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">has_adjacent</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">            </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">left</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lanelet_length</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">            </span><span class="nt">rule</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">greater_than_or_equal</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">            </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">not</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">            </span><span class="nt">constraint</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">is_junction</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">not</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">            </span><span class="nt">constraint</span><span class="p">:</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">              </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in_set</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">              </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${map.no_3d_model_lanelet_ids}</span>
+</code></pre></div>
+<p>The id the field shows stays in the document under a search: it is the default a
+run that does not sweep falls back to, and the value the exported config
+declares so that Hydra's struct mode accepts the override at all.</p>
+<p><strong>One search per run.</strong> The sweeper enumerates a single target key, so a
+document may search for one lanelet; a second search is a validation <em>warning</em>
+rather than an error — the scenario still runs, with everything else pinned to
+its default — and names which slot is being driven.</p>
+<p><strong>Preview matches</strong> evaluates that tree against the real Lanelet2 map and
+reports, for example, <code>133 matched of 979 lanelets</code>. It is counted when the
+picker is opened, not on every render: each lanelet field on the inspector has a
+picker in the page at once, and counting means parsing a city. Loading a map is
+opt-in and cached; if the map files are missing the count is unavailable but the
+constraint editor keeps working.</p>
+<h3 id="the-map">The map<a class="headerlink" href="#the-map" title="Permanent link">&para;</a></h3>
+<p>The drawing comes from
+<a href="https://github.com/hakuturu583/simple_lanelet2"><code>simple_lanelet2</code></a>'s wasm map
+viewer — the same project that provides the <code>lanelet2</code> Python API this framework
+runs on. The editor serves the scenario's <code>.osm</code> at
+<code>/draft/&lt;id&gt;/map.osm</code>, the viewer parses and renders it in the browser, and the
+editor drives it through two calls: <code>setHighlight()</code> with the matched IDs, and a
+<code>select</code> listener that turns <strong>clicking a lanelet into setting whichever lanelet
+field the picker was opened from</strong>.</p>
+<p>Constraint evaluation stays on the server, in the framework's own sweeper — the
+viewer only draws. That split is deliberate: a second constraint engine in
+JavaScript could disagree with the sweep the scenario will actually run.</p>
+<p>The module is loaded from the project's GitHub Pages build, because the wasm is
+built rather than committed. Point <code>SCENARIO_EDITOR_MAP_VIEWER</code> at the output of
+<code>simple_lanelet2</code>'s <code>tools/build_web.sh</code> to serve it yourself. When it cannot be
+fetched the panel says so; the match count and the matched-ID list come from the
+server and are unaffected.</p>
+<h3 id="the-map-is-parsed-once">The map is parsed once<a class="headerlink" href="#the-map-is-parsed-once" title="Permanent link">&para;</a></h3>
+<p>htmx replaces the whole inspector on every edit, so the server sends a
+brand-new, empty map frame each time. Mounting that frame refetched the <code>.osm</code>
+and parsed it again in wasm — one fetch per edit, for a map that had not
+changed.</p>
+<p>The frame that already holds the parsed scene carries a <code>data-viewer-key</code>, and
+<code>reuseMap()</code> in <code>editor.js</code> swaps it back in over the fresh one, copying across
+only what actually differs: which lanelets are outlined. The whole frame moves
+rather than the canvas inside it — the viewer keeps a reference to the element
+it was constructed with and observes it for resizes, so lifting the canvas out
+would leave it measuring a node that is no longer on the page. Panning and
+zooming survive an edit as a consequence, which re-mounting had been silently
+throwing away.</p>
+<p>That is what makes the picker editable. An edit in its side panel — the fixed or
+searched choice, the constraints, a spawn's offset along the lanelet — posts like
+every other control and swaps the whole editor body, which builds a fresh copy
+of the modal while the open one hangs off <code>&lt;body&gt;</code>. The fresh copy is swapped in
+behind the person using it, and the key carries the parsed map across, pan and
+zoom included.</p>
+<p>It is the <strong>only</strong> renderer. A server-rendered SVG used to sit behind it as an
+offline fallback, but the page loads htmx from a CDN and every control here is an
+<code>hx-</code> attribute, so an editor that cannot reach the network does not work at all
+— the fallback bought no offline capability while costing a second drawing of the
+same map on screen at once.</p>
+<p>The viewer has a single highlight channel — one outline colour, no second class
+— so <strong>what is outlined follows the mode</strong>: a constraint search outlines its
+matches, a pinned lanelet outlines itself. The caption under the map names which
+of the two it is, rather than showing colour swatches the viewer does not use.</p>
+<h3 id="derived-offsets">Derived offsets<a class="headerlink" href="#derived-offsets" title="Permanent link">&para;</a></h3>
+<p>The longitudinal offset can be <strong>Fixed</strong> or <strong>Derived</strong> from the map. A derived
+offset is a <code>sweep.bindings</code> entry -- currently <code>StopLineOffsetBinding</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Position on matched lanelet</td>
+<td>Derived</td>
+</tr>
+<tr>
+<td>Derived from</td>
+<td>Before stop line</td>
+</tr>
+<tr>
+<td>Distance</td>
+<td>15 m</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">sweep</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">bindings</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">ego.spawn_s</span><span class="p">:</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stop_line_offset</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">offset</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15.0</span>
+</code></pre></div>
+<p>The sweeper enumerates a single target key per run, so one entity's spawn can be
+searched per scenario; the editor warns when a document asks for more.</p>
+<p>The ego reaches the runner through the framework's own <code>ego.spawn_lanelet_id</code> /
+<code>ego.spawn_s</code> keys. Other entities get a declared
+<code>scenario.spawn_overrides.&lt;entity&gt;</code> sub-tree so they are addressable by exactly
+the same plain <code>key=value</code> overrides.</p>
+<h2 id="ego-who-drives-and-where-to">Ego: who drives, and where to<a class="headerlink" href="#ego-who-drives-and-where-to" title="Permanent link">&para;</a></h2>
+<p>The ego's inspector opens with <strong>Driven by</strong> — the stack that drives it, exported
+as <code>ego.entity</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Driven by</th>
+<th><code>ego.entity</code></th>
+<th>Goal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TrafficManager (CARLA autopilot)</td>
+<td><code>autopilot</code></td>
+<td>optional — it reads none</td>
+</tr>
+<tr>
+<td>Autoware</td>
+<td><code>autoware</code></td>
+<td><strong>required</strong> — it plans its route to the goal and will not move without one</td>
+</tr>
+</tbody>
+</table>
+<p>(The framework's third value, <code>carla_driver</code>, needs a <code>driver</code> config group the
+editor does not author; a run can still select it from the command line.)</p>
+<p>The <strong>Goal</strong> section sits beside the spawn, because the two are the ends of the
+same thing: where the run starts, and where the ego is meant to get to. A goal is
+picked from the map like a spawn is, and may be <strong>searched for</strong> like one — the
+sweep then writes <code>ego.goal_lanelet_id</code>. An Autoware ego without one is a validation
+error; an ego the TrafficManager drives may be given none — a cut-in or a
+red-light run is about what happens on the way — and <strong>Clear goal</strong> puts it back
+to that.</p>
+<p>A goal is not a card. A card happens <em>during</em> a run, and a goal is what the ego
+needs before one can start: Autoware localizes at the spawn, plans a route to
+the goal, and only then engages. The framework asks the same of a hand-written
+scenario — <code>BaseScenario.require_goal()</code>, asked by <code>register_route_to_goal</code> and
+by <code>ScenarioRunner</code> once <code>setup()</code> returns — so the editor stores the goal on the
+ego and exports it as the framework's own keys:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">ego</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">183</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">autoware</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">goal_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">265</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">goal_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12.5</span>
+</code></pre></div>
+<p>The goal keys are written only when a goal is set, leaving the <code>ego</code> group's own
+<code>null</code> in place otherwise.</p>
+<p>The <strong>Set Goal</strong> card still exists, for changing a destination mid-run or for a
+vehicle that is not the ego. One owned by the ego and left in the initialization
+phase is warned about: the ego's own goal is already delivered there, so the card
+would send a second destination in the same phase. Only a vehicle that plans its own route reads a
+goal at all, so a goal stored on any other entity is a validation error rather
+than something quietly dropped at export.</p>
+<h2 id="metadata-driven-gui">Metadata-driven GUI<a class="headerlink" href="#metadata-driven-gui" title="Permanent link">&para;</a></h2>
+<p>Actions, conditions, constraints and bindings keep growing, so the templates
+render <em>metadata</em>, never a <code>type</code> switch. Adding a primitive is a Python-side
+change in <code>autoware_carla_scenario.authoring.registry</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">register_action_spec</span><span class="p">(</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">ActionSpec</span><span class="p">(</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>        <span class="n">type_id</span><span class="o">=</span><span class="s2">"lane_change"</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>        <span class="n">title</span><span class="o">=</span><span class="s2">"Lane Change"</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>        <span class="n">category</span><span class="o">=</span><span class="s2">"Vehicle / Motion"</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>        <span class="n">builder</span><span class="o">=</span><span class="s2">"build_lane_change_action"</span><span class="p">,</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>        <span class="n">visual_kind</span><span class="o">=</span><span class="s2">"instant"</span><span class="p">,</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>        <span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="n">FieldSpec</span><span class="p">(</span><span class="s2">"direction"</span><span class="p">,</span> <span class="s2">"Direction"</span><span class="p">,</span> <span class="s2">"select"</span><span class="p">,</span> <span class="s2">"left"</span><span class="p">,</span> <span class="n">_DIRECTIONS</span><span class="p">),),</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="p">)</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="p">)</span>
+</code></pre></div>
+<p>plus a matching factory in <code>authoring.builders</code> that returns the framework's own
+class. The inspector, the canvas, validation and the compiler all pick it up
+with no template edit. <code>test_authoring_registry.py</code> fails if a spec names a
+builder that does not exist, or a visual that names a field the primitive lacks.</p>
+<h3 id="the-map-path-is-a-document-field">The map path is a document field<a class="headerlink" href="#the-map-path-is-a-document-field" title="Permanent link">&para;</a></h3>
+<p><code>/draft/&lt;id&gt;/map.osm</code> serves the file the document names, and that name is
+typed by whoever is using the editor -- which binds <code>0.0.0.0</code> by default. Handed
+straight to a <code>FileResponse</code> it was an arbitrary local file read for anyone who
+could reach the port. A path is accepted only when it resolves <strong>inside</strong>
+<code>SCENARIO_EDITOR_MAP_ROOTS</code> (the working directory unless set) and names a
+<code>.osm</code>, so what the route can serve is bounded by where the editor was started
+rather than by what the process can read.</p>
+<p>That is a bound, not authentication: the editor still has none, so it belongs on
+a network you trust.</p>
+<h2 id="save-draft-vs-export-wheelhouse">Save Draft vs Export Wheelhouse<a class="headerlink" href="#save-draft-vs-export-wheelhouse" title="Permanent link">&para;</a></h2>
+<p><strong>Save Draft</strong> writes the working document to <code>scenario_drafts/&lt;id&gt;.yaml</code>.</p>
+<p><strong>Export Wheelhouse</strong> produces a <code>.zip</code> <strong>the browser downloads</strong>, holding every
+wheel the scenario needs:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>cut_in-wheelhouse.zip
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>`-- cut_in_scenario_wheelhouse/
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    |-- typesafe_carla-0.2.*.whl                   # the CARLA client, CPython package prebuilt
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    |-- ... every transitive dependency, ~94 wheels
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    |-- requirements.txt                           # the whole set, pinned
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    `-- README.md                                  # how to install it
+</code></pre></div>
+<p>Install it with pip and nothing else -- no <code>uv</code>, no <code>git</code>, no network, no
+resolution:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>unzip<span class="w"> </span>cut_in-wheelhouse.zip
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>.venv/bin/pip<span class="w"> </span>install<span class="w"> </span>--no-index<span class="w"> </span>--find-links<span class="w"> </span>cut_in_scenario_wheelhouse<span class="w"> </span>cut-in-scenario
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+</code></pre></div>
+<p>The CARLA client is <a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>,
+and the <code>typesafe-carla</code> wheel in the wheelhouse is the released one from
+PyPI, which carries its CPython package (<code>typesafe_carla.carla</code>) prebuilt --
+one build for every Python 3.10+. So pip is the whole installation, here as
+everywhere: nothing is compiled on the target, and an offline vehicle needs
+neither <code>cc</code> nor a build step. Only if that prebuilt package does not match
+the installation -- a <code>typesafe-carla-toolchain</code> other than the one the wheel
+was built with, say -- does the first <code>import typesafe_carla.carla</code>, the first
+scenario run, build it with the Codon compiler from the toolchain wheel (15 to
+30 minutes, about 14 GB of RAM, <code>cc</code>, but no network) into
+<code>~/.cache/typesafe_carla/pycarla</code> (<code>TYPESAFE_CARLA_PYCARLA_DIR</code> moves it);
+<code>typesafe-codon pycarla</code> does that ahead of time, and reports that there is
+nothing to build when the prebuilt package applies.</p>
+<p>That is the point of the format. Autoware's <code>scenario_bridge</code> installs a
+scenario into a venv built from <code>python3-venv</code> and <code>python3-pip</code> -- the two
+things rosdep can resolve -- and has neither uv nor, on a vehicle, a network
+route. A uv project needs all three; a wheelhouse needs none.</p>
+<p>The scenario's document and Hydra config travel <strong>inside</strong> its wheel, so an
+installed scenario is self-contained: there is no directory that has to be kept
+beside it.</p>
+<h3 id="what-the-wheelhouse-is-built-from">What the wheelhouse is built from<a class="headerlink" href="#what-the-wheelhouse-is-built-from" title="Permanent link">&para;</a></h3>
+<p>The exporter still generates the uv project it always did -- <code>pyproject.toml</code>
+with the framework pinned to an exact commit, <code>uv.lock</code>, the document, the Hydra
+config, the package's own tests -- and still runs <code>uv sync --locked</code> and those
+tests against it. That project is now a <strong>build input</strong>: the wheels are resolved
+from its lockfile and the project itself does not leave the server.</p>
+<p>The CARLA client needs no special handling: <code>typesafe-carla</code> is a plain
+dependency of the framework, published on PyPI, so the package requests no
+extra, vendors no wheel, and the lock resolves the client like any other
+dependency.</p>
+<p>There is no destination field. The editor is routinely used from another machine
+on the LAN, where a path typed into it would name a directory on the host running
+the server -- not one the person exporting can reach. Everything is built in a
+temporary directory, the wheelhouse is zipped, and the build tree is removed, so
+the only thing that outlives the request is the archive, and re-exporting never
+has to overwrite a half-written one.</p>
+<p>The response is still the <strong>report</strong> -- warnings, the tool log, whether the
+package's own tests passed -- with the download link in it. Making the response
+the file itself would throw away the very things an export is checked for.</p>
+<h3 id="one-platform-every-supported-interpreter">One platform, every supported interpreter<a class="headerlink" href="#one-platform-every-supported-interpreter" title="Permanent link">&para;</a></h3>
+<p>A wheelhouse is resolved <em>for</em> a platform: the wheels are the ones the exporting
+machine selected, so installing them on a different platform fails on the first
+wheel with no matching tag -- export from a matching machine instead.</p>
+<p>The interpreter is not that kind of constraint. Resolution is done once per
+interpreter the package supports, all into the same directory. <em>Which</em>
+interpreters those are is the CI-tested range -- 3.10, 3.11 and 3.12 -- narrowed
+to what the package's <code>requires-python</code> admits; the package inherits the
+framework's, so normally all three. The pure-Python wheels are shared between
+the passes and the compiled ones sit side by side with their own tag, so pip
+installs whichever matches. That is what lets one export serve ROS 2 Humble,
+whose Python is 3.10, and Jazzy, whose Python is 3.12: the alternative is a
+<code>python3.12</code> that Ubuntu 22.04 does not package at all.</p>
+<p>It is large -- the CARLA client and its Codon toolchain, OpenCV and the
+lanelet2 bindings, the compiled ones once per interpreter. That is the cost of not needing a network at install time, and of
+not needing to know which Python the target runs before exporting.</p>
+<h3 id="reproducibility">Reproducibility<a class="headerlink" href="#reproducibility" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Pinned by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>autoware-carla-scenario</code></td>
+<td>exact version, or an exact commit SHA</td>
+</tr>
+<tr>
+<td><code>typesafe-carla</code></td>
+<td>the framework's own requirement (<code>&gt;=0.3.0,&lt;0.4</code>), locked in <code>uv.lock</code> like everything else</td>
+</tr>
+<tr>
+<td>Python</td>
+<td><code>.python-version</code>, exact patch version</td>
+</tr>
+<tr>
+<td>uv</td>
+<td><code>[tool.uv] required-version</code>, when uv's version could be read</td>
+</tr>
+<tr>
+<td>Everything else</td>
+<td><code>uv.lock</code>, and then the wheels built from it</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>branch is never emitted</strong> -- <code>main</code>, <code>master</code> and <code>HEAD</code> all move, so a
+package pinned to one stops being the package that was tested as soon as
+somebody pushes. When no immutable pin can be determined the export fails rather
+than guessing. A local-path dependency is only produced by an explicit
+development export, which says so in its README and manifest.</p>
+<p>Set <code>SCENARIO_EXPORT_FRAMEWORK_VERSION</code> to pin a published release instead of
+the current checkout's commit.</p>
+<h3 id="export-is-atomic">Export is atomic<a class="headerlink" href="#export-is-atomic" title="Permanent link">&para;</a></h3>
+<p>The exporter builds into a temporary directory and runs <code>uv lock</code>, then
+<code>uv sync --locked</code>, then the generated package's own tests, then the wheelhouse.
+<strong>If locking, verification or the wheelhouse fails, nothing is written</strong> -- a
+package whose dependencies never resolved, or that no environment can install,
+is not a successful export.</p>
+<p>The manifest records only values that were actually observed:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">format_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">cut_in</span><span class="p p-Indicator">,</span><span class="nt"> title</span><span class="p">:</span><span class="w"> </span><span class="nv">Cut in</span><span class="p p-Indicator">,</span><span class="nt"> document_version</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> package</span><span class="p">:</span><span class="w"> </span><span class="nv">cut-in-scenario</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="nv">3.12.10</span><span class="p p-Indicator">,</span><span class="nt"> uv</span><span class="p">:</span><span class="w"> </span><span class="nv">0.12.0</span><span class="p p-Indicator">,</span><span class="nt"> requires_python</span><span class="p">:</span><span class="w"> </span><span class="s">'&gt;=3.10,&lt;3.13'</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="nt">wheelhouse</span><span class="p">:</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cut_in_scenario_wheelhouse</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">  </span><span class="nt">install</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">  </span><span class="nt">wheels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">104</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">  </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'3.10'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.11'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.12'</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="nt">autoware_carla_scenario</span><span class="p">:</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="nt">repository</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/hakuturu583/autoware_carla_scenario</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">  </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0123456789abcdef0123456789abcdef01234567</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">  </span><span class="nt">subdirectory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">autoware_carla_scenario</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="nt">files</span><span class="p">:</span>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="w">  </span><span class="nt">document</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/document.yaml</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="w">  </span><span class="nt">hydra_config</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/conf/scenario/cut_in.yaml</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="nt">notes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</code></pre></div>
+<p>Anything that could not be determined is <code>null</code> with a note, never a plausible
+guess.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SCENARIO_EDITOR_DRAFTS</code></td>
+<td><code>./scenario_drafts</code></td>
+<td>Where drafts are stored</td>
+</tr>
+<tr>
+<td><code>SCENARIO_EDITOR_EXPORT_DIR</code></td>
+<td><code>./scenario_packages</code></td>
+<td>Where an export's wheelhouse <code>.zip</code> is staged until the browser fetches it</td>
+</tr>
+<tr>
+<td><code>SCENARIO_EDITOR_MAP_ROOTS</code></td>
+<td>the working directory</td>
+<td>Directories a Lanelet2 map may be read from, <code>:</code>-separated</td>
+</tr>
+<tr>
+<td><code>SCENARIO_EDITOR_HOST</code></td>
+<td><code>0.0.0.0</code></td>
+<td>Bind address</td>
+</tr>
+<tr>
+<td><code>SCENARIO_EDITOR_PORT</code></td>
+<td><code>9100</code></td>
+<td>Bind port (the result viewer uses 9000)</td>
+</tr>
+<tr>
+<td><code>SCENARIO_EDITOR_MAP_VIEWER</code></td>
+<td>GitHub Pages build</td>
+<td>URL of <code>simple_lanelet2</code>'s <code>viewer.js</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="running-an-authored-scenario">Running an authored scenario<a class="headerlink" href="#running-an-authored-scenario" title="Permanent link">&para;</a></h2>
+<p>An exported scenario plugs in through the same entry point any scenario package
+uses (see <a href="../architecture/">Architecture</a>) -- installed from its wheelhouse, the
+<code>scenario</code> command is on the venv's <code>PATH</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># Sweep every lanelet the spawn constraints match:</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>.venv/bin/scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
+</code></pre></div>
+<p>The CARLA client needs no separate install: <code>typesafe-carla</code> is a dependency of
+the framework, so it is in the lock and in the wheelhouse alongside everything
+else, with its CPython package prebuilt, so nothing has to be compiled on the
+machine that runs the scenario (see
+<a href="#save-draft-vs-export-wheelhouse">Save Draft vs Export Wheelhouse</a>).</p>
+<h2 id="offline">Offline<a class="headerlink" href="#offline" title="Permanent link">&para;</a></h2>
+<p>Only two things in the editor come from the network, and neither is load-bearing
+for editing:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>htmx</td>
+<td>every interaction; the editor needs it</td>
+</tr>
+<tr>
+<td><code>simple_lanelet2</code>'s map viewer</td>
+<td>the map drawing only — the panel says so when it cannot be fetched</td>
+</tr>
+</tbody>
+</table>
+<p>The stylesheet is served by the app itself rather than by a CDN, so a blocked
+egress rule cannot take the layout with it.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 5, 2026 22:52:23 UTC"><span class="timeago" datetime="2026-10-05T22:52:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 5, 2026 22:52:23 UTC">2026-10-05</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 3, 2026 15:06:54 UTC"><span class="timeago" datetime="2026-09-03T15:06:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 3, 2026 15:06:54 UTC">2026-09-03</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
