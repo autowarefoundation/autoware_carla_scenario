@@ -158,6 +158,9 @@ class DeclarativeScenario(BaseScenario):
             offset = override.get("s")
             if offset is not None:
                 entity.spawn.s.value = float(offset)
+            heading = override.get("heading")
+            if heading is not None:
+                entity.spawn.heading = float(heading)
 
     def _apply_param_overrides(self) -> None:
         """Fold ``config.param_overrides`` into the document's action/condition params.

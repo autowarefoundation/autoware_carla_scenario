@@ -32,8 +32,19 @@ run on.
 | stopping at a red signal | a traffic-light stop line; the ego starts 25 m before it | two lanelets on | the ego has stood still for 2 s |
 | anything else | a lane at least 50 m long, outside a junction | the next lanelet | the scene's length has elapsed |
 
-Every search excludes the map's `no_3d_model_lanelet_ids`. FAIL is a collision
-or a timeout of twice the scene's length plus 10 s (at least 20 s).
+Every search excludes the map's `no_3d_model_lanelet_ids`, and the scene's
+scenery narrows it further:
+
+| Scenery | Added to the search |
+| --- | --- |
+| `junction_type: T-junction` / `crossroad` | `junction_type` on a turn's junction lanelet; `previous_of: [junction_type]` for a lane approaching one (not for a lane change, which is searched outside junctions) |
+| `horizontal_plane_type` | `road_shape` (straight, or bending left / right above 0.02 1/m) for lane following and lane changes |
+
+A junction is the group of `turn_direction` lanelets that overlap, follow one
+another or share an approach or exit lane; its type counts the roads meeting at
+it, as CodSceneClassifier does: 3 is a T-junction, 4 a crossroad.
+
+FAIL is a collision or a timeout of twice the scene's length plus 10 s (at least 20 s).
 
 ## Road users
 
@@ -45,11 +56,14 @@ lateral category names.
 | --- | --- |
 | `in_the_same_lane` / `to_the_left` / `to_the_right` | `side: same` / `left` / `right` (and the search requires that neighbour) |
 | `initial_direction: oncoming` | `side: opposite` |
+| `initial_direction: crossing_from_left` / `_right` | `crossing` / `crossing_s`: the lane into the junction lanelet that crosses the ego's path from that side, as far before the junction as the vehicle was beside the ego's line (5-40 m); the search requires `has_crossing` |
 | `velocity` | `initial_speed_kmh` |
 | `standing_still` / `accelerating` / `decelerating` / `keeping_speed` | `set_speed` to 0 / +15 km/h / -15 km/h / the same speed |
 | `change_lane_*`, or `context: cutting_in` | `lane_change` (towards the ego for a cut-in), 1 s in |
 | `turn_left` / `turn_right` | `turn` |
-| pedestrian | a walker at the recorded lateral offset; crossing contexts face across the road, walking ones get `walk_straight` |
+| pedestrian on or near a crosswalk | `crosswalk` / `crosswalk_s` / `crosswalk_heading`: at the kerb of the first crosswalk ahead on the side it was on, facing across; the search requires `has_crosswalk_ahead` |
+| other pedestrian | a walker at the recorded lateral offset; crossing contexts face across the road |
+| walking contexts | `walk_straight` |
 | `signal_color` | `traffic_signal` on every light |
 
 ## What is approximated
@@ -59,9 +73,8 @@ Each document's description lists what it leaves out, and
 
 - ego decisions with no IR primitive -- pulling over or out, avoidance,
   emergency braking -- and `branching` are imported as lane following;
-- vehicles crossing the ego's path are left out (no crossing-lane binding);
-- pedestrians are placed by offset, not on a crosswalk;
 - motorcycles and bicycles are spawned as a car and a pedestrian;
-- the junction type and the road's curvature are not searched for;
+- the road's shape is not searched for on a turn or a red-light approach,
+  whose pick is a junction or the lane into one;
 - when a lane change starts is not recorded, so it fires 1 s in;
 - the signal colour is set on every traffic light, not only the ego's.

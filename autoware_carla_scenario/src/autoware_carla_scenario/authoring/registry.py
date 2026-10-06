@@ -420,7 +420,7 @@ class BindingSpec:
     description: str = ""
     #: What the binding works out: a spawn's ``s``, or a lanelet id for a
     #: ``derived`` lanelet slot.  The editor offers each only where it fits.
-    produces: Literal["s", "lanelet"] = "s"
+    produces: Literal["s", "lanelet", "heading"] = "s"
     #: Parameters the binding is always given and the editor does not offer.
     fixed: tuple[tuple[str, Any], ...] = ()
     #: Whether an ``s`` it works out is a point relative to the pick, and so
@@ -2696,6 +2696,91 @@ register_constraint_spec(
     )
 )
 
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="road_shape",
+        title="Road shape",
+        category="Geometry",
+        fields=(
+            FieldSpec(
+                name="value",
+                label="Shape",
+                kind="select",
+                default="straight",
+                options=(
+                    SelectOption("straight", "Straight"),
+                    SelectOption("curved_left", "Bends left"),
+                    SelectOption("curved_right", "Bends right"),
+                ),
+            ),
+        ),
+        description=(
+            "The centreline is straight, or bends that way (above 0.02 1/m "
+            "of curvature, as CodSceneClassifier labels a road)."
+        ),
+    )
+)
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="junction_type",
+        title="Junction type",
+        category="Topology",
+        fields=(
+            FieldSpec(
+                name="value",
+                label="Type",
+                kind="select",
+                default="crossroad",
+                options=(
+                    SelectOption("T-junction", "T-junction"),
+                    SelectOption("crossroad", "Crossroad"),
+                ),
+            ),
+        ),
+        description=(
+            "A junction lanelet of a junction where three (T-junction) or four "
+            "(crossroad) roads meet."
+        ),
+    )
+)
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="has_crossing",
+        title="Crossed from",
+        category="Topology",
+        fields=(
+            FieldSpec(
+                name="value",
+                label="Side",
+                kind="select",
+                default="left",
+                options=_DIRECTIONS,
+            ),
+        ),
+        description=(
+            "The path through this junction lanelet -- or the one after this "
+            "lane, straight on -- is crossed by a lane coming from that side."
+        ),
+    )
+)
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="has_crosswalk_ahead",
+        title="Crosswalk ahead",
+        category="Regulatory",
+        fields=(
+            FieldSpec(
+                name="distance",
+                label="Within",
+                kind="number",
+                default=60.0,
+                unit="m",
+            ),
+        ),
+        description="A crosswalk crosses the lane within that distance ahead.",
+    )
+)
+
 
 # ---------------------------------------------------------------------------
 # Built-in spawn bindings
@@ -2817,6 +2902,87 @@ register_binding_spec(
             "The offset along the lanelet Along the road from the matched "
             "lanelet lands on: another vehicle placed relative to the case."
         ),
+    )
+)
+_CROSSING_FIELDS = (
+    FieldSpec(
+        name="side", label="From", kind="select", default="left", options=_DIRECTIONS
+    ),
+    FieldSpec(
+        name="approach",
+        label="Before the junction",
+        kind="number",
+        default=15.0,
+        unit="m",
+    ),
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="crossing",
+        title="Lane crossing the path",
+        produces="lanelet",
+        fields=_CROSSING_FIELDS,
+        description=(
+            "The lane approaching the junction lanelet that crosses the "
+            "pick's path from that side.  Pair it with Crossed from on the "
+            "search, and Along the crossing lane (s) on the same spawn."
+        ),
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="crossing_s",
+        title="Along the crossing lane (s)",
+        fields=_CROSSING_FIELDS,
+        relative_to_pick=True,
+        description="The offset on the lane Lane crossing the path names.",
+    )
+)
+_CROSSWALK_FIELDS = (
+    FieldSpec(
+        name="side",
+        label="From the kerb on the",
+        kind="select",
+        default="left",
+        options=_DIRECTIONS,
+    ),
+    FieldSpec(
+        name="search_distance",
+        label="Within",
+        kind="number",
+        default=60.0,
+        unit="m",
+    ),
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="crosswalk",
+        title="Crosswalk ahead",
+        produces="lanelet",
+        fields=_CROSSWALK_FIELDS,
+        description=(
+            "The first crosswalk across the pick's lane.  Pair it with "
+            "Crosswalk ahead on the search, Crosswalk kerb (s) and Across the "
+            "crosswalk (heading) on the same spawn."
+        ),
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="crosswalk_s",
+        title="Crosswalk kerb (s)",
+        fields=_CROSSWALK_FIELDS,
+        relative_to_pick=True,
+        description="Where on the crosswalk its kerb on that side is.",
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="crosswalk_heading",
+        title="Across the crosswalk (heading)",
+        produces="heading",
+        fields=_CROSSWALK_FIELDS,
+        description="The heading that walks the crosswalk from that kerb.",
     )
 )
 register_binding_spec(

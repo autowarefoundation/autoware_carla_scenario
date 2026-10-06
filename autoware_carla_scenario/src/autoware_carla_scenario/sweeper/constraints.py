@@ -346,6 +346,140 @@ class HasAdjacentConstraint:
         return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
 
 
+@dataclass(frozen=True)
+class RoadShapeConstraint:
+    """Matches lanelets whose centreline is straight or bends that way::
+
+        - type: road_shape
+          value: curved_left
+
+    Straight below 0.02 1/m of curvature, as CodSceneClassifier labels a scene
+    (see :func:`~autoware_carla_scenario.sweeper.topology.road_shape`).
+    """
+
+    value: str = "straight"
+
+    def __post_init__(self) -> None:
+        valid = ("straight", "curved_left", "curved_right")
+        if self.value not in valid:
+            raise ValueError(
+                f"Unknown road_shape {self.value!r}. Available: {list(valid)}"
+            )
+
+    def evaluate(self, lanelet: Any) -> bool:
+        from .topology import road_shape  # noqa: PLC0415
+
+        return road_shape(lanelet) == self.value
+
+
+@dataclass(frozen=True)
+class JunctionTypeConstraint:
+    """Matches junction lanelets of a T-junction or a crossroad::
+
+        - type: junction_type
+          value: crossroad
+
+    A junction is the group of lanelets carrying a ``turn_direction`` tag that
+    overlap or share an approach or exit lane; its type is how many roads meet
+    at it (see :mod:`~autoware_carla_scenario.sweeper.topology`).
+    """
+
+    value: str = "crossroad"
+
+    def __post_init__(self) -> None:
+        if self.value not in ("T-junction", "crossroad"):
+            raise ValueError(
+                f"Unknown junction_type {self.value!r}. "
+                "Available: ['T-junction', 'crossroad']"
+            )
+
+    def find_matching_ids(
+        self, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> set[int]:
+        """Return IDs of the junction lanelets of that type."""
+        from .topology import junction_type_of  # noqa: PLC0415
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        return {
+            ll.id
+            for ll in lanelet_map.laneletLayer
+            if junction_type_of(ll, lanelet_map, routing_graph) == self.value
+        }
+
+    def evaluate(self, lanelet: Any) -> bool:
+        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
+
+
+@dataclass(frozen=True)
+class HasCrossingConstraint:
+    """Matches lanelets whose path through the next junction is crossed from a side::
+
+        - type: has_crossing
+          value: left
+
+    The path is the lanelet itself when it is a junction lanelet, else the one
+    following it, straight on where there is a choice -- what the ``crossing``
+    binding places a crossing vehicle against.
+    """
+
+    value: str = "left"
+
+    def __post_init__(self) -> None:
+        if self.value not in ("left", "right"):
+            raise ValueError(
+                f"has_crossing value must be 'left' or 'right', got {self.value!r}"
+            )
+
+    def find_matching_ids(
+        self, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> set[int]:
+        """Return IDs of lanelets crossed from that side."""
+        from .topology import crossing_lanelet  # noqa: PLC0415
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        return {
+            ll.id
+            for ll in lanelet_map.laneletLayer
+            if crossing_lanelet(ll, lanelet_map, routing_graph, self.value) is not None
+        }
+
+    def evaluate(self, lanelet: Any) -> bool:
+        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
+
+
+@dataclass(frozen=True)
+class HasCrosswalkAheadConstraint:
+    """Matches lanelets with a crosswalk across the lane within ``distance`` metres::
+
+    - type: has_crosswalk_ahead
+      distance: 60.0
+    """
+
+    distance: float = 60.0
+
+    def find_matching_ids(
+        self, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> set[int]:
+        """Return IDs of lanelets with a crosswalk ahead."""
+        from .topology import crosswalk_start  # noqa: PLC0415
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        found: set[int] = set()
+        for ll in lanelet_map.laneletLayer:
+            try:
+                crosswalk_start(ll, lanelet_map, routing_graph, "left", self.distance)
+            except ValueError:
+                continue
+            found.add(ll.id)
+        return found
+
+    def evaluate(self, lanelet: Any) -> bool:
+        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # Composite constraints (and / or / not)
 # ---------------------------------------------------------------------------
@@ -468,9 +602,7 @@ def _bind_set_level_constraints(
     ``find_matching_ids`` and stores the result as ``_cached_ids`` using
     ``object.__setattr__`` (the dataclasses are frozen).
     """
-    if isinstance(
-        constraint, (PreviousOfConstraint, FollowingOfConstraint, HasAdjacentConstraint)
-    ):
+    if hasattr(constraint, "find_matching_ids"):
         ids = constraint.find_matching_ids(lanelet_map, routing_graph)
         object.__setattr__(constraint, "_cached_ids", ids)
     if hasattr(constraint, "constraints"):
@@ -494,6 +626,10 @@ _LEAF_REGISTRY: dict[str, type] = {
     "lanelet_length": LaneletLengthConstraint,
     "equals": EqualsConstraint,
     "in_set": InSetConstraint,
+    "road_shape": RoadShapeConstraint,
+    "junction_type": JunctionTypeConstraint,
+    "has_crossing": HasCrossingConstraint,
+    "has_crosswalk_ahead": HasCrosswalkAheadConstraint,
 }
 
 

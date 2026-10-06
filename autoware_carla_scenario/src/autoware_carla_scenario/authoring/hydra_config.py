@@ -123,14 +123,19 @@ def swept_entity(document: ScenarioDocument) -> Entity | None:
 
 def _entity_spawn_overrides(document: ScenarioDocument) -> dict[str, Any]:
     """Return the declared ``scenario.spawn_overrides`` tree for non-ego entities."""
-    return {
-        entity.id: {
+    overrides: dict[str, Any] = {}
+    for entity in document.entities:
+        if entity.kind == "ego":
+            continue
+        override: dict[str, Any] = {
             "lanelet_id": entity.spawn.lanelet_id,
             "s": entity.spawn.s.value,
         }
-        for entity in document.entities
-        if entity.kind != "ego"
-    }
+        # Declared only where a binding writes it: struct mode needs the key.
+        if entity.spawn.heading_binding is not None:
+            override["heading"] = entity.spawn.heading
+        overrides[entity.id] = override
+    return overrides
 
 
 def _param_override_defaults(document: ScenarioDocument) -> dict[str, Any]:
@@ -263,6 +268,12 @@ def build_scenario_config(
                 continue
             assert entity.spawn.s.binding is not None  # noqa: S101 -- checked above
             bindings[spawn_s_key(entity)] = entity.spawn.s.binding.to_sweep_dict()
+        for entity in document.entities:
+            heading = entity.spawn.heading_binding
+            if heading is not None and entity.kind != "ego":
+                bindings[f"scenario.spawn_overrides.{entity.id}.heading"] = (
+                    heading.to_sweep_dict()
+                )
         # Every lanelet derived from the pick is a binding onto its own key:
         # the sweeper resolves each one against the lanelet it picked.
         for derived in document.derived_lanelet_slots():

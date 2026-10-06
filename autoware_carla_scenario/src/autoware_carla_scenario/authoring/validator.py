@@ -449,6 +449,20 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
 
     if spawn.s.mode == "derived":
         _check_binding(out, f"{path}.spawn.s.binding", spawn.s.binding, "s", entity.id)
+    if spawn.heading_binding is not None:
+        if entity.kind == "ego":
+            out.error(
+                f"{path}.spawn.heading_binding",
+                "The ego's heading follows its lane; it cannot be derived.",
+                entity.id,
+            )
+        _check_binding(
+            out,
+            f"{path}.spawn.heading_binding",
+            spawn.heading_binding,
+            "heading",
+            entity.id,
+        )
 
 
 def _check_binding(
@@ -816,6 +830,13 @@ def _check_sweep_shape(out: _Collector, document: ScenarioDocument) -> None:
         swept.owner_id if swept is not None and swept.field == "spawn" else None
     )
     for entity in document.entities:
+        if entity.spawn.heading_binding is not None and swept is None:
+            out.warn(
+                f"entities[{document.entities.index(entity)}].spawn.heading_binding",
+                "A derived heading is worked out from the searched lanelet, but "
+                f"nothing is searched; {entity.id!r} keeps {entity.spawn.heading}.",
+                entity.id,
+            )
         if entity.spawn.s.mode != "derived":
             continue
         binding_spec = (

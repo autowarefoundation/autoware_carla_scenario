@@ -552,6 +552,21 @@ nearest lane running the other way on the left of this direction's innermost
 lane. A pick where the point runs off the road, or has no such lane, is dropped
 from the sweep. [Importing CoD scenes](cod_import.md) builds documents this way.
 
+Two more families place road users that are not in the pick's lane at all:
+
+| Binding | Produces | Where |
+| --- | --- | --- |
+| `crossing` / `crossing_s` | lanelet / s | the lane into the junction lanelet that crosses the pick's path from `side`, `approach` metres before it |
+| `crosswalk` / `crosswalk_s` | lanelet / s | the first crosswalk across the pick's lane within `search_distance`, at its `side` kerb |
+| `crosswalk_heading` | heading | 0 or pi: the way that walks that crosswalk from that kerb |
+
+A heading binding sits on a spawn's `heading_binding` and is written to
+`scenario.spawn_overrides.<entity>.heading`. Pair each with the search
+constraint that guarantees it resolves -- `has_crossing` and
+`has_crosswalk_ahead` -- or picks without one are dropped. `junction_type`
+(T-junction / crossroad) and `road_shape` (straight / curved left / right)
+narrow a search by the kind of junction or road.
+
 The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_s` keys. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly

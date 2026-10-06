@@ -349,6 +349,11 @@ class SpawnSpec(LaneletChoice):
     #: Yaw relative to the lanelet's direction of travel, in radians, positive
     #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
     heading: float = 0.0
+    #: Derives :attr:`heading` from the sweep's pick -- a ``sweep.bindings``
+    #: entry producing a heading, such as which way a crosswalk is walked from
+    #: a given kerb.  :attr:`heading` stays the default a run without a sweep
+    #: keeps.
+    heading_binding: Optional[BindingRef] = None
 
     @property
     def heading_deg(self) -> float:

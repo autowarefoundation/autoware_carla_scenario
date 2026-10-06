@@ -181,6 +181,15 @@ class TestConstruction:
         assert npc.spawn.lanelet_id == 999
         assert npc.spawn.s.value == 3.5
 
+    def test_a_derived_heading_reaches_the_entity(self) -> None:
+        """A crosswalk walked from its far kerb arrives as a heading of pi."""
+        config = DeclarativeScenarioConfig(
+            name="cut_in", spawn_overrides={"npc1": {"heading": 3.14159}}
+        )
+        npc = _scenario(config=config).document.entity("npc1")
+        assert npc is not None
+        assert npc.spawn.heading == 3.14159
+
     def test_spawn_overrides_for_an_unknown_entity_are_ignored(self) -> None:
         config = DeclarativeScenarioConfig(
             name="cut_in", spawn_overrides={"ghost": {"lanelet_id": 1}}

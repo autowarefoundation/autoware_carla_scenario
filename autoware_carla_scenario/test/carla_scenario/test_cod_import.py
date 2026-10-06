@@ -180,6 +180,31 @@ class TestEgo:
         assert document.ego is not None and document.ego.driven_by == "autopilot"
 
 
+class TestScenery:
+    def test_a_turn_searches_the_junction_type(self) -> None:
+        document = scene_to_document(
+            _scene("turn_right", junction="T-junction")
+        ).document
+        (root,) = _sweep(document)["constraints"]["ego.spawn_lanelet_id"]
+        assert {"type": "junction_type", "value": "T-junction"} in root["constraints"]
+
+    def test_lane_following_approaches_a_junction_of_that_type(self) -> None:
+        document = scene_to_document(_scene(junction="crossroad")).document
+        (root,) = _sweep(document)["constraints"]["ego.spawn_lanelet_id"]
+        assert {
+            "type": "previous_of",
+            "constraints": [{"type": "junction_type", "value": "crossroad"}],
+        } in root["constraints"]
+
+    def test_a_lane_is_searched_for_its_shape(self) -> None:
+        scene = _scene()
+        plane = scene["scenery"]["scenery_elements"][0]["drivable_area_geometry"]
+        plane["horizontal_plane"]["horizontal_plane_type"] = "curved_left"
+        document = scene_to_document(scene).document
+        (root,) = _sweep(document)["constraints"]["ego.spawn_lanelet_id"]
+        assert {"type": "road_shape", "value": "curved_left"} in root["constraints"]
+
+
 class TestVehicles:
     def test_a_leading_vehicle_is_placed_ahead_in_the_ego_lane(self) -> None:
         document = scene_to_document(_scene(entities=[_vehicle(20.0)])).document
@@ -228,12 +253,21 @@ class TestVehicles:
         assert npc is not None and npc.spawn.binding is not None
         assert npc.spawn.binding.params["side"] == "opposite"
 
-    def test_a_crossing_vehicle_is_left_out_and_noted(self) -> None:
-        imported = scene_to_document(
-            _scene(entities=[_vehicle(30.0, direction="crossing_from_left")])
-        )
-        assert imported.document.entity("npc1") is None
-        assert any("crossing" in note for note in imported.notes)
+    def test_a_crossing_vehicle_comes_from_the_lane_across_the_junction(
+        self,
+    ) -> None:
+        raw = _vehicle(30.0, direction="crossing_from_left")
+        raw["position"]["y"] = 12.0
+        document = scene_to_document(_scene(entities=[raw])).document
+        assert _errors(document) == []
+        sweep = _sweep(document)
+        assert sweep["bindings"]["scenario.spawn_overrides.npc1.lanelet_id"] == {
+            "type": "crossing",
+            "side": "left",
+            "approach": 12.0,
+        }
+        (root,) = sweep["constraints"]["ego.spawn_lanelet_id"]
+        assert {"type": "has_crossing", "value": "left"} in root["constraints"]
 
     @pytest.mark.parametrize(
         ("longitudinal", "target"),
@@ -279,6 +313,26 @@ class TestPedestrians:
         assert walker.spawn.heading == pytest.approx(-math.pi / 2)
         (walk,) = [a for a in document.actions if a.type == "walk_straight"]
         assert walk.actor == "ped1"
+
+    def test_on_a_crosswalk_it_starts_at_the_kerb_it_was_on(self) -> None:
+        document = scene_to_document(
+            _scene(entities=[self._pedestrian(context="crossing_crosswalk")])
+        ).document
+        assert _errors(document) == []
+        sweep = _sweep(document)
+        bindings = sweep["bindings"]
+        assert bindings["scenario.spawn_overrides.ped1.lanelet_id"] == {
+            "type": "crosswalk",
+            "side": "left",
+        }
+        assert bindings["scenario.spawn_overrides.ped1.heading"] == {
+            "type": "crosswalk_heading",
+            "side": "left",
+        }
+        (root,) = sweep["constraints"]["ego.spawn_lanelet_id"]
+        assert {"type": "has_crosswalk_ahead", "distance": 60.0} in root["constraints"]
+        overrides = build_scenario_config(document)["scenario"]["spawn_overrides"]
+        assert "heading" in overrides["ped1"]
 
     def test_a_group_is_capped(self) -> None:
         imported = scene_to_document(

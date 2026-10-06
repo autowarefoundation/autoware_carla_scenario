@@ -626,6 +626,147 @@ class RouteOffsetSBinding(RouteOffsetBinding):
         return BindingResult(value=round(s, 3))
 
 
+def _graph(lanelet_map: Any, routing_graph: Any | None) -> Any:
+    from .constraints import create_routing_graph
+
+    return (
+        routing_graph
+        if routing_graph is not None
+        else create_routing_graph(lanelet_map)
+    )
+
+
+@dataclass
+class CrossingBinding:
+    """Where a vehicle crossing the case's path starts, by lanelet ID::
+
+        bindings:
+          scenario.spawn_overrides.npc1.lanelet_id:
+            type: crossing
+            side: left
+            approach: 15.0
+
+    The lane approaching the junction lanelet that crosses the ego's path from
+    ``side`` (straight on preferred), ``approach`` metres before the junction.
+    Pair it with :class:`CrossingSBinding` on the same spawn's ``s``, and with
+    ``has_crossing`` on the search.
+    """
+
+    target_key: str
+    side: str = "left"
+    approach: float = 15.0
+
+    def __post_init__(self) -> None:
+        if self.side not in ("left", "right"):
+            raise ValueError(
+                f"crossing side must be 'left' or 'right', got {self.side!r}"
+            )
+
+    def _pose(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any
+    ) -> tuple[int, float]:
+        from .topology import crossing_approach  # noqa: PLC0415
+
+        return crossing_approach(
+            lanelet_map.laneletLayer[lanelet_id],
+            lanelet_map,
+            _graph(lanelet_map, routing_graph),
+            self.side,
+            self.approach,
+        )
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the ID of the lane the crossing vehicle starts on."""
+        return BindingResult(
+            value=self._pose(lanelet_id, lanelet_map, routing_graph)[0]
+        )
+
+
+@dataclass
+class CrossingSBinding(CrossingBinding):
+    """The ``s`` on the lane :class:`CrossingBinding` names."""
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the offset along the crossing vehicle's lane."""
+        s = self._pose(lanelet_id, lanelet_map, routing_graph)[1]
+        return BindingResult(value=round(s, 3))
+
+
+@dataclass
+class CrosswalkBinding:
+    """The crosswalk across the case's lane, by lanelet ID::
+
+        bindings:
+          scenario.spawn_overrides.ped1.lanelet_id:
+            type: crosswalk
+            side: left
+
+    The first crosswalk across the lane within ``search_distance`` metres of the
+    pick's start.  :class:`CrosswalkSBinding` puts a pedestrian at its
+    ``side`` kerb and :class:`CrosswalkHeadingBinding` faces it across; pair
+    all three, and ``has_crosswalk_ahead`` on the search.
+    """
+
+    target_key: str
+    side: str = "left"
+    search_distance: float = 60.0
+
+    def __post_init__(self) -> None:
+        if self.side not in ("left", "right"):
+            raise ValueError(
+                f"crosswalk side must be 'left' or 'right', got {self.side!r}"
+            )
+
+    def _start(self, lanelet_id: int, lanelet_map: Any, routing_graph: Any) -> Any:
+        from .topology import crosswalk_start  # noqa: PLC0415
+
+        return crosswalk_start(
+            lanelet_map.laneletLayer[lanelet_id],
+            lanelet_map,
+            _graph(lanelet_map, routing_graph),
+            self.side,
+            self.search_distance,
+        )
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the crosswalk's lanelet ID."""
+        return BindingResult(
+            value=self._start(lanelet_id, lanelet_map, routing_graph).lanelet_id
+        )
+
+
+@dataclass
+class CrosswalkSBinding(CrosswalkBinding):
+    """The ``s`` at the crosswalk's ``side`` kerb."""
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the offset along the crosswalk."""
+        return BindingResult(
+            value=round(self._start(lanelet_id, lanelet_map, routing_graph).s, 3)
+        )
+
+
+@dataclass
+class CrosswalkHeadingBinding(CrosswalkBinding):
+    """The heading that walks the crosswalk from its ``side`` kerb: 0 or pi."""
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the heading relative to the crosswalk's direction."""
+        return BindingResult(
+            value=round(self._start(lanelet_id, lanelet_map, routing_graph).heading, 6)
+        )
+
+
 _BINDING_REGISTRY: dict[str, type] = {
     "stop_line_offset": StopLineOffsetBinding,
     "route_through": RouteThroughBinding,
@@ -634,6 +775,11 @@ _BINDING_REGISTRY: dict[str, type] = {
     "stop_line_approach": StopLineApproachBinding,
     "route_offset": RouteOffsetBinding,
     "route_offset_s": RouteOffsetSBinding,
+    "crossing": CrossingBinding,
+    "crossing_s": CrossingSBinding,
+    "crosswalk": CrosswalkBinding,
+    "crosswalk_s": CrosswalkSBinding,
+    "crosswalk_heading": CrosswalkHeadingBinding,
 }
 
 

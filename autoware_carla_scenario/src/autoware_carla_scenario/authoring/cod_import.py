@@ -481,6 +481,20 @@ def _relative_spawn(
     )
 
 
+def _crossing_spawn(side: str, approach: float) -> SpawnSpec:
+    params = {"side": side, "approach": round(approach, 1)}
+    return SpawnSpec(
+        mode="derived",
+        lanelet_id=183,
+        binding=BindingRef(type="crossing", params=dict(params)),
+        s=SValue(
+            mode="derived",
+            value=0.0,
+            binding=BindingRef(type="crossing_s", params=dict(params)),
+        ),
+    )
+
+
 def _add_vehicle(
     raw: Mapping[str, Any],
     entity_id: str,
@@ -489,26 +503,39 @@ def _add_vehicle(
     entities: list[Entity],
     actions: list[ActionNode],
     notes: list[str],
+    required: list[ConstraintNode],
 ) -> None:
     state = raw.get("state_or_initial_state") or {}
     behavior = raw.get("behavior") or {}
     side = _vehicle_side(state)
-    if side is None:
-        notes.append(
-            f"{entity_id}: a vehicle crossing the ego's path needs a crossing-lane "
-            "binding the sweeper does not have; left out."
-        )
-        return
     if raw.get("type") != "vehicle":
         notes.append(f"{entity_id}: {raw.get('type')} spawned as a car.")
 
     speed_kmh = round(float(raw.get("velocity") or 0.0) * 3.6, 1)
+    if side is None:
+        # Crossing the ego's path: on the lane across the junction ahead, as far
+        # before it as the vehicle was beside the ego's line.
+        crossing_side = (
+            "left" if str(state.get("initial_direction")).endswith("left") else "right"
+        )
+        position = raw.get("position")
+        lateral_gap = (
+            abs(float(position.get("y") or 0.0))
+            if isinstance(position, Mapping)
+            else 15.0
+        )
+        spawn = _crossing_spawn(crossing_side, max(5.0, min(40.0, lateral_gap)))
+        required.append(
+            ConstraintNode(type="has_crossing", params={"value": crossing_side})
+        )
+    else:
+        spawn = _relative_spawn(base_distance + _relative_distance(raw), side)
     entity = Entity(
         id=entity_id,
         kind="vehicle",
         title=_title(raw),
         initial_speed_kmh=speed_kmh,
-        spawn=_relative_spawn(base_distance + _relative_distance(raw), side),
+        spawn=spawn,
     )
     entities.append(entity)
 
@@ -579,6 +606,7 @@ def _add_pedestrians(
     entities: list[Entity],
     actions: list[ActionNode],
     notes: list[str],
+    required: list[ConstraintNode],
 ) -> None:
     context = str(raw.get("context") or "")
     position = raw.get("position") if isinstance(raw.get("position"), Mapping) else {}
@@ -608,14 +636,14 @@ def _add_pedestrians(
     spawned = min(count, max(1, options.max_pedestrians_per_group))
     if spawned < count:
         notes.append(f"{entity_id}: a group of {count}, {spawned} spawned.")
-    if context in (
+    on_crosswalk = context in (
         "crossing_crosswalk",
         "approaching_crosswalk",
         "standing_near_crosswalk",
-    ):
-        notes.append(
-            f"{entity_id}: placed by its offset from the ego, not on a crosswalk "
-            "(no crosswalk binding yet)."
+    )
+    if on_crosswalk:
+        required.append(
+            ConstraintNode(type="has_crosswalk_ahead", params={"distance": 60.0})
         )
     if raw.get("type") == "bicycle":
         notes.append(f"{entity_id}: a bicycle, spawned as a pedestrian.")
@@ -623,15 +651,14 @@ def _add_pedestrians(
     distance = base_distance + _relative_distance(raw)
     for index in range(spawned):
         member = entity_id if spawned == 1 else f"{entity_id}_{index + 1}"
-        entities.append(
-            Entity(
-                id=member,
-                kind="pedestrian",
-                title=_title(raw),
-                spawn=_relative_spawn(
-                    distance + index * 1.0, "same", t=round(y, 2), heading=heading
-                ),
+        if on_crosswalk:
+            spawn = _crosswalk_spawn("left" if y > 0 else "right", t=index * 0.8)
+        else:
+            spawn = _relative_spawn(
+                distance + index * 1.0, "same", t=round(y, 2), heading=heading
             )
+        entities.append(
+            Entity(id=member, kind="pedestrian", title=_title(raw), spawn=spawn)
         )
         if walking:
             actions.append(
@@ -642,6 +669,34 @@ def _add_pedestrians(
                     speed_ms=1.4,
                 )
             )
+
+
+def _crosswalk_spawn(side: str, *, t: float = 0.0) -> SpawnSpec:
+    """At the *side* kerb of the crosswalk ahead, facing across it."""
+    params = {"side": side}
+    return SpawnSpec(
+        mode="derived",
+        lanelet_id=183,
+        binding=BindingRef(type="crosswalk", params=dict(params)),
+        s=SValue(
+            mode="derived",
+            value=0.0,
+            binding=BindingRef(type="crosswalk_s", params=dict(params)),
+        ),
+        # Side by side across the crosswalk's width, for a group.
+        t=t,
+        heading_binding=BindingRef(type="crosswalk_heading", params=dict(params)),
+    )
+
+
+def _extend_search(ego_plan: _EgoPlan, required: list[ConstraintNode]) -> None:
+    """Add *required* to the ego's search, once each."""
+    root = ego_plan.spawn.constraints[0]
+    present = [c.to_sweep_dict() for c in root.constraints]
+    for node in required:
+        if node.to_sweep_dict() not in present:
+            root.constraints.insert(0, node)
+            present.append(node.to_sweep_dict())
 
 
 def _require_neighbours(ego_plan: _EgoPlan, entities: list[Entity]) -> None:
@@ -658,7 +713,9 @@ def _require_neighbours(ego_plan: _EgoPlan, entities: list[Entity]) -> None:
         {
             str(e.spawn.binding.params.get("side"))
             for e in entities
-            if e.kind != "ego" and e.spawn.binding is not None
+            if e.kind != "ego"
+            and e.spawn.binding is not None
+            and e.spawn.binding.type == "route_offset"
         }
         & {"left", "right"}
     )
@@ -733,6 +790,7 @@ def scene_to_document(
             "not only the ego's."
         )
 
+    required: list[ConstraintNode] = []
     vehicles = pedestrians = 0
     for raw in scene.get("dynamic_entities") or ():
         if not isinstance(raw, Mapping):
@@ -747,6 +805,7 @@ def scene_to_document(
                 entities,
                 actions,
                 notes,
+                required,
             )
         else:
             vehicles += 1
@@ -758,6 +817,7 @@ def scene_to_document(
                 entities,
                 actions,
                 notes,
+                required,
             )
 
     _require_neighbours(ego_plan, entities)
@@ -765,16 +825,29 @@ def scene_to_document(
     geometry = _geometry(scene)
     junction = (geometry.get("junctions") or {}).get("intersection") or {}
     plane = geometry.get("horizontal_plane") or {}
-    if junction.get("junction_type"):
-        notes.append(
-            f"junction type {junction['junction_type']!r} is not searched for "
-            "(no constraint yet)."
-        )
-    if plane.get("horizontal_plane_type") not in (None, "straight"):
-        notes.append(
-            f"road shape {plane['horizontal_plane_type']!r} is not searched for "
-            "(no curvature constraint yet)."
-        )
+    junction_type = junction.get("junction_type")
+    if junction_type in ("T-junction", "crossroad"):
+        kind = ConstraintNode(type="junction_type", params={"value": junction_type})
+        if ego_plan.anchor == "turn":
+            required.append(kind)
+        elif ego_plan.anchor == "lane_change":
+            notes.append(
+                f"junction type {junction_type!r}: a lane change is searched "
+                "for outside junctions, so it is not."
+            )
+        else:
+            # The pick is the lane approaching the junction.
+            required.append(ConstraintNode(type="previous_of", constraints=[kind]))
+    shape = plane.get("horizontal_plane_type")
+    if shape in ("straight", "curved_left", "curved_right"):
+        if ego_plan.anchor in ("lane", "lane_change"):
+            required.append(ConstraintNode(type="road_shape", params={"value": shape}))
+        elif shape != "straight":
+            notes.append(
+                f"road shape {shape!r} is not searched for: the pick is a "
+                "junction or its approach."
+            )
+    _extend_search(ego_plan, required)
 
     timeout = float(max(20, math.ceil(duration * 2) + 10))
     decisions = scene.get("driving_decisions") or {}
