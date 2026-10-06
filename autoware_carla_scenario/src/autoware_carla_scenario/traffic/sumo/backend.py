@@ -63,7 +63,13 @@ from ..config import TrafficManagerBackendConfig
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
 from .geometry import Pose2D, carla_to_sumo, sumo_to_carla
-from .network import SumoNetwork, build_network, generate_trips, sumo_home
+from .network import (
+    SignalTable,
+    SumoNetwork,
+    build_network,
+    generate_trips,
+    sumo_home,
+)
 from .physics_control import (
     longitudinal,
     lookahead_distance,
@@ -1256,6 +1262,35 @@ class SumoTrafficBackend(TrafficBackend):
     # ------------------------------------------------------------------
 
     def _match_signals(self, world: Any) -> dict[tuple[str, int], Any]:
+        """Each SUMO signal link, and the CARLA light that switches it.
+
+        Read off roadgen's traces when the network was built here: a CARLA light
+        is the OpenDRIVE signal of its ``get_opendrive_id()``, and the traces
+        follow that signal through the map to the SUMO links of every movement
+        it governs.  A network given as ``net_path`` has no traces, and is
+        matched by where each light's lanes fall in it instead.
+        """
+        table = SignalTable.load(self._network) if self._network else None
+        if table is None:
+            return self._match_signals_by_position(world)
+        matched: dict[tuple[str, int], Any] = {}
+        unmatched = []
+        for light in world.get_actors().filter("traffic.traffic_light"):
+            links = table.links(light.get_opendrive_id())
+            if not links:
+                unmatched.append(light.get_opendrive_id())
+            for link in links:
+                matched[link] = light
+        if unmatched:
+            logger.warning(
+                "No SUMO signal link for CARLA light(s) %s; SUMO keeps its own "
+                "program there",
+                ", ".join(sorted(unmatched)),
+            )
+        logger.info("Matched %d SUMO signal link(s) to CARLA lights", len(matched))
+        return matched
+
+    def _match_signals_by_position(self, world: Any) -> dict[tuple[str, int], Any]:
         """Each SUMO signal link the CARLA light standing over its lane controls."""
         tc = self._traci
         links: dict[str, tuple[str, int]] = {}
@@ -1331,6 +1366,10 @@ class SumoTrafficBackend(TrafficBackend):
         for _ in range(steps):
             self._push_external()
             self._push_walkers(world)
+            # The queues SUMO builds while it warms up are the ones CARLA's lights
+            # would have built.
+            if self._config.traffic_light_authority == "carla":
+                self._signals_to_sumo()
             tc.simulationStep()
         for sumo_id in self._driven:
             tc.vehicle.setSpeed(sumo_id, -1)  # back to SUMO's own speed

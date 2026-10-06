@@ -913,3 +913,59 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     }
     backend._signals_to_sumo()
     assert backend._traci.trafficlight.states["tls"] == "Gyrr"
+
+
+class _FakeTrace:
+    """roadgen.Trace's ``translate``, for a map whose signal 949 switches two links."""
+
+    def translate(self, fmt: str, element: str, *, to: str) -> list[dict[str, Any]]:
+        assert (fmt, to) == ("opendrive", "sumo")
+        if element != "signal:949":
+            raise ValueError(f"{element} is not in the map")
+        return [
+            {"ref": "tls:j_189", "role": "traffic_light"},
+            {"ref": "tls:j_189/13", "role": "link"},
+            {"ref": "tls:j_189/12", "role": "link"},
+            {"ref": "tls:j_189/12", "role": "link"},
+        ]
+
+
+def test_the_signal_table_reads_a_lights_links_off_the_traces() -> None:
+    from autoware_carla_scenario.traffic.sumo.network import SignalTable
+
+    table = SignalTable(_FakeTrace())
+    assert table.links("949") == [("j_189", 12), ("j_189", 13)]
+    assert table.links("1") == []
+
+
+def test_a_network_built_without_traces_has_no_signal_table(tmp_path: Path) -> None:
+    from autoware_carla_scenario.traffic.sumo.network import SignalTable, SumoNetwork
+
+    network = SumoNetwork(tmp_path / "network.net.xml", tmp_path / "network.safe")
+    assert SignalTable.load(network) is None
+
+
+def test_carla_lights_are_matched_to_sumo_links_by_their_opendrive_id(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.traffic.sumo import backend as sumo_backend
+    from autoware_carla_scenario.traffic.sumo.network import SignalTable, SumoNetwork
+
+    lights = [
+        SimpleNamespace(get_opendrive_id=lambda: "949"),
+        SimpleNamespace(get_opendrive_id=lambda: "1"),
+    ]
+    world = SimpleNamespace(
+        get_actors=lambda: SimpleNamespace(
+            filter=lambda pattern: lights if pattern == "traffic.traffic_light" else []
+        )
+    )
+    monkeypatch.setattr(
+        SignalTable, "load", classmethod(lambda cls, network: cls(_FakeTrace()))
+    )
+    backend = sumo_backend.SumoTrafficBackend.__new__(sumo_backend.SumoTrafficBackend)
+    backend._network = SumoNetwork(Path("network.net.xml"), Path("network.safe"))
+    with caplog.at_level("WARNING"):
+        matched = backend._match_signals(world)
+    assert matched == {("j_189", 12): lights[0], ("j_189", 13): lights[0]}
+    assert "light(s) 1" in caplog.text

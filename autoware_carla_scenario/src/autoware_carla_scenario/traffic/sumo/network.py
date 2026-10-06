@@ -10,6 +10,11 @@ Ambient demand comes from SUMO's own ``randomTrips.py``, weighted by the
 ``network.safe.*`` files roadgen writes beside the network (sources and sinks
 away from dead ends).
 
+Beside the network go roadgen's traces -- the IR dump, what each element of the
+OpenDRIVE became (``map.xodr.trace.json``) and what each became in SUMO -- which
+join a CARLA traffic light, by its OpenDRIVE signal id, to the SUMO signal links
+it switches (:class:`SignalTable`).
+
 Both are cached under a directory named after a hash of the OpenDRIVE text and
 of the roadgen and SUMO versions, so a map is converted once per machine.
 """
@@ -34,6 +39,7 @@ from ..base import TrafficBackendError, TrafficBackendUnavailable
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "SignalTable",
     "SumoNetwork",
     "build_network",
     "generate_trips",
@@ -51,6 +57,57 @@ class SumoNetwork:
     net_file: Path
     #: ``randomTrips --weights-prefix``: ``<prefix>.src.xml`` and friends.
     weights_prefix: Path
+
+    @property
+    def trace_files(self) -> tuple[Path, Path, Path]:
+        """The IR dump, the OpenDRIVE's read trace and the SUMO trace."""
+        directory = self.net_file.parent
+        return (
+            directory / "network.ir.json",
+            directory / "map.xodr.trace.json",
+            directory / "network.sumo.trace.json",
+        )
+
+
+class SignalTable:
+    """Which SUMO signal links each OpenDRIVE signal switches, from roadgen's traces.
+
+    The OpenDRIVE is CARLA's own, so a signal's id there is
+    ``TrafficLight.get_opendrive_id()``: the table is the CARLA light to the
+    ``(tls id, link index)`` of every movement it governs in SUMO.
+    """
+
+    def __init__(self, trace: Any) -> None:
+        self._trace = trace
+
+    @classmethod
+    def load(cls, network: SumoNetwork) -> SignalTable | None:
+        """The table of *network*, or ``None`` when it was built without traces."""
+        if not all(path.is_file() for path in network.trace_files):
+            return None
+        import roadgen  # noqa: PLC0415
+
+        # The files are this cache's own and never change, but they were renamed
+        # from roadgen's prefix to `network.*` after the traces recorded them.
+        files = (str(path) for path in network.trace_files)
+        return cls(roadgen.Trace.load(*files, check_files=False))
+
+    def links(self, signal_id: str) -> list[tuple[str, int]]:
+        """The ``(tls id, link index)`` pairs the signal *signal_id* switches."""
+        try:
+            answers = self._trace.translate(
+                "opendrive", f"signal:{signal_id}", to="sumo"
+            )
+        except ValueError:  # the signal is not in the map: nothing to switch
+            return []
+        links = set()
+        for answer in answers:
+            ref = answer["ref"]
+            if answer.get("role") != "link" or not ref.startswith("tls:"):
+                continue
+            tls, _, index = ref[len("tls:") :].rpartition("/")
+            links.add((tls, int(index)))
+        return sorted(links)
 
 
 def sumo_home() -> Path:
@@ -147,6 +204,8 @@ def build_network(
         try:
             road_map = roadgen.read_opendrive(str(xodr))
             prefix = _export(road_map, tmp, curve_lateral_acceleration)
+            road_map.export_ir(str(tmp / "network.ir.json"))
+            road_map.write_read_trace(str(tmp / "map.xodr.trace.json"))
         except Exception as exc:  # roadgen raises ValueError, among others
             raise TrafficBackendError(
                 f"roadgen could not convert the map: {exc}"
