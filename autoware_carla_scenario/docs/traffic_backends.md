@@ -386,8 +386,21 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the
 lights sets them for SUMO's traffic too; `sumo` drives CARLA's lights from
-SUMO's programs; `none` leaves each alone. Lights and SUMO signal links are
-matched geometrically (a CARLA light's stop waypoints to the SUMO lane there).
+SUMO's programs; `none` leaves each alone. CARLA's lights are applied while
+SUMO warms up too, so the queues it starts with are the ones they would build.
+
+Which SUMO signal links a CARLA light switches is read off roadgen's traces,
+written beside the network when it is built: the light is the OpenDRIVE signal
+of its `get_opendrive_id()`, roadgen records which map element that signal
+became when it reads the OpenDRIVE (`map.xodr.trace.json`), and which SUMO links
+of the junction's program that element became when it writes the network
+(`network.sumo.trace.json`). A light whose signal reached no link is named in a
+warning, and SUMO keeps its own program there. A network given as `net_path`
+has no traces, and its links are matched geometrically instead: a light's stop
+waypoints to the SUMO lane there.
+
+On Town10HD_Opt all 15 lights match, 56 links between them; SUMO's only other
+signal links are on emergency-only shoulder lanes.
 
 **Manoeuvres** of SUMO-driven vehicles become TraCI calls: `change_lane` →
 `changeLane` (SUMO obeys a solid line, and says so), `set_desired_speed` →

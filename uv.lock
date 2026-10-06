@@ -184,7 +184,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyxodr", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.15.0" },
+    { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.16.0" },
     { name = "simple-lanelet2", specifier = ">=1.1.2" },
     { name = "sumolib", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
@@ -2279,12 +2279,12 @@ wheels = [
 
 [[package]]
 name = "roadgen"
-version = "0.15.0"
+version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e1/a3/213ecf86db915406479d7cb83ea2fd6a3c09453713ac583b4c1cb18a53f8/roadgen-0.15.0.tar.gz", hash = "sha256:ba8788a3472e0dad996b8af866dce842df9ab8f05c988246017245547005b6ba", size = 678318, upload-time = "2026-10-05T10:40:50.275Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/b7/1b577b85bf1b4d287a751bb7297293ba02fdaa9f4bd6ae1bb3c2e83c03e7/roadgen-0.16.0.tar.gz", hash = "sha256:d50183f9a24fe387911de9623ada31c816365e3069229d0eca1b9cb04b88d513", size = 682379, upload-time = "2026-10-06T02:00:05.239Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/90/261df09ec0779d543ece41379ea72f184de4143f13384a455c27842780ca/roadgen-0.15.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8e2adc956e7a3d06f5e48f2903f832c3c9548b1d1f355818df5aa4b83662068a", size = 4496960, upload-time = "2026-10-05T10:40:46.509Z" },
-    { url = "https://files.pythonhosted.org/packages/83/4c/39816e8f53f5471e25f5f08a2ba72d65ab8fc75600da7c3a696951ae1531/roadgen-0.15.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b54be30e89ab4862ae93024f0750f3b4c70ce0dba8dae0546ae58650ec6d95e7", size = 4896625, upload-time = "2026-10-05T10:40:48.33Z" },
+    { url = "https://files.pythonhosted.org/packages/db/aa/6436ccd50ad432c16026457e94ab4d3cc0166ba9552d618199a4d5df991c/roadgen-0.16.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5bd04f3b8ba01ef9be994274b918ade531a7e5c1754b5bb64907ed8a6b3f9239", size = 4516273, upload-time = "2026-10-06T02:00:00.918Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/57/a08c34d14962d10d83d59558a5bdcc5aec565306fcdb49a2610838b045b9/roadgen-0.16.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5180a942f556db1ad7aa70628f617d21c6b79a6d758d6aa663382394e406b3da", size = 4920282, upload-time = "2026-10-06T02:00:03.501Z" },
 ]
 
 [[package]]
