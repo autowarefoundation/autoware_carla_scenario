@@ -132,16 +132,13 @@ jobs:
             const labels = pr.labels.map(label => label.name);
             console.log(`PR Labels: ${labels.join(', ')}`);
 
-            // Check if any of the required labels exist
-            if (labels.includes('bump patch')) {
-              console.log('✅ Found "bump patch" label');
-              return;
-            } else if (labels.includes('bump minor')) {
-              console.log('✅ Found "bump minor" label');
-              return;
-            } else if (labels.includes('bump major')) {
-              console.log('✅ Found "bump major" label');
-              return;
+            // The release workflow bumps by exactly one of these, and refuses a
+            // merge that carries more than one.
+            const bumps = ['bump patch', 'bump minor', 'bump major'].filter(l => labels.includes(l));
+            if (bumps.length === 1) {
+              console.log(`✅ Found "${bumps[0]}" label`);
+            } else if (bumps.length > 1) {
+              core.setFailed(`❌ ERROR: PR has more than one version bump label (${bumps.join(', ')}); keep exactly one.`);
             } else {
               core.setFailed('❌ ERROR: PR must have one of the following labels:\n' +
                 '  - bump patch\n' +

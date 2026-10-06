@@ -86,7 +86,7 @@ converter separately when you need to generate a map.
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/hakuturu583/autoware_carla_scenario.git
+    git clone https://github.com/autowarefoundation/autoware_carla_scenario.git
     cd autoware_carla_scenario
     ```
 

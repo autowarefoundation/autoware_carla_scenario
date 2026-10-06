@@ -1,7 +1,7 @@
 # {{ distribution_name }}
 
 A standalone **scenario package** for the
-[`autoware-carla-scenario`](https://github.com/hakuturu583/autoware_carla_scenario)
+[`autoware-carla-scenario`](https://github.com/autowarefoundation/autoware_carla_scenario)
 framework, generated with `scenario-new`. Its scenario and config dataclass
 live here, outside the framework.
 
@@ -38,7 +38,7 @@ uv run scenario scenario={{ scenario_name }}/default scenario.timeout_seconds=20
 its CARLA client (typesafe_carla, at the version the framework's lock pins):
 
 ```yaml
-- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@master
   with:
     scenario-package-path: {{ package_name }}
     image: ghcr.io/<owner>/{{ distribution_name }}

@@ -2,6 +2,7 @@
 name = "autoware-carla-scenario"
 version = "3.1.2"
 description = "CARLA scenario testing framework for Autoware"
+readme = "README.md"
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
 ]
@@ -51,6 +52,13 @@ dependencies = [
     "grpcio>=1.60",
     "protobuf>=4.25.0,<5.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Documentation = "https://autowarefoundation.github.io/autoware_carla_scenario/"
+Repository = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Issues = "https://github.com/autowarefoundation/autoware_carla_scenario/issues"
+Changelog = "https://github.com/autowarefoundation/autoware_carla_scenario/releases"
 
 [project.optional-dependencies]
 # The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the

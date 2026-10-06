@@ -758,7 +758,7 @@ wheelhouse:
   python: ['3.10', '3.11', '3.12']
 autoware_carla_scenario:
   source: git
-  repository: https://github.com/hakuturu583/autoware_carla_scenario
+  repository: https://github.com/autowarefoundation/autoware_carla_scenario
   commit: 0123456789abcdef0123456789abcdef01234567
   subdirectory: autoware_carla_scenario
 files:

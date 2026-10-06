@@ -11,7 +11,7 @@ meant to be referenced from other repositories:
 ```yaml
 - uses: actions/checkout@v4
 
-- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@master
   with:
     scenario-package-path: my_scenario_package
     image: ghcr.io/my-org/my-scenario

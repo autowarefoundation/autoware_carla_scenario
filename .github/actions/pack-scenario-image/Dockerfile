@@ -227,7 +227,7 @@ ENV PATH=/opt/venv/bin:$PATH \
 
 LABEL org.opencontainers.image.title="autoware_carla_scenario scenario package" \
       org.opencontainers.image.description="A generated scenario package with its CARLA client (typesafe_carla)" \
-      org.opencontainers.image.source="https://github.com/hakuturu583/autoware_carla_scenario" \
+      org.opencontainers.image.source="https://github.com/autowarefoundation/autoware_carla_scenario" \
       io.autoware.carla-scenario.carla-client="typesafe-carla"
 
 USER scenario

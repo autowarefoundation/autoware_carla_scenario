@@ -383,7 +383,7 @@ framework. This keeps your scenarios reusable and versioned independently, with
 no fork of `autoware_carla_scenario`.
 
 A ready-to-copy template lives at
-[`examples/scenario_package_template/`](https://github.com/hakuturu583/autoware_carla_scenario/tree/master/examples/scenario_package_template).
+[`examples/scenario_package_template/`](https://github.com/autowarefoundation/autoware_carla_scenario/tree/master/examples/scenario_package_template).
 
 ### Quickest path — generate one with `scenario-new`
 

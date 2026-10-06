@@ -4,6 +4,6 @@
   "description": "Interactive CARLA test scenario writer for autoware_carla_scenario package",
   "author": {
     "name": "tier4",
-    "url": "https://github.com/hakuturu583/autoware_carla_scenario"
+    "url": "https://github.com/autowarefoundation/autoware_carla_scenario"
   }
 }

@@ -102,7 +102,7 @@ This project follows the same coding standards as the parent repository:
 - **Type checking**: `mypy --ignore-missing-imports` over both `src/` and `test/`
 
 The full pre-commit configuration lives in
-[`.pre-commit-config.yaml`](https://github.com/hakuturu583/autoware_carla_scenario/blob/master/.pre-commit-config.yaml)
+[`.pre-commit-config.yaml`](https://github.com/autowarefoundation/autoware_carla_scenario/blob/master/.pre-commit-config.yaml)
 at the repository root and runs the following hooks:
 
 - `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `check-toml`,

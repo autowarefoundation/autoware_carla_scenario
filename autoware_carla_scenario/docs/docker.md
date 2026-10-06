@@ -12,7 +12,7 @@ needs lives in the action's own directory, so it is meant to be referenced from
 other repositories:
 
 ```yaml
-- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@master
 ```
 
 The ref is both the action version and the framework version that ends up in

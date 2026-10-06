@@ -71,23 +71,61 @@ uv run pytest -n auto -o addopts= -m "not slow"   # what CI's fast job runs
 uv run pre-commit run --all-files                 # what CI's lint job runs
 ```
 
+## Installation from PyPI
+
+Released versions are published to PyPI as
+[`autoware-carla-scenario`](https://pypi.org/project/autoware-carla-scenario/):
+
+```bash
+uv add autoware-carla-scenario          # or: pip install autoware-carla-scenario
+uv add "autoware-carla-scenario[sumo]"  # with the SUMO traffic backend
+```
+
 ## Releases
 
-Releases are cut by `.github/workflows/release.yml` when a pull request is
-merged into `master` with exactly one version bump label (`bump patch`,
-`bump minor` or `bump major`). The workflow bumps `version` in
-`autoware_carla_scenario/pyproject.toml`, re-locks, tags `v<version>`, creates
-the GitHub Release with the documentation attached, and deploys the docs to
-GitHub Pages. A merge without a label releases nothing.
+Releases are cut by [`.github/workflows/release.yml`](.github/workflows/release.yml),
+modelled on [simple_lanelet2](https://github.com/hakuturu583/simple_lanelet2)'s.
+When a pull request is merged into `master` with exactly one version bump label
+(`bump patch`, `bump minor` or `bump major`), one run of the workflow:
 
-If a labelled merge bumped the version but a later step failed, run the
-workflow by hand (Actions → Release → Run workflow) with that version, e.g.
-`2.63.0`. A manual run does not bump: it builds from the version's tag, or else
-from its `chore: bump version to X` commit on `master`, so merges that landed
-since do not leak in, and it reuses any tag, Release or asset the failed run
-already created. Do not re-run the failed push run: it would bump a second time
-from the old merge commit.
+1. bumps `version` in `autoware_carla_scenario/pyproject.toml` and re-locks
+   (`tools/bump_version.py`), commits `chore(release): vX.Y.Z` to `master`,
+   and creates the tag `vX.Y.Z` and the GitHub Release with generated notes;
+2. re-runs the fast test suite on that commit and checks the tag matches the
+   package version;
+3. builds the wheel and sdist, checks their metadata, and installs the wheel
+   clean;
+4. publishes them to PyPI with Trusted Publishing (no API token is stored);
+5. attaches the documentation as PDF and zip to the Release and deploys it to
+   [GitHub Pages](https://autowarefoundation.github.io/autoware_carla_scenario/)
+   with `mike`.
+
+A merge without a label releases nothing. A hand-pushed `v*` tag is tested,
+built, published and documented the same way, without a bump.
+
+**Recovering a failed release.** Run the workflow by hand (Actions → Release →
+Run workflow) on `master` with the version, e.g. `3.1.3`. It does not bump: it
+builds from the version's tag, or else from its `chore(release): vX.Y.Z`
+commit, so merges that landed since do not leak in, and it reuses any tag,
+Release, PyPI file or docs version the failed run already made. Do not re-run
+the failed push run: it would bump a second time. Run it with the version
+empty for a dry run that tests and builds the selected ref and publishes
+nothing.
+
+**One-time setup** of the repository:
+
+- PyPI → Publishing → add a (pending) trusted publisher: owner
+  `autowarefoundation`, repository `autoware_carla_scenario`, workflow
+  `release.yml`, environment `pypi`. Create the `pypi` environment under the
+  repository's Settings → Environments.
+- Create the `bump patch`, `bump minor` and `bump major` labels.
+- Settings → Pages: deploy from the `gh-pages` branch (created by the first
+  release).
+- If `master` has a ruleset that github-actions[bot] cannot bypass, add a
+  `GH_PAT` secret that can push to it; the workflow uses it for the bump
+  commit only, and `GITHUB_TOKEN` otherwise.
 
 The version line continues from `autoware_lanelet2_to_opendrive`, where this
-package started: it was split out at 2.62.0, so the first release here is
-2.62.1. The workflow pushes with the `GH_PAT` repository secret.
+package started: it was split out at 2.62.0, so the first release was 2.62.1.
+Development moved from `hakuturu583/autoware_carla_scenario` to
+`autowarefoundation/autoware_carla_scenario` after 3.1.2.

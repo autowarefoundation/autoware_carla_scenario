@@ -1,8 +1,8 @@
 site_name: Autoware CARLA Scenario
-site_url: https://hakuturu583.github.io/autoware_carla_scenario/
+site_url: https://autowarefoundation.github.io/autoware_carla_scenario/
 site_description: CARLA scenario testing framework for Autoware autonomous driving software
-repo_url: https://github.com/hakuturu583/autoware_carla_scenario
-repo_name: hakuturu583/autoware_carla_scenario
+repo_url: https://github.com/autowarefoundation/autoware_carla_scenario
+repo_name: autowarefoundation/autoware_carla_scenario
 
 theme:
   name: material
@@ -109,4 +109,4 @@ extra:
     alias: true
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/hakuturu583/autoware_carla_scenario
+      link: https://github.com/autowarefoundation/autoware_carla_scenario

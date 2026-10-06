@@ -6,7 +6,7 @@
     "local": {
       "source": {
         "source": "github",
-        "repo": "hakuturu583/autoware_carla_scenario",
+        "repo": "autowarefoundation/autoware_carla_scenario",
         "path": ".claude/local-marketplace"
       }
     }
