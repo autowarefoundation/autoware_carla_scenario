@@ -532,7 +532,7 @@ def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
                 "move without one.",
                 entity.id,
             )
-    elif entity.goal.lanelet_id <= 0 and not entity.goal.searching:
+    elif entity.goal.lanelet_id <= 0 and entity.goal.mode == "fixed":
         out.error(
             f"{path}.goal.lanelet_id",
             "A goal needs a positive lanelet ID.",

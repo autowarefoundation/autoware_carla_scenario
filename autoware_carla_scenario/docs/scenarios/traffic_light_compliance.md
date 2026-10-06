@@ -5,7 +5,9 @@ light red. It has to stay put while the light is red, and pull away once it
 turns green 5 s in -- on every lane that leads into a signalised junction.
 
 ```bash
-uv run scenario scenario=traffic_light_compliance/traffic_light_compliance map=<map>
+# Every case on the map, one run each
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=traffic_light_compliance/traffic_light_compliance map=<map>
 ```
 
 ## In the Scenario Editor

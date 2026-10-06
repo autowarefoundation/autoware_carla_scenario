@@ -150,19 +150,22 @@
       </div>
     {% endif %}
 
-    {# Off the centreline and turned: a pedestrian waiting at the kerb to
-       cross.  A vehicle is snapped back onto the road, so for one these
-       mostly read zero. #}
-    <div class="ed-field">
-      <label class="ed-label">Off the centreline <span class="unit">(m, + left)</span></label>
-      <input type="number" step="any" name="spawn_t" class="ed-input"
-             value="{{ target.spawn.t }}">
-    </div>
-    <div class="ed-field">
-      <label class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></label>
-      <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
-             value="{{ target.spawn.heading_deg|round(1) }}">
-    </div>
+    {% if target.kind != 'ego' %}
+      {# Off the centreline and turned: a pedestrian waiting at the kerb to
+         cross.  A vehicle is snapped back onto the road, so for one these
+         mostly read zero.  The ego spawns from its own Hydra keys, which have
+         neither. #}
+      <div class="ed-field">
+        <label class="ed-label">Off the centreline <span class="unit">(m, + left)</span></label>
+        <input type="number" step="any" name="spawn_t" class="ed-input"
+               value="{{ target.spawn.t }}">
+      </div>
+      <div class="ed-field">
+        <label class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></label>
+        <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
+               value="{{ target.spawn.heading_deg|round(1) }}">
+      </div>
+    {% endif %}
   </form>
 {% endcall %}
 

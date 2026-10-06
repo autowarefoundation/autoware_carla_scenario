@@ -5,7 +5,9 @@ A vehicle in the next lane, 10 m ahead of the ego, changes into the ego's lane
 side.
 
 ```bash
-uv run scenario scenario=cut_in/left map=<map>
+# Every case on the map, one run each
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=cut_in/left map=<map>
 ```
 
 ## Scenario

@@ -5,14 +5,16 @@ movement through it -- left, right or straight on -- on every junction
 movement of that kind on the map. Every light is green, so nothing stops it.
 
 ```bash
-uv run scenario scenario=intersection_passing/left_turn map=<map>
+# Every case on the map, one run each
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=intersection_passing/left_turn map=<map>
 ```
 
 ## Scenario
 
 | | |
 |---|---|
-| **Ego** | Constraint search: a junction lanelet whose `turn_direction` is the movement, with a stop line at its start (see the variants), excluding the map's lanelets with no 3D model. Position *before stop line*: 25 m short of it -- which walks back onto the lane that approaches the junction, where the run starts. Goal *from the search*: the lanelet after the junction lanelet. |
+| **Ego** | Constraint search: a junction lanelet whose `turn_direction` is the movement and which has a stop line -- any, or a traffic light's (see the variants) -- excluding the map's lanelets with no 3D model, except from a standstill. Position *before stop line*: 25 m short of it -- which walks back onto the lane that approaches the junction, where the run starts. Goal *from the search*: the lanelet after the junction lanelet. |
 | **Initialization** | Every traffic light green. |
 | **Ego, from the start** | Turn at the next junction, in the movement's direction. |
 | **Pass** | The ego has been on the road of the junction lanelet (*the matched lanelet*), *and* on the road of the lane it comes out on (*along the route*, one step on). Any lane of each road counts. |
@@ -25,7 +27,7 @@ uv run scenario scenario=intersection_passing/left_turn map=<map>
     ![Left turn in the Scenario Editor](media/intersection_left_turn.png)
 
     `scenario=intersection_passing/left_turn` -- `turn_direction: left`, a
-    stop line at its start (a signal's or a stop sign's), 20 km/h, 20 s.
+    stop line (a signal's or a stop sign's), 20 km/h, 20 s.
 
     <video controls muted playsinline width="100%" src="../media/intersection_left_turn.mp4"></video>
 
@@ -36,7 +38,7 @@ uv run scenario scenario=intersection_passing/left_turn map=<map>
     ![Right turn in the Scenario Editor](media/intersection_right_turn.png)
 
     `scenario=intersection_passing/right_turn` -- `turn_direction: right`, a
-    stop line at its start, 20 km/h, 20 s.
+    stop line, 20 km/h, 20 s.
 
     <video controls muted playsinline width="100%" src="../media/intersection_right_turn.mp4"></video>
 
@@ -48,7 +50,8 @@ uv run scenario scenario=intersection_passing/left_turn map=<map>
 
     `scenario=intersection_passing/right_turn_sweep` -- `turn_direction:
     right` at a signalised junction only (a traffic-light stop line), starting
-    at 0 km/h, so the ego has to pull away as well as steer; 60 s.
+    at 0 km/h, so the ego has to pull away as well as steer; 60 s. It does
+    not leave out the lanelets with no 3D model.
 
     <video controls muted playsinline width="100%" src="../media/intersection_right_turn_sweep.mp4"></video>
 
@@ -71,7 +74,8 @@ uv run scenario scenario=intersection_passing/left_turn map=<map>
 | Parameter | Left | Right | Right, standstill | Straight |
 |---|---|---|---|---|
 | Junction lanelet | `turn_direction: left` | `right` | `right` | `straight` |
-| Stop line at its start | any | any | a signal's | a signal's |
+| Stop line | any | any | a traffic light's | a traffic light's |
+| No-3D-model lanelets left out | yes | yes | no | yes |
 | Spawn | 25 m before it | 25 m | 25 m | 25 m |
 | Ego initial speed | 20 km/h | 20 km/h | 0 km/h | 5 km/h |
 | Minimum speed | -- | -- | -- | 3 km/h, after 0.3 s |

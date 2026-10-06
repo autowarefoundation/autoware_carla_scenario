@@ -832,9 +832,13 @@ class EditorService:
         if "spawn_t" in form:
             spawn.t = _as_float(form["spawn_t"], "Lateral offset", spawn.t)
         if "spawn_heading_deg" in form:
-            spawn.heading = math.radians(
-                _as_float(form["spawn_heading_deg"], "Heading", spawn.heading_deg)
+            heading_deg = _as_float(
+                form["spawn_heading_deg"], "Heading", spawn.heading_deg
             )
+            # The field shows the heading rounded; posting that back unchanged
+            # alongside some other edit must not round the stored value.
+            if heading_deg != round(spawn.heading_deg, 1):
+                spawn.heading = math.radians(heading_deg)
 
         # Only a derived offset needs a binding, and switching back to Fixed
         # leaves the old one in place: it is inert (nothing emits it) and it
@@ -1382,6 +1386,12 @@ def _merge_binding(
         raise EditorError(f"{binding_type!r} does not work out a {produces}.")
     if existing is not None and existing.type == binding_type:
         params = {**existing.params, **_parse(spec.fields, form, prefix="binding_")}
+    elif existing is None and binding_type == default:
+        # The picker showed this type's defaults, so the form's fields are its.
+        params = {
+            **default_params(spec.fields),
+            **_parse(spec.fields, form, prefix="binding_"),
+        }
     else:
         params = default_params(spec.fields)
     return BindingRef(type=binding_type, params=params)

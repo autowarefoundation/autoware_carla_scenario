@@ -5,8 +5,11 @@ to change into, it has to end up in it; where there is none, it has to stay
 where it is.
 
 ```bash
-uv run scenario scenario=lane_change/left map=<map>
-uv run scenario scenario=lane_change_fail/left map=<map>
+# Every case on the map, one run each
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=lane_change/left map=<map>
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=lane_change_fail/left map=<map>
 ```
 
 ## Scenario

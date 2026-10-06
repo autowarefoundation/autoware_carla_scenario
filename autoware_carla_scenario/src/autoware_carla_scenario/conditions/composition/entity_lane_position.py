@@ -141,7 +141,8 @@ class EntityLanePositionCondition(CompositionCondition):
         # An address always names a lane, so one is supplied and then dropped:
         # the road is what this condition matches on.  Going through __init__
         # rather than around it keeps one construction path.
-        condition = cls(
+        # Not ``cls``: a subclass's constructor need not take these arguments.
+        condition = EntityLanePositionCondition(
             entity_name,
             OpenDrivePose(road_id=road_id, lane_id=0, s=0.0),
             rules,

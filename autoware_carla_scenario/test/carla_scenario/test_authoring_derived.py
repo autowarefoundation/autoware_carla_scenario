@@ -193,3 +193,46 @@ class TestLaneOf:
         assert spec is not None
         (lane,) = [f for f in spec.fields if f.name == "lane"]
         assert tuple(o.value for o in lane.options) == LANE_RELATIONS
+
+
+def test_a_derived_goal_needs_no_pinned_default_to_export() -> None:
+    """Like every other derived slot: a missing default is a warning, not an error."""
+    document = _with_ego_goal(
+        new_document(), GoalSpec(lanelet_id=0, **_derived("matched"))
+    )
+    assert _messages(document) == []
+
+
+def test_lane_of_inherits_no_broken_road_constructor() -> None:
+    from autoware_carla_scenario.conditions import (
+        EntityLaneOfCondition,
+        EntityLanePositionCondition,
+    )
+
+    condition = EntityLaneOfCondition.anywhere_on_road("ego", "5", label="x")
+    assert type(condition) is EntityLanePositionCondition
+    assert condition.get_details()["lane_id"] is None
+
+
+class TestMergeBinding:
+    def test_the_first_edit_of_a_missing_binding_is_kept(self) -> None:
+        from autoware_carla_scenario.editor.service import _merge_binding
+
+        binding = _merge_binding(
+            None,
+            {"binding_type": "stop_line_offset", "binding_offset": "25"},
+            produces="s",
+            default="stop_line_offset",
+        )
+        assert binding.params == {"offset": 25.0}
+
+    def test_a_change_of_type_starts_from_its_defaults(self) -> None:
+        from autoware_carla_scenario.editor.service import _merge_binding
+
+        binding = _merge_binding(
+            BindingRef(type="matched"),
+            {"binding_type": "adjacent", "binding_offset": "25"},
+            produces="lanelet",
+            default="matched",
+        )
+        assert binding.params == {"side": "left"}

@@ -5,7 +5,9 @@ governs -- a stop sign's. It has to stop at the line and then go again -- on
 every such stop line of the map.
 
 ```bash
-uv run scenario scenario=temporary_stop/temporary_stop map=<map>
+# Every case on the map, one run each
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=temporary_stop/temporary_stop map=<map>
 ```
 
 ## In the Scenario Editor

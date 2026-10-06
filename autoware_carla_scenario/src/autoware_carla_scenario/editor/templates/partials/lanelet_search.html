@@ -29,7 +29,7 @@
        radio group. #}
     <label class="ed-radio">
       <input type="radio" name="{{ group }}" value="fixed"
-             {% if not slot.searching %}checked{% endif %}
+             {% if slot.choice.mode == 'fixed' %}checked{% endif %}
              hx-post="/draft/{{ draft.id }}/lanelet-mode"
              hx-vals='{"slot": "{{ slot.key }}", "mode": "fixed"}'
              hx-target="#editor-body" hx-swap="innerHTML">

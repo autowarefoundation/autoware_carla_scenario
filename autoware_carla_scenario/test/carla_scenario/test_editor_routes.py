@@ -2363,3 +2363,17 @@ class TestDerivedLanelets:
         assert spawn.t == -3.0
         assert spawn.heading == pytest.approx(math.pi / 2)
         assert spawn.heading_deg == pytest.approx(90.0)
+
+    def test_editing_a_spawn_does_not_round_its_heading(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The field shows the heading rounded; posting it back must not round it."""
+        client.post(
+            f"/draft/{draft_id}/entity/npc1", data={"spawn_heading_deg": "7.0705"}
+        )
+        stored = _entity(store, draft_id, "npc1").spawn.heading
+        client.post(
+            f"/draft/{draft_id}/entity/npc1",
+            data={"spawn_heading_deg": "7.1", "spawn_t": "-1"},
+        )
+        assert _entity(store, draft_id, "npc1").spawn.heading == stored

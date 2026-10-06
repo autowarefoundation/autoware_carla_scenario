@@ -6,7 +6,9 @@ the right-hand edge of a road, where the pedestrian steps straight off the kerb
 into it.
 
 ```bash
-uv run scenario scenario=pedestrian_dart_out/pedestrian_dart_out map=<map>
+# Every case on the map, one run each
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+    scenario=pedestrian_dart_out/pedestrian_dart_out map=<map>
 ```
 
 ## In the Scenario Editor
