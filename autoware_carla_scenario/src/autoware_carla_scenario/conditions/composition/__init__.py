@@ -8,7 +8,12 @@ from .distance_measure import (
     separation,
 )
 from .entity_distance import EntityDistanceCondition
-from .entity_lane_position import EntityLanePositionCondition
+from .entity_lane_position import (
+    LANE_RELATIONS,
+    EntityLaneOfCondition,
+    EntityLanePositionCondition,
+    beside_lane_id,
+)
 from .entity_position_distance import EntityPositionDistanceCondition
 from .relative_speed import RelativeSpeedCondition
 from .speed import SpeedCondition, SpeedCoordinateSystem, SpeedDirection
@@ -25,7 +30,10 @@ __all__ = [
     "DistanceCoordinateSystem",
     "EntityDistanceCondition",
     "RelativeDistanceType",
+    "EntityLaneOfCondition",
     "EntityLanePositionCondition",
+    "LANE_RELATIONS",
+    "beside_lane_id",
     "EntityPositionDistanceCondition",
     "RelativeSpeedCondition",
     "SpeedCondition",

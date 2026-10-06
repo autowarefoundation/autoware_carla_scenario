@@ -33,7 +33,9 @@
        statement about the map, and this column is 384px wide. #}
     {{ f.lanelet_field('spawn_lanelet_id', target.spawn.lanelet_id, draft) }}
     <p class="ed-help">
-      {% if not target.spawn.searching %}
+      {% if target.spawn.deriving %}
+        Derived from the search ({{ target.spawn.binding_title or 'no binding yet' }}, this ID the default a non-swept run uses),
+      {% elif not target.spawn.searching %}
         Pinned,
       {% else %}
         Searched ({{ target.spawn.constraints|length }} constraint{{ '' if target.spawn.constraints|length == 1 else 's' }}, this ID the default a non-swept run uses),
@@ -81,6 +83,8 @@
       <p class="ed-help">
         {% if target.goal and target.goal.searching %}
           Searched: the sweeper runs the scenario once per matching lanelet.
+        {% elif target.goal and target.goal.deriving %}
+          Derived from the lanelet the search picks.
         {% endif %}
         {% if autoware %}
           Required: Autoware plans its route to it and will not move without
@@ -141,26 +145,25 @@
     </div>
 
     {% if target.spawn.s.mode == 'derived' %}
-      {% set binding = target.spawn.s.binding %}
-      {% set binding_type = binding.type if binding else 'stop_line_offset' %}
-      {% set binding_spec = get_binding_spec(binding_type) %}
       <div class="ed-derived">
-        <div class="ed-field">
-          <label class="ed-label">Derived from</label>
-          <select name="binding_type" class="ed-input">
-            {% for spec in binding_specs() %}
-              <option value="{{ spec.type_id }}" {% if spec.type_id == binding_type %}selected{% endif %}>
-                {{ spec.title }}
-              </option>
-            {% endfor %}
-          </select>
-          {% if binding_spec and binding_spec.description %}
-            <p class="ed-help">{{ binding_spec.description }}</p>
-          {% endif %}
-        </div>
-        {% if binding_spec %}
-          {{ f.fields(binding_spec.fields, binding.params if binding else {}, document, 'binding_', draft) }}
-        {% endif %}
+        {{ f.binding_picker('s', target.spawn.s.binding, 'stop_line_offset', 'Derived from', document, draft) }}
+      </div>
+    {% endif %}
+
+    {% if target.kind != 'ego' %}
+      {# Off the centreline and turned: a pedestrian waiting at the kerb to
+         cross.  A vehicle is snapped back onto the road, so for one these
+         mostly read zero.  The ego spawns from its own Hydra keys, which have
+         neither. #}
+      <div class="ed-field">
+        <label class="ed-label">Off the centreline <span class="unit">(m, + left)</span></label>
+        <input type="number" step="any" name="spawn_t" class="ed-input"
+               value="{{ target.spawn.t }}">
+      </div>
+      <div class="ed-field">
+        <label class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></label>
+        <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
+               value="{{ target.spawn.heading_deg|round(1) }}">
       </div>
     {% endif %}
   </form>

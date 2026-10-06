@@ -136,13 +136,13 @@ def _entity_spawn_overrides(document: ScenarioDocument) -> dict[str, Any]:
 def _param_override_defaults(document: ScenarioDocument) -> dict[str, Any]:
     """Return the declared ``scenario.param_overrides`` tree, node by node.
 
-    Only searched parameters are declared.  A pinned lanelet already reaches the
+    Only searched and derived parameters are declared.  A pinned lanelet already reaches the
     runtime in the document itself, and declaring a key for every lanelet a
     primitive can name would fill the config with addresses nothing writes to.
     """
     tree: dict[str, Any] = {}
     for slot in document.lanelet_slots():
-        if slot.field in ("spawn", "goal") or not slot.searching:
+        if slot.field in ("spawn", "goal") or not (slot.searching or slot.deriving):
             continue
         tree.setdefault(slot.owner_id, {})[slot.field] = slot.lanelet_id
     return tree
@@ -239,14 +239,21 @@ def build_scenario_config(
         # enumerated: it derives "15 m before *this* lanelet's stop line", so it
         # says nothing when the sweep is driving some other slot.
         target = document.entity(slot.owner_id) if slot.field == "spawn" else None
+        bindings: dict[str, Any] = {}
         if (
             target is not None
             and target.spawn.s.mode == "derived"
             and target.spawn.s.binding is not None
         ):
-            sweep["bindings"] = {
-                spawn_s_key(target): target.spawn.s.binding.to_sweep_dict()
-            }
+            bindings[spawn_s_key(target)] = target.spawn.s.binding.to_sweep_dict()
+        # Every lanelet derived from the pick is a binding onto its own key:
+        # the sweeper resolves each one against the lanelet it picked.
+        for derived in document.derived_lanelet_slots():
+            key = slot_lanelet_key(document, derived)
+            if key is not None and derived.choice.binding is not None:
+                bindings[key] = derived.choice.binding.to_sweep_dict()
+        if bindings:
+            sweep["bindings"] = bindings
         config["sweep"] = sweep
 
     return config

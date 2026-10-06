@@ -29,7 +29,7 @@
        radio group. #}
     <label class="ed-radio">
       <input type="radio" name="{{ group }}" value="fixed"
-             {% if not slot.searching %}checked{% endif %}
+             {% if slot.choice.mode == 'fixed' %}checked{% endif %}
              hx-post="/draft/{{ draft.id }}/lanelet-mode"
              hx-vals='{"slot": "{{ slot.key }}", "mode": "fixed"}'
              hx-target="#editor-body" hx-swap="innerHTML">
@@ -43,9 +43,28 @@
              hx-target="#editor-body" hx-swap="innerHTML">
       <span>Constraint search</span>
     </label>
+    <label class="ed-radio">
+      <input type="radio" name="{{ group }}" value="derived"
+             {% if slot.deriving %}checked{% endif %}
+             hx-post="/draft/{{ draft.id }}/lanelet-mode"
+             hx-vals='{"slot": "{{ slot.key }}", "mode": "derived"}'
+             hx-target="#editor-body" hx-swap="innerHTML">
+      <span>From the search</span>
+    </label>
   </div>
 
-  {% if not slot.searching %}
+  {% if slot.deriving %}
+    <p class="ed-help">
+      Worked out from the lanelet the search picks, case by case: the lane
+      beside it, the lanelet after it, the pick itself. The pinned ID stays as
+      the default a non-swept run uses.
+    </p>
+    <form hx-post="/draft/{{ draft.id }}/lanelet-binding"
+          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="slot" value="{{ slot.key }}">
+      {{ f.binding_picker('lanelet', slot.choice.binding, 'matched', 'Derived as', document, draft) }}
+    </form>
+  {% elif not slot.searching %}
     <p class="ed-help">
       Click a lanelet to pin it. A constraint search hands the choice to the
       lanelet-constraint sweeper instead, which runs the scenario once per

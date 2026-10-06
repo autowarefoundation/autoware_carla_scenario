@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...coordinate.poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
@@ -140,14 +141,19 @@ class EntityLanePositionCondition(CompositionCondition):
         # An address always names a lane, so one is supplied and then dropped:
         # the road is what this condition matches on.  Going through __init__
         # rather than around it keeps one construction path.
-        condition = cls(
+        # Not ``cls``: a subclass's constructor need not take these arguments.
+        condition = EntityLanePositionCondition(
             entity_name,
             OpenDrivePose(road_id=road_id, lane_id=0, s=0.0),
             rules,
             label=label,
         )
-        condition._lane_id = None
+        condition._match_any_lane()
         return condition
+
+    def _match_any_lane(self) -> None:
+        """Match on the road alone, whichever of its lanes the entity is in."""
+        self._lane_id = None
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
@@ -311,3 +317,71 @@ class EntityLanePositionCondition(CompositionCondition):
             ll2_pose.t,
         )
         return ScenarioResult(passed=True, message=msg, elapsed_seconds=elapsed)
+
+
+#: The lanes :class:`EntityLaneOfCondition` can mean, relative to a position's.
+LANE_RELATIONS: tuple[str, ...] = ("same", "left", "right", "any")
+
+
+def beside_lane_id(lane_id: int, side: str) -> int:
+    """The OpenDRIVE lane on *side* (``"left"`` / ``"right"``) of *lane_id*.
+
+    Left of a negative (right-hand) lane is towards the centre, ``id + 1``; a
+    positive lane runs against the reference line, so the offsets flip.  The
+    lane a lane change *side* from *lane_id* ends on.
+    """
+    if side not in ("left", "right"):
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    delta = 1 if side == "left" else -1
+    return lane_id + delta if lane_id < 0 else lane_id - delta
+
+
+class EntityLaneOfCondition(EntityLanePositionCondition):
+    """The entity is on the OpenDRIVE lane of a position, beside it, or on its road.
+
+    Where :class:`EntityLanePositionCondition` takes the lane it names, this
+    one takes a *position* -- a spawn, the start of a junction lanelet -- and a
+    relation to that position's lane:
+
+    * ``same``: the OpenDRIVE lane under the position, anywhere along its road.
+      Wider than the lanelet the position is on, which ends where the lanelet
+      does.
+    * ``left`` / ``right``: the lane beside it, where a lane change from the
+      position ends (:func:`beside_lane_id`).  The lane need not exist: a
+      scenario asserting that a change is *refused* names one that does not.
+    * ``any``: any lane of the road under the position
+      (:meth:`EntityLanePositionCondition.anywhere_on_road`).
+
+    Args:
+        entity_name: The ``role_name`` attribute of the actor to track.
+        position: The reference position.  Only the road and lane under it
+            are used.
+        lane: One of :data:`LANE_RELATIONS`.
+        label: Human-readable name for the condition.
+
+    Raises:
+        ValueError: If *lane* is not one of :data:`LANE_RELATIONS`.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        position: AnyPose,
+        lane: str = "same",
+        *,
+        label: str,
+    ) -> None:
+        if lane not in LANE_RELATIONS:
+            raise ValueError(f"lane must be one of {LANE_RELATIONS}, got {lane!r}")
+        address = to_opendrive(position)
+        if lane in ("left", "right"):
+            address = replace(address, lane_id=beside_lane_id(address.lane_id, lane))
+        super().__init__(entity_name, address, label=label)
+        self._relation = lane
+        if lane == "any":
+            self._match_any_lane()
+
+    def get_details(self) -> dict[str, Any]:
+        details = super().get_details()
+        details["relation"] = self._relation
+        return details

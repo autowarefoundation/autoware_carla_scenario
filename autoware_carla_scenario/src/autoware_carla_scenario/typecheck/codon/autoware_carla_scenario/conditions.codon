@@ -345,6 +345,22 @@ class EntityLanePositionCondition(BaseCondition):
                                            label=_required_str(label, "EntityLanePositionCondition.anywhere_on_road(): label"))
 
 
+def beside_lane_id(lane_id: int, side: str) -> int:
+    if side != "left" and side != "right":
+        raise ValueError("beside_lane_id(): side must be 'left' or 'right'")
+    delta = 1 if side == "left" else -1
+    return lane_id + delta if lane_id < 0 else lane_id - delta
+
+
+class EntityLaneOfCondition(EntityLanePositionCondition):
+    def __init__(self, entity_name, position, lane: str = "same", *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityLaneOfCondition(): label")
+        if lane != "same" and lane != "left" and lane != "right" and lane != "any":
+            raise ValueError("EntityLaneOfCondition(): lane must be same, left, right or any")
+        super().__init__(entity_name, position,
+                         label=_required_str(label, "EntityLaneOfCondition(): label"))
+
+
 class TemporaryStopCondition(BaseCondition):
     def __init__(self, entity_name, stop_positions, s_margin: float = 5.0,
                  speed_threshold: float = 0.1, stop_duration: float = 1.0, *_kw, label = _Required()):

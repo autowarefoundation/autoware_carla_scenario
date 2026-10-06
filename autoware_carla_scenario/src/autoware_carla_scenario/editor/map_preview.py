@@ -72,6 +72,11 @@ class _LoadedMap:
     #: here rather than in a cache of its own because that is what makes it
     #: correct: the answer belongs to this parse of this map, and dies with it.
     matches: "OrderedDict[str, list[int]]" = field(default_factory=OrderedDict)
+    #: Lanelets derived from a pick, by binding and pick, for the same reason:
+    #: the places panel works each one out again on every edit.
+    derived: "OrderedDict[tuple[str, int], Optional[int]]" = field(
+        default_factory=OrderedDict
+    )
 
 
 @dataclass
@@ -379,6 +384,24 @@ def missing_map_reason(document: ScenarioDocument) -> str:
     )
 
 
+def _loaded(
+    document: ScenarioDocument, paths: Optional[MapPaths], *, load_map: bool
+) -> Optional[_LoadedMap]:
+    """Return the document's parsed map, or ``None`` when it is not parsed yet.
+
+    *load_map* parses it on the spot instead, which is the expensive part:
+    left off, nothing here waits on a map nobody has loaded.
+
+    Raises:
+        FileNotFoundError: If the map files are not configured or missing.
+        RuntimeError: If Lanelet2 could not parse the map.
+    """
+    resolved = map_paths(document) if paths is None else paths
+    if not load_map and not is_map_loaded(document, resolved):
+        return None
+    return _load(document, resolved)
+
+
 def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     """Parse the document's map, or return the cached parse.
 
@@ -456,14 +479,12 @@ def evaluate_slot(
         result.error = "Add a constraint to see which lanelets match."
         return result
 
-    resolved = map_paths(document) if paths is None else paths
-    if not load_map and not is_map_loaded(document, resolved):
-        return result
-
     try:
-        loaded = _load(document, resolved)
+        loaded = _loaded(document, paths, load_map=load_map)
     except (FileNotFoundError, RuntimeError) as exc:
         result.error = str(exc)
+        return result
+    if loaded is None:
         return result
 
     result.map_loaded = True
@@ -503,3 +524,48 @@ def evaluate_slot(
         loaded.matches.popitem(last=False)
     result.matched_ids = list(matched)
     return result
+
+
+def derive_lanelet(
+    document: ScenarioDocument,
+    slot: LaneletSlot,
+    picked_id: int,
+    *,
+    paths: Optional[MapPaths] = None,
+) -> Optional[int]:
+    """Return the lanelet a derived *slot* works out from the pick *picked_id*.
+
+    The sweeper's own binding does the working out, so the map draws the
+    lanelet a run would get.  ``None`` when the map is not loaded yet, the slot
+    has no binding, or the pick has no such lanelet -- a run would drop that
+    case.
+    """
+    binding = slot.choice.binding
+    if binding is None:
+        return None
+    try:
+        loaded = _loaded(document, paths, load_map=False)
+    except (FileNotFoundError, RuntimeError):
+        return None
+    if loaded is None:
+        return None
+    asked = (json.dumps(binding.to_sweep_dict(), sort_keys=True), picked_id)
+    if asked in loaded.derived:
+        return loaded.derived[asked]
+
+    from ..sweeper.bindings import parse_binding  # noqa: PLC0415
+
+    try:
+        value = (
+            parse_binding(slot.key, binding.to_sweep_dict())
+            .resolve(picked_id, loaded.lanelet_map, loaded.routing_graph)
+            .value
+        )
+    except Exception as exc:  # noqa: BLE001 -- shown as "not derived", not raised
+        logger.info("Binding for %s did not resolve: %s", slot.key, exc)
+        value = None
+    derived = value if isinstance(value, int) else None
+    loaded.derived[asked] = derived
+    while len(loaded.derived) > _MATCH_CACHE_SIZE:
+        loaded.derived.popitem(last=False)
+    return derived

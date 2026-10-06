@@ -137,6 +137,27 @@ class TestSpawning:
         placed = world.try_spawn_actor.call_args[0][1]
         assert placed.location.z > 0.0
 
+    def test_a_spawn_refused_in_the_kerb_is_tried_higher(self) -> None:
+        """A walker at the roadside starts inside the kerb unless it is lifted clear."""
+        world = MagicMock()
+        world.get_blueprint_library.return_value.find.return_value = MagicMock()
+        world.try_spawn_actor.side_effect = [None, MagicMock()]
+
+        entity = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1",
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=1.0, y=2.0, z=0.0))
+                ),
+            )
+        )
+        entity.spawn(world)
+
+        first, second = (
+            c[0][1].location.z for c in world.try_spawn_actor.call_args_list
+        )
+        assert second > first > 0.0
+
     def test_a_refused_spawn_point_raises(self) -> None:
         world = MagicMock()
         world.get_blueprint_library.return_value.find.return_value = MagicMock()

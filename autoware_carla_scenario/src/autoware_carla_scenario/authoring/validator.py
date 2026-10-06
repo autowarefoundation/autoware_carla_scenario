@@ -16,9 +16,11 @@ from typing import Any, Literal, Optional
 from .models import (
     SIGNAL_STATE_NAMES,
     ActionNode,
+    BindingRef,
     ConditionNode,
     ConstraintNode,
     Entity,
+    LaneletSlot,
     ScenarioDocument,
     condition_refs,
 )
@@ -438,7 +440,7 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
     # The search itself -- its constraints, and the default it falls back to --
     # is checked with every other searched lanelet in `_check_lanelet_slots`,
     # so a spawn, a goal and a condition's lanelet are held to one rule.
-    if not spawn.searching and spawn.lanelet_id <= 0:
+    if spawn.mode == "fixed" and spawn.lanelet_id <= 0:
         out.error(
             f"{path}.spawn.lanelet_id",
             "A fixed spawn needs a positive lanelet ID.",
@@ -446,31 +448,35 @@ def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
         )
 
     if spawn.s.mode == "derived":
-        binding = spawn.s.binding
-        if binding is None:
-            out.error(
-                f"{path}.spawn.s.binding",
-                "A derived offset needs a binding.",
-                entity.id,
-            )
-        else:
-            binding_spec = get_binding_spec(binding.type)
-            if binding_spec is None:
-                out.error(
-                    f"{path}.spawn.s.binding",
-                    f"Unknown binding type {binding.type!r}.",
-                    entity.id,
-                )
-            else:
-                for field_spec in binding_spec.fields:
-                    _check_field(
-                        out,
-                        f"{path}.spawn.s.binding",
-                        field_spec,
-                        binding.params,
-                        _NO_REFS,
-                        entity.id,
-                    )
+        _check_binding(out, f"{path}.spawn.s.binding", spawn.s.binding, "s", entity.id)
+
+
+def _check_binding(
+    out: _Collector,
+    path: str,
+    binding: Optional[BindingRef],
+    produces: str,
+    owner_id: str,
+) -> None:
+    """Check a binding exists, is known, works out a *produces*, and is filled in."""
+    noun = "offset" if produces == "s" else produces
+    if binding is None:
+        out.error(path, f"A derived {noun} needs a binding.", owner_id)
+        return
+    binding_spec = get_binding_spec(binding.type)
+    if binding_spec is None:
+        out.error(path, f"Unknown binding type {binding.type!r}.", owner_id)
+        return
+    if binding_spec.produces != produces:
+        out.error(
+            path,
+            f"{binding_spec.title} works out a {binding_spec.produces}, "
+            f"not a {noun}.",
+            owner_id,
+        )
+        return
+    for field_spec in binding_spec.fields:
+        _check_field(out, path, field_spec, binding.params, _NO_REFS, owner_id)
 
 
 def _check_model(out: _Collector, path: str, entity: Entity) -> None:
@@ -526,7 +532,7 @@ def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
                 "move without one.",
                 entity.id,
             )
-    elif entity.goal.lanelet_id <= 0 and not entity.goal.searching:
+    elif entity.goal.lanelet_id <= 0 and entity.goal.mode == "fixed":
         out.error(
             f"{path}.goal.lanelet_id",
             "A goal needs a positive lanelet ID.",
@@ -731,8 +737,13 @@ def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
     a run that does not sweep -- so they are asked once here rather than at each
     of the three sites, which is how the goal came to have no answer at all.
     """
-    for slot in document.lanelet_slots():
+    slots = document.lanelet_slots()
+    searched = any(slot.searching for slot in slots)
+    for slot in slots:
         choice = slot.choice
+        if choice.deriving:
+            _check_derived_slot(out, slot, searched=searched)
+            continue
         if not choice.searching:
             continue
         if not choice.constraints:
@@ -751,6 +762,35 @@ def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
             )
         for index, constraint in enumerate(choice.constraints):
             _check_constraint(out, f"{slot.key}.constraints[{index}]", constraint)
+
+
+def _check_derived_slot(out: _Collector, slot: LaneletSlot, *, searched: bool) -> None:
+    """Check a lanelet worked out from the sweep's pick.
+
+    It follows the search, so it needs one to follow; and like a searched slot
+    it keeps a default for a run that does not sweep.
+    """
+    _check_binding(
+        out,
+        f"{slot.key}.binding",
+        slot.choice.binding,
+        "lanelet",
+        slot.owner_id,
+    )
+    if not searched:
+        out.error(
+            f"{slot.key}.binding",
+            f"{slot.label} is derived from the searched lanelet, but nothing is "
+            "searched for. Search for a lanelet, or pin this one.",
+            slot.owner_id,
+        )
+    if slot.lanelet_id <= 0:
+        out.warn(
+            f"{slot.key}.lanelet_id",
+            f"No default lanelet for {slot.label}: a run that does not sweep "
+            "has nothing to fall back to.",
+            slot.owner_id,
+        )
 
 
 def _check_sweep_shape(out: _Collector, document: ScenarioDocument) -> None:

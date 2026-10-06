@@ -224,8 +224,19 @@ def build_map_view(
         is_swept = slot.key == view.swept_key
         bound = is_swept and bound_id > 0
         lanelet_id = bound_id if bound else slot.lanelet_id
+        derived = (
+            map_preview.derive_lanelet(document, slot, bound_id, paths=paths)
+            if slot.deriving and bound_id > 0
+            else None
+        )
+        if derived is not None:
+            lanelet_id = derived
         if bound:
             note = f"bound: match {view.pattern + 1} of {view.pattern_count}"
+        elif derived is not None:
+            note = f"derived from match {view.pattern + 1}"
+        elif slot.deriving:
+            note = "derived from the search, not bound yet"
         elif slot.searching and is_swept:
             note = "searched, not bound yet"
         elif slot.searching:
@@ -246,7 +257,7 @@ def build_map_view(
                 lanelet_id=lanelet_id,
                 detail=_detail(slot),
                 note=note,
-                bound=bound,
+                bound=bound or derived is not None,
             )
         )
     return view

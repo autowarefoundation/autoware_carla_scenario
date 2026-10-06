@@ -220,6 +220,9 @@
             {% if entity.spawn.mode == 'fixed' %}
               <span class="k">lanelet</span> <span class="v">{{ entity.spawn.lanelet_id }}</span>
               <span class="k">at</span> <span class="v">{{ entity.spawn.s.value }} m</span>
+            {% elif entity.spawn.deriving %}
+              <span class="v">{{ entity.spawn.binding_title or 'derived' }}</span>
+              <span class="k">at</span> <span class="v">{{ entity.spawn.s.value }} m</span>
             {% else %}
               <span class="v">{{ entity.spawn.constraints|length }} constraint{{ '' if entity.spawn.constraints|length == 1 else 's' }}</span>
               <span class="k">searched</span>
@@ -235,7 +238,7 @@
                is the other end of it: where this vehicle starts, where it is
                sent. Only the ego can carry one. #}
             {% if entity.goal %}
-              <br><span class="k">goal</span> <span class="v">{{ entity.goal.lanelet_id }}</span>
+              <br><span class="k">goal</span> <span class="v">{{ 'searched' if entity.goal.searching else ('derived' if entity.goal.deriving else entity.goal.lanelet_id) }}</span>
               <span class="k">at</span> <span class="v">{{ entity.goal.s }} m</span>
             {% endif %}
           </div>

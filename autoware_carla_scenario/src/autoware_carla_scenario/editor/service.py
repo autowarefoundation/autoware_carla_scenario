@@ -13,12 +13,13 @@ registered primitive is editable with no change to this module.
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Sequence, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Optional, Sequence, get_args
 
 from ..authoring.models import (
     ActionNode,
@@ -28,6 +29,7 @@ from ..authoring.models import (
     EgoDriver,
     Entity,
     GoalSpec,
+    LaneletMode,
     LaneletSlot,
     MapRef,
     ScenarioDocument,
@@ -827,27 +829,24 @@ class EditorService:
                 spawn.s.mode = s_mode  # type: ignore[assignment]
         if "spawn_s" in form:
             spawn.s.value = _as_float(form["spawn_s"], "Offset", spawn.s.value)
+        if "spawn_t" in form:
+            spawn.t = _as_float(form["spawn_t"], "Lateral offset", spawn.t)
+        if "spawn_heading_deg" in form:
+            heading_deg = _as_float(
+                form["spawn_heading_deg"], "Heading", spawn.heading_deg
+            )
+            # The field shows the heading rounded; posting that back unchanged
+            # alongside some other edit must not round the stored value.
+            if heading_deg != round(spawn.heading_deg, 1):
+                spawn.heading = math.radians(heading_deg)
 
         # Only a derived offset needs a binding, and switching back to Fixed
         # leaves the old one in place: it is inert (nothing emits it) and it
         # means flipping the radio back does not lose what was configured.
         if spawn.s.mode == "derived":
-            binding_type = str(form.get("binding_type") or "").strip()
-            if not binding_type and spawn.s.binding is not None:
-                binding_type = spawn.s.binding.type
-            if not binding_type:
-                binding_type = "stop_line_offset"
-            spec = get_binding_spec(binding_type)
-            if spec is None:
-                raise EditorError(f"Unknown binding type {binding_type!r}.")
-            existing = (
-                spawn.s.binding.params
-                if spawn.s.binding is not None and spawn.s.binding.type == binding_type
-                else default_params(spec.fields)
+            spawn.s.binding = _merge_binding(
+                spawn.s.binding, form, produces="s", default="stop_line_offset"
             )
-            params = dict(existing)
-            params.update(_parse(spec.fields, form, prefix="binding_"))
-            spawn.s.binding = BindingRef(type=binding_type, params=params)
 
     @staticmethod
     def _update_goal(entity: Entity, form: Mapping[str, Any]) -> None:
@@ -912,10 +911,34 @@ class EditorService:
             The id of the object the inspector should show, so the picker
             re-opens on the thing that was just edited.
         """
-        if mode not in ("fixed", "constraint_search"):
+        if mode not in get_args(LaneletMode):
             raise EditorError(f"Unknown lanelet mode {mode!r}.")
         slot = self.require_slot(document, slot_key)
-        slot.attach().mode = mode  # type: ignore[assignment]
+        choice = slot.attach()
+        choice.mode = mode  # type: ignore[assignment]
+        if mode == "derived" and choice.binding is None:
+            choice.binding = BindingRef(type="matched")
+        return slot.owner_id
+
+    def set_lanelet_binding(
+        self, document: ScenarioDocument, slot_key: str, form: Mapping[str, Any]
+    ) -> str:
+        """Say how a derived lanelet slot follows the search's pick.
+
+        A change of type starts from the new type's defaults; the same type
+        keeps what was set and takes the form's fields over it.
+
+        Returns:
+            The id of the object the inspector should show.
+
+        Raises:
+            EditorError: If the type is unknown or does not produce a lanelet.
+        """
+        slot = self.require_slot(document, slot_key)
+        choice = slot.attach()
+        choice.binding = _merge_binding(
+            choice.binding, form, produces="lanelet", default="matched"
+        )
         return slot.owner_id
 
     def add_constraint(
@@ -1336,6 +1359,42 @@ def condition_actions(node: ConditionNode) -> list[str]:
     that moving a card could invent or erase.
     """
     return condition_refs(node, "action")
+
+
+def _merge_binding(
+    existing: Optional[BindingRef],
+    form: Mapping[str, Any],
+    *,
+    produces: str,
+    default: str,
+) -> BindingRef:
+    """Return the binding a form asks for, from the one already there.
+
+    The form's ``binding_type`` picks the type -- the existing one, else
+    *default*, when it says none.  The same type keeps what was set and takes
+    the form's fields over it; a change of type starts from the new type's
+    defaults, since the fields the form carries are the old type's.
+
+    Raises:
+        EditorError: If the type is unknown or does not work out a *produces*.
+    """
+    binding_type = str(form.get("binding_type") or "").strip() or (
+        existing.type if existing is not None else default
+    )
+    spec = get_binding_spec(binding_type)
+    if spec is None or spec.produces != produces:
+        raise EditorError(f"{binding_type!r} does not work out a {produces}.")
+    if existing is not None and existing.type == binding_type:
+        params = {**existing.params, **_parse(spec.fields, form, prefix="binding_")}
+    elif existing is None and binding_type == default:
+        # The picker showed this type's defaults, so the form's fields are its.
+        params = {
+            **default_params(spec.fields),
+            **_parse(spec.fields, form, prefix="binding_"),
+        }
+    else:
+        params = default_params(spec.fields)
+    return BindingRef(type=binding_type, params=params)
 
 
 def _purge_references(document: ScenarioDocument, kind: str, target: str) -> None:

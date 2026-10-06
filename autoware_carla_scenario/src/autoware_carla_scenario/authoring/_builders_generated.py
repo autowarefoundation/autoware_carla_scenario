@@ -38,11 +38,13 @@ __all__ = [
     "build_entity_existence_condition",
     "build_lane_change_settled_condition",
     "build_waypoint_condition",
+    "build_entity_lane_of_condition",
     "build_entity_lane_position_condition",
     "build_entity_road_position_condition",
     "build_speed_condition",
     "build_standstill_condition",
     "build_temporary_stop_condition",
+    "build_temporary_stop_at_stop_lines_condition",
     "build_entity_distance_condition",
     "build_distance_condition",
     "build_relative_speed_condition",
@@ -203,6 +205,28 @@ def build_waypoint_condition(
     return WaypointCondition(
         entity_name=str(params["entity"]),
         distance=params["distance"],
+        label=compiled.label,
+    )
+
+
+def build_entity_lane_of_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityLaneOfCondition`."""
+    from ..conditions import EntityLaneOfCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+    )
+    return EntityLaneOfCondition(
+        entity_name=str(params["entity"]),
+        position=position,
+        lane=str(params["lane"]),
         label=compiled.label,
     )
 
@@ -377,6 +401,30 @@ def build_temporary_stop_condition(
                 s=0.0,
             )
         )
+    return TemporaryStopCondition(
+        entity_name=str(params["entity"]),
+        stop_positions=stop_positions,
+        s_margin=params["s_margin"],
+        speed_threshold=params["speed_threshold"],
+        stop_duration=params["stop_duration"],
+        label=compiled.label,
+    )
+
+
+def build_temporary_stop_at_stop_lines_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TemporaryStopCondition`."""
+    from ..conditions import TemporaryStopCondition  # noqa: PLC0415
+    from ..coordinate import get_stop_line_poses_with_following  # noqa: PLC0415
+
+    params = compiled.params
+    stop_positions = get_stop_line_poses_with_following(
+        lanelet_id=params["from_lanelet"],
+        depth=params["depth"],
+    )
     return TemporaryStopCondition(
         entity_name=str(params["entity"]),
         stop_positions=stop_positions,
