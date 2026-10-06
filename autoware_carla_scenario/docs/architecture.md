@@ -484,6 +484,7 @@ classDiagram
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
+    class KeepRelativePositionAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TrafficSignalControllerAction
@@ -493,6 +494,7 @@ classDiagram
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
+    BaseAction <|-- KeepRelativePositionAction
     BaseAction --> BaseCondition : trigger condition
 ```
 
@@ -531,7 +533,11 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    hands work to the simulator and watches for it to land — `force_lane_change`
    returns long before the vehicle is in the next lane, and must not be re-sent
    — so it supplies a `LaneChangeSettledCondition` as its `until` and does not
-   repeat. A rate-limited speed change says both.
+   repeat. A rate-limited speed change says both, and so does
+   `KeepRelativePositionAction`: it re-commands the vehicle every tick -- the
+   target's speed plus a correction proportional to how far the vehicle is from
+   its gap along the road -- until its hold time is up, so a relative position a
+   scenario spawned with is still there when a manoeuvre starts from it.
 3. **End.** `endTransition` is held for one tick so a condition can watch for
    it. Then `once` decides: `True` (default) means `completeState` and no
    further evaluation; `False` returns the action to standby to be triggered

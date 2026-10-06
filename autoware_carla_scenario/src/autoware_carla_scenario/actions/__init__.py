@@ -2,6 +2,7 @@
 
 from .base import BaseAction, TickTiming
 from .environment import EnvironmentAction
+from .keep_relative_position import KeepRelativePositionAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
 from .routing import RoutingAction
 from .set_speed import SetSpeedAction
@@ -14,6 +15,7 @@ from .walk_straight import WalkStraightAction
 __all__ = [
     "BaseAction",
     "EnvironmentAction",
+    "KeepRelativePositionAction",
     "LaneChangeAction",
     "LaneChangeDirection",
     "RoutingAction",

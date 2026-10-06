@@ -64,6 +64,7 @@ __all__ = [
     "build_traffic_sink_action",
     "build_traffic_source_action",
     "build_walk_straight_action",
+    "build_keep_relative_position_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
@@ -828,6 +829,31 @@ def build_walk_straight_action(
     return WalkStraightAction(
         entity_name=compiled.actor_role,
         speed_ms=params["speed_ms"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_keep_relative_position_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`KeepRelativePositionAction`."""
+    from ..actions import KeepRelativePositionAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return KeepRelativePositionAction(
+        entity_name=compiled.actor_role,
+        target=str(params["target"]),
+        gap_m=params["gap_m"],
+        gain=params["gain"],
+        max_speed_kmh=params["max_speed_kmh"],
+        hold_seconds=params["hold_seconds"],
         condition=condition,
         timing=timing,
         label=compiled.label,

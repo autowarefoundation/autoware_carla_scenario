@@ -163,6 +163,17 @@ class SetSpeedAction(BaseAction):
         super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
 
 
+class KeepRelativePositionAction(BaseAction):
+    def __init__(self, entity_name, target, gap_m: float, gain: float = 0.5,
+                 max_speed_kmh: float = 80.0, hold_seconds: float = 0.0, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "keep_relative_position", once: bool = True):
+        _keyword_only(_kw, "KeepRelativePositionAction(): label and once")
+        _expect_role(entity_name)
+        _expect_role(target)
+        super().__init__(label, condition, timing, once=once)
+
+
 class TrafficSignalAction(BaseAction):
     def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,

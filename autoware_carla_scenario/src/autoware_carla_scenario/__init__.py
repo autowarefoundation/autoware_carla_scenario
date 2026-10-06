@@ -84,6 +84,7 @@ if TYPE_CHECKING:
         TickTiming as TickTiming,
         TrafficLightTarget as TrafficLightTarget,
         RoutingAction as RoutingAction,
+        KeepRelativePositionAction as KeepRelativePositionAction,
         SetSpeedAction as SetSpeedAction,
         TrafficSignalAction as TrafficSignalAction,
         TrafficSignalControllerAction as TrafficSignalControllerAction,
@@ -374,6 +375,7 @@ __all__ = [
     "TickTiming",
     "TrafficLightTarget",
     "RoutingAction",
+    "KeepRelativePositionAction",
     "SetSpeedAction",
     "TrafficSignalAction",
     "TrafficSignalControllerAction",
@@ -407,6 +409,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TickTiming": (".actions", "TickTiming"),
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
+    "KeepRelativePositionAction": (".actions", "KeepRelativePositionAction"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),
     "TrafficSignalControllerAction": (

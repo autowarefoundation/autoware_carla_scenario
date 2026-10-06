@@ -6,7 +6,8 @@
 # here runs. test_typecheck_model.py keeps each declaration in step with the
 # Python one it models.
 
-from .actions import (BaseAction, EnvironmentAction, LaneChangeAction, RoutingAction,
+from .actions import (BaseAction, EnvironmentAction, KeepRelativePositionAction,
+                      LaneChangeAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)

@@ -1146,6 +1146,61 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="keep_relative_position",
+        title="Keep Relative Position",
+        category="Vehicle / Motion",
+        builder="build_keep_relative_position_action",
+        target="..actions:KeepRelativePositionAction",
+        # The ego is driven by its own stack; holding it in place would be
+        # taking the scenario's subject away from what is under test.
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=(
+            _entity_field("target", "Relative to"),
+            FieldSpec(
+                name="gap_m",
+                label="Gap",
+                kind="number",
+                default=20.0,
+                unit="m",
+                help="Along the road from that vehicle: positive ahead, negative behind.",
+            ),
+            FieldSpec(
+                name="hold_seconds",
+                label="For",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help="Zero holds until the run ends.",
+            ),
+            FieldSpec(
+                name="gain",
+                label="Correction",
+                kind="number",
+                default=0.5,
+                unit="1/s",
+                help="Speed added per metre the vehicle is out of place.",
+            ),
+            FieldSpec(
+                name="max_speed_kmh",
+                label="Top speed",
+                kind="number",
+                default=80.0,
+                unit="km/h",
+            ),
+        ),
+        description=(
+            "Hold a vehicle at a gap from another one, every tick: it is "
+            "commanded the other vehicle's speed plus a correction for how far "
+            "out of place it is, so a scenario's relative positions survive "
+            "the run rather than only the spawn.  Completes when the hold "
+            "ends, so a manoeuvre can be started from where it was held."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="routing",
         title="Set Goal",
         category="Vehicle / Motion",
