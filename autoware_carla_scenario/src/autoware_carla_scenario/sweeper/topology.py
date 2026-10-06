@@ -1,40 +1,25 @@
-"""Map questions the routing graph does not answer: junctions, crossings, crosswalks.
+"""Map questions the routing graph does not answer: crossings and crosswalks.
 
 The sweeper's constraints and bindings read the Lanelet2 routing graph, which
 knows which lane follows which and which a vehicle may change into.  A logical
 scenario also asks things the graph has no edge for:
 
-* what *kind* of junction a lanelet belongs to -- a T-junction or a crossroad,
-  told apart by how many roads (arms) meet there;
 * which lane crosses the ego's path through a junction, and from which side;
-* where a crosswalk lies across the ego's lane;
-* whether a lane is straight or bends.
+* where a crosswalk lies across the ego's lane.
 
-They are answered geometrically here, once per map: the per-junction answers
-are cached against the map object, because a sweep asks them of every lanelet.
-
-The junction clustering and the arm count follow CodSceneClassifier's own
-(``utils/lanelet_util.py``): junction lanelets are grouped, the lanes entering
-and leaving the group give one outward bearing each, and bearings within 30
-degrees are one arm.  3 arms is a T-junction and 4 a crossroad.
+They are answered geometrically here.  Where crosswalks lie is worked out once
+per map and cached against the map object, because a sweep asks of every
+lanelet.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 import lanelet2.core
 import lanelet2.geometry
-
-JunctionType = Literal["T-junction", "crossroad"]
-RoadShape = Literal["straight", "curved_left", "curved_right"]
-
-#: Bearings closer than this are one arm of a junction.
-ARM_BIN_DEG = 30.0
-#: Curvature above which a lane bends, in 1/m (CodSceneClassifier's threshold).
-CURVATURE_THRESHOLD = 0.02
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +97,6 @@ def _segment_intersection(
 class _MapFacts:
     """What is worked out once per map."""
 
-    #: Junction lanelet id -> id of the junction (cluster) it belongs to.
-    junction_of: dict[int, int]
-    #: Junction id -> its type, when it is one the classifier would name.
-    junction_type: dict[int, Optional[JunctionType]]
     #: Lanelet id -> crosswalks across it: ``(arc length, crosswalk id, x, y)``,
     #: nearest the lanelet's start first.
     crosswalks_across: dict[int, list[tuple[float, int, float, float]]]
@@ -124,61 +105,16 @@ class _MapFacts:
 _FACTS: dict[int, tuple[Any, _MapFacts]] = {}
 
 
-def _facts(lanelet_map: Any, routing_graph: Any) -> _MapFacts:
+def _facts(lanelet_map: Any) -> _MapFacts:
     cached = _FACTS.get(id(lanelet_map))
     if cached is not None and cached[0] is lanelet_map:
         return cached[1]
-    facts = _build_facts(lanelet_map, routing_graph)
+    facts = _build_facts(lanelet_map)
     _FACTS[id(lanelet_map)] = (lanelet_map, facts)
     return facts
 
 
-def _build_facts(lanelet_map: Any, routing_graph: Any) -> _MapFacts:
-    junctions = [ll for ll in lanelet_map.laneletLayer if _is_junction(ll)]
-    parent = {ll.id: ll.id for ll in junctions}
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def union(a: int, b: int) -> None:
-        parent[find(a)] = find(b)
-
-    by_id = {ll.id: ll for ll in junctions}
-    # An `intersection_area` tag names the junction outright where a map has it.
-    by_area: dict[str, int] = {}
-    for ll in junctions:
-        if "intersection_area" in ll.attributes:
-            area = str(ll.attributes["intersection_area"])
-            if area in by_area:
-                union(ll.id, by_area[area])
-            else:
-                by_area[area] = ll.id
-    # Otherwise: lanelets that overlap, follow one another, leave one approach
-    # lane or reach one exit lane are the same junction.
-    for ll in junctions:
-        for other in _nearby(lanelet_map, ll):
-            if other.id in by_id and lanelet2.geometry.overlaps2d(ll, other):
-                union(ll.id, other.id)
-        for prev in routing_graph.previous(ll):
-            if prev.id in by_id:
-                union(ll.id, prev.id)
-            for sibling in routing_graph.following(prev):
-                if sibling.id in by_id:
-                    union(ll.id, sibling.id)
-        for nxt in routing_graph.following(ll):
-            for sibling in routing_graph.previous(nxt):
-                if sibling.id in by_id:
-                    union(ll.id, sibling.id)
-
-    clusters: dict[int, list[Any]] = {}
-    for ll in junctions:
-        clusters.setdefault(find(ll.id), []).append(ll)
-    junction_type = {
-        root: _classify(members, routing_graph) for root, members in clusters.items()
-    }
+def _build_facts(lanelet_map: Any) -> _MapFacts:
     across: dict[int, list[tuple[float, int, float, float]]] = {}
     for crosswalk in lanelet_map.laneletLayer:
         if _subtype(crosswalk) != "crosswalk":
@@ -196,87 +132,12 @@ def _build_facts(lanelet_map: Any, routing_graph: Any) -> _MapFacts:
                 )
     for hits in across.values():
         hits.sort()
-    return _MapFacts(
-        junction_of={ll.id: find(ll.id) for ll in junctions},
-        junction_type=junction_type,
-        crosswalks_across=across,
-    )
-
-
-def _classify(members: list[Any], routing_graph: Any) -> Optional[JunctionType]:
-    """Count the arms of one junction: the outward bearing of every road at it."""
-    ids = {ll.id for ll in members}
-    bearings: list[float] = []
-    for ll in members:
-        for prev in routing_graph.previous(ll):
-            if prev.id not in ids:
-                points = _points(prev)
-                bearings.append(_wrap(_heading(points, len(points) - 1) + math.pi))
-        for nxt in routing_graph.following(ll):
-            if nxt.id not in ids:
-                bearings.append(_heading(_points(nxt), 0))
-    arms = _count_arms(bearings)
-    return "T-junction" if arms == 3 else "crossroad" if arms == 4 else None
-
-
-def _count_arms(bearings: list[float]) -> int:
-    """How many groups the bearings form, ``ARM_BIN_DEG`` apart (wrapping)."""
-    if not bearings:
-        return 0
-    ordered = sorted(b % (2 * math.pi) for b in bearings)
-    gap = math.radians(ARM_BIN_DEG)
-    groups = 1
-    for a, b in zip(ordered, ordered[1:]):
-        if b - a > gap:
-            groups += 1
-    if groups > 1 and (ordered[0] + 2 * math.pi) - ordered[-1] <= gap:
-        groups -= 1
-    return groups
+    return _MapFacts(crosswalks_across=across)
 
 
 # ---------------------------------------------------------------------------
 # Public questions
 # ---------------------------------------------------------------------------
-
-
-def junction_type_of(
-    lanelet: Any, lanelet_map: Any, routing_graph: Any
-) -> Optional[JunctionType]:
-    """The type of the junction *lanelet* lies in, or ``None``."""
-    facts = _facts(lanelet_map, routing_graph)
-    root = facts.junction_of.get(lanelet.id)
-    return None if root is None else facts.junction_type[root]
-
-
-def road_shape(lanelet: Any) -> RoadShape:
-    """Whether *lanelet*'s centreline is straight or bends left or right.
-
-    The 90th-percentile |curvature| against :data:`CURVATURE_THRESHOLD`, as the
-    classifier labels a scene; the bend's direction is the sign of the
-    curvature where it is strongest.
-    """
-    points = _points(lanelet)
-    signed: list[float] = []
-    for i in range(1, len(points) - 1):
-        a, b, c = points[i - 1], points[i], points[i + 1]
-        ab, bc, ca = (
-            math.hypot(b.x - a.x, b.y - a.y),
-            math.hypot(c.x - b.x, c.y - b.y),
-            math.hypot(a.x - c.x, a.y - c.y),
-        )
-        if ab * bc * ca < 1e-9:
-            continue
-        cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-        signed.append(2.0 * cross / (ab * bc * ca))
-    if not signed:
-        return "straight"
-    magnitudes = sorted(abs(k) for k in signed)
-    p90 = magnitudes[min(len(magnitudes) - 1, int(0.9 * len(magnitudes)))]
-    if p90 <= CURVATURE_THRESHOLD:
-        return "straight"
-    strongest = max(signed, key=abs)
-    # Positive curvature turns anticlockwise: to the left.
-    return "curved_left" if strongest > 0 else "curved_right"
 
 
 def ego_junction_lanelet(lanelet: Any, routing_graph: Any) -> Optional[Any]:
@@ -389,7 +250,7 @@ def crosswalk_start(
     Raises:
         ValueError: If no crosswalk crosses the lane within that distance.
     """
-    facts = _facts(lanelet_map, routing_graph)
+    facts = _facts(lanelet_map)
     current, travelled = lanelet, 0.0
     while current is not None and travelled <= search_distance:
         hits = facts.crosswalks_across.get(current.id)
@@ -420,12 +281,8 @@ def crosswalk_start(
 
 __all__ = [
     "CrosswalkStart",
-    "JunctionType",
-    "RoadShape",
     "crossing_approach",
     "crossing_lanelet",
     "crosswalk_start",
     "ego_junction_lanelet",
-    "junction_type_of",
-    "road_shape",
 ]

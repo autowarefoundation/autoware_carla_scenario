@@ -7,6 +7,7 @@ from .bindings import (
     RouteThroughBinding,
     StopLineOffsetBinding,
     parse_binding,
+    register_binding,
 )
 from .constraints import (
     AndConstraint,
@@ -25,6 +26,7 @@ from .constraints import (
     TurnDirectionConstraint,
     find_matching_lanelets,
     parse_constraint,
+    register_constraint,
 )
 from .expand import expand_config, expand_sweep
 from .lanelet_constraint_sweeper import LaneletConstraintSweeper
@@ -57,4 +59,6 @@ __all__ = [
     "load_lanelet2_map",
     "parse_binding",
     "parse_constraint",
+    "register_binding",
+    "register_constraint",
 ]

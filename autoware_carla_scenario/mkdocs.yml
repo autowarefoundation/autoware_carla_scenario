@@ -79,7 +79,6 @@ nav:
   - Tutorial: tutorial.md
   - Usage: usage.md
   - Scenario Editor: scenario_editor.md
-  - Importing CoD Scenes: cod_import.md
   - Example Scenarios:
       - Overview: scenarios/index.md
       - Traffic Light Compliance: scenarios/traffic_light_compliance.md

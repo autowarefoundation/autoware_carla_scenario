@@ -783,6 +783,15 @@ _BINDING_REGISTRY: dict[str, type] = {
 }
 
 
+def register_binding(type_id: str, cls: type) -> None:
+    """Make a binding available to ``sweep.bindings`` as *type_id*.
+
+    *cls* is built as ``cls(target_key=..., **params)`` and satisfies
+    :class:`Binding`.
+    """
+    _BINDING_REGISTRY[type_id] = cls
+
+
 def parse_binding(target_key: str, cfg: dict[str, Any]) -> Binding:
     """Instantiate a :class:`Binding` from a YAML mapping.
 
@@ -800,6 +809,11 @@ def parse_binding(target_key: str, cfg: dict[str, Any]) -> Binding:
     if binding_type is None:
         raise ValueError(f"Binding config is missing 'type': {cfg}")
     cls = _BINDING_REGISTRY.get(binding_type)
+    if cls is None:
+        from ..extensions import load_extensions  # noqa: PLC0415
+
+        load_extensions()
+        cls = _BINDING_REGISTRY.get(binding_type)
     if cls is None:
         raise ValueError(
             f"Unknown binding type: {binding_type!r}. "

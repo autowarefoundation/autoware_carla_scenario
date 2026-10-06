@@ -686,6 +686,13 @@ _CONSTRAINT_SPECS: dict[str, ConstraintSpec] = {}
 _BINDING_SPECS: dict[str, BindingSpec] = {}
 
 
+def _load_extensions() -> None:
+    """Let installed extensions register their specs (see :mod:`..extensions`)."""
+    from ..extensions import load_extensions  # noqa: PLC0415
+
+    load_extensions()
+
+
 def register_action_spec(spec: ActionSpec) -> None:
     """Make an action type available to the editor and the compiler."""
     _ACTION_SPECS[spec.type_id] = spec
@@ -708,16 +715,19 @@ def register_binding_spec(spec: BindingSpec) -> None:
 
 def action_specs() -> list[ActionSpec]:
     """Return every registered action spec, ordered by category then title."""
+    _load_extensions()
     return sorted(_ACTION_SPECS.values(), key=lambda s: (s.category, s.title))
 
 
 def condition_specs() -> list[ConditionSpec]:
     """Return every registered condition spec, ordered by category then title."""
+    _load_extensions()
     return sorted(_CONDITION_SPECS.values(), key=lambda s: (s.category, s.title))
 
 
 def constraint_specs() -> list[ConstraintSpec]:
     """Return every registered constraint spec, ordered by category then title."""
+    _load_extensions()
     return sorted(_CONSTRAINT_SPECS.values(), key=lambda s: (s.category, s.title))
 
 
@@ -727,6 +737,7 @@ def binding_specs(produces: Optional[str] = None) -> list[BindingSpec]:
     *produces* narrows them to the ones that work out an ``s`` or a lanelet,
     which is what decides where each one may be offered.
     """
+    _load_extensions()
     return sorted(
         (s for s in _BINDING_SPECS.values() if produces in (None, s.produces)),
         key=lambda s: s.title,
@@ -735,22 +746,38 @@ def binding_specs(produces: Optional[str] = None) -> list[BindingSpec]:
 
 def get_action_spec(type_id: str) -> Optional[ActionSpec]:
     """Return the action spec for *type_id*, or ``None``."""
-    return _ACTION_SPECS.get(type_id)
+    spec = _ACTION_SPECS.get(type_id)
+    if spec is None:
+        _load_extensions()
+        spec = _ACTION_SPECS.get(type_id)
+    return spec
 
 
 def get_condition_spec(type_id: str) -> Optional[ConditionSpec]:
     """Return the condition spec for *type_id*, or ``None``."""
-    return _CONDITION_SPECS.get(type_id)
+    spec = _CONDITION_SPECS.get(type_id)
+    if spec is None:
+        _load_extensions()
+        spec = _CONDITION_SPECS.get(type_id)
+    return spec
 
 
 def get_constraint_spec(type_id: str) -> Optional[ConstraintSpec]:
     """Return the constraint spec for *type_id*, or ``None``."""
-    return _CONSTRAINT_SPECS.get(type_id)
+    spec = _CONSTRAINT_SPECS.get(type_id)
+    if spec is None:
+        _load_extensions()
+        spec = _CONSTRAINT_SPECS.get(type_id)
+    return spec
 
 
 def get_binding_spec(type_id: str) -> Optional[BindingSpec]:
     """Return the binding spec for *type_id*, or ``None``."""
-    return _BINDING_SPECS.get(type_id)
+    spec = _BINDING_SPECS.get(type_id)
+    if spec is None:
+        _load_extensions()
+        spec = _BINDING_SPECS.get(type_id)
+    return spec
 
 
 def default_params(fields: "tuple[FieldSpec, ...]") -> dict[str, Any]:
@@ -2696,53 +2723,6 @@ register_constraint_spec(
     )
 )
 
-register_constraint_spec(
-    ConstraintSpec(
-        type_id="road_shape",
-        title="Road shape",
-        category="Geometry",
-        fields=(
-            FieldSpec(
-                name="value",
-                label="Shape",
-                kind="select",
-                default="straight",
-                options=(
-                    SelectOption("straight", "Straight"),
-                    SelectOption("curved_left", "Bends left"),
-                    SelectOption("curved_right", "Bends right"),
-                ),
-            ),
-        ),
-        description=(
-            "The centreline is straight, or bends that way (above 0.02 1/m "
-            "of curvature, as CodSceneClassifier labels a road)."
-        ),
-    )
-)
-register_constraint_spec(
-    ConstraintSpec(
-        type_id="junction_type",
-        title="Junction type",
-        category="Topology",
-        fields=(
-            FieldSpec(
-                name="value",
-                label="Type",
-                kind="select",
-                default="crossroad",
-                options=(
-                    SelectOption("T-junction", "T-junction"),
-                    SelectOption("crossroad", "Crossroad"),
-                ),
-            ),
-        ),
-        description=(
-            "A junction lanelet of a junction where three (T-junction) or four "
-            "(crossroad) roads meet."
-        ),
-    )
-)
 register_constraint_spec(
     ConstraintSpec(
         type_id="has_crossing",

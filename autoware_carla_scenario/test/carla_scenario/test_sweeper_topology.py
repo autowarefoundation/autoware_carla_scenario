@@ -1,10 +1,9 @@
-"""Junction types, road shapes, crossings and crosswalks on the Nishi-Shinjuku map."""
+"""Crossings and crosswalks on the Nishi-Shinjuku map."""
 
 from __future__ import annotations
 
 import math
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,62 +26,7 @@ def nishishinjuku() -> tuple[Any, Any]:
     return lanelet_map, create_routing_graph(lanelet_map)
 
 
-class TestArms:
-    def test_three_roads_are_a_t_junction(self) -> None:
-        bearings = [math.radians(d) for d in (0, 2, 90, 180, -178)]
-        assert topology._count_arms(bearings) == 3
-
-    def test_bearings_either_side_of_the_wrap_are_one_arm(self) -> None:
-        bearings = [math.radians(d) for d in (179, -179, 0, 90, -90)]
-        assert topology._count_arms(bearings) == 4
-
-
-class TestRoadShape:
-    @staticmethod
-    def _lanelet(points: list[tuple[float, float]]) -> Any:
-        import lanelet2.core
-
-        return SimpleNamespace(
-            centerline=lanelet2.core.LineString3d(
-                lanelet2.core.getId(),
-                [
-                    lanelet2.core.Point3d(lanelet2.core.getId(), x, y, 0.0)
-                    for x, y in points
-                ],
-            )
-        )
-
-    def test_a_straight_line_is_straight(self) -> None:
-        lanelet = self._lanelet([(float(x), 0.0) for x in range(10)])
-        assert topology.road_shape(lanelet) == "straight"
-
-    @pytest.mark.parametrize(
-        ("sign", "shape"), [(1, "curved_left"), (-1, "curved_right")]
-    )
-    def test_an_arc_bends_its_way(self, sign: int, shape: str) -> None:
-        radius = 20.0  # 0.05 1/m, over the 0.02 threshold
-        points = [
-            (radius * math.sin(a / 10), sign * radius * (1 - math.cos(a / 10)))
-            for a in range(10)
-        ]
-        assert topology.road_shape(self._lanelet(points)) == shape
-
-
 class TestOnTheMap:
-    def test_both_junction_types_are_found(self, nishishinjuku) -> None:
-        lanelet_map, graph = nishishinjuku
-        for value in ("T-junction", "crossroad"):
-            matched = find_matching_lanelets(
-                [parse_constraint({"type": "junction_type", "value": value})],
-                lanelet_map,
-                graph,
-            )
-            assert matched, value
-            assert all(
-                "turn_direction" in lanelet_map.laneletLayer[i].attributes
-                for i in matched
-            )
-
     @pytest.mark.parametrize("side", ["left", "right"])
     def test_a_crossing_vehicle_starts_on_a_lane_into_the_junction(
         self, nishishinjuku, side: str

@@ -347,71 +347,6 @@ class HasAdjacentConstraint:
 
 
 @dataclass(frozen=True)
-class RoadShapeConstraint:
-    """Matches lanelets whose centreline is straight or bends that way::
-
-        - type: road_shape
-          value: curved_left
-
-    Straight below 0.02 1/m of curvature, as CodSceneClassifier labels a scene
-    (see :func:`~autoware_carla_scenario.sweeper.topology.road_shape`).
-    """
-
-    value: str = "straight"
-
-    def __post_init__(self) -> None:
-        valid = ("straight", "curved_left", "curved_right")
-        if self.value not in valid:
-            raise ValueError(
-                f"Unknown road_shape {self.value!r}. Available: {list(valid)}"
-            )
-
-    def evaluate(self, lanelet: Any) -> bool:
-        from .topology import road_shape  # noqa: PLC0415
-
-        return road_shape(lanelet) == self.value
-
-
-@dataclass(frozen=True)
-class JunctionTypeConstraint:
-    """Matches junction lanelets of a T-junction or a crossroad::
-
-        - type: junction_type
-          value: crossroad
-
-    A junction is the group of lanelets carrying a ``turn_direction`` tag that
-    overlap or share an approach or exit lane; its type is how many roads meet
-    at it (see :mod:`~autoware_carla_scenario.sweeper.topology`).
-    """
-
-    value: str = "crossroad"
-
-    def __post_init__(self) -> None:
-        if self.value not in ("T-junction", "crossroad"):
-            raise ValueError(
-                f"Unknown junction_type {self.value!r}. "
-                "Available: ['T-junction', 'crossroad']"
-            )
-
-    def find_matching_ids(
-        self, lanelet_map: Any, routing_graph: Any | None = None
-    ) -> set[int]:
-        """Return IDs of the junction lanelets of that type."""
-        from .topology import junction_type_of  # noqa: PLC0415
-
-        if routing_graph is None:
-            routing_graph = create_routing_graph(lanelet_map)
-        return {
-            ll.id
-            for ll in lanelet_map.laneletLayer
-            if junction_type_of(ll, lanelet_map, routing_graph) == self.value
-        }
-
-    def evaluate(self, lanelet: Any) -> bool:
-        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
-
-
-@dataclass(frozen=True)
 class HasCrossingConstraint:
     """Matches lanelets whose path through the next junction is crossed from a side::
 
@@ -626,11 +561,20 @@ _LEAF_REGISTRY: dict[str, type] = {
     "lanelet_length": LaneletLengthConstraint,
     "equals": EqualsConstraint,
     "in_set": InSetConstraint,
-    "road_shape": RoadShapeConstraint,
-    "junction_type": JunctionTypeConstraint,
     "has_crossing": HasCrossingConstraint,
     "has_crosswalk_ahead": HasCrosswalkAheadConstraint,
 }
+
+
+def register_constraint(type_id: str, cls: type) -> None:
+    """Make a leaf constraint available to ``sweep.constraints`` as *type_id*.
+
+    *cls* is built from the YAML mapping's other keys.  A constraint that needs
+    the whole map rather than one lanelet defines ``find_matching_ids(map,
+    routing_graph) -> set[int]`` and reads ``self._cached_ids`` in
+    ``evaluate``, as :class:`HasAdjacentConstraint` does.
+    """
+    _LEAF_REGISTRY[type_id] = cls
 
 
 def parse_constraint(cfg: dict[str, Any]) -> Constraint:
@@ -698,6 +642,11 @@ def parse_constraint(cfg: dict[str, Any]) -> Constraint:
 
     # --- leaf ---
     cls = _LEAF_REGISTRY.get(constraint_type)
+    if cls is None:
+        from ..extensions import load_extensions  # noqa: PLC0415
+
+        load_extensions()
+        cls = _LEAF_REGISTRY.get(constraint_type)
     if cls is None:
         raise ValueError(
             f"Unknown constraint type: {constraint_type!r}. "

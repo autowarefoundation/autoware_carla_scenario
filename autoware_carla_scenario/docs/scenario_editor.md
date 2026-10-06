@@ -550,7 +550,7 @@ sweep:
 `left` / `right` are the lanes a vehicle may change into; `opposite` is the
 nearest lane running the other way on the left of this direction's innermost
 lane. A pick where the point runs off the road, or has no such lane, is dropped
-from the sweep. [Importing CoD scenes](cod_import.md) builds documents this way.
+from the sweep.
 
 Two more families place road users that are not in the pick's lane at all:
 
@@ -563,9 +563,37 @@ Two more families place road users that are not in the pick's lane at all:
 A heading binding sits on a spawn's `heading_binding` and is written to
 `scenario.spawn_overrides.<entity>.heading`. Pair each with the search
 constraint that guarantees it resolves -- `has_crossing` and
-`has_crosswalk_ahead` -- or picks without one are dropped. `junction_type`
-(T-junction / crossroad) and `road_shape` (straight / curved left / right)
-narrow a search by the kind of junction or road.
+`has_crosswalk_ahead` -- or picks without one are dropped.
+
+An installed [extension](#extensions) may add constraints and bindings of its
+own; they are offered here like the built-in ones.
+
+### Extensions
+
+A separate package adds to this vocabulary through the
+`autoware_carla_scenario.extensions` entry-point group, naming a zero-argument
+callable that registers what it adds:
+
+```toml
+[project.entry-points."autoware_carla_scenario.extensions"]
+my_extension = "my_package:register"
+```
+
+```python
+from autoware_carla_scenario.authoring.registry import (
+    ConstraintSpec, register_constraint_spec,
+)
+from autoware_carla_scenario.sweeper import register_constraint
+
+
+def register() -> None:
+    register_constraint("my_constraint", MyConstraint)  # what the sweep runs
+    register_constraint_spec(ConstraintSpec(type_id="my_constraint", ...))  # what the editor offers
+```
+
+Extensions load the first time a spec or a sweep type is looked up, so a
+document naming an extension's type validates and expands wherever that
+package is installed.
 
 The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_s` keys. Other entities get a declared
