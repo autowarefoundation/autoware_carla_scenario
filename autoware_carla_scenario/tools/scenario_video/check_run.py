@@ -13,13 +13,13 @@ from __future__ import annotations
 import bisect
 import csv
 import math
-import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from autoware_carla_scenario.traffic.sumo.network import SignalTable, SumoNetwork
+from sumo_replay import signal_states
 
 _EXPECTED = {"Red": "r", "Yellow": "yY", "Green": "Gg"}
 
@@ -35,12 +35,7 @@ def main() -> int:
         for r in csv.DictReader(clock.open())
     ]
     carla_times = [r[0] for r in rows]
-    states: dict[str, list[tuple[float, str]]] = defaultdict(list)
-    for m in re.finditer(
-        r'<tlsState time="([\d.]+)" id="([^"]+)"[^>]*state="([^"]+)"',
-        tls_file.read_text(),
-    ):
-        states[m.group(2)].append((float(m.group(1)), m.group(3)))
+    states = signal_states(tls_file)
     agree = 0
     disagree: Counter[tuple[str, str, str]] = Counter()
     for t, signal, state in csv.reader(lights.open()):
@@ -63,6 +58,10 @@ def main() -> int:
                 disagree[(signal, state, got)] += 1
     total = agree + sum(disagree.values())
     print(f"signals: {agree}/{total} link samples agree")
+    if total == 0:
+        # Nothing compared is not a pass: no lights logged, none matched to a
+        # link, or no SUMO state recorded at those times.
+        print("signals: no link sample to compare")
     for (signal, state, got), n in disagree.most_common(5):
         print(f"  light {signal} {state} but SUMO {got!r}: {n}")
 
@@ -88,7 +87,7 @@ def main() -> int:
             )
         else:
             print(f"person {pid}: did not move")
-    return 0 if not disagree else 1
+    return 0 if total and not disagree else 1
 
 
 if __name__ == "__main__":

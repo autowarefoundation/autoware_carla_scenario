@@ -43,10 +43,23 @@ def main() -> None:
     carla_dir, sumo_dir, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     title, result = sys.argv[4], sys.argv[5]
     frames = sorted(carla_dir.glob("carla_*.png"), key=_stamp)
+    if not frames:
+        raise SystemExit(f"no CARLA frames in {carla_dir}")
     sumo_frames = {round(_stamp(p), 3): p for p in sumo_dir.glob("sumo_*.png")}
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _encode(frames, sumo_frames, Path(tmp_dir), out, title, result)
+
+
+def _encode(
+    frames: list[Path],
+    sumo_frames: dict[float, Path],
+    tmp: Path,
+    out: Path,
+    title: str,
+    result: str,
+) -> None:
     font = ImageFont.load_default(size=24)
     small = ImageFont.load_default(size=20)
-    tmp = Path(tempfile.mkdtemp())
     t0 = _stamp(frames[0])
     last_c = last_s = None
     n = 0

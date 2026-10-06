@@ -30,7 +30,7 @@ import sumolib
 import traci
 
 
-def _signal_states(path: Path) -> dict[str, list[tuple[float, str]]]:
+def signal_states(path: Path) -> dict[str, list[tuple[float, str]]]:
     """Every signal's states over the run, by time."""
     states: dict[str, list[tuple[float, str]]] = defaultdict(list)
     pattern = re.compile(r'<tlsState time="([\d.]+)" id="([^"]+)"[^>]*state="([^"]+)"')
@@ -57,8 +57,10 @@ def main() -> None:
             key=lambda k: abs(carla_times[k] - t),
         )
         wanted[round(rows[i][1], 2)] = t
+    if not wanted:
+        raise SystemExit("no CARLA frames to match")
     first = min(wanted) - 1.0
-    signals = _signal_states(Path(tls_file))
+    signals = signal_states(Path(tls_file))
     signal_times = {tls: [t for t, _ in seq] for tls, seq in signals.items()}
 
     binary = str(Path(sumo.__file__).parent / "bin" / "sumo-gui")
@@ -82,103 +84,107 @@ def main() -> None:
             "none",
         ]
     )
-    network = sumolib.net.readNet(net)
-    edges = [e.getID() for e in network.getEdges() if e.getFunction() == ""]
-    footway = next(
-        (
-            e.getID()
-            for e in network.getEdges()
-            if e.getFunction() == "" and e.allows("pedestrian")
-        ),
-        edges[0],
-    )
-    traci.route.add("r0", [edges[0]])
-    vehicles: set[str] = set()
-    persons: set[str] = set()
-    ego = None
-    for _event, element in ET.iterparse(fcd, events=("end",)):
-        if element.tag != "timestep":
-            continue
-        t = float(element.get("time"))
-        if t < first:
+    try:
+        network = sumolib.net.readNet(net)
+        edges = [e.getID() for e in network.getEdges() if e.getFunction() == ""]
+        footway = next(
+            (
+                e.getID()
+                for e in network.getEdges()
+                if e.getFunction() == "" and e.allows("pedestrian")
+            ),
+            edges[0],
+        )
+        traci.route.add("r0", [edges[0]])
+        vehicles: set[str] = set()
+        persons: set[str] = set()
+        ego = None
+        for _event, element in ET.iterparse(fcd, events=("end",)):
+            if element.tag != "timestep":
+                continue
+            t = float(element.get("time"))
+            if t < first:
+                element.clear()
+                continue
+            here_v = {v.get("id"): v for v in element.findall("vehicle")}
+            here_p = {p.get("id"): p for p in element.findall("person")}
+            for vid in vehicles - set(here_v):
+                traci.vehicle.remove(vid)
+                vehicles.discard(vid)
+            for pid in persons - set(here_p):
+                traci.person.remove(pid)
+                persons.discard(pid)
+            for vid in here_v:
+                if vid in vehicles:
+                    continue
+                traci.vehicle.add(vid, "r0", departPos="0")
+                traci.vehicle.setSpeedMode(vid, 0)
+                traci.vehicle.setLaneChangeMode(vid, 0)
+                if vid.startswith("bg"):
+                    traci.vehicle.setColor(vid, (90, 170, 255, 255))
+                elif not vid.startswith("sumo"):
+                    traci.vehicle.setColor(vid, (230, 40, 40, 255))
+                    if vid.lower().startswith("ego"):
+                        ego = vid
+                        # Follow the ego from the start of the replay's lead-in, a
+                        # second before the first screenshot: sumo-gui applies a
+                        # view change on a later redraw, so one made in the same
+                        # step as a screenshot is not in it.
+                        traci.gui.setSchema("View #0", "real world")
+                        traci.gui.trackVehicle("View #0", ego)
+                        traci.gui.setZoom("View #0", 450)
+                vehicles.add(vid)
+            for pid, person in here_p.items():
+                if pid in persons:
+                    continue
+                edge = person.get("edge") or footway
+                if edge.startswith(":"):
+                    edge = footway
+                traci.person.add(pid, edge, 0.0)
+                traci.person.appendWaitingStage(pid, 1e7)
+                traci.person.setColor(pid, (255, 200, 0, 255))
+                traci.person.setWidth(pid, 0.8)
+                traci.person.setLength(pid, 0.8)
+                persons.add(pid)
+            for tls, seq in signals.items():
+                k = bisect.bisect_right(signal_times[tls], t) - 1
+                if k >= 0:
+                    traci.trafficlight.setRedYellowGreenState(tls, seq[k][1])
+            traci.simulationStep()
+            for vid, v in here_v.items():
+                try:
+                    traci.vehicle.moveToXY(
+                        vid,
+                        "",
+                        -1,
+                        float(v.get("x")),
+                        float(v.get("y")),
+                        float(v.get("angle")),
+                        2,
+                    )
+                except traci.TraCIException:
+                    pass
+            for pid, p in here_p.items():
+                try:
+                    traci.person.moveToXY(
+                        pid,
+                        "",
+                        float(p.get("x")),
+                        float(p.get("y")),
+                        float(p.get("angle")),
+                        6,
+                    )
+                except traci.TraCIException as exc:
+                    print("person", pid, exc)
+            key = round(t, 2)
+            if key in wanted:
+                traci.gui.screenshot(
+                    "View #0", str(out / f"sumo_{wanted[key]:010.3f}.png")
+                )
             element.clear()
-            continue
-        here_v = {v.get("id"): v for v in element.findall("vehicle")}
-        here_p = {p.get("id"): p for p in element.findall("person")}
-        for vid in vehicles - set(here_v):
-            traci.vehicle.remove(vid)
-            vehicles.discard(vid)
-        for pid in persons - set(here_p):
-            traci.person.remove(pid)
-            persons.discard(pid)
-        for vid in here_v:
-            if vid in vehicles:
-                continue
-            traci.vehicle.add(vid, "r0", departPos="0")
-            traci.vehicle.setSpeedMode(vid, 0)
-            traci.vehicle.setLaneChangeMode(vid, 0)
-            if vid.startswith("bg"):
-                traci.vehicle.setColor(vid, (90, 170, 255, 255))
-            elif not vid.startswith("sumo"):
-                traci.vehicle.setColor(vid, (230, 40, 40, 255))
-                if vid.lower().startswith("ego"):
-                    ego = vid
-                    # Follow the ego from the start of the replay's lead-in, a
-                    # second before the first screenshot: sumo-gui applies a
-                    # view change on a later redraw, so one made in the same
-                    # step as a screenshot is not in it.
-                    traci.gui.setSchema("View #0", "real world")
-                    traci.gui.trackVehicle("View #0", ego)
-                    traci.gui.setZoom("View #0", 450)
-            vehicles.add(vid)
-        for pid, person in here_p.items():
-            if pid in persons:
-                continue
-            edge = person.get("edge") or footway
-            if edge.startswith(":"):
-                edge = footway
-            traci.person.add(pid, edge, 0.0)
-            traci.person.appendWaitingStage(pid, 1e7)
-            traci.person.setColor(pid, (255, 200, 0, 255))
-            traci.person.setWidth(pid, 0.8)
-            traci.person.setLength(pid, 0.8)
-            persons.add(pid)
-        for tls, seq in signals.items():
-            k = bisect.bisect_right(signal_times[tls], t) - 1
-            if k >= 0:
-                traci.trafficlight.setRedYellowGreenState(tls, seq[k][1])
         traci.simulationStep()
-        for vid, v in here_v.items():
-            try:
-                traci.vehicle.moveToXY(
-                    vid,
-                    "",
-                    -1,
-                    float(v.get("x")),
-                    float(v.get("y")),
-                    float(v.get("angle")),
-                    2,
-                )
-            except traci.TraCIException:
-                pass
-        for pid, p in here_p.items():
-            try:
-                traci.person.moveToXY(
-                    pid,
-                    "",
-                    float(p.get("x")),
-                    float(p.get("y")),
-                    float(p.get("angle")),
-                    6,
-                )
-            except traci.TraCIException as exc:
-                print("person", pid, exc)
-        key = round(t, 2)
-        if key in wanted:
-            traci.gui.screenshot("View #0", str(out / f"sumo_{wanted[key]:010.3f}.png"))
-        element.clear()
-    traci.simulationStep()
-    traci.close()
+    finally:
+        traci.close()
     print("screenshots requested", len(wanted))
 
 

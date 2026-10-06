@@ -6,25 +6,22 @@ Waits for the ego (role ``Ego``) to appear in a synchronous world, attaches an
 RGB camera behind it, and saves a frame every 0.1 s of simulation time as
 ``carla_<elapsed>.png``.  Each saved frame also appends every traffic light's
 state to ``lights.csv`` (``elapsed,opendrive_id,state``), which
-``check_signals.py`` compares with SUMO's.  Exits once the ego is gone.
+``check_run.py`` compares with SUMO's.  Exits once the ego is gone.
 """
 
 from __future__ import annotations
 
 import argparse
+import signal
+import sys
 import time
 from pathlib import Path
 
 import typesafe_carla.carla as carla
 
+from autoware_carla_scenario.utils.traffic_light import traffic_light_state_name
+
 PERIOD_S = 0.1
-_STATES = {0: "Red", 1: "Yellow", 2: "Green", 3: "Off", 4: "Unknown"}
-
-
-def _state_name(state: object) -> str:
-    """typesafe_carla gives a light's state as a plain int; the official client
-    as an enum."""
-    return _STATES.get(int(state), str(state)) if isinstance(state, int) else str(state)
 
 
 def main() -> None:
@@ -35,6 +32,9 @@ def main() -> None:
     parser.add_argument("--wait-s", type=float, default=900.0)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    # render.py stops a chase that outlives its run with SIGTERM; exiting
+    # through SystemExit runs the finally below, which removes the camera.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
     client = carla.Client(args.host, args.port)
     client.set_timeout(60.0)
@@ -88,29 +88,33 @@ def main() -> None:
         try:
             for light in lights:
                 log.write(
-                    f"{stamp:.3f},{light.get_opendrive_id()},{_state_name(light.get_state())}\n"
+                    f"{stamp:.3f},{light.get_opendrive_id()},{traffic_light_state_name(light.get_state())}\n"
                 )
             log.flush()
         except RuntimeError:
             pass
 
-    camera.listen(save)
-    while time.time() - state["last"] < 20 and time.time() < deadline:
-        time.sleep(0.5)
-        try:
-            if not any(
-                a.id == ego.id
-                for a in client.get_world().get_actors().filter("vehicle.*")
-            ):
-                break
-        except RuntimeError:
-            break
     try:
-        camera.stop()
-        camera.destroy()
-    except RuntimeError:
-        pass
-    log.close()
+        camera.listen(save)
+        while time.time() - state["last"] < 20 and time.time() < deadline:
+            time.sleep(0.5)
+            try:
+                if not any(
+                    a.id == ego.id
+                    for a in client.get_world().get_actors().filter("vehicle.*")
+                ):
+                    break
+            except RuntimeError:
+                break
+    finally:
+        # Also on SIGTERM from render.py: a camera left behind stays attached
+        # in the next run's world.
+        try:
+            camera.stop()
+            camera.destroy()
+        except RuntimeError:
+            pass
+        log.close()
     print("frames", len(list(args.out.glob("carla_*.png"))))
 
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -63,27 +64,10 @@ def _case_overrides(scenario: str, spawn: str) -> list[str]:
     raise SystemExit(f"{scenario}: no case spawns the ego on lanelet {spawn}")
 
 
-def _render(
-    name: str, scenario: str, spawn: str, title: str, extra: list[str], work: Path
-) -> str:
-    run_dir = work / name
-    subprocess.run(["rm", "-rf", str(run_dir)], check=True)
-    run_dir.mkdir(parents=True)
-    tls_add = run_dir / "tls_add.xml"
-    tls_states = run_dir / "tls_states.xml"
-    tls_add.write_text(
-        f'<additional>\n    <timedEvent type="SaveTLSStates" dest="{tls_states}"/>\n</additional>\n'
-    )
-    overrides = _case_overrides(scenario, spawn)
-    (run_dir / "args.txt").write_text(
-        " ".join([f"scenario={scenario}", *overrides, *extra]) + "\n"
-    )
-    chase = subprocess.Popen(
-        [PYTHON, str(HERE / "chase.py"), str(run_dir / "carla")],
-        stdout=(run_dir / "chase.log").open("w"),
-        stderr=subprocess.STDOUT,
-    )
-    with (run_dir / "run.log").open("w") as log:
+def _run_scenario(
+    scenario: str, overrides: list[str], extra: list[str], tls_add: Path, log_path: Path
+) -> None:
+    with log_path.open("w") as log:
         subprocess.run(
             [
                 SCENARIO,
@@ -101,17 +85,61 @@ def _render(
             timeout=900,
             check=False,
         )
+
+
+def _stop(chase: subprocess.Popen) -> None:
+    """Let the chase finish (it exits once the ego is gone), else end it."""
     try:
         chase.wait(timeout=60)
     except subprocess.TimeoutExpired:
-        chase.kill()
+        chase.terminate()  # chase.py removes its camera on SIGTERM
+        try:
+            chase.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            chase.kill()
+
+
+def _render(
+    name: str, scenario: str, spawn: str, title: str, extra: list[str], work: Path
+) -> tuple[str, bool]:
+    """Record one clip; returns its summary line and whether every step passed."""
+    run_dir = work / name
+    shutil.rmtree(run_dir, ignore_errors=True)
+    run_dir.mkdir(parents=True)
+    tls_add = run_dir / "tls_add.xml"
+    tls_states = run_dir / "tls_states.xml"
+    tls_add.write_text(
+        f'<additional>\n    <timedEvent type="SaveTLSStates" dest="{tls_states}"/>\n</additional>\n'
+    )
+    overrides = _case_overrides(scenario, spawn)
+    (run_dir / "args.txt").write_text(
+        " ".join([f"scenario={scenario}", *overrides, *extra]) + "\n"
+    )
+    chase = subprocess.Popen(
+        [PYTHON, str(HERE / "chase.py"), str(run_dir / "carla")],
+        stdout=(run_dir / "chase.log").open("w"),
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        _run_scenario(scenario, overrides, extra, tls_add, run_dir / "run.log")
+    except subprocess.TimeoutExpired:
+        return f"{name}: ERROR, the scenario run timed out", False
+    finally:
+        _stop(chase)
     text = (run_dir / "run.log").read_text()
     result = (re.findall(r"Result: ([A-Z]+)", text) or ["UNKNOWN"])[-1]
-    out_dir = Path(re.findall(r"Result JSON: (\S+)", text)[-1]).parent
-    net = re.findall(r"SUMO started on (\S+)", text)[-1]
+    json_paths = re.findall(r"Result JSON: (\S+)", text)
+    nets = re.findall(r"SUMO started on (\S+)", text)
+    if not json_paths or not nets:
+        return (
+            f"{name}: ERROR, the run logged no result or SUMO network (see run.log)",
+            False,
+        )
+    out_dir = Path(json_paths[-1]).parent
+    net = nets[-1]
     sumo_out = out_dir / "sumo"
     with (run_dir / "replay.log").open("w") as log:
-        subprocess.run(
+        replay = subprocess.run(
             [
                 PYTHON,
                 str(HERE / "sumo_replay.py"),
@@ -126,7 +154,7 @@ def _render(
             stderr=subprocess.STDOUT,
             check=False,
         )
-    subprocess.run(
+    compose = subprocess.run(
         [
             PYTHON,
             str(HERE / "compose.py"),
@@ -156,9 +184,20 @@ def _render(
     )
     (run_dir / "check.txt").write_text(check.stdout + check.stderr)
     frames = len(list((run_dir / "carla").glob("carla_*.png")))
-    return f"{name}: {result}, {frames} frames | " + " | ".join(
+    failed = [
+        step
+        for step, rc in (
+            ("replay", replay.returncode),
+            ("compose", compose.returncode),
+            ("check", check.returncode),
+        )
+        if rc != 0
+    ]
+    status = f"FAILED: {', '.join(failed)}" if failed else "ok"
+    summary = f"{name}: {result}, {frames} frames, {status} | " + " | ".join(
         check.stdout.strip().splitlines()
     )
+    return summary, result == "PASSED" and not failed
 
 
 def main() -> None:
@@ -169,6 +208,7 @@ def main() -> None:
     parser.add_argument("--min-free-gb", type=float, default=6.0)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
+    failures = []
     for line in args.cases.read_text().splitlines():
         if not line.strip() or line.startswith("#"):
             continue
@@ -176,10 +216,14 @@ def main() -> None:
         if args.only and name not in args.only:
             continue
         _wait_for_memory(args.min_free_gb)
-        summary = _render(name, scenario, spawn, title, extra.split(), args.work)
+        summary, ok = _render(name, scenario, spawn, title, extra.split(), args.work)
+        if not ok:
+            failures.append(name)
         print(summary, flush=True)
         with (args.work / "summary.txt").open("a") as f:
             f.write(summary + "\n")
+    if failures:
+        raise SystemExit(f"not every clip came out clean: {', '.join(failures)}")
 
 
 if __name__ == "__main__":
