@@ -921,7 +921,7 @@ class _FakeTrace:
     def translate(self, fmt: str, element: str, *, to: str) -> list[dict[str, Any]]:
         assert (fmt, to) == ("opendrive", "sumo")
         if element != "signal:949":
-            raise ValueError(f"{element} is not in the map")
+            return []  # as roadgen answers for a signal the map does not have
         return [
             {"ref": "tls:j_189", "role": "traffic_light"},
             {"ref": "tls:j_189/13", "role": "link"},
@@ -969,3 +969,28 @@ def test_carla_lights_are_matched_to_sumo_links_by_their_opendrive_id(
         matched = backend._match_signals(world)
     assert matched == {("j_189", 12): lights[0], ("j_189", 13): lights[0]}
     assert "light(s) 1" in caplog.text
+
+
+@needs_sumo
+def test_a_network_keeps_its_traces_whatever_its_map_is_called(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """roadgen names its files after the map, and `map` is a name a map can have."""
+    import re
+
+    from autoware_carla_scenario.traffic.sumo.network import (
+        SignalTable,
+        build_network,
+    )
+
+    text = crossroads.read_text()
+    header = re.search(r"<header\b[^>]*>", text)
+    assert header is not None
+    named = re.sub(r'\sname="[^"]*"', "", header.group(0)).replace(
+        "<header", '<header name="map"', 1
+    )
+    network = build_network(text.replace(header.group(0), named, 1), tmp_path)
+    assert all(path.is_file() for path in network.trace_files), sorted(
+        path.name for path in network.net_file.parent.iterdir()
+    )
+    assert SignalTable.load(network) is not None

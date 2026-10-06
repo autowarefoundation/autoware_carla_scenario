@@ -1272,6 +1272,10 @@ class SumoTrafficBackend(TrafficBackend):
         """
         table = SignalTable.load(self._network) if self._network else None
         if table is None:
+            logger.info(
+                "No roadgen traces beside the SUMO network; matching CARLA lights "
+                "to SUMO signal links by position"
+            )
             return self._match_signals_by_position(world)
         matched: dict[tuple[str, int], Any] = {}
         unmatched = []

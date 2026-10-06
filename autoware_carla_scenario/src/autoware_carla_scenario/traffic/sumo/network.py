@@ -98,7 +98,7 @@ class SignalTable:
             answers = self._trace.translate(
                 "opendrive", f"signal:{signal_id}", to="sumo"
             )
-        except ValueError:  # the signal is not in the map: nothing to switch
+        except ValueError:  # an id roadgen cannot read; one it lacks gives []
             return []
         links = set()
         for answer in answers:
@@ -205,7 +205,7 @@ def build_network(
             road_map = roadgen.read_opendrive(str(xodr))
             prefix = _export(road_map, tmp, curve_lateral_acceleration)
             road_map.export_ir(str(tmp / "network.ir.json"))
-            road_map.write_read_trace(str(tmp / "map.xodr.trace.json"))
+            road_map.write_read_trace(str(tmp / f"{xodr.name}.trace.json"))
         except Exception as exc:  # roadgen raises ValueError, among others
             raise TrafficBackendError(
                 f"roadgen could not convert the map: {exc}"
@@ -224,8 +224,12 @@ def build_network(
                 f"netconvert failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
             )
         if prefix != "network":
+            # roadgen names what it writes after the map, which may itself be
+            # `map`; the OpenDRIVE and its read trace are this function's own.
+            own = {xodr.name, f"{xodr.name}.trace.json"}
             for path in tmp.glob(f"{prefix}.*"):
-                path.rename(tmp / path.name.replace(prefix, "network", 1))
+                if path.name not in own:
+                    path.rename(tmp / path.name.replace(prefix, "network", 1))
         try:
             os.rename(tmp, target)  # atomic; another process may have won
         except OSError:
