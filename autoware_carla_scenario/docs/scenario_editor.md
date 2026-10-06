@@ -533,6 +533,25 @@ sweep:
 The sweeper enumerates a single target key per run, so one entity's spawn can be
 searched per scenario; the editor warns when a document asks for more.
 
+**Along the road** (`route_offset_s`) is the exception to "only the searched
+spawn": it measures from the *pick*, not from the spawn's own lanelet, so it
+places any entity relative to the case -- "40 m ahead, one lane to the left".
+Pair it with **Along the road from the matched lanelet** (`route_offset`) on the
+same spawn's lanelet; both take a signed `distance` from the pick's start and a
+`side` (`same`, `left`, `right`, `opposite`):
+
+```yaml
+sweep:
+  bindings:
+    scenario.spawn_overrides.npc1.lanelet_id: {type: route_offset, distance: 40.0, side: left}
+    scenario.spawn_overrides.npc1.s: {type: route_offset_s, distance: 40.0, side: left}
+```
+
+`left` / `right` are the lanes a vehicle may change into; `opposite` is the
+nearest lane running the other way on the left of this direction's innermost
+lane. A pick where the point runs off the road, or has no such lane, is dropped
+from the sweep. [Importing CoD scenes](cod_import.md) builds documents this way.
+
 The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_s` keys. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly

@@ -180,6 +180,17 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
     return overrides
 
 
+def _s_follows_pick(entity: Entity) -> bool:
+    """Whether *entity*'s spawn offset is derived relative to the sweep's pick."""
+    from .registry import get_binding_spec  # noqa: PLC0415
+
+    s = entity.spawn.s
+    if s.mode != "derived" or s.binding is None:
+        return False
+    spec = get_binding_spec(s.binding.type)
+    return spec is not None and spec.relative_to_pick
+
+
 def build_scenario_config(
     document: ScenarioDocument, *, document_path: str | None = None
 ) -> dict[str, Any]:
@@ -246,6 +257,12 @@ def build_scenario_config(
             and target.spawn.s.binding is not None
         ):
             bindings[spawn_s_key(target)] = target.spawn.s.binding.to_sweep_dict()
+        # An offset relative to the pick means the same on any spawn.
+        for entity in document.entities:
+            if entity is target or not _s_follows_pick(entity):
+                continue
+            assert entity.spawn.s.binding is not None  # noqa: S101 -- checked above
+            bindings[spawn_s_key(entity)] = entity.spawn.s.binding.to_sweep_dict()
         # Every lanelet derived from the pick is a binding onto its own key:
         # the sweeper resolves each one against the lanelet it picked.
         for derived in document.derived_lanelet_slots():

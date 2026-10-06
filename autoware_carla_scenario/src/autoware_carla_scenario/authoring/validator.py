@@ -818,6 +818,21 @@ def _check_sweep_shape(out: _Collector, document: ScenarioDocument) -> None:
     for entity in document.entities:
         if entity.spawn.s.mode != "derived":
             continue
+        binding_spec = (
+            get_binding_spec(entity.spawn.s.binding.type)
+            if entity.spawn.s.binding is not None
+            else None
+        )
+        if binding_spec is not None and binding_spec.relative_to_pick:
+            if swept is None:
+                out.warn(
+                    f"entities[{document.entities.index(entity)}].spawn.s",
+                    f"{binding_spec.title} is measured from the searched lanelet, "
+                    f"but nothing is searched; {entity.id!r} keeps its fixed "
+                    f"value of {entity.spawn.s.value}.",
+                    entity.id,
+                )
+            continue
         if entity.id != swept_spawn:
             out.warn(
                 f"entities[{document.entities.index(entity)}].spawn.s",

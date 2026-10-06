@@ -8,6 +8,7 @@ of the matched lanelet (e.g. "15 m before the stop line").
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -416,12 +417,223 @@ class StopLineApproachBinding:
         return BindingResult(value=landed.lanelet_id_override or lanelet_id)
 
 
+#: The lanes :class:`RouteOffsetBinding` can land beside the pick's own.
+ROUTE_OFFSET_SIDES = ("same", "left", "right", "opposite")
+
+
+#: How far to the left of a lane's middle an oncoming lane's middle may lie.
+_OPPOSITE_SEARCH_RADIUS_M = 15.0
+#: How many lanelets nearest a lane's middle are considered for its oncoming one.
+_OPPOSITE_CANDIDATES = 24
+
+
+def _unit_direction(points: list[Any], index: int) -> tuple[float, float]:
+    """The unit direction of a polyline at its *index*-th point."""
+    a = points[max(index - 1, 0)]
+    b = points[min(index + 1, len(points) - 1)]
+    dx, dy = b.x - a.x, b.y - a.y
+    norm = math.hypot(dx, dy) or 1.0
+    return dx / norm, dy / norm
+
+
+def _opposite_lanelet(lanelet: Any, lanelet_map: Any) -> Any | None:
+    """The nearest lanelet running the other way on *lanelet*'s left, if any.
+
+    The routing graph only knows lanes a vehicle may change into, and maps do
+    not agree on whether the two directions share a centre line (Nishi-Shinjuku
+    has a median), so it is answered geometrically: the closest lanelet whose
+    middle lies to the left within :data:`_OPPOSITE_SEARCH_RADIUS_M` and points
+    the other way.  Junction lanelets are skipped -- they cross, not oppose.
+    """
+    centre = list(lanelet2.geometry.to2D(lanelet.centerline))
+    if len(centre) < 2:
+        return None
+    middle = centre[len(centre) // 2]
+    hx, hy = _unit_direction(centre, len(centre) // 2)
+    best: tuple[float, Any] | None = None
+    nearby = lanelet_map.laneletLayer.nearest(
+        lanelet2.core.BasicPoint2d(middle.x, middle.y), _OPPOSITE_CANDIDATES
+    )
+    for other in nearby:
+        if other.id == lanelet.id or "turn_direction" in other.attributes:
+            continue
+        points = list(lanelet2.geometry.to2D(other.centerline))
+        if len(points) < 2:
+            continue
+        index = min(
+            range(len(points)),
+            key=lambda i: (points[i].x - middle.x) ** 2 + (points[i].y - middle.y) ** 2,
+        )
+        dx, dy = points[index].x - middle.x, points[index].y - middle.y
+        gap = math.hypot(dx, dy)
+        # Left of the lane (positive cross product) and within reach.
+        if gap > _OPPOSITE_SEARCH_RADIUS_M or hx * dy - hy * dx <= 0:
+            continue
+        ox, oy = _unit_direction(points, index)
+        if hx * ox + hy * oy > -0.9:
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, other)
+    return None if best is None else best[1]
+
+
+def route_offset_pose(
+    lanelet_id: int,
+    lanelet_map: Any,
+    routing_graph: Any,
+    *,
+    distance: float,
+    side: str = "same",
+) -> tuple[int, float]:
+    """Where ``distance`` metres along the road from the pick's start lands.
+
+    The walk follows the pick's lane -- forwards through the lowest-id
+    following lanelet, as :class:`RouteThroughBinding` does, and backwards
+    through the first predecessor, as :class:`StopLineOffsetBinding` does, so a
+    point measured from an ego that offset walked back lands on the ego's own
+    approach.  The lane it ends on is then swapped for the one on ``side``,
+    with the point projected across onto it.
+
+    Returns:
+        ``(lanelet_id, s)`` of the landed point.
+
+    Raises:
+        ValueError: If the road ends before ``distance`` or the landed lanelet
+            has no lane on ``side``: the case is dropped.
+    """
+    if side not in ROUTE_OFFSET_SIDES:
+        raise ValueError(
+            f"route offset side must be one of {ROUTE_OFFSET_SIDES}, got {side!r}"
+        )
+    current = lanelet_map.laneletLayer[lanelet_id]
+    s = float(distance)
+    length = lanelet2.geometry.length2d(current)
+    while s > length:
+        following = sorted(routing_graph.following(current), key=lambda ll: ll.id)
+        if not following:
+            raise ValueError(
+                f"lanelet {current.id} has no following lanelet; "
+                f"{distance} m from lanelet {lanelet_id} runs off the road."
+            )
+        s -= length
+        current = following[0]
+        length = lanelet2.geometry.length2d(current)
+    while s < 0:
+        previous = routing_graph.previous(current)
+        if not previous:
+            raise ValueError(
+                f"lanelet {current.id} has no previous lanelet; "
+                f"{distance} m from lanelet {lanelet_id} runs off the road."
+            )
+        current = previous[0]
+        length = lanelet2.geometry.length2d(current)
+        s += length
+    if side == "same":
+        return current.id, s
+    if side == "opposite":
+        # Measured from the innermost lane of this direction, so a pick in the
+        # middle of a wide road still finds the lane across the centre.
+        innermost = current
+        while (further := routing_graph.left(innermost)) is not None:
+            innermost = further
+        beside = _opposite_lanelet(innermost, lanelet_map)
+    else:
+        beside = (
+            routing_graph.left(current)
+            if side == "left"
+            else routing_graph.right(current)
+        )
+    if beside is None:
+        raise ValueError(f"lanelet {current.id} has no {side} lane.")
+    # The same spot, projected across onto the other lane.
+    point = lanelet2.geometry.interpolatedPointAtDistance(
+        lanelet2.geometry.to2D(current.centerline), s
+    )
+    across = lanelet2.geometry.toArcCoordinates(
+        lanelet2.geometry.to2D(beside.centerline), point
+    ).length
+    return beside.id, min(max(across, 0.0), lanelet2.geometry.length2d(beside))
+
+
+@dataclass
+class RouteOffsetBinding:
+    """The lanelet ``distance`` metres along the road from the pick, by ID::
+
+        bindings:
+          scenario.spawn_overrides.npc1.lanelet_id:
+            type: route_offset
+            distance: 40.0
+            side: left
+
+    Where another vehicle is *relative to* the case: 40 m ahead in the lane to
+    the left.  Pair it with :class:`RouteOffsetSBinding` on the same entity's
+    ``s`` -- this names the lanelet, that the offset along it.
+    """
+
+    target_key: str
+    distance: float = 0.0
+    side: str = "same"
+
+    def __post_init__(self) -> None:
+        if self.side not in ROUTE_OFFSET_SIDES:
+            raise ValueError(
+                f"route_offset side must be one of {ROUTE_OFFSET_SIDES}, "
+                f"got {self.side!r}"
+            )
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the ID of the lanelet the offset lands on."""
+        from .constraints import create_routing_graph
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        landed, _ = route_offset_pose(
+            lanelet_id,
+            lanelet_map,
+            routing_graph,
+            distance=self.distance,
+            side=self.side,
+        )
+        return BindingResult(value=landed)
+
+
+@dataclass
+class RouteOffsetSBinding(RouteOffsetBinding):
+    """The ``s`` on the lanelet :class:`RouteOffsetBinding` lands on.
+
+    Unlike :class:`StopLineOffsetBinding` it never moves the *searched* slot:
+    it describes a point relative to the pick, so it may sit on any entity's
+    spawn, not only the swept one's.
+    """
+
+    def resolve(
+        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+    ) -> BindingResult:
+        """Return the offset along the landed lanelet."""
+        from .constraints import create_routing_graph
+
+        if routing_graph is None:
+            routing_graph = create_routing_graph(lanelet_map)
+        _, s = route_offset_pose(
+            lanelet_id,
+            lanelet_map,
+            routing_graph,
+            distance=self.distance,
+            side=self.side,
+        )
+        return BindingResult(value=round(s, 3))
+
+
 _BINDING_REGISTRY: dict[str, type] = {
     "stop_line_offset": StopLineOffsetBinding,
     "route_through": RouteThroughBinding,
     "adjacent": AdjacentBinding,
     "matched": MatchedBinding,
     "stop_line_approach": StopLineApproachBinding,
+    "route_offset": RouteOffsetBinding,
+    "route_offset_s": RouteOffsetSBinding,
 }
 
 

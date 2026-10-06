@@ -423,6 +423,11 @@ class BindingSpec:
     produces: Literal["s", "lanelet"] = "s"
     #: Parameters the binding is always given and the editor does not offer.
     fixed: tuple[tuple[str, Any], ...] = ()
+    #: Whether an ``s`` it works out is a point relative to the pick, and so
+    #: means the same on any entity's spawn -- not only on the searched one,
+    #: which is all ``stop_line_offset`` (measured on the spawn's own lanelet)
+    #: can describe.
+    relative_to_pick: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2766,6 +2771,52 @@ register_binding_spec(
         # A lanelet slot takes one id: the route's last lanelet.
         fixed=(("last_only", True),),
         description="The lanelet that many steps on from the pick.",
+    )
+)
+_ROUTE_OFFSET_FIELDS = (
+    FieldSpec(
+        name="distance",
+        label="Distance from the pick's start",
+        kind="number",
+        default=0.0,
+        unit="m",
+        help="Along the road; negative is behind the pick.",
+    ),
+    FieldSpec(
+        name="side",
+        label="Lane",
+        kind="select",
+        default="same",
+        options=(
+            SelectOption("same", "Same lane"),
+            *_DIRECTIONS,
+            SelectOption("opposite", "Oncoming lane"),
+        ),
+    ),
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="route_offset",
+        title="Along the road from the matched lanelet",
+        produces="lanelet",
+        fields=_ROUTE_OFFSET_FIELDS,
+        description=(
+            "The lanelet a point that far along the road from the pick lies "
+            "on, in the pick's lane or the one beside or opposite it.  Pair it "
+            "with Along the road (s) on the same spawn."
+        ),
+    )
+)
+register_binding_spec(
+    BindingSpec(
+        type_id="route_offset_s",
+        title="Along the road (s)",
+        fields=_ROUTE_OFFSET_FIELDS,
+        relative_to_pick=True,
+        description=(
+            "The offset along the lanelet Along the road from the matched "
+            "lanelet lands on: another vehicle placed relative to the case."
+        ),
     )
 )
 register_binding_spec(

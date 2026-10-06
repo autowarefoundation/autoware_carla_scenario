@@ -2,6 +2,8 @@
 
 from .bindings import (
     Binding,
+    RouteOffsetBinding,
+    RouteOffsetSBinding,
     RouteThroughBinding,
     StopLineOffsetBinding,
     parse_binding,
@@ -44,6 +46,8 @@ __all__ = [
     "NotConstraint",
     "OrConstraint",
     "PreviousOfConstraint",
+    "RouteOffsetBinding",
+    "RouteOffsetSBinding",
     "RouteThroughBinding",
     "StopLineOffsetBinding",
     "TurnDirectionConstraint",

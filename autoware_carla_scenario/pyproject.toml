@@ -116,6 +116,8 @@ scenario-expand = "autoware_carla_scenario.examples.expand:main"
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"
 detect-no-3d-model = "autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main"
+# Logical scenarios from CodSceneClassifier scene labels.
+scenario-import-cod = "autoware_carla_scenario.authoring.cod_import:main"
 viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not
 # start the other.
