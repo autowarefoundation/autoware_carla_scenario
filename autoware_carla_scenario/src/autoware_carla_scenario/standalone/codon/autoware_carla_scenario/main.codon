@@ -1,0 +1,121 @@
+# The command line of a standalone scenario binary (docs/standalone.md).
+#
+# A bundle is laid out as
+#
+#     <bundle>/bin/<scenario>     the binary (RPATH $ORIGIN/../lib)
+#     <bundle>/lib/               the CARLA client library and the Codon runtime
+#     <bundle>/share/map.acsmap   the baked map (standalone/bake.py)
+#     <bundle>/share/map.xodr     the OpenDRIVE installed when the map asks for it
+#
+# and the binary finds share/ next to bin/ from /proc/self/exe, so the bundle
+# can be copied anywhere.
+
+import sys
+import os
+import typesafe_carla.carla as carla
+
+from .runner import RunOptions, run_scenario
+
+from C import readlink(cobj, cobj, int) -> int
+
+_USAGE = """usage: {prog} [options]
+
+Run the scenario this binary was built from against a CARLA server.
+
+options:
+  --host HOST            CARLA server host (built with: {host})
+  --port PORT            CARLA server port (built with: {port})
+  --tm-port PORT         TrafficManager port (built with: {tm_port})
+  --timeout SECONDS      default timeout of the run (built with: {timeout})
+  --output-dir DIR       where the result JSON and the replay log go
+                         (default: scenario_outputs)
+  --client-timeout SEC   seconds to wait for each CARLA call (default: 60)
+  --map-data PATH        the baked map (default: <bundle>/share/map.acsmap)
+  -h, --help             show this help
+
+The exit status is 0 when the scenario passed, 1 when it failed, 2 on a usage
+error, 3 when it could not run (no CARLA server, a map it cannot load).
+Environment: AUTOWARE_CARLA_SCENARIO_LOG_LEVEL (DEBUG, INFO, WARNING).
+"""
+
+
+def _exe_dir() -> str:
+    buf = Ptr[byte](4096)
+    n = readlink("/proc/self/exe".c_str(), buf.as_byte(), 4095)
+    if n <= 0:
+        return "."
+    path = str(buf, n)
+    i = path.rfind("/")
+    return path[:i] if i > 0 else "/"
+
+
+def _bundle_dir() -> str:
+    exe = _exe_dir()
+    i = exe.rfind("/")
+    return exe[:i] if i > 0 else "/"
+
+
+def _usage(opts: RunOptions) -> str:
+    prog = sys.argv[0]
+    return (_USAGE.replace("{prog}", prog).replace("{host}", opts.host)
+            .replace("{port}", str(opts.port)).replace("{tm_port}", str(opts.tm_port))
+            .replace("{timeout}", str(opts.timeout_seconds)))
+
+
+def _error(kind: str, message: str) -> int:
+    sys.stderr.write(f"{sys.argv[0]}: {kind}: {message}\n")
+    return 3
+
+
+def main(build_scenario, opts: RunOptions) -> int:
+    bundle = _bundle_dir()
+    opts.map_data = bundle + "/share/map.acsmap"
+    opts.xodr_path = bundle + "/share/map.xodr"
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-h" or arg == "--help":
+            print(_usage(opts))
+            return 0
+        if i + 1 >= len(args):
+            sys.stderr.write(f"{sys.argv[0]}: {arg} needs a value (or unknown option)\n")
+            return 2
+        value = args[i + 1]
+        if arg == "--host":
+            opts.host = value
+        elif arg == "--port":
+            opts.port = int(value)
+        elif arg == "--tm-port":
+            opts.tm_port = int(value)
+        elif arg == "--timeout":
+            opts.timeout_seconds = float(value)
+        elif arg == "--output-dir":
+            opts.output_dir = value
+        elif arg == "--client-timeout":
+            opts.client_timeout = float(value)
+        elif arg == "--map-data":
+            opts.map_data = value
+        else:
+            sys.stderr.write(f"{sys.argv[0]}: unknown option {arg} (see --help)\n")
+            return 2
+        i += 2
+    try:
+        scenario = build_scenario()
+        result = run_scenario(scenario, opts)
+    except carla.CarlaError as error:
+        return _error("CARLA", error.message)
+    except carla.TimeoutError as error:
+        return _error("CARLA timed out", error.message)
+    except RuntimeError as error:
+        return _error("RuntimeError", error.message)
+    except ValueError as error:
+        return _error("ValueError", error.message)
+    except KeyError as error:
+        return _error("KeyError", error.message)
+    except IOError as error:
+        return _error("IOError", error.message)
+    status = "PASSED" if result.passed else "FAILED"
+    print(f"{status}: {result.message} ({result.elapsed_seconds:.2f}s)")
+    print(f"Result JSON: {opts.output_dir}/{opts.scenario_name}_result.json")
+    return 0 if result.passed else 1

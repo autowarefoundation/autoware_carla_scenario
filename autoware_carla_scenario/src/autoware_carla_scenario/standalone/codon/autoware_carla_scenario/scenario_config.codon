@@ -1,0 +1,102 @@
+# Model of autoware_carla_scenario.scenario_config (docs/typecheck.md).
+#
+# Dataclasses are written as Codon classes with defaulted fields, which give
+# them the same generated __init__. A field Hydra marks as mandatory (MISSING,
+# "???") has a placeholder default here: Hydra itself refuses to run without
+# it. SweepConfig's free-form mappings (dict[str, Any]) have no Codon type and
+# are left out of it.
+
+
+class ServerConfig:
+    host: str = "localhost"
+    port: int = 2000
+    cooldown_seconds: float = 3.0
+    cooldown_max_retries: int = 0
+    max_tick_rate_hz: Optional[float] = None
+
+
+class MapConfig:
+    name: str = "???"
+    source: Optional[str] = None
+    directory: Optional[str] = None
+    xodr_path: Optional[str] = None
+    lanelet2_path: Optional[str] = None
+    projector_type: Optional[str] = None
+
+
+class EntityConfig:
+    ground_projection_ray_distance_upper: float = 5.0
+    ground_projection_ray_distance_lower: float = 5.0
+    spawn_retry_max_count: int = 10
+    spawn_retry_t_step: float = 0.1
+    spawn_retry_z_step: float = 0.5
+
+
+class EgoVehicleConfig:
+    vehicle_type: str = "vehicle.mini.cooper"
+    initial_speed_kmh: float = 0.0
+    spawn_lanelet_id: int = 242
+    spawn_s: float = 25.0
+    goal_lanelet_id: Optional[int] = None
+    goal_s: float = 0.0
+    waypoint_lanelet_ids: List[int] = List[int]()
+    entity: str = "autopilot"
+
+
+class NpcVehicleConfig:
+    spawn_lanelet_id: int = 0  # MISSING
+    spawn_s: float = 0.0
+    vehicle_type: str = "vehicle.mini.cooper"
+    initial_speed_kmh: float = 0.0
+
+
+class DriverCameraSpec:
+    logical_id: str = "camera_front_wide_120fov"
+    image_width: int = 960
+    image_height: int = 604
+    fov: float = 120.0
+    fps: float = 20.0
+    position_x: float = 1.5
+    position_y: float = 0.0
+    position_z: float = 1.6
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+
+class DriverControlSpec:
+    lookahead_gain_s: float = 0.9
+    min_lookahead_m: float = 4.0
+    max_lookahead_m: float = 20.0
+    wheelbase_m: float = 2.8
+    max_steer_angle_deg: float = 70.0
+    max_steer_rate: float = 4.0
+    speed_kp: float = 0.6
+    speed_ki: float = 0.15
+    speed_kd: float = 0.05
+    integral_limit: float = 1.0
+    stop_speed_mps: float = 0.2
+    stop_brake: float = 0.6
+
+
+class DriverConfig:
+    address: str = "localhost:50051"
+    timeout_s: float = 60.0
+    policy_timestep_s: float = 0.1
+    image_quality: int = 90
+    route_horizon_m: float = 80.0
+    route_resolution_m: float = 2.0
+    rear_axle_offset_m: Optional[float] = None
+    send_ground_truth: bool = False
+    send_renderer_data: bool = True
+    send_actor_ground_truth: bool = True
+    traffic_light_sight_distance_m: float = 60.0
+    actor_horizon_m: float = 150.0
+    random_seed: int = 0
+    cameras: List[DriverCameraSpec] = [DriverCameraSpec()]
+    control: DriverControlSpec = DriverControlSpec()
+
+
+class SweepConfig:
+    job_timeout_seconds: int = 120
+    resume_from: int = 0

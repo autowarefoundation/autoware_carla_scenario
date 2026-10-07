@@ -1,0 +1,799 @@
+# autoware_carla_scenario.conditions for the standalone runtime
+# (docs/standalone.md).
+#
+# Every condition derives from BaseCondition directly: the Python
+# CompositionCondition layer in between (its entity-existence gate) is folded
+# into each condition that has one (Codon 0.19 miscompiles class hierarchies
+# two levels deep). A condition the runtime does not implement yet is a build
+# error at the line that constructs it.
+#
+# Python wraps every subclass's check() to remember its last result for the
+# summary (BaseCondition.__init_subclass__); Codon cannot wrap a method, so
+# the runtime calls BaseCondition.evaluate(), which does the same around the
+# (virtual) check().
+
+import math
+import logging
+import typesafe_carla.carla as carla
+
+from ._tc import _keyword_only, _expect_float, _Required, _required_str
+from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
+                         _expect_optional_pose, _expect_pose_list, to_opendrive, on_lanelet,
+                         project_onto_lanelet, project_onto_road)
+from .entity_role import EntityRole, _expect_role, _expect_optional_role
+from .entity import find_entity_by_role_name
+
+_logger = logging.getLogger("autoware_carla_scenario.conditions")
+
+
+@tuple
+class ComparisonRule:
+    value: int
+    GREATER_THAN: ClassVar[ComparisonRule] = ComparisonRule(1)
+    LESS_THAN: ClassVar[ComparisonRule] = ComparisonRule(2)
+    EQUAL_TO: ClassVar[ComparisonRule] = ComparisonRule(3)
+    GREATER_THAN_OR_EQUAL: ClassVar[ComparisonRule] = ComparisonRule(4)
+    LESS_THAN_OR_EQUAL: ClassVar[ComparisonRule] = ComparisonRule(5)
+
+    def __eq__(self, other: ComparisonRule) -> bool:
+        return self.value == other.value
+
+    def __ne__(self, other: ComparisonRule) -> bool:
+        return self.value != other.value
+
+    @property
+    def name(self) -> str:
+        names = ["", "GREATER_THAN", "LESS_THAN", "EQUAL_TO", "GREATER_THAN_OR_EQUAL",
+                 "LESS_THAN_OR_EQUAL"]
+        return names[self.value]
+
+    @property
+    def text(self) -> str:
+        return self.name.lower().replace("_", " ")
+
+
+def compare(actual: float, rule: ComparisonRule, value: float, tolerance: float = 1e-06) -> bool:
+    if rule == ComparisonRule.GREATER_THAN:
+        return actual > value
+    if rule == ComparisonRule.LESS_THAN:
+        return actual < value
+    if rule == ComparisonRule.EQUAL_TO:
+        return abs(actual - value) <= tolerance
+    if rule == ComparisonRule.GREATER_THAN_OR_EQUAL:
+        return actual >= value
+    if rule == ComparisonRule.LESS_THAN_OR_EQUAL:
+        return actual <= value
+    raise ValueError("Unknown comparison rule: " + str(rule.value))
+
+
+@tuple
+class AccelerationDirection:
+    value: int
+    LONGITUDINAL: ClassVar[AccelerationDirection] = AccelerationDirection(1)
+    LATERAL: ClassVar[AccelerationDirection] = AccelerationDirection(2)
+    MAGNITUDE: ClassVar[AccelerationDirection] = AccelerationDirection(3)
+
+
+@tuple
+class SpeedDirection:
+    value: int
+    LONGITUDINAL: ClassVar[SpeedDirection] = SpeedDirection(1)
+    LATERAL: ClassVar[SpeedDirection] = SpeedDirection(2)
+    MAGNITUDE: ClassVar[SpeedDirection] = SpeedDirection(3)
+
+    @property
+    def name(self) -> str:
+        return ["", "LONGITUDINAL", "LATERAL", "MAGNITUDE"][self.value]
+
+
+@tuple
+class SpeedCoordinateSystem:
+    value: int
+    WORLD: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(1)
+    ENTITY: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(2)
+
+
+@tuple
+class DistanceCoordinateSystem:
+    value: int
+    ENTITY: ClassVar[DistanceCoordinateSystem] = DistanceCoordinateSystem(1)
+    LANE: ClassVar[DistanceCoordinateSystem] = DistanceCoordinateSystem(2)
+
+
+@tuple
+class RelativeDistanceType:
+    value: str
+    EUCLIDEAN: ClassVar[RelativeDistanceType] = RelativeDistanceType("euclidean")
+    LONGITUDINAL: ClassVar[RelativeDistanceType] = RelativeDistanceType("longitudinal")
+    LATERAL: ClassVar[RelativeDistanceType] = RelativeDistanceType("lateral")
+
+
+@tuple
+class CollisionTargetType:
+    value: str
+    ANY: ClassVar[CollisionTargetType] = CollisionTargetType("")
+    VEHICLE: ClassVar[CollisionTargetType] = CollisionTargetType("vehicle.")
+    PEDESTRIAN: ClassVar[CollisionTargetType] = CollisionTargetType("walker.")
+    STATIC: ClassVar[CollisionTargetType] = CollisionTargetType("static.")
+
+
+@tuple
+class WaypointCheckType:
+    value: int
+    IS_EMPTY: ClassVar[WaypointCheckType] = WaypointCheckType(1)
+
+
+class ScalarComparisonRule:
+    field: str
+    rule: ComparisonRule
+    value: float
+    tolerance: float
+
+    def __init__(self, field: str, rule: ComparisonRule, value: float, tolerance: float = 1e-06):
+        self.field = field
+        self.rule = rule
+        self.value = value
+        self.tolerance = tolerance
+
+    def satisfied(self, actual: float) -> bool:
+        return compare(actual, self.rule, self.value, self.tolerance)
+
+
+def _json_str(text: str) -> str:
+    out = List[str]()
+    out.append('"')
+    for ch in text:
+        if ch == '"':
+            out.append('\\"')
+        elif ch == "\\":
+            out.append("\\\\")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ord(ch) < 32:
+            out.append("\\u" + hex(ord(ch))[2:].zfill(4))
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _json_bool(b: bool) -> str:
+    return "true" if b else "false"
+
+
+class ConditionStatus:
+    label: str
+    satisfied: bool
+    message: str
+    condition_type: str
+    role: str
+
+    def __init__(self, label: str, satisfied: bool, message: str, condition_type: str = "",
+                 role: str = ""):
+        self.label = label
+        self.satisfied = satisfied
+        self.message = message
+        self.condition_type = condition_type
+        self.role = role
+
+    def to_json(self, indent: str) -> str:
+        pad = indent + "  "
+        return ("{\n" + pad + '"label": ' + _json_str(self.label) + ",\n"
+                + pad + '"satisfied": ' + _json_bool(self.satisfied) + ",\n"
+                + pad + '"message": ' + _json_str(self.message) + ",\n"
+                + pad + '"condition_type": ' + _json_str(self.condition_type) + ",\n"
+                + pad + '"role": ' + _json_str(self.role) + ",\n"
+                + pad + '"details": {}\n' + indent + "}")
+
+
+class ScenarioResult:
+    passed: bool
+    message: str
+    elapsed_seconds: float
+    condition_statuses: List[ConditionStatus]
+
+    def __init__(self, passed: bool, message: str, elapsed_seconds: float,
+                 condition_statuses: Optional[List[ConditionStatus]] = None):
+        self.passed = passed
+        self.message = message
+        self.elapsed_seconds = elapsed_seconds
+        self.condition_statuses = (condition_statuses if condition_statuses is not None
+                                   else List[ConditionStatus]())
+
+    def to_json(self) -> str:
+        """ScenarioResult.to_json(indent=2), less each condition's details."""
+        statuses = ""
+        if len(self.condition_statuses) == 0:
+            statuses = "[]"
+        else:
+            items = [s.to_json("    ") for s in self.condition_statuses]
+            statuses = "[\n    " + ",\n    ".join(items) + "\n  ]"
+        return ("{\n"
+                + '  "passed": ' + _json_bool(self.passed) + ",\n"
+                + '  "message": ' + _json_str(self.message) + ",\n"
+                + '  "elapsed_seconds": ' + repr(self.elapsed_seconds) + ",\n"
+                + '  "condition_statuses": ' + statuses + "\n}")
+
+
+class BaseCondition:
+    label: str
+    _last_satisfied: bool
+    _last_message: str
+
+    def __init__(self, label: str):
+        if not label:
+            raise ValueError("BaseCondition: label must not be empty. Provide a non-empty "
+                             "string to identify this condition.")
+        self.label = label
+        self._last_satisfied = False
+        self._last_message = ""
+
+    def _acs_condition(self) -> int:
+        """Marks a condition for _acs_list (_lists.codon)."""
+        return 0
+
+    def condition_type(self) -> str:
+        """type(condition).__name__ in the Python runner's condition summary."""
+        return "BaseCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        raise NotImplementedError("BaseCondition.check()")
+
+    def evaluate(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        """check(), remembering the outcome as the Python wrapper does."""
+        result = self.check(world, elapsed)
+        if result is not None:
+            self._last_satisfied = unwrap(result).passed
+            self._last_message = unwrap(result).message
+        elif self._last_satisfied:
+            self._last_satisfied = False
+            self._last_message = ""
+        return result
+
+
+def _as_condition(condition) -> BaseCondition:
+    """A condition argument, as a BaseCondition (Codon's Optional does not take a subclass)."""
+    if not hasattr(condition, "_acs_condition"):
+        compile_error("expected a condition (a BaseCondition subclass)")
+    out: BaseCondition = condition
+    return out
+
+
+def _expect_optional_condition(condition) -> Optional[BaseCondition]:
+    if isinstance(condition, None):
+        return None
+    elif isinstance(condition, Optional[NoneType]):
+        return None
+    elif isinstance(condition, Optional):
+        if condition is None:
+            return None
+        return _as_condition(unwrap(condition))
+    else:
+        return _as_condition(condition)
+
+
+def _expect_condition(condition) -> BaseCondition:
+    return _as_condition(condition)
+
+
+def _expect_conditions(conditions) -> List[BaseCondition]:
+    """A Sequence[BaseCondition] argument: a list or tuple of any conditions."""
+    out = List[BaseCondition]()
+    for condition in conditions:
+        out.append(_as_condition(condition))
+    return out
+
+
+def find_actor_in_list(actors: carla.ActorList, role_name: str) -> Optional[carla.Actor]:
+    for actor in actors:
+        attributes = actor.attributes
+        if "role_name" in attributes and attributes["role_name"] == role_name:
+            return actor
+    return None
+
+
+def find_actor_by_role_name(world: carla.World, role_name) -> Optional[carla.Actor]:
+    return find_actor_in_list(world.get_actors(), str(_expect_role(role_name)))
+
+
+def _exists(world: carla.World, entity_name: EntityRole) -> bool:
+    """CompositionCondition's gate: the entity is in the world."""
+    return find_actor_by_role_name(world, entity_name) is not None
+
+
+class AlwaysTrueCondition(BaseCondition):
+    def __init__(self, *_kw, label: str = "always_true"):
+        _keyword_only(_kw, "AlwaysTrueCondition(): label")
+        super().__init__(label)
+
+    def condition_type(self) -> str:
+        return "AlwaysTrueCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        return ScenarioResult(True, "AlwaysTrueCondition", elapsed)
+
+
+class AndCondition(BaseCondition):
+    _conditions: List[BaseCondition]
+
+    def __init__(self, conditions, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "AndCondition(): label")
+        children = _expect_conditions(conditions)
+        if len(children) < 2:
+            raise ValueError("AndCondition requires at least 2 conditions")
+        super().__init__(label if label is not None else " AND ".join([c.label for c in children]))
+        self._conditions = children
+
+    def condition_type(self) -> str:
+        return "AndCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        messages = List[str]()
+        for condition in self._conditions:
+            result = condition.evaluate(world, elapsed)
+            if result is None:
+                return None
+            if not unwrap(result).passed:
+                return result
+            messages.append(unwrap(result).message)
+        return ScenarioResult(True, " AND ".join(messages), elapsed)
+
+
+class OrCondition(BaseCondition):
+    _conditions: List[BaseCondition]
+
+    def __init__(self, conditions, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "OrCondition(): label")
+        children = _expect_conditions(conditions)
+        if len(children) < 2:
+            raise ValueError("OrCondition requires at least 2 conditions")
+        super().__init__(label if label is not None else " OR ".join([c.label for c in children]))
+        self._conditions = children
+
+    def condition_type(self) -> str:
+        return "OrCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        for condition in self._conditions:
+            result = condition.evaluate(world, elapsed)
+            if result is not None:
+                return result
+        return None
+
+
+class NotCondition(BaseCondition):
+    _condition: BaseCondition
+
+    def __init__(self, condition, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "NotCondition(): label")
+        child = _as_condition(condition)
+        super().__init__(label if label is not None else child.label)
+        self._condition = child
+
+    def condition_type(self) -> str:
+        return "NotCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        found = self._condition.evaluate(world, elapsed)
+        if found is None:
+            return None
+        result = unwrap(found)
+        return ScenarioResult(not result.passed, "NOT(" + result.message + ")",
+                              result.elapsed_seconds)
+
+
+class StickyCondition(BaseCondition):
+    _condition: BaseCondition
+    _latched_result: Optional[ScenarioResult]
+
+    def __init__(self, condition, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "StickyCondition(): label")
+        child = _as_condition(condition)
+        super().__init__(label if label is not None else child.label + "_sticky")
+        self._condition = child
+        self._latched_result = None
+
+    def condition_type(self) -> str:
+        return "StickyCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        if self._latched_result is not None:
+            return self._latched_result
+        result = self._condition.evaluate(world, elapsed)
+        if result is not None and unwrap(result).passed:
+            self._latched_result = result
+            _logger.info("StickyCondition: latched — %s", unwrap(result).message)
+        return result
+
+
+class PersistentCondition(BaseCondition):
+    _condition: BaseCondition
+    _duration: float
+    _true_start: Optional[float]
+
+    def __init__(self, condition, duration: float, *_kw, label: Optional[str] = None):
+        _keyword_only(_kw, "PersistentCondition(): label")
+        if duration <= 0:
+            raise ValueError("duration must be positive")
+        child = _as_condition(condition)
+        super().__init__(label if label is not None else child.label)
+        self._condition = child
+        self._duration = duration
+        self._true_start = None
+
+    def condition_type(self) -> str:
+        return "PersistentCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        result = self._condition.evaluate(world, elapsed)
+        if result is not None and unwrap(result).passed:
+            if self._true_start is None:
+                self._true_start = elapsed
+            held = elapsed - unwrap(self._true_start)
+            if held >= self._duration:
+                return ScenarioResult(True, f"Child condition passed continuously for {held:.2f}s "
+                                      f"(threshold: {self._duration}s)", elapsed)
+            return None
+        self._true_start = None
+        return None
+
+
+class ElapsedTimeCondition(BaseCondition):
+    _comparison: ScalarComparisonRule
+
+    def __init__(self, duration_seconds: float,
+                 rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "ElapsedTimeCondition(): label")
+        super().__init__(_required_str(label, "ElapsedTimeCondition(): label"))
+        if duration_seconds <= 0:
+            raise ValueError("duration_seconds must be positive")
+        if tolerance < 0:
+            raise ValueError("tolerance must be non-negative")
+        self._comparison = ScalarComparisonRule("elapsed", rule, duration_seconds, tolerance)
+
+    def condition_type(self) -> str:
+        return "ElapsedTimeCondition"
+
+    @property
+    def duration_seconds(self) -> float:
+        return self._comparison.value
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        if self._comparison.satisfied(elapsed):
+            return ScenarioResult(True, f"Elapsed time {elapsed:.2f}s {self._comparison.rule.text} "
+                                  f"target duration {self.duration_seconds:.2f}s", elapsed)
+        return None
+
+
+class TimeoutCondition(BaseCondition):
+    timeout_seconds: float
+
+    def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
+        _keyword_only(_kw, "TimeoutCondition(): label")
+        super().__init__(_required_str(label, "TimeoutCondition(): label"))
+        self.timeout_seconds = timeout_seconds
+
+    def condition_type(self) -> str:
+        return "TimeoutCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        if elapsed >= self.timeout_seconds:
+            return ScenarioResult(False, f"Timeout after {elapsed:.2f}s (limit: "
+                                  f"{self.timeout_seconds}s)", elapsed)
+        return None
+
+
+class EntityExistenceCondition(BaseCondition):
+    _entity_name: EntityRole
+
+    def __init__(self, entity_name, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityExistenceCondition(): label")
+        super().__init__(_required_str(label, "EntityExistenceCondition(): label"))
+        self._entity_name = _expect_role(entity_name)
+
+    def condition_type(self) -> str:
+        return "EntityExistenceCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        if find_actor_by_role_name(world, self._entity_name) is not None:
+            return None
+        msg = f"Actor '{self._entity_name}' not found in the world at {elapsed:.2f}s"
+        _logger.error(msg)
+        return ScenarioResult(False, msg, elapsed)
+
+
+class LaneChangeSettledCondition(BaseCondition):
+    _entity_name: EntityRole
+
+    def __init__(self, entity_name, *_kw, label: str = "lane_change_settled"):
+        _keyword_only(_kw, "LaneChangeSettledCondition(): label")
+        super().__init__(label)
+        self._entity_name = _expect_role(entity_name)
+
+    def condition_type(self) -> str:
+        return "LaneChangeSettledCondition"
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        entity = find_entity_by_role_name(self._entity_name)
+        if entity is None or not unwrap(entity).lane_change_finished(world):
+            return None
+        return ScenarioResult(True, f"Entity '{self._entity_name}' has settled onto its new lane",
+                              elapsed)
+
+
+class SpeedCondition(BaseCondition):
+    _entity_name: EntityRole
+    _comparison: ScalarComparisonRule
+    _direction: SpeedDirection
+    _coordinate_system: SpeedCoordinateSystem
+    _reference_entity_name: Optional[EntityRole]
+
+    def __init__(self, entity_name, value: float, rule: ComparisonRule,
+                 direction: SpeedDirection = SpeedDirection(3),  # MAGNITUDE
+                 coordinate_system: SpeedCoordinateSystem = SpeedCoordinateSystem(1),  # WORLD
+                 reference_entity_name = None, tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "SpeedCondition(): label")
+        reference = _expect_optional_role(reference_entity_name)
+        if tolerance < 0:
+            raise ValueError("tolerance must be non-negative")
+        if coordinate_system.value == 2 and reference is None:
+            raise ValueError("reference_entity_name is required when coordinate_system is ENTITY")
+        super().__init__(_required_str(label, "SpeedCondition(): label"))
+        self._entity_name = _expect_role(entity_name)
+        self._comparison = ScalarComparisonRule("speed", rule, value, tolerance)
+        self._direction = direction
+        self._coordinate_system = coordinate_system
+        self._reference_entity_name = reference
+
+    def condition_type(self) -> str:
+        return "SpeedCondition"
+
+    def _component(self, entity: carla.Actor, actors: carla.ActorList) -> Optional[float]:
+        v = entity.get_velocity()
+        if self._direction.value == 3:
+            return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+        if self._coordinate_system.value == 1:
+            return v.x if self._direction.value == 1 else v.y
+        found = find_actor_in_list(actors, str(unwrap(self._reference_entity_name)))
+        if found is None:
+            return None
+        fwd = unwrap(found).get_transform().get_forward_vector()
+        magnitude = math.sqrt(fwd.x * fwd.x + fwd.y * fwd.y)
+        if magnitude < 1e-12:
+            return None
+        fx = fwd.x / magnitude
+        fy = fwd.y / magnitude
+        if self._direction.value == 1:
+            return v.x * fx + v.y * fy
+        return v.x * fy + v.y * (-fx)
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        actors = world.get_actors()
+        found = find_actor_in_list(actors, str(self._entity_name))
+        if found is None:
+            return None
+        component = self._component(unwrap(found), actors)
+        if component is None:
+            return None
+        speed = unwrap(component)
+        if self._comparison.satisfied(speed):
+            return ScenarioResult(True, f"Entity '{self._entity_name}' speed "
+                                  f"{self._direction.name.lower()} ({speed:.2f} m/s) "
+                                  f"{self._comparison.rule.text} {self._comparison.value:.2f} m/s",
+                                  elapsed)
+        return None
+
+
+class EntityLanePositionCondition(BaseCondition):
+    _entity_name: EntityRole
+    _road_id: str
+    _lane_id: Optional[int]
+    _lanelet_id: Optional[int]
+    _rules: List[ScalarComparisonRule]
+
+    def __init__(self, entity_name, position,
+                 rules: Optional[List[ScalarComparisonRule]] = None, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityLanePositionCondition(): label")
+        _expect_pose(position)
+        address = to_opendrive(position)
+        super().__init__(_required_str(label, "EntityLanePositionCondition(): label"))
+        self._entity_name = _expect_role(entity_name)
+        self._road_id = address.road_id
+        self._lane_id = address.lane_id
+        self._lanelet_id = None
+        if isinstance(position, Lanelet2Pose):
+            self._lanelet_id = position.lanelet_id
+        self._rules = rules if rules is not None else List[ScalarComparisonRule]()
+        for rule in self._rules:
+            if rule.field != "s" and rule.field != "t":
+                raise ValueError(f"ScalarComparisonRule field must be 's' or 't', got '{rule.field}'")
+
+    @staticmethod
+    def anywhere_on_road(entity_name, road_id: str,
+                         rules: Optional[List[ScalarComparisonRule]] = None, *_kw,
+                         label = _Required()) -> EntityLanePositionCondition:
+        _keyword_only(_kw, "EntityLanePositionCondition.anywhere_on_road(): label")
+        condition = EntityLanePositionCondition(
+            entity_name, OpenDrivePose(road_id, 0, 0.0), rules,
+            label=_required_str(label, "EntityLanePositionCondition.anywhere_on_road(): label"))
+        condition._lane_id = None
+        return condition
+
+    def condition_type(self) -> str:
+        return "EntityLanePositionCondition"
+
+    def _rules_hold(self, s: float, t: float, elapsed: float) -> bool:
+        for rule in self._rules:
+            actual = s if rule.field == "s" else t
+            if not rule.satisfied(actual):
+                _logger.debug("EntityLanePositionCondition: '%s' rule %s %s %.3f not satisfied "
+                              "(actual %.3f) at t=%.2fs", str(self._entity_name), rule.field,
+                              rule.rule.name, rule.value, actual, elapsed)
+                return False
+        return True
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        if not _exists(world, self._entity_name):
+            return None
+        found = find_actor_by_role_name(world, self._entity_name)
+        if found is None:
+            return None
+        loc = unwrap(found).get_location()
+        carla_pose = CarlaWorldPose(loc.x, loc.y, loc.z)
+        if self._lanelet_id is not None:
+            lanelet_id = unwrap(self._lanelet_id)
+            if not on_lanelet(carla_pose, lanelet_id):
+                return None
+            ll2 = project_onto_lanelet(carla_pose, lanelet_id)
+            if not self._rules_hold(ll2.s, ll2.t, elapsed):
+                return None
+            _logger.info("EntityLanePositionCondition: MATCHED — '%s' on lanelet %d (s=%.2f, t=%.2f)",
+                         str(self._entity_name), lanelet_id, ll2.s, ll2.t)
+            return ScenarioResult(True, f"Entity '{self._entity_name}' is on lanelet {lanelet_id} "
+                                  f"(s={ll2.s:.2f}, t={ll2.t:.2f}) at {elapsed:.2f}s", elapsed)
+        od_pose = to_opendrive(carla_pose)
+        if od_pose.road_id != self._road_id:
+            _logger.debug("EntityLanePositionCondition: '%s' on road='%s' lane=%d (want road='%s') "
+                          "at (%.1f, %.1f, %.1f) t=%.2fs", str(self._entity_name), od_pose.road_id,
+                          od_pose.lane_id, self._road_id, loc.x, loc.y, loc.z, elapsed)
+            return None
+        if self._lane_id is not None and od_pose.lane_id != unwrap(self._lane_id):
+            _logger.debug("EntityLanePositionCondition: '%s' on road='%s' lane=%d (want lane=%d) "
+                          "at t=%.2fs", str(self._entity_name), od_pose.road_id, od_pose.lane_id,
+                          unwrap(self._lane_id), elapsed)
+            return None
+        if self._lane_id is None and len(self._rules) > 0:
+            od_pose = project_onto_road(carla_pose, self._road_id)
+        if not self._rules_hold(od_pose.s, od_pose.t, elapsed):
+            return None
+        lane_desc = "(any lane)" if self._lane_id is None else f"lane {unwrap(self._lane_id)}"
+        _logger.info("EntityLanePositionCondition: MATCHED — '%s' on road='%s' %s (s=%.2f, t=%.2f)",
+                     str(self._entity_name), self._road_id, lane_desc, od_pose.s, od_pose.t)
+        return ScenarioResult(True, f"Entity '{self._entity_name}' is on road '{self._road_id}' "
+                              f"{lane_desc} (s={od_pose.s:.2f}, t={od_pose.t:.2f}) at {elapsed:.2f}s",
+                              elapsed)
+
+
+LANE_RELATIONS = ("same", "left", "right", "any")
+
+
+def beside_lane_id(lane_id: int, side: str) -> int:
+    if side != "left" and side != "right":
+        raise ValueError(f"side must be 'left' or 'right', got {repr(side)}")
+    delta = 1 if side == "left" else -1
+    return lane_id + delta if lane_id < 0 else lane_id - delta
+
+
+def EntityLaneOfCondition(entity_name, position, lane: str = "same", *_kw,
+                          label = _Required()) -> EntityLanePositionCondition:
+    """EntityLaneOfCondition, as the EntityLanePositionCondition it is (a subclass
+    in Python, a factory here: Codon 0.19 miscompiles a second level)."""
+    _keyword_only(_kw, "EntityLaneOfCondition(): label")
+    if lane not in LANE_RELATIONS:
+        raise ValueError(f"lane must be one of {LANE_RELATIONS}, got {repr(lane)}")
+    address = to_opendrive(position)
+    if lane == "left" or lane == "right":
+        address = OpenDrivePose(address.road_id, beside_lane_id(address.lane_id, lane), address.s,
+                                address.t, address.heading)
+    condition = EntityLanePositionCondition(
+        entity_name, address, label=_required_str(label, "EntityLaneOfCondition(): label"))
+    if lane == "any":
+        condition._lane_id = None
+    return condition
+
+
+# --- Not in the standalone runtime yet ----------------------------------------------
+
+
+class CollisionCondition(BaseCondition):
+    def __init__(self, min_impulse: float = 0.0, target = None,
+                 target_type: CollisionTargetType = CollisionTargetType(""),  # ANY
+                 *_kw, label = _Required()):
+        compile_error("CollisionCondition is not supported by the standalone runtime yet")
+
+
+class TrafficSignalCondition(BaseCondition):
+    def __init__(self, lanelet2_regulatory_element_id: int, expected_state: int, *_kw,
+                 label = _Required()):
+        compile_error("TrafficSignalCondition is not supported by the standalone runtime yet")
+
+
+class TrafficSignalControllerCondition(BaseCondition):
+    def __init__(self, controller: str, phase: str, *_kw, label = _Required()):
+        compile_error("TrafficSignalControllerCondition is not supported by the standalone "
+                      "runtime yet")
+
+
+class AccelerationCondition(BaseCondition):
+    def __init__(self, entity_name, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),
+                 direction: AccelerationDirection = AccelerationDirection(3),
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        compile_error("AccelerationCondition is not supported by the standalone runtime yet")
+
+
+class RelativeSpeedCondition(BaseCondition):
+    def __init__(self, entity_name, reference_entity_name, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),
+                 direction: SpeedDirection = SpeedDirection(3),
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        compile_error("RelativeSpeedCondition is not supported by the standalone runtime yet")
+
+
+class StandstillCondition(BaseCondition):
+    def __init__(self, entity_name, duration: float, speed_threshold: float = 0.1, *_kw,
+                 label = _Required()):
+        compile_error("StandstillCondition is not supported by the standalone runtime yet")
+
+
+class EntityDistanceCondition(BaseCondition):
+    def __init__(self, source, target, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),
+                 vertical: bool = False,
+                 distance_type: RelativeDistanceType = RelativeDistanceType("euclidean"),
+                 edge_to_edge: bool = False, tolerance: float = 1e-06,
+                 coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),
+                 *_kw, label = _Required()):
+        compile_error("EntityDistanceCondition is not supported by the standalone runtime yet")
+
+
+class EntityPositionDistanceCondition(BaseCondition):
+    def __init__(self, entity_name, position, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),
+                 vertical: bool = False, tolerance: float = 1e-06, *_kw, label = _Required()):
+        compile_error("EntityPositionDistanceCondition is not supported by the standalone "
+                      "runtime yet")
+
+
+class TemporaryStopCondition(BaseCondition):
+    def __init__(self, entity_name, stop_positions, s_margin: float = 5.0,
+                 speed_threshold: float = 0.1, stop_duration: float = 1.0, *_kw, label = _Required()):
+        compile_error("TemporaryStopCondition is not supported by the standalone runtime yet")
+
+
+class TimeHeadwayCondition(BaseCondition):
+    def __init__(self, source, target, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),
+                 tolerance: float = 1e-06,
+                 coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),
+                 *_kw, label = _Required()):
+        compile_error("TimeHeadwayCondition is not supported by the standalone runtime yet")
+
+
+class TimeToCollisionCondition(BaseCondition):
+    def __init__(self, source, target = None, value: float = 4.0,
+                 rule: ComparisonRule = ComparisonRule(2),
+                 position = None, edge_to_edge: bool = False, tolerance: float = 1e-06,
+                 coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),
+                 *_kw, label = _Required()):
+        compile_error("TimeToCollisionCondition is not supported by the standalone runtime yet")
+
+
+class WaypointCondition(BaseCondition):
+    def __init__(self, entity_name, distance: float,
+                 check_type: WaypointCheckType = WaypointCheckType(1),
+                 *_kw, label = _Required()):
+        compile_error("WaypointCondition is not supported by the standalone runtime yet")

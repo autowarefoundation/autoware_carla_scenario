@@ -1,0 +1,31 @@
+# Python's dataclasses, for the standalone runtime (docs/standalone.md).
+#
+# A Codon class with annotated fields already has the generated __init__ of a
+# dataclass, so the build drops @dataclass decorators and puts each
+# `field(default=...)` / `field(default_factory=...)` default in place
+# (typecheck/transform.py). dataclass and field only resolve the import;
+# replace() makes the copy Python's does.
+
+import internal.static as static
+
+
+def dataclass(cls):
+    return cls
+
+
+def field(default):
+    return default
+
+
+def replace(obj, **changes):
+    """dataclasses.replace(obj, **changes): a new obj with *changes* applied.
+
+    A change naming no field of obj is ignored (Python raises TypeError).
+    """
+    out = type(obj).__new__()
+    for name, value in static.vars(obj):
+        if hasattr(changes, name):
+            setattr(out, name, getattr(changes, name))
+        else:
+            setattr(out, name, value)
+    return out

@@ -1,0 +1,406 @@
+# The scenario runner of the standalone runtime (docs/standalone.md).
+#
+# ScenarioQueue.start() and ScenarioRunner.run_scenario() for one scenario,
+# step for step: connect, load the map (installing the bundled OpenDRIVE first
+# when the map asks for it), set up the scenario, spawn the ego, warm up, run
+# the init actions, release the vehicles, start the traffic, tick until a pass
+# or fail condition decides, clean up, write <Scenario>_result.json, reload the
+# world. What it leaves out is listed in docs/standalone.md (the trajectory
+# recording, the video render, a CARLA server it starts itself).
+
+import os
+import time
+import logging
+import typesafe_carla.carla as carla
+
+from .conditions import (BaseCondition, ConditionStatus, ScenarioResult,
+                         EntityExistenceCondition, TimeoutCondition, find_actor_by_role_name)
+from .constants import EGO_ROLE_NAME, FIXED_DELTA_SECONDS
+from .coordinate import CarlaWorldPose, load_map_data, attach_carla_world, to_opendrive
+from .entity import register_entity, clear_entities, _WARMUP_DONE
+from .traffic import TrafficManagerBackend
+from .scenario_base import BaseScenario
+
+_logger = logging.getLogger("autoware_carla_scenario.scenario_runner")
+
+_CONDITION_LOG_INTERVAL = 20
+
+
+class RunOptions:
+    scenario_name: str
+    host: str
+    port: int
+    tm_port: int
+    client_timeout: float
+    timeout_seconds: float
+    output_dir: str
+    map_name: str
+    overwrite_xodr: bool
+    xodr_path: str  # the bundled OpenDRIVE (installed when overwrite_xodr)
+    xodr_env_var: str  # where it is installed: maps.opendrive.map_asset_env_var(map_name)
+    map_data: str
+    max_tick_rate_hz: float  # 0: uncapped
+
+    def __init__(self):
+        self.scenario_name = ""
+        self.host = "localhost"
+        self.port = 2000
+        self.tm_port = 8100
+        self.client_timeout = 60.0
+        self.timeout_seconds = 60.0
+        self.output_dir = "scenario_outputs"
+        self.map_name = ""
+        self.overwrite_xodr = False
+        self.xodr_path = ""
+        self.xodr_env_var = ""
+        self.map_data = ""
+        self.max_tick_rate_hz = 0.0
+
+
+class _Pacer:
+    """ScenarioRunner._pace_tick: at most max_tick_rate_hz ticks per wall second."""
+    interval: float
+    next_at: float
+
+    def __init__(self, max_tick_rate_hz: float):
+        self.interval = 1.0 / max_tick_rate_hz if max_tick_rate_hz > 0.0 else 0.0
+        self.next_at = 0.0
+
+    def pace(self) -> None:
+        if self.interval <= 0.0:
+            return
+        now = time.monotonic()
+        if now < self.next_at:
+            time.sleep(self.next_at - now)
+            now = self.next_at
+        self.next_at = now + self.interval
+
+
+class _Clock:
+    """_ScenarioClock: simulated seconds since the tick loop started."""
+    world: carla.World
+    start: float
+
+    def __init__(self, world: carla.World):
+        self.world = world
+        self.start = self._now()
+
+    def _now(self) -> float:
+        return self.world.get_snapshot().timestamp.elapsed_seconds
+
+    @property
+    def simulated(self) -> float:
+        return self._now() - self.start
+
+
+# Codon's os module has getenv and mkdir, not os.path: the few path helpers
+# the runner needs.
+from C import getcwd(cobj, int) -> cobj
+
+
+def _join(a: str, b: str) -> str:
+    return b if a == "" else a.rstrip("/") + "/" + b
+
+
+def _abspath(path: str) -> str:
+    if path.startswith("/"):
+        return path
+    buf = Ptr[byte](4096)
+    if getcwd(buf.as_byte(), 4096) == cobj():
+        return path
+    return _join(str.from_ptr(buf), path)
+
+
+def _mkdirs(path: str) -> None:
+    """mkdir -p: each prefix in turn (one that exists already fails harmlessly)."""
+    prefix = "/" if path.startswith("/") else ""
+    for part in path.split("/"):
+        if part == "":
+            continue
+        prefix = "/" + part if prefix == "/" else _join(prefix, part)
+        os.mkdir(prefix)
+
+
+def _copy_file(src: str, dest: str) -> None:
+    with open(src) as fin:
+        content = fin.read()
+    with open(dest, "w") as fout:
+        fout.write(content)
+
+
+def _hold_vehicles_still(world: carla.World) -> None:
+    stopped = carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True)
+    for actor in world.get_actors().filter("vehicle.*"):
+        actor.as_vehicle().apply_control(stopped)
+
+
+def _release_vehicles(world: carla.World) -> None:
+    released = carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False)
+    for actor in world.get_actors().filter("vehicle.*"):
+        actor.as_vehicle().apply_control(released)
+
+
+def _destroy_all_dynamic_actors(world: carla.World, scenario_name: str) -> None:
+    """The leftover vehicles, walkers, controllers and sensors (the autopilot ego
+    attaches to nothing, so nothing is kept)."""
+    actors = world.get_actors()
+    destroyed = 0
+    for pattern in ("vehicle.*", "walker.*", "controller.*", "sensor.*"):
+        for actor in actors.filter(pattern):
+            try:
+                actor.destroy()
+                destroyed += 1
+            except carla.CarlaError:
+                pass
+    if destroyed > 0:
+        world.tick()
+        _logger.info("[%s] Destroyed %d leftover actor(s)", scenario_name, destroyed)
+
+
+def _load_map(client: carla.Client, opts: RunOptions) -> carla.World:
+    if opts.map_name == "":
+        return client.get_world()
+    if opts.overwrite_xodr:
+        dest = os.getenv(opts.xodr_env_var, "")
+        if dest == "":
+            raise RuntimeError(f"Environment variable '{opts.xodr_env_var}' is not set. Set it to the "
+                               f"path of the internal .xodr file for map '{opts.map_name}' inside the "
+                               "CARLA installation (e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/"
+                               f"{opts.map_name}.xodr).")
+        _copy_file(opts.xodr_path, dest)
+    available = client.get_available_maps()
+    found = False
+    for candidate in available:
+        if candidate == opts.map_name or candidate.split("/")[-1] == opts.map_name:
+            found = True
+    if not found:
+        names = sorted([m.split("/")[-1] for m in available])
+        raise ValueError(f"Map {repr(opts.map_name)} is not available on the CARLA server. "
+                         f"Available maps: {names}")
+    return client.load_world(opts.map_name)
+
+
+def _log_ego_opendrive_position(world: carla.World, scenario_name: str, elapsed: float,
+                                tick_count: int) -> None:
+    found = find_actor_by_role_name(world, EGO_ROLE_NAME)
+    if found is None:
+        _logger.warning("[%s] tick=%d t=%.2fs ego actor NOT FOUND (destroyed?)", scenario_name,
+                        tick_count, elapsed)
+        return
+    loc = unwrap(found).get_location()
+    od = to_opendrive(CarlaWorldPose(loc.x, loc.y, loc.z))
+    _logger.info("[%s] tick=%d t=%.2fs ego CARLA(%.1f, %.1f, %.1f) -> OpenDRIVE road='%s' lane=%d "
+                 "s=%.1f", scenario_name, tick_count, elapsed, loc.x, loc.y, loc.z, od.road_id,
+                 od.lane_id, od.s)
+
+
+def _status(cond: BaseCondition, index: int, role: str, world: carla.World,
+            elapsed: float) -> ConditionStatus:
+    check = cond.evaluate(world, elapsed)
+    if check is not None:
+        satisfied = True
+        message = unwrap(check).message
+    else:
+        satisfied = False
+        message = "not yet satisfied" if role == "pass" else "not triggered"
+    return ConditionStatus(f"{role}[{index}]({cond.label})", satisfied, message,
+                           cond.condition_type(), role)
+
+
+def _collect_condition_statuses(scenario, world: carla.World, elapsed: float,
+                                scenario_name: str) -> List[ConditionStatus]:
+    statuses = List[ConditionStatus]()
+    for i in range(len(scenario._pass_conditions)):
+        status = _status(scenario._pass_conditions[i], i, "pass", world, elapsed)
+        if status.satisfied:
+            _logger.info("[%s]   %s: OK — %s", scenario_name, status.label, status.message)
+        else:
+            _logger.info("[%s]   %s: PENDING", scenario_name, status.label)
+        statuses.append(status)
+    for i in range(len(scenario._fail_conditions)):
+        status = _status(scenario._fail_conditions[i], i, "fail", world, elapsed)
+        if status.satisfied:
+            _logger.info("[%s]   %s: TRIGGERED — %s", scenario_name, status.label, status.message)
+        statuses.append(status)
+    return statuses
+
+
+def _decide(scenario, conditions: List[BaseCondition], passed: bool, world: carla.World,
+            elapsed: float, tick_count: int, scenario_name: str) -> Optional[ScenarioResult]:
+    for i in range(len(conditions)):
+        condition = conditions[i]
+        check = condition.evaluate(world, elapsed)
+        if check is not None:
+            message = unwrap(check).message
+            if passed:
+                _logger.info("[%s] Pass condition [%d](%s) SATISFIED: %s", scenario_name, i,
+                             condition.label, message)
+            else:
+                _logger.info("[%s] Fail condition [%d](%s) TRIGGERED: %s", scenario_name, i,
+                             condition.label, message)
+            return ScenarioResult(passed, message, unwrap(check).elapsed_seconds,
+                                  _collect_condition_statuses(scenario, world, elapsed,
+                                                              scenario_name))
+        if passed and tick_count % _CONDITION_LOG_INTERVAL == 0:
+            _logger.info("[%s] Pass condition [%d](%s) pending at t=%.2fs (tick %d)", scenario_name,
+                         i, condition.label, elapsed, tick_count)
+    return None
+
+
+def run_scenario(scenario, opts: RunOptions) -> ScenarioResult:
+    """Run *scenario* (a BaseScenario subclass) against the CARLA server *opts* names."""
+    scenario_name = opts.scenario_name
+    load_map_data(opts.map_data)
+    client = carla.Client(opts.host, opts.port)
+    client.set_timeout(opts.client_timeout)
+    _logger.info("Connected to CARLA %s at %s:%d", client.get_server_version(), opts.host, opts.port)
+    world = _load_map(client, opts)
+    attach_carla_world(world)
+    pacer = _Pacer(opts.max_tick_rate_hz)
+
+    clear_entities()
+    ego = scenario.create_ego()
+    register_entity(EGO_ROLE_NAME, ego)
+    backend = TrafficManagerBackend(opts.tm_port)
+    ego.set_traffic_backend(backend)
+    _destroy_all_dynamic_actors(world, scenario_name)
+
+    settings = world.get_settings()
+    settings.synchronous_mode = True
+    settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
+    world.apply_settings(settings)
+
+    recording_started = False
+    tick_count = 0
+    result: Optional[ScenarioResult] = None
+    _mkdirs(opts.output_dir)
+    try:
+        backend.prepare(client, scenario.random_seed)
+        _logger.info("[%s] Traffic: %s", scenario_name, backend.describe())
+        _logger.info("[%s] === Setup start ===", scenario_name)
+        scenario.set_client(client, tm_port=opts.tm_port)
+        scenario.set_traffic_backend(backend)
+        scenario.setup()
+        scenario.require_goal()
+        _logger.info("[%s] Spawning ego vehicle ...", scenario_name)
+        ego_actor = ego.spawn(world, scenario.ego_config)
+        _logger.info("[%s] Ego spawned: id=%d blueprint=%s", scenario_name, ego_actor.id,
+                     ego_actor.type_id)
+
+        existence: BaseCondition = EntityExistenceCondition(EGO_ROLE_NAME, label="ego_existence")
+        scenario.register_fail_condition(existence)
+
+        for _ in range(_stabilize_ticks(scenario)):
+            _hold_vehicles_still(world)
+            pacer.pace()
+            world.tick()
+
+        _logger.info("[%s] === Init actions ===", scenario_name)
+        scenario.run_init(world)
+        ego.on_scenario_start(world)
+        _release_vehicles(world)
+
+        skip_ids = Set[int]()
+        if not EgoVehicle_uses_autopilot(ego):
+            skip_ids.add(ego_actor.id)
+        backend.start(world, skip_ids)
+        scenario.set_initial_speed(ego_actor)
+        _WARMUP_DONE[0] = True
+
+        log_path = _join(opts.output_dir, scenario_name + ".log")
+        try:
+            client.start_recorder(_abspath(log_path))
+        except carla.CarlaError as error:
+            _logger.warning("[%s] CARLA recorder unavailable (%s); continuing without a replay log",
+                            scenario_name, error.message)
+        else:
+            recording_started = True
+            _logger.info("[%s] Recording to %s", scenario_name, log_path)
+
+        timeout: BaseCondition = TimeoutCondition(opts.timeout_seconds, label="default_timeout")
+        scenario.register_fail_condition(timeout)
+
+        _logger.info("[%s] === Tick loop start ===", scenario_name)
+        clock = _Clock(world)
+        while not scenario.is_done():
+            pre_tick_elapsed = clock.simulated
+            tick_count += 1
+            for action in scenario._pre_tick_actions:
+                action.tick(world, pre_tick_elapsed)
+            for cb in scenario._pre_tick_callbacks:
+                cb(world)
+            pacer.pace()
+            world.tick()
+            elapsed = clock.simulated
+            ego.on_tick(world, elapsed)
+            backend.tick(world, elapsed)
+            for action in scenario._post_tick_actions:
+                action.tick(world, elapsed)
+            for cb in scenario._post_tick_callbacks:
+                cb(world)
+            if tick_count % _CONDITION_LOG_INTERVAL == 0:
+                _log_ego_opendrive_position(world, scenario_name, elapsed, tick_count)
+            result = _decide(scenario, scenario._pass_conditions, True, world, elapsed, tick_count,
+                             scenario_name)
+            if result is not None:
+                break
+            result = _decide(scenario, scenario._fail_conditions, False, world, elapsed,
+                             tick_count, scenario_name)
+            if result is not None:
+                break
+            if ego.termination_requested:
+                _logger.info("[%s] Ego entity requested termination at t=%.2fs (tick %d)",
+                             scenario_name, elapsed, tick_count)
+                result = ScenarioResult(False, "Ego entity requested session termination", elapsed,
+                                        _collect_condition_statuses(scenario, world, elapsed,
+                                                                    scenario_name))
+                break
+        if result is None:
+            result = ScenarioResult(True, "Scenario completed successfully", clock.simulated)
+    finally:
+        _logger.info("[%s] === Cleanup start ===", scenario_name)
+        _WARMUP_DONE[0] = False
+        try:
+            ego.on_scenario_end(world)
+        except carla.CarlaError as error:
+            _logger.warning("[%s] Ego entity teardown failed: %s", scenario_name, error.message)
+        try:
+            ego.destroy()
+            _logger.info("[%s] Ego vehicle destroyed", scenario_name)
+        except carla.CarlaError as error:
+            _logger.warning("[%s] Failed to destroy ego vehicle: %s", scenario_name, error.message)
+        if recording_started:
+            client.stop_recorder()
+            _logger.info("[%s] Recorder stopped", scenario_name)
+        backend.close()
+        _logger.info("[%s] === Cleanup done ===", scenario_name)
+
+    final = unwrap(result)
+    _logger.info("[%s] Result: %s — %s (%.2fs)", scenario_name, "PASSED" if final.passed else "FAILED",
+                 final.message, final.elapsed_seconds)
+    json_path = _join(opts.output_dir, scenario_name + "_result.json")
+    with open(json_path, "w") as f:
+        f.write(final.to_json())
+    _logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
+
+    try:
+        world.tick()
+        client.reload_world()
+        client.get_world().tick()
+        _logger.info("[%s] World reloaded and ticked", scenario_name)
+    except carla.CarlaError as error:
+        _logger.warning("[%s] reload_world failed — world may retain residual state: %s",
+                        scenario_name, error.message)
+    return final
+
+
+def EgoVehicle_uses_autopilot(ego) -> bool:
+    return type(ego).use_autopilot
+
+
+def _stabilize_ticks(scenario) -> int:
+    """scenario.STABILIZE_TICKS: a subclass's own, else BaseScenario's (Codon
+    does not inherit a ClassVar)."""
+    if hasattr(type(scenario), "STABILIZE_TICKS"):
+        return type(scenario).STABILIZE_TICKS
+    return BaseScenario.STABILIZE_TICKS

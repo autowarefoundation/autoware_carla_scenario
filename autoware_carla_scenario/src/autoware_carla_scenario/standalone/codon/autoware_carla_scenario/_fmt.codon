@@ -1,0 +1,391 @@
+# Python's text formatting, for the standalone runtime (docs/standalone.md).
+#
+# Codon 0.19 formats floats with {fmt} under std::locale("en_US.UTF-8"): a
+# format spec (f"{x:.2f}") raises on a machine without that locale, and
+# str(3.0) is "3", not Python's "3.0". A scenario binary must print what the
+# Python runner prints and must not depend on the locales of the machine it
+# is copied to, so this module replaces both, program-wide (@extend):
+#
+# * str(x) / repr(x) / f"{x}" of a float: Python's shortest round-trip repr;
+# * format(x, spec) / f"{x:spec}" of a float or an int: the spec subset
+#   scenarios use ([[fill]align][sign][0][width][.precision][type], types
+#   f, e, g, d, %, s and none), rounded exactly (typesafe_carla's fmt_f/fmt_g,
+#   which expand the double to its exact decimal value, as glibc and CPython
+#   do);
+# * "..." % args: printf-style formatting, for logging's lazy arguments.
+
+import math
+
+from typesafe_carla._fmt import _drop_digits, _exact_decimal, fmt_f, fmt_g
+
+
+def _special(x: float) -> str:
+    if x != x:
+        return "nan"
+    return "inf" if x > 0.0 else "-inf"
+
+
+def _is_finite(x: float) -> bool:
+    return x == x and x != math.inf and x != -math.inf
+
+
+def float_repr(x: float) -> str:
+    """repr(x) as CPython writes it: the shortest digits that read back as x."""
+    if not _is_finite(x):
+        return _special(x)
+    if x == 0.0:
+        return "-0.0" if math.copysign(1.0, x) < 0.0 else "0.0"
+    s = fmt_g(x, 17)
+    for p in range(1, 18):
+        candidate = fmt_g(x, p)
+        if float(candidate) == x:
+            s = candidate
+            break
+    neg = s.startswith("-")
+    if neg:
+        s = s[1:]
+    e = 0
+    mant = s
+    if "e" in s:
+        parts = s.split("e")
+        mant = parts[0]
+        e = int(parts[1])
+    ip = mant
+    fp = ""
+    if "." in mant:
+        parts = mant.split(".")
+        ip = parts[0]
+        fp = parts[1]
+    stripped_ip = ip.lstrip("0")
+    if stripped_ip:
+        exp = len(stripped_ip) - 1 + e
+    else:
+        exp = -(len(fp) - len(fp.lstrip("0"))) - 1 + e
+    digits = (ip + fp).lstrip("0").rstrip("0")
+    if not digits:
+        digits = "0"
+    if -4 <= exp < 16:
+        if exp >= 0:
+            if len(digits) <= exp + 1:
+                out = digits + "0" * (exp + 1 - len(digits)) + ".0"
+            else:
+                out = digits[: exp + 1] + "." + digits[exp + 1 :]
+        else:
+            out = "0." + "0" * (-exp - 1) + digits
+    else:
+        out = digits[0]
+        if len(digits) > 1:
+            out += "." + digits[1:]
+        out += ("e-" if exp < 0 else "e+") + _int_digits(abs(exp)).zfill(2)
+    return "-" + out if neg else out
+
+
+def _fmt_e(x: float, precision: int) -> str:
+    """printf("%.*e"), rounded exactly: exponent of at least two digits."""
+    if not _is_finite(x):
+        return _special(x)
+    neg = math.copysign(1.0, x) < 0.0
+    digits, k = _exact_decimal(abs(x))
+    n = len(digits)
+    exp = n - 1 - k if digits != "0" else 0
+    sig = _drop_digits(digits, n - (precision + 1))
+    if len(sig) > precision + 1:  # rounding carried into a new leading digit
+        exp += 1
+        sig = sig[: precision + 1]
+    sig = sig.zfill(precision + 1)
+    out = sig[0] + ("." + sig[1:] if precision > 0 else "")
+    out += ("e-" if exp < 0 else "e+") + _int_digits(abs(exp)).zfill(2)
+    return "-" + out if neg else out
+
+
+@tuple
+class _Spec:
+    fill: str
+    align: str
+    sign: str
+    zero: bool
+    width: int
+    precision: int  # -1: not given
+    kind: str
+
+
+def _parse_spec(spec: str) -> _Spec:
+    i = 0
+    n = len(spec)
+    fill = " "
+    align = ""
+    if n >= 2 and spec[1] in "<>^=":
+        fill = spec[0]
+        align = spec[1]
+        i = 2
+    elif n >= 1 and spec[0] in "<>^=":
+        align = spec[0]
+        i = 1
+    sign = "-"
+    if i < n and spec[i] in "+- ":
+        sign = spec[i]
+        i += 1
+    zero = False
+    if i < n and spec[i] == "0":
+        zero = True
+        i += 1
+    width = 0
+    while i < n and spec[i].isdigit():
+        width = width * 10 + int(spec[i])
+        i += 1
+    if i < n and spec[i] == ",":
+        raise ValueError("format spec '" + spec + "': ',' grouping is not supported")
+    precision = -1
+    if i < n and spec[i] == ".":
+        i += 1
+        precision = 0
+        while i < n and spec[i].isdigit():
+            precision = precision * 10 + int(spec[i])
+            i += 1
+    kind = ""
+    if i < n:
+        kind = spec[i]
+        i += 1
+    if i != n:
+        raise ValueError("invalid format spec '" + spec + "'")
+    return _Spec(fill, align, sign, zero, width, precision, kind)
+
+
+def _pad(body: str, negative: bool, spec: _Spec, numeric: bool) -> str:
+    sign = ""
+    if negative:
+        sign = "-"
+    elif numeric and spec.sign == "+":
+        sign = "+"
+    elif numeric and spec.sign == " ":
+        sign = " "
+    text = sign + body
+    if len(text) >= spec.width:
+        return text
+    gap = spec.width - len(text)
+    align = spec.align
+    fill = spec.fill
+    if spec.zero and align == "":
+        fill = "0"
+        align = "="
+    if align == "":
+        align = ">" if numeric else "<"
+    if align == "<":
+        return text + fill * gap
+    if align == "^":
+        left = gap // 2
+        return fill * left + text + fill * (gap - left)
+    if align == "=":
+        return sign + fill * gap + body
+    return fill * gap + text
+
+
+def format_float(x: float, spec: str) -> str:
+    if spec == "":
+        return float_repr(x)
+    s = _parse_spec(spec)
+    negative = x < 0.0 or (x == 0.0 and math.copysign(1.0, x) < 0.0)
+    a = abs(x)
+    kind = s.kind
+    if not _is_finite(x):
+        body = "nan" if x != x else "inf"
+        return _pad(body, x == -math.inf, s, True)
+    if kind == "f" or kind == "F":
+        body = fmt_f(a, s.precision if s.precision >= 0 else 6)
+    elif kind == "e" or kind == "E":
+        body = _fmt_e(a, s.precision if s.precision >= 0 else 6)
+    elif kind == "g" or kind == "G":
+        body = fmt_g(a, s.precision if s.precision >= 0 else 6)
+    elif kind == "%":
+        body = fmt_f(a * 100.0, s.precision if s.precision >= 0 else 6) + "%"
+    elif kind == "":
+        if s.precision >= 0:
+            body = fmt_g(a, max(s.precision, 1))
+            if "." not in body and "e" not in body:
+                body += ".0"
+        else:
+            body = float_repr(a)
+    else:
+        raise ValueError("unknown format code '" + kind + "' for a float")
+    return _pad(body, negative, s, True)
+
+
+def _int_digits(n: int) -> str:
+    """str(n) without int.__format__ (Codon's int.__repr__ calls __format__(""))."""
+    if n == 0:
+        return "0"
+    neg = n < 0
+    digits = List[str]()
+    while n != 0:
+        q = n // 10
+        r = n - q * 10
+        if r < 0:  # n < 0: C division truncates toward zero
+            r = -r
+        digits.append(chr(48 + r))
+        n = q
+    if neg:
+        digits.append("-")
+    digits.reverse()
+    return "".join(digits)
+
+
+def format_int(n: int, spec: str) -> str:
+    if spec == "":
+        return _int_digits(n)
+    s = _parse_spec(spec)
+    kind = s.kind
+    if kind == "f" or kind == "F" or kind == "e" or kind == "E" or kind == "g" \
+            or kind == "G" or kind == "%":
+        return format_float(float(n), spec)
+    if kind != "" and kind != "d":
+        raise ValueError("unknown format code '" + kind + "' for an int")
+    return _pad(_int_digits(n)[1:] if n < 0 else _int_digits(n), n < 0, s, True)
+
+
+def format_str(text: str, spec: str) -> str:
+    if spec == "":
+        return text
+    s = _parse_spec(spec)
+    if s.kind != "" and s.kind != "s":
+        raise ValueError("unknown format code '" + s.kind + "' for a str")
+    if s.precision >= 0:
+        text = text[: s.precision]
+    return _pad(text, False, s, False)
+
+
+@extend
+class float:
+    def __str__(self) -> str:
+        return float_repr(self)
+
+    def __repr__(self) -> str:
+        return float_repr(self)
+
+    def __format__(self, spec: str) -> str:
+        return format_float(self, spec)
+
+
+@extend
+class int:
+    def __format__(self, spec: str) -> str:
+        return format_int(self, spec)
+
+
+# --- printf-style ("..." % args) ------------------------------------------------
+
+# One argument of a printf-style format, converted to what each conversion
+# needs (Codon has no dynamic type to dispatch on at the time the format string
+# is read).
+@tuple
+class _PArg:
+    kind: int  # 0 str, 1 int, 2 float, 3 bool
+    i: int
+    f: float
+    s: str
+    r: str
+
+
+def _parg(value) -> _PArg:
+    if isinstance(value, bool):
+        return _PArg(3, int(value), float(int(value)), str(value), repr(value))
+    elif isinstance(value, int):
+        return _PArg(1, value, float(value), str(value), str(value))
+    elif isinstance(value, float):
+        return _PArg(2, int(value), value, float_repr(value), float_repr(value))
+    elif isinstance(value, str):
+        return _PArg(0, 0, 0.0, value, repr(value))
+    elif isinstance(value, None):
+        return _PArg(0, 0, 0.0, "None", "None")
+    elif isinstance(value, Optional):
+        if value is None:
+            return _PArg(0, 0, 0.0, "None", "None")
+        return _parg(unwrap(value))
+    else:
+        return _PArg(0, 0, 0.0, str(value), repr(value))
+
+
+def _pargs(args) -> List[_PArg]:
+    out = List[_PArg]()
+    if isinstance(args, Tuple):
+        for a in args:
+            out.append(_parg(a))
+    else:
+        out.append(_parg(args))
+    return out
+
+
+def percent_format(fmt: str, args: List[_PArg]) -> str:
+    """fmt % tuple(args), for the conversions s r d i f F e E g G x %."""
+    out = List[str]()
+    i = 0
+    n = len(fmt)
+    k = 0
+    while i < n:
+        c = fmt[i]
+        if c != "%":
+            j = i
+            while j < n and fmt[j] != "%":
+                j += 1
+            out.append(fmt[i:j])
+            i = j
+            continue
+        i += 1
+        if i < n and fmt[i] == "%":
+            out.append("%")
+            i += 1
+            continue
+        flags = ""
+        while i < n and fmt[i] in "-+ 0#":
+            flags += fmt[i]
+            i += 1
+        width = ""
+        while i < n and fmt[i].isdigit():
+            width += fmt[i]
+            i += 1
+        precision = ""
+        if i < n and fmt[i] == ".":
+            precision = "."
+            i += 1
+            while i < n and fmt[i].isdigit():
+                precision += fmt[i]
+                i += 1
+            if precision == ".":
+                precision = ".0"
+        if i >= n:
+            raise ValueError("incomplete format")
+        conv = fmt[i]
+        i += 1
+        if k >= len(args):
+            raise TypeError("not enough arguments for format string")
+        a = args[k]
+        k += 1
+        align = "<" if "-" in flags else ""
+        sign = "+" if "+" in flags else (" " if " " in flags else "")
+        zero = "0" if ("0" in flags and "-" not in flags) else ""
+        spec = align + sign + zero + width
+        if conv == "s":
+            out.append(format_str(a.s, align + width + precision))
+        elif conv == "r":
+            out.append(format_str(a.r, align + width + precision))
+        elif conv == "d" or conv == "i":
+            if a.kind == 0:
+                raise TypeError("%d format: a number is required")
+            out.append(format_int(a.i if a.kind != 2 else int(a.f), spec + "d"))
+        elif conv in "fFeEgG":
+            if a.kind == 0:
+                raise TypeError("%" + conv + " format: a real number is required")
+            p = precision if precision else ".6"
+            out.append(format_float(a.f, spec + p + conv))
+        elif conv == "x":
+            out.append(hex(a.i)[2:])
+        else:
+            raise ValueError("unsupported format character '" + conv + "'")
+    if k != len(args):
+        raise TypeError("not all arguments converted during string formatting")
+    return "".join(out)
+
+
+@extend
+class str:
+    def __mod__(self, args) -> str:
+        return percent_format(self, _pargs(args))

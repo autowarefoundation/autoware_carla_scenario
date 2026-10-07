@@ -1,0 +1,101 @@
+# The part of Python's logging a scenario calls, for the standalone runtime
+# (docs/standalone.md).
+#
+# Records go to stderr as "[name][LEVEL] - message", at INFO and above by
+# default (AUTOWARE_CARLA_SCENARIO_LOG_LEVEL, or basicConfig(level=...),
+# changes it). The message is formatted lazily, as logging does: "%s" % args
+# only when the record is emitted.
+
+import os
+import sys
+import internal.static as static
+
+DEBUG = 10
+INFO = 20
+WARNING = 30
+ERROR = 40
+CRITICAL = 50
+
+_NAMES = {10: "DEBUG", 20: "INFO", 30: "WARNING", 40: "ERROR", 50: "CRITICAL"}
+
+
+def _initial_level() -> int:
+    name = os.getenv("AUTOWARE_CARLA_SCENARIO_LOG_LEVEL", "INFO").upper()
+    for level, level_name in _NAMES.items():
+        if level_name == name:
+            return level
+    return INFO
+
+
+_root_level = [_initial_level()]
+
+
+def basicConfig(level: int = WARNING, **kwargs) -> None:
+    _root_level[0] = level
+
+
+def _format(msg: str, args) -> str:
+    if static.len(args) == 0:
+        return msg
+    return msg % args
+
+
+class Logger:
+    name: str
+    level: int  # 0: the root level
+
+    def __init__(self, name: str):
+        self.name = name
+        self.level = 0
+
+    def _effective(self) -> int:
+        return self.level if self.level != 0 else _root_level[0]
+
+    def isEnabledFor(self, level: int) -> bool:
+        return level >= self._effective()
+
+    def setLevel(self, level: int) -> None:
+        self.level = level
+
+    def _emit(self, level: int, text: str) -> None:
+        sys.stderr.write("[" + self.name + "][" + _NAMES.get(level, "LEVEL") + "] - " + text + "\n")
+        sys.stderr.flush()
+
+    def log(self, level: int, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(level):
+            self._emit(level, _format(msg, args))
+
+    def debug(self, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(DEBUG):
+            self._emit(DEBUG, _format(msg, args))
+
+    def info(self, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(INFO):
+            self._emit(INFO, _format(msg, args))
+
+    def warning(self, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(WARNING):
+            self._emit(WARNING, _format(msg, args))
+
+    def error(self, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(ERROR):
+            self._emit(ERROR, _format(msg, args))
+
+    def exception(self, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(ERROR):
+            self._emit(ERROR, _format(msg, args))
+
+    def critical(self, msg: str, *args, **kwargs) -> None:
+        if self.isEnabledFor(CRITICAL):
+            self._emit(CRITICAL, _format(msg, args))
+
+
+_loggers = Dict[str, Logger]()
+
+
+def getLogger(name: str = "root") -> Logger:
+    if name in _loggers:
+        return _loggers[name]
+    created = Logger(name)
+    _loggers[name] = created
+    return created

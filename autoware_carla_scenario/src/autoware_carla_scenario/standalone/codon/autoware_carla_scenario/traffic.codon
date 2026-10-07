@@ -1,0 +1,289 @@
+# autoware_carla_scenario.traffic for the standalone runtime
+# (docs/standalone.md): the manoeuvre directions, and the TrafficManager
+# backend (traffic/traffic_manager.py), the one backend a scenario binary
+# drives traffic with. An entity argument is generic (entity.codon's
+# BackendDriven, which imports this module).
+
+import math
+import logging
+import typesafe_carla.carla as carla
+
+from .constants import DEFAULT_TM_PORT, LANE_CHANGE_CENTER_TOLERANCE_M, \
+    LANE_CHANGE_HEADING_TOLERANCE_DEG
+
+_logger = logging.getLogger("autoware_carla_scenario.traffic.traffic_manager")
+
+TURN_SEARCH_DISTANCE_M: float = 200.0
+TURN_WAYPOINT_STEP_M: float = 2.0
+TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
+
+
+@tuple
+class TurnDirection:
+    value: str
+    LEFT: ClassVar[TurnDirection] = TurnDirection("left")
+    RIGHT: ClassVar[TurnDirection] = TurnDirection("right")
+    STRAIGHT: ClassVar[TurnDirection] = TurnDirection("straight")
+
+    def __eq__(self, other: TurnDirection) -> bool:
+        return self.value == other.value
+
+    def __ne__(self, other: TurnDirection) -> bool:
+        return self.value != other.value
+
+    def target_deg(self) -> float:
+        if self.value == "left":
+            return -90.0
+        if self.value == "right":
+            return 90.0
+        return 0.0
+
+
+@tuple
+class LaneChangeDirection:
+    value: str
+    LEFT: ClassVar[LaneChangeDirection] = LaneChangeDirection("left")
+    RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")
+
+    def __eq__(self, other: LaneChangeDirection) -> bool:
+        return self.value == other.value
+
+    def __ne__(self, other: LaneChangeDirection) -> bool:
+        return self.value != other.value
+
+    def to_carla_bool(self) -> bool:
+        return self.value == "right"
+
+
+def normalize_angle_deg(angle: float) -> float:
+    """kinematics.angle.normalize_angle_deg: into [-180, 180)."""
+    r = math.fmod(angle + 180.0, 360.0)
+    if r < 0.0:
+        r += 360.0
+    return r - 180.0
+
+
+def _lane_key_of(wp: carla.Waypoint) -> Tuple[int, int]:
+    return (wp.road_id, wp.lane_id)
+
+
+def _adjacent_lane(carla_map: carla.Map, location: carla.Location,
+                   direction: LaneChangeDirection) -> Optional[Tuple[int, int]]:
+    found = carla_map.get_waypoint(location, project_to_road=True)
+    if found is None:
+        return None
+    wp = unwrap(found)
+    neighbour = wp.get_right_lane() if direction == LaneChangeDirection.RIGHT else wp.get_left_lane()
+    if neighbour is None:
+        return None
+    return _lane_key_of(unwrap(neighbour))
+
+
+def _walk_to_junction(start_wp: carla.Waypoint, search_distance: float, waypoint_step: float
+                      ) -> Tuple[Optional[carla.Waypoint], List[carla.Waypoint]]:
+    none: Optional[carla.Waypoint] = None
+    wp = start_wp
+    distance = 0.0
+    while wp.is_junction and distance < search_distance:
+        nxt = wp.next(waypoint_step)
+        if len(nxt) == 0:
+            return (none, List[carla.Waypoint]())
+        wp = nxt[0]
+        distance += waypoint_step
+    while distance < search_distance:
+        next_wps = wp.next(waypoint_step)
+        if len(next_wps) == 0:
+            return (none, List[carla.Waypoint]())
+        entries = [w for w in next_wps if w.is_junction]
+        if len(entries) > 0:
+            found: Optional[carla.Waypoint] = wp
+            return (found, entries)
+        wp = next_wps[0]
+        distance += waypoint_step
+    return (none, List[carla.Waypoint]())
+
+
+def _trace_through_junction(entry_wp: carla.Waypoint, waypoint_step: float,
+                            post_junction_distance: float) -> List[carla.Waypoint]:
+    path = [entry_wp]
+    wp = entry_wp
+    safety_limit = 500
+    while wp.is_junction and safety_limit > 0:
+        nxt = wp.next(waypoint_step)
+        if len(nxt) == 0:
+            break
+        wp = nxt[0]
+        path.append(wp)
+        safety_limit -= 1
+    post = 0.0
+    while post < post_junction_distance:
+        nxt = wp.next(waypoint_step)
+        if len(nxt) == 0:
+            break
+        wp = nxt[0]
+        path.append(wp)
+        post += waypoint_step
+    return path
+
+
+def compute_turn_route(current_wp: carla.Waypoint, direction: TurnDirection,
+                       search_distance: float = TURN_SEARCH_DISTANCE_M,
+                       waypoint_step: float = TURN_WAYPOINT_STEP_M,
+                       post_junction_distance: float = TURN_POST_JUNCTION_DISTANCE_M
+                       ) -> List[carla.Location]:
+    pre_junction, junction_entries = _walk_to_junction(current_wp, search_distance, waypoint_step)
+    if pre_junction is None or len(junction_entries) == 0:
+        return List[carla.Location]()
+    pre_junction_wp = unwrap(pre_junction)
+    branches = List[List[carla.Waypoint]]()
+    for entry_wp in junction_entries:
+        branch = _trace_through_junction(entry_wp, waypoint_step, post_junction_distance)
+        if len(branch) > 0:
+            branches.append(branch)
+    if len(branches) == 0:
+        return List[carla.Location]()
+    entry_yaw = pre_junction_wp.transform.rotation.yaw
+    target = direction.target_deg()
+    best = -1
+    best_score = math.inf
+    for i in range(len(branches)):
+        branch = branches[i]
+        exit_yaw = branch[len(branch) - 1].transform.rotation.yaw
+        diff = normalize_angle_deg(exit_yaw - entry_yaw)
+        score = abs(diff - target)
+        _logger.debug("turn route: branch exit_yaw=%.1f, diff=%.1f, score=%.1f", exit_yaw, diff, score)
+        if score < best_score:
+            best_score = score
+            best = i
+    if best < 0:
+        return List[carla.Location]()
+    chosen = branches[best]
+    diff = normalize_angle_deg(chosen[len(chosen) - 1].transform.rotation.yaw - entry_yaw)
+    _logger.info("turn route: selected branch with heading change %.1f deg (target: %.1f deg %s)",
+                 diff, target, direction.value)
+    return [wp.transform.location for wp in chosen]
+
+
+class TrafficManagerBackend:
+    """traffic.TrafficManagerBackend: CARLA's TrafficManager drives the vehicles."""
+    name: ClassVar[str] = "traffic_manager"
+    port: int
+    _client: Optional[carla.Client]
+    _random_seed: int
+    _closed: bool
+    _started: bool
+
+    def __init__(self, port: int = DEFAULT_TM_PORT):
+        self.port = port
+        self._client = None
+        self._random_seed = 0
+        self._closed = False
+        self._started = False
+
+    def _tm(self) -> carla.TrafficManager:
+        if self._client is None:
+            raise RuntimeError("TrafficManagerBackend: no CARLA client")
+        return unwrap(self._client).get_trafficmanager(self.port)
+
+    def prepare(self, client: carla.Client, random_seed: int) -> None:
+        self._closed = False
+        self._client = client
+        self._random_seed = random_seed
+        tm = self._tm()
+        tm.set_synchronous_mode(True)
+        tm.set_random_device_seed(random_seed)
+
+    def describe(self) -> str:
+        return ("{'backend': 'traffic_manager', 'port': " + str(self.port)
+                + ", 'random_seed': " + str(self._random_seed) + "}")
+
+    def start(self, world: carla.World, skip_actor_ids: Set[int]) -> None:
+        self._started = True
+        enabled = 0
+        for actor in world.get_actors().filter("vehicle.*"):
+            if actor.id in skip_actor_ids:
+                continue
+            actor.as_vehicle().set_autopilot(True, self.port)
+            enabled += 1
+        if enabled > 0:
+            _logger.info("Autopilot enabled on %d vehicle(s)", enabled)
+        if len(skip_actor_ids) > 0:
+            ids = sorted(list(skip_actor_ids))
+            _logger.info("Autopilot skipped for %s — external control expected",
+                         ", ".join([str(i) for i in ids]))
+
+    def tick(self, world: carla.World, elapsed: float) -> None:
+        pass
+
+    def close(self) -> None:
+        self._started = False
+        if self._closed or self._client is None:
+            return
+        self._closed = True
+        try:
+            self._tm().shut_down()
+        except carla.CarlaError as exc:
+            _logger.warning("TrafficManager shut down failed: %s", exc.message)
+        else:
+            _logger.info("TrafficManager shut down")
+
+    def change_lane(self, entity, world: carla.World, direction: LaneChangeDirection) -> None:
+        if entity.actor is None:
+            _logger.warning("%s: %s asked for before the actor exists", entity.label(), "change_lane")
+            return
+        actor = unwrap(entity.actor)
+        carla_map = world.get_map()
+        entity._lane_change_target = _adjacent_lane(carla_map, actor.get_location(), direction)
+        entity._lane_change_map = carla_map
+        if entity._lane_change_target is None:
+            _logger.warning("%s: no lane %s to change into", entity.label(), direction.value)
+        self._tm().force_lane_change(actor.as_vehicle(), direction.to_carla_bool())
+        _logger.info("%s: forced a %s lane change", entity.label(), direction.value)
+
+    def lane_change_finished(self, entity, world: carla.World) -> bool:
+        if entity._lane_change_target is None or entity._lane_change_map is None \
+                or entity.actor is None:
+            return False
+        target = unwrap(entity._lane_change_target)
+        carla_map = unwrap(entity._lane_change_map)
+        transform = unwrap(entity.actor).get_transform()
+        found = carla_map.get_waypoint(transform.location, project_to_road=True)
+        if found is None:
+            return False
+        waypoint = unwrap(found)
+        if _lane_key_of(waypoint) != target:
+            return False
+        if transform.location.distance(waypoint.transform.location) > LANE_CHANGE_CENTER_TOLERANCE_M:
+            return False
+        error = abs(normalize_angle_deg(transform.rotation.yaw - waypoint.transform.rotation.yaw))
+        return error <= LANE_CHANGE_HEADING_TOLERANCE_DEG
+
+    def set_desired_speed(self, entity, world: carla.World, speed_kmh: float) -> None:
+        if entity.actor is None:
+            _logger.warning("%s: %s asked for before the actor exists", entity.label(),
+                            "set_desired_speed")
+            return
+        self._tm().set_desired_speed(unwrap(entity.actor).as_vehicle(), speed_kmh)
+        _logger.debug("%s: desired speed set to %.1f km/h", entity.label(), speed_kmh)
+
+    def turn_at_junction(self, entity, world: carla.World, direction: TurnDirection,
+                         search_distance: float = TURN_SEARCH_DISTANCE_M,
+                         waypoint_step: float = TURN_WAYPOINT_STEP_M,
+                         post_junction_distance: float = TURN_POST_JUNCTION_DISTANCE_M) -> None:
+        if entity.actor is None:
+            _logger.warning("%s: %s asked for before the actor exists", entity.label(),
+                            "turn_at_junction")
+            return
+        actor = unwrap(entity.actor)
+        found = world.get_map().get_waypoint(actor.get_location())
+        if found is None:
+            _logger.warning("%s: no %s turn route found", entity.label(), direction.value)
+            return
+        path = compute_turn_route(unwrap(found), direction, search_distance, waypoint_step,
+                                  post_junction_distance)
+        if len(path) == 0:
+            _logger.warning("%s: no %s turn route found", entity.label(), direction.value)
+            return
+        self._tm().set_path(actor.as_vehicle(), path)
+        _logger.info("%s: set a %s turn route (%d points)", entity.label(), direction.value,
+                     len(path))

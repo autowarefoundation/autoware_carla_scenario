@@ -1,0 +1,403 @@
+# autoware_carla_scenario.entity for the standalone runtime
+# (docs/standalone.md).
+#
+# EgoConfig lives in scenario_base in Python; it is defined here, next to the
+# EgoVehicle.spawn() that takes it, and scenario_base re-exports it.
+# SpawnLocation (Union[SpawnPointIndex, SpawnTransform] in Python) is the base
+# class of the two here. BackendDriven (traffic/driven.py) is the base class of
+# every entity the registry holds, so the registry has one type to hold; each
+# entity derives from it directly (Codon 0.19 miscompiles deeper hierarchies).
+#
+# The ego is the autopilot ego (entity/ego.py): TrafficManager drives it. The
+# Autoware and external-driver egos are not in the standalone runtime.
+
+import math
+import logging
+import typesafe_carla.carla as carla
+
+from ._tc import _keyword_only
+from .constants import EGO_ROLE_NAME, DEFAULT_TM_PORT
+from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
+                         _expect_optional_ground_projection)
+from .entity_role import EntityRole, _expect_role
+from .traffic import TrafficManagerBackend, LaneChangeDirection, TurnDirection, \
+    TURN_SEARCH_DISTANCE_M, TURN_WAYPOINT_STEP_M, TURN_POST_JUNCTION_DISTANCE_M
+
+_logger = logging.getLogger("autoware_carla_scenario.entity")
+
+#: VehicleEntity.spawn() refuses once the warm-up ticks have run
+#: (entity/vehicle_entity.py _warmup_done).
+_WARMUP_DONE = [False]
+
+
+class SpawnLocation:
+    _index: int  # -1: a transform
+
+    def __init__(self):
+        self._index = -1
+
+    def _transform(self) -> carla.Transform:
+        raise NotImplementedError()
+
+
+class SpawnTransform(SpawnLocation):
+    value: carla.Transform
+
+    def __init__(self, value: carla.Transform):
+        super().__init__()
+        self.value = value
+
+    def _transform(self) -> carla.Transform:
+        return self.value
+
+
+class SpawnPointIndex(SpawnLocation):
+    value: int
+
+    def __init__(self, value: int):
+        super().__init__()
+        self.value = value
+        self._index = value
+
+    def _transform(self) -> carla.Transform:
+        raise NotImplementedError()
+
+
+class VehicleEntityConfig:
+    role_name: EntityRole
+    spawn_location: SpawnLocation
+    vehicle_type: str
+    initial_speed_kmh: float
+    spawn_retry_max_count: int
+    spawn_retry_t_step: float
+    spawn_retry_z_step: float
+    od_pose: Optional[OpenDrivePose]
+    ground_projection: Optional[GroundProjectionConfig]
+
+    def __init__(self, role_name, spawn_location: SpawnLocation,
+                 vehicle_type: str = "vehicle.mini.cooper", initial_speed_kmh: float = 0.0,
+                 spawn_retry_max_count: int = 0, spawn_retry_t_step: float = 0.1,
+                 spawn_retry_z_step: float = 0.5, od_pose: Optional[OpenDrivePose] = None,
+                 ground_projection = None):
+        self.role_name = _expect_role(role_name)
+        self.spawn_location = spawn_location
+        self.vehicle_type = vehicle_type
+        self.initial_speed_kmh = initial_speed_kmh
+        self.spawn_retry_max_count = spawn_retry_max_count
+        self.spawn_retry_t_step = spawn_retry_t_step
+        self.spawn_retry_z_step = spawn_retry_z_step
+        self.od_pose = od_pose
+        self.ground_projection = _expect_optional_ground_projection(ground_projection)
+
+
+def _expect_optional_lanelet2_poses(poses) -> List[Lanelet2Pose]:
+    """An Optional[Sequence[Lanelet2Pose]] argument."""
+    out = List[Lanelet2Pose]()
+    if isinstance(poses, None):
+        pass
+    elif isinstance(poses, Optional[NoneType]):
+        pass
+    elif isinstance(poses, Optional):
+        if poses is not None:
+            for pose in unwrap(poses):
+                out.append(pose)
+    else:
+        for pose in poses:
+            out.append(pose)
+    return out
+
+
+class EgoConfig(VehicleEntityConfig):
+    goal_pose: Optional[Lanelet2Pose]
+    waypoint_poses: List[Lanelet2Pose]
+
+    def __init__(self, spawn_location: SpawnLocation, vehicle_type: str = "vehicle.mini.cooper",
+                 initial_speed_kmh: float = 0.0, spawn_retry_max_count: int = 0,
+                 spawn_retry_t_step: float = 0.1, spawn_retry_z_step: float = 0.5, *_kw,
+                 goal_pose: Optional[Lanelet2Pose] = None, waypoint_poses = None):
+        _keyword_only(_kw, "EgoConfig(): goal_pose and waypoint_poses")
+        super().__init__(EGO_ROLE_NAME, spawn_location, vehicle_type, initial_speed_kmh,
+                         spawn_retry_max_count, spawn_retry_t_step, spawn_retry_z_step)
+        self.goal_pose = goal_pose
+        self.waypoint_poses = _expect_optional_lanelet2_poses(waypoint_poses)
+
+
+# --- Spawning (entity/_spawn.py) ----------------------------------------------------
+
+
+def spawn_vehicle_actor(world: carla.World, vehicle_type: str, role_name: str,
+                        spawn_location: SpawnLocation, od_pose: Optional[OpenDrivePose],
+                        spawn_retry_max_count: int, spawn_retry_t_step: float,
+                        spawn_retry_z_step: float) -> carla.Actor:
+    bp_lib = world.get_blueprint_library()
+    vehicle_ids = [bp.id for bp in bp_lib.filter("vehicle.*")]
+    if vehicle_type not in vehicle_ids:
+        raise ValueError(f"Vehicle blueprint {repr(vehicle_type)} is not available. "
+                         f"Available vehicles: {sorted(vehicle_ids)}")
+    spawn_points: Optional[List[carla.Transform]] = None
+    resolved: carla.Transform
+    if spawn_location._index >= 0:
+        points = world.get_map().get_spawn_points()
+        spawn_points = points
+        if spawn_location._index >= len(points):
+            raise ValueError(f"Spawn index {spawn_location._index} is out of range. The map has "
+                             f"{len(points)} spawn points (valid indices: 0–{len(points) - 1}).")
+        resolved = points[spawn_location._index]
+    else:
+        resolved = spawn_location._transform()
+    vehicle_bp = bp_lib.find(vehicle_type)
+    vehicle_bp.set_attribute("role_name", role_name)
+    _logger.info("Spawning '%s' at x=%.3f, y=%.3f, z=%.3f", role_name, resolved.location.x,
+                 resolved.location.y, resolved.location.z)
+    actor = world.try_spawn_actor(vehicle_bp, resolved)
+    if actor is None and spawn_retry_max_count > 0 and od_pose is not None:
+        yaw_rad = math.radians(resolved.rotation.yaw)
+        sin_yaw = math.sin(yaw_rad)
+        cos_yaw = math.cos(yaw_rad)
+        base_x = resolved.location.x
+        base_y = resolved.location.y
+        base_z = resolved.location.z
+        _logger.info("Spawn failed for '%s', starting retry (max_count=%d, t_step=%.3f, "
+                     "z_step=%.3f, base=%.3f, %.3f, %.3f)", role_name, spawn_retry_max_count,
+                     spawn_retry_t_step, spawn_retry_z_step, base_x, base_y, base_z)
+        signs = [(-1, "-"), (0, "0"), (1, "+")]
+        for attempt in range(1, spawn_retry_max_count + 1):
+            t_delta = spawn_retry_t_step * attempt
+            z_delta = spawn_retry_z_step * attempt
+            for t_sign, t_label in signs:
+                for z_sign, z_label in signs:
+                    if actor is not None:
+                        break
+                    if t_sign == 0 and z_sign == 0:
+                        continue
+                    t_offset = t_sign * t_delta
+                    z_offset = z_sign * z_delta
+                    retry = carla.Transform(
+                        carla.Location(x=base_x + sin_yaw * t_offset, y=base_y - cos_yaw * t_offset,
+                                       z=base_z + z_offset), resolved.rotation)
+                    _logger.info("Spawn retry %d/%d (%st,%sz) for '%s': t=%.3f z=%.3f "
+                                 "(x=%.3f, y=%.3f, z=%.3f)", attempt, spawn_retry_max_count,
+                                 t_label, z_label, role_name, t_offset, z_offset,
+                                 retry.location.x, retry.location.y, retry.location.z)
+                    actor = world.try_spawn_actor(vehicle_bp, retry)
+                    if actor is not None:
+                        _logger.info("Spawn succeeded on retry %d (%st,%sz) for '%s' "
+                                     "(x=%.3f, y=%.3f, z=%.3f)", attempt, t_label, z_label,
+                                     role_name, retry.location.x, retry.location.y,
+                                     retry.location.z)
+            if actor is not None:
+                break
+    if actor is None:
+        points = world.get_map().get_spawn_points() if spawn_points is None else unwrap(spawn_points)
+        suggestions = List[str]()
+        for i in range(min(5, len(points))):
+            sp = points[i]
+            suggestions.append(f"  [{i}] x={sp.location.x:.1f}, y={sp.location.y:.1f}, "
+                               f"z={sp.location.z:.1f}")
+        raise RuntimeError(f"Failed to spawn vehicle '{role_name}' at x={resolved.location.x}, "
+                           f"y={resolved.location.y}, z={resolved.location.z}. The location may be "
+                           "occupied or out of map bounds. Try one of these spawn points:\n"
+                           + "\n".join(suggestions))
+    return unwrap(actor)
+
+
+# --- Entities -----------------------------------------------------------------------
+
+
+class BackendDriven:
+    """traffic/driven.py: an entity a traffic backend drives."""
+    _traffic_backend: Optional[TrafficManagerBackend]
+    _lane_change_target: Optional[Tuple[int, int]]
+    _lane_change_map: Optional[carla.Map]
+    _vehicle: Optional[carla.Actor]
+
+    def __init__(self):
+        self._traffic_backend = None
+        self._lane_change_target = None
+        self._lane_change_map = None
+        self._vehicle = None
+
+    @property
+    def actor(self) -> Optional[carla.Actor]:
+        return self._vehicle
+
+    def label(self) -> str:
+        return "entity"
+
+    def _initial_speed(self) -> float:
+        return 0.0
+
+    def set_traffic_backend(self, backend: TrafficManagerBackend) -> None:
+        self._traffic_backend = backend
+
+    def set_client(self, client: carla.Client, tm_port: int = DEFAULT_TM_PORT) -> None:
+        backend = TrafficManagerBackend(tm_port)
+        backend._client = client
+        self._traffic_backend = backend
+
+    def _backend(self) -> TrafficManagerBackend:
+        if self._traffic_backend is None:
+            raise RuntimeError(self.label() + ": no traffic backend to drive it")
+        return unwrap(self._traffic_backend)
+
+    def change_lane(self, world: carla.World, direction: LaneChangeDirection) -> None:
+        self._backend().change_lane(self, world, direction)
+
+    def lane_change_finished(self, world: carla.World) -> bool:
+        return self._backend().lane_change_finished(self, world)
+
+    def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
+        self._backend().set_desired_speed(self, world, speed_kmh)
+
+    def turn_at_junction(self, world: carla.World, direction: TurnDirection,
+                         search_distance: float = TURN_SEARCH_DISTANCE_M,
+                         waypoint_step: float = TURN_WAYPOINT_STEP_M,
+                         post_junction_distance: float = TURN_POST_JUNCTION_DISTANCE_M) -> None:
+        self._backend().turn_at_junction(self, world, direction, search_distance, waypoint_step,
+                                         post_junction_distance)
+
+    def destroy(self) -> None:
+        if self._vehicle is not None:
+            unwrap(self._vehicle).destroy()
+            self._vehicle = None
+
+
+class VehicleEntity(BackendDriven):
+    _config: VehicleEntityConfig
+
+    def __init__(self, config: VehicleEntityConfig):
+        super().__init__()
+        self._config = config
+
+    def label(self) -> str:
+        return str(self._config.role_name)
+
+    def _initial_speed(self) -> float:
+        return self._config.initial_speed_kmh
+
+    @property
+    def role_name(self) -> EntityRole:
+        return self._config.role_name
+
+    @property
+    def vehicle_type(self) -> str:
+        return self._config.vehicle_type
+
+    @property
+    def initial_speed_kmh(self) -> float:
+        return self._config.initial_speed_kmh
+
+    def spawn(self, world: carla.World) -> carla.Actor:
+        if _WARMUP_DONE[0]:
+            raise RuntimeError("CARLA NPCs require ~5 ticks to stabilise after spawning. Spawn "
+                               "operations must be performed in setup() before the warm-up phase.")
+        c = self._config
+        actor = spawn_vehicle_actor(world, c.vehicle_type, str(c.role_name), c.spawn_location,
+                                    c.od_pose, c.spawn_retry_max_count, c.spawn_retry_t_step,
+                                    c.spawn_retry_z_step)
+        self._vehicle = actor
+        return actor
+
+
+class EgoVehicle(BackendDriven):
+    """entity/ego.py EgoVehicle: TrafficManager's autopilot drives the ego."""
+    use_autopilot: ClassVar[bool] = True
+    requires_goal: ClassVar[bool] = False
+    attaches_to_existing_actor: ClassVar[bool] = False
+
+    def __init__(self):
+        super().__init__()
+
+    def _acs_ego_vehicle(self) -> int:
+        return 0
+
+    def label(self) -> str:
+        return str(EGO_ROLE_NAME)
+
+    @property
+    def is_initialized(self) -> bool:
+        return True
+
+    @property
+    def termination_requested(self) -> bool:
+        return False
+
+    def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
+                 initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
+                 waypoints = ()) -> None:
+        _keyword_only(_kw, "EgoVehicle.route_to(): initial_pose, ground_projection and waypoints")
+
+    def spawn(self, world: carla.World, config: EgoConfig) -> carla.Actor:
+        actor = spawn_vehicle_actor(world, config.vehicle_type, str(EGO_ROLE_NAME),
+                                    config.spawn_location, config.od_pose,
+                                    config.spawn_retry_max_count, config.spawn_retry_t_step,
+                                    config.spawn_retry_z_step)
+        self._vehicle = actor
+        return actor
+
+    def on_scenario_start(self, world: carla.World) -> None:
+        pass
+
+    def on_tick(self, world: carla.World, elapsed: float) -> None:
+        pass
+
+    def on_scenario_end(self, world: carla.World) -> None:
+        pass
+
+
+def _expect_optional_ego_vehicle(ego) -> Optional[EgoVehicle]:
+    """An Optional[EgoVehicle] argument (Codon's Optional does not take a subclass)."""
+    if isinstance(ego, None):
+        return None
+    elif isinstance(ego, Optional[NoneType]):
+        return None
+    elif isinstance(ego, Optional):
+        if ego is None:
+            return None
+        return _expect_ego_vehicle(unwrap(ego))
+    else:
+        return _expect_ego_vehicle(ego)
+
+
+def _expect_ego_vehicle(ego: EgoVehicle) -> EgoVehicle:
+    if not isinstance(ego, EgoVehicle):
+        compile_error("the standalone runtime runs the autopilot ego (EgoVehicle) only")
+    return ego
+
+
+class PedestrianEntityConfig:
+    role_name: EntityRole
+    spawn_location: SpawnTransform
+    walker_type: str
+
+    def __init__(self, role_name, spawn_location: SpawnTransform,
+                 walker_type: str = "walker.pedestrian.0001"):
+        self.role_name = _expect_role(role_name)
+        self.spawn_location = spawn_location
+        self.walker_type = walker_type
+
+
+class PedestrianEntity:
+    def __init__(self, config: PedestrianEntityConfig):
+        compile_error("PedestrianEntity is not supported by the standalone runtime yet")
+
+
+# --- The registry (entity/registry.py) ---------------------------------------------
+
+_ENTITIES = Dict[str, BackendDriven]()
+
+
+def register_entity(role_name, entity) -> None:
+    driven: BackendDriven = entity
+    _ENTITIES[str(_expect_role(role_name))] = driven
+
+
+def find_entity_by_role_name(role_name) -> Optional[BackendDriven]:
+    key = str(_expect_role(role_name))
+    if key in _ENTITIES:
+        return _ENTITIES[key]
+    return None
+
+
+def clear_entities() -> None:
+    _ENTITIES.clear()

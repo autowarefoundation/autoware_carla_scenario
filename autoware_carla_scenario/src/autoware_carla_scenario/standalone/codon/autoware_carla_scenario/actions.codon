@@ -1,0 +1,341 @@
+# autoware_carla_scenario.actions for the standalone runtime
+# (docs/standalone.md). BaseAction.tick() is actions/base.py's lifecycle
+# (StandBy -> StartTransition -> Running -> EndTransition -> Complete) as is;
+# an action the runtime does not implement yet is a build error at the line
+# that constructs it.
+
+import logging
+import typesafe_carla.carla as carla
+
+from ._tc import _keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool
+from .conditions import (BaseCondition, AlwaysTrueCondition, LaneChangeSettledCondition,
+                         _expect_optional_condition)
+from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
+                         _expect_optional_ground_projection)
+from .entity import find_entity_by_role_name
+from .entity_role import EntityRole, _expect_role
+from .traffic import TurnDirection, LaneChangeDirection
+
+_logger = logging.getLogger("autoware_carla_scenario.actions")
+
+
+@tuple
+class TickTiming:
+    value: str
+    PRE_TICK: ClassVar[TickTiming] = TickTiming("pre_tick")
+    POST_TICK: ClassVar[TickTiming] = TickTiming("post_tick")
+
+
+@tuple
+class ActionState:
+    value: str
+    STANDBY: ClassVar[ActionState] = ActionState("standbyState")
+    START_TRANSITION: ClassVar[ActionState] = ActionState("startTransition")
+    RUNNING: ClassVar[ActionState] = ActionState("runningState")
+    END_TRANSITION: ClassVar[ActionState] = ActionState("endTransition")
+    COMPLETE: ClassVar[ActionState] = ActionState("completeState")
+
+    def __eq__(self, other: ActionState) -> bool:
+        return self.value == other.value
+
+    def __ne__(self, other: ActionState) -> bool:
+        return self.value != other.value
+
+
+@tuple
+class TrafficLightTarget:
+    value: str
+    ALL: ClassVar[TrafficLightTarget] = TrafficLightTarget("all")
+
+
+class BaseAction:
+    label: str
+    REISSUES_BY_DEFAULT: ClassVar[bool] = False
+    _condition: BaseCondition
+    _timing: TickTiming
+    _once: bool
+    _until: Optional[BaseCondition]
+    _reissue: Optional[bool]
+    _done: bool
+    _lifecycle: ActionState
+
+    def __init__(self, label: str, condition = None,
+                 timing: TickTiming = TickTiming("post_tick"), *_kw, once: bool = True,
+                 until = None, reissue = None):
+        _keyword_only(_kw, "BaseAction(): once, until and reissue")
+        if not label:
+            raise ValueError("BaseAction: label must not be empty. Provide a non-empty string "
+                             "to identify this action.")
+        self.label = label
+        gate = _expect_optional_condition(condition)
+        if gate is None:
+            always: BaseCondition = AlwaysTrueCondition()
+            self._condition = always
+        else:
+            self._condition = unwrap(gate)
+        self._timing = timing
+        self._once = once
+        self._until = _expect_optional_condition(until)
+        self._reissue = _expect_optional_bool(reissue)
+        self._done = False
+        self._lifecycle = ActionState.STANDBY
+
+    def _acs_action(self) -> int:
+        """Marks an action for _acs_list (_lists.codon)."""
+        return 0
+
+    def action_type(self) -> str:
+        return "BaseAction"
+
+    @property
+    def timing(self) -> TickTiming:
+        return self._timing
+
+    @property
+    def done(self) -> bool:
+        return self._done
+
+    @property
+    def state(self) -> ActionState:
+        return self._lifecycle
+
+    def _reissues_by_default(self) -> bool:
+        return False
+
+    @property
+    def reissues_while_running(self) -> bool:
+        if self._reissue is not None:
+            return unwrap(self._reissue)
+        return self._reissues_by_default()
+
+    def execute(self, world: carla.World) -> None:
+        raise NotImplementedError("BaseAction.execute()")
+
+    def tick(self, world: carla.World, elapsed: float) -> None:
+        just_started = False
+        if self._lifecycle == ActionState.START_TRANSITION:
+            self._lifecycle = ActionState.RUNNING
+            just_started = True
+        if self._lifecycle == ActionState.RUNNING:
+            reissues = self.reissues_while_running
+            if reissues:
+                self.execute(world)
+            finished = self._until is None or unwrap(self._until).evaluate(world, elapsed) is not None
+            if not finished:
+                return
+            self._lifecycle = ActionState.END_TRANSITION
+            if not just_started or self._until is not None or reissues:
+                return
+        if self._lifecycle == ActionState.END_TRANSITION:
+            self._lifecycle = ActionState.COMPLETE if self._once else ActionState.STANDBY
+        if self._lifecycle != ActionState.STANDBY:
+            return
+        result = self._condition.evaluate(world, elapsed)
+        if result is None:
+            return
+        _logger.info("%s triggered: %s", self.action_type(), unwrap(result).message)
+        self.execute(world)
+        self._done = True
+        self._lifecycle = ActionState.START_TRANSITION
+
+
+def _as_action(action) -> BaseAction:
+    if not hasattr(action, "_acs_action"):
+        compile_error("expected an action (a BaseAction subclass)")
+    out: BaseAction = action
+    return out
+
+
+def _expect_action(action) -> BaseAction:
+    return _as_action(action)
+
+
+def _expect_lanelet2_poses(poses) -> List[Lanelet2Pose]:
+    """A Sequence[Lanelet2Pose] argument."""
+    out = List[Lanelet2Pose]()
+    for pose in poses:
+        out.append(pose)
+    return out
+
+
+class LaneChangeAction(BaseAction):
+    _entity_name: EntityRole
+    _direction: LaneChangeDirection
+
+    def __init__(self, entity_name, direction: LaneChangeDirection, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change",
+                 once: bool = True, until = None):
+        _keyword_only(_kw, "LaneChangeAction(): label, once and until")
+        role = _expect_role(entity_name)
+        settle = _expect_optional_condition(until)
+        if settle is None:
+            settled: BaseCondition = LaneChangeSettledCondition(role, label=label + "_settled")
+            super().__init__(label, condition, timing, once=once, until=settled)
+        else:
+            super().__init__(label, condition, timing, once=once, until=unwrap(settle))
+        self._entity_name = role
+        self._direction = direction
+
+    def action_type(self) -> str:
+        return "LaneChangeAction"
+
+    def execute(self, world: carla.World) -> None:
+        entity = find_entity_by_role_name(self._entity_name)
+        if entity is None:
+            _logger.warning("LaneChangeAction: entity '%s' not found", str(self._entity_name))
+            return
+        unwrap(entity).change_lane(world, self._direction)
+
+
+class RoutingAction(BaseAction):
+    _entity_name: EntityRole
+    _goal: Lanelet2Pose
+    _initial_pose: Optional[CarlaWorldPose]
+    _waypoints: List[Lanelet2Pose]
+
+    def __init__(self, entity_name, goal: Lanelet2Pose, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
+                 once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
+                 ground_projection = None, waypoints = ()):
+        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection and waypoints")
+        _expect_optional_ground_projection(ground_projection)
+        super().__init__(label, condition, timing, once=once)
+        self._entity_name = _expect_role(entity_name)
+        self._goal = goal
+        self._initial_pose = initial_pose
+        self._waypoints = _expect_lanelet2_poses(waypoints)
+
+    def action_type(self) -> str:
+        return "RoutingAction"
+
+    @property
+    def goal(self) -> Lanelet2Pose:
+        return self._goal
+
+    @property
+    def entity_name(self) -> EntityRole:
+        return self._entity_name
+
+    def execute(self, world: carla.World) -> None:
+        # The autopilot ego, the only ego of the standalone runtime, plans no
+        # route of its own (EgoVehicle.route_to is a no-op).
+        if find_entity_by_role_name(self._entity_name) is None:
+            _logger.warning("RoutingAction: entity '%s' not found", str(self._entity_name))
+
+
+_LIGHT_STATE_NAMES = ["Red", "Yellow", "Green", "Off", "Unknown"]
+
+
+class TrafficSignalAction(BaseAction):
+    _state: int
+    _freeze: bool
+
+    def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "traffic_signal", once: bool = True, freeze: bool = True):
+        _keyword_only(_kw, "TrafficSignalAction(): label, once and freeze")
+        if isinstance(lanelet2_traffic_light_ids, TrafficLightTarget):
+            pass
+        else:
+            compile_error("TrafficSignalAction: the standalone runtime sets "
+                          "TrafficLightTarget.ALL only (the Lanelet2 -> OpenDRIVE signal mapping "
+                          "is not baked yet)")
+        super().__init__(label, condition, timing, once=once)
+        self._state = state
+        self._freeze = freeze
+
+    def action_type(self) -> str:
+        return "TrafficSignalAction"
+
+    def execute(self, world: carla.World) -> None:
+        count = 0
+        for actor in world.get_actors().filter("traffic.traffic_light*"):
+            light = actor.as_traffic_light()
+            light.set_state(self._state)
+            light.freeze(self._freeze)
+            count += 1
+        name = (_LIGHT_STATE_NAMES[self._state] if 0 <= self._state < len(_LIGHT_STATE_NAMES)
+                else str(self._state))
+        _logger.info("TrafficSignalAction [%s]: set %d traffic lights to %s (freeze=%s)",
+                     self.label, count, name, self._freeze)
+
+
+class TurnAction(BaseAction):
+    _entity_name: EntityRole
+    _direction: TurnDirection
+    _search_distance: float
+    _waypoint_step: float
+    _post_junction_distance: float
+
+    def __init__(self, entity_name, direction: TurnDirection, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "turn_signal",
+                 once: bool = True, search_distance: float = 200.0, waypoint_step: float = 2.0,
+                 post_junction_distance: float = 20.0):
+        _keyword_only(_kw, "TurnAction(): label, once, search_distance, waypoint_step and post_junction_distance")
+        super().__init__(label, condition, timing, once=once)
+        self._entity_name = _expect_role(entity_name)
+        self._direction = direction
+        self._search_distance = search_distance
+        self._waypoint_step = waypoint_step
+        self._post_junction_distance = post_junction_distance
+
+    def action_type(self) -> str:
+        return "TurnAction"
+
+    def execute(self, world: carla.World) -> None:
+        entity = find_entity_by_role_name(self._entity_name)
+        if entity is None:
+            _logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
+            return
+        unwrap(entity).turn_at_junction(world, self._direction, self._search_distance,
+                                        self._waypoint_step, self._post_junction_distance)
+
+
+# --- Not in the standalone runtime yet ----------------------------------------------
+
+
+class EnvironmentAction(BaseAction):
+    def __init__(self, cloudiness = None, precipitation = None, precipitation_deposits = None,
+                 wetness = None, wind_intensity = None, fog_density = None, fog_distance = None,
+                 sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "environment",
+                 once: bool = True):
+        compile_error("EnvironmentAction is not supported by the standalone runtime yet")
+
+
+class SetSpeedAction(BaseAction):
+    def __init__(self, entity_name, target_speed_kmh: float, rate_kmh_s = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "set_speed",
+                 once: bool = True, until = None, reissue = None):
+        compile_error("SetSpeedAction is not supported by the standalone runtime yet")
+
+
+class TrafficSignalControllerAction(BaseAction):
+    def __init__(self, controller: str, phase: str, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "traffic_signal_controller", once: bool = True):
+        compile_error("TrafficSignalControllerAction is not supported by the standalone runtime yet")
+
+
+class TrafficSourceAction(BaseAction):
+    def __init__(self, constraints, *_kw, initial_vehicles: int = 0,
+                 vehicles_per_minute: float = 0.0, max_vehicles = None,
+                 speed_kmh: float = 30.0, min_gap_m: float = 15.0, blueprint = None,
+                 seed: int = 0, label: str = "traffic_source", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), once: bool = True,
+                 until = None, reissue = None):
+        compile_error("TrafficSourceAction is not supported by the standalone runtime yet")
+
+
+class TrafficSinkAction(BaseAction):
+    def __init__(self, constraints, *_kw, label: str = "traffic_sink", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), once: bool = True,
+                 until = None, reissue = None):
+        compile_error("TrafficSinkAction is not supported by the standalone runtime yet")
+
+
+class WalkStraightAction(BaseAction):
+    def __init__(self, entity_name, speed_ms: float = 1.4, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "walk_straight",
+                 once: bool = True):
+        compile_error("WalkStraightAction is not supported by the standalone runtime yet")
