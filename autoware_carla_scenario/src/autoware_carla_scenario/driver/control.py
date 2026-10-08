@@ -96,14 +96,23 @@ class ControlConfig:
     held rather than integrated."""
 
     # -- Longitudinal (PID) ----------------------------------------------------
-    speed_kp: float = 0.6
-    """Proportional gain on speed error."""
+    speed_kp: float = 0.16
+    """Proportional gain on speed error, in pedal per m/s.
+
+    The target speed is read :attr:`speed_preview_s` ahead, so the error is the
+    acceleration the plan asks for times that preview; a full pedal moves a
+    Lincoln MKZ at 30 km/h by about 6 m/s² either way (CARLA 0.10), so reaching the
+    previewed speed in time takes about ``1 / (6 * speed_preview_s)``.  A larger
+    gain answers a plan easing off by 2 m/s with a full brake: the car stops
+    hard, and a policy reading its own acceleration back plans the stop onward.
+    """
 
     speed_ki: float = 0.15
     """Integral gain on speed error."""
 
     speed_kd: float = 0.05
-    """Derivative gain on speed error."""
+    """Derivative gain, on the measured speed rather than the error: a new plan
+    moving the target is a step in the error, not something to brake against."""
 
     integral_limit: float = 1.0
     """Clamp on the integral term, preventing wind-up while braking."""
@@ -116,14 +125,29 @@ class ControlConfig:
     """
 
     throttle_deadband: float = 0.2
-    """Throttle below which the vehicle does not move at all; a positive command is
-    mapped onto ``[throttle_deadband, 1]``.
+    """Throttle below which a standing vehicle does not move at all; a positive
+    command to a standing vehicle is mapped onto ``[throttle_deadband, 1]``.
 
     The PID asks for acceleration-like effort, but CARLA's throttle has a dead band:
     a standing Lincoln MKZ on flat road (CARLA 0.10) stays put at 0.2 and pulls away
     at 0.25.  Without the offset a gentle pull-away -- a target of a few cm/s --
-    commands a throttle that moves nothing, and the car never leaves.  ``0`` passes
-    the PID output through.
+    commands a throttle that moves nothing, and the car never leaves.  Only from a
+    standstill (below :attr:`standstill_speed_mps`): a rolling MKZ holds 30 km/h at
+    about 0.1 and gains speed at 0.2, so offsetting every command would turn the
+    smallest correction into a surge.  ``0`` passes the PID output through.
+    """
+
+    standstill_speed_mps: float = 0.5
+    """Below this speed the vehicle counts as standing, for :attr:`throttle_deadband`."""
+
+    brake_deadband: float = 0.05
+    """PID effort below which a slowing command coasts rather than brakes; past it,
+    the brake is the effort less this.
+
+    CARLA's brake is strong (0.3 for one tick takes about 0.1 m/s off 30 km/h)
+    while a coasting MKZ loses only about 0.2 m/s each second, so braking for every
+    few tenths of a m/s over the target jolts the car -- and a policy that reads
+    its own acceleration back plans the jolt onward.
     """
 
     stop_distance_m: float = 0.5
@@ -239,7 +263,7 @@ class TrajectoryFollower:
     def reset(self) -> None:
         """Clear the integral term, the derivative memory, and the steering state."""
         self._integral = 0.0
-        self._previous_error = 0.0
+        self._previous_speed: Optional[float] = None
         self._previous_steer = 0.0
         self._yaw_rate_trim = 0.0
         self._asked_curvature: Optional[float] = None
@@ -424,10 +448,16 @@ class TrajectoryFollower:
                     self._config.integral_limit,
                 )
             )
-            derivative = (error - self._previous_error) / dt_s
+            # On the measured speed: the error's own derivative would kick the
+            # output whenever a new plan moves the target.  None on the first step.
+            derivative = (
+                0.0
+                if self._previous_speed is None
+                else (self._previous_speed - current_speed_mps) / dt_s
+            )
         else:
             derivative = 0.0
-        self._previous_error = error
+        self._previous_speed = current_speed_mps
 
         output = (
             self._config.speed_kp * error
@@ -435,9 +465,11 @@ class TrajectoryFollower:
             + self._config.speed_kd * derivative
         )
         if output > 0.0:
+            if current_speed_mps >= self._config.standstill_speed_mps:
+                return float(min(output, 1.0)), 0.0
             deadband = self._config.throttle_deadband
             return deadband + (1.0 - deadband) * float(min(output, 1.0)), 0.0
-        return 0.0, float(np.clip(-output, 0.0, 1.0))
+        return 0.0, float(np.clip(-output - self._config.brake_deadband, 0.0, 1.0))
 
 
 def _travel_m(points: np.ndarray) -> float:

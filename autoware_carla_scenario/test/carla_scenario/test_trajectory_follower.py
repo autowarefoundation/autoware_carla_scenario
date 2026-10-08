@@ -255,6 +255,50 @@ def test_any_throttle_starts_past_the_dead_band() -> None:
     assert full.throttle == pytest.approx(1.0)
 
 
+def test_a_rolling_car_gets_no_dead_band_offset() -> None:
+    """Rolling, a small correction is a small throttle: the offset is for pull-aways."""
+    command = TrajectoryFollower().step(
+        _straight(speed_mps=8.4), Pose.identity(), 8.33, _DT_S
+    )
+    assert 0.0 < command.throttle < 0.1
+
+
+def test_a_little_over_the_target_coasts() -> None:
+    """A few tenths of a m/s over the plan lets the car roll off, not brake."""
+    command = TrajectoryFollower().step(
+        _straight(speed_mps=8.2), Pose.identity(), 8.33, _DT_S
+    )
+    assert command.throttle == pytest.approx(0.0)
+    assert command.brake == pytest.approx(0.0)
+
+
+def test_a_moved_target_is_no_derivative_kick() -> None:
+    """The derivative is on the measured speed: neither the first step nor a new
+    plan asking for less, at an unchanged speed, moves the output through it."""
+    config = ControlConfig(speed_kp=0.0, speed_ki=0.0, speed_kd=1.0, brake_deadband=0.0)
+    follower = TrajectoryFollower(config)
+    for target_mps in (8.0, 6.0):
+        command = follower.step(_straight(speed_mps=target_mps), Pose.identity(), 8.0, _DT_S)
+        assert command.brake == pytest.approx(0.0)
+        assert command.throttle == pytest.approx(0.0)
+
+
+def test_a_car_losing_speed_is_pushed_back_by_the_derivative() -> None:
+    """At an unchanged target, the derivative answers the speed falling with throttle."""
+    config = ControlConfig(speed_kp=0.0, speed_ki=0.0, speed_kd=1.0, throttle_deadband=0.0)
+    follower = TrajectoryFollower(config)
+    follower.step(_straight(speed_mps=8.0), Pose.identity(), 8.0, _DT_S)
+    command = follower.step(_straight(speed_mps=8.0), Pose.identity(), 7.9, _DT_S)
+    assert command.throttle > 0.0
+
+
+def test_a_plan_easing_off_brakes_gently() -> None:
+    """A plan 2 m/s slower a second ahead asks for about 2 m/s², not a full brake."""
+    follower = TrajectoryFollower()
+    command = follower.step(_straight(speed_mps=6.0), Pose.identity(), 8.0, _DT_S)
+    assert 0.0 < command.brake < 0.5
+
+
 def test_a_plan_stopping_within_the_preview_brakes_early() -> None:
     """A plan reaching its stop within a second asks for (almost) nothing now."""
     plan = _plan([(0.0, 0.0), (1.0, 0.0), (1.5, 0.0)], speed_mps=5.0)

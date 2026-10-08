@@ -536,6 +536,8 @@ def _placed(actor: MagicMock) -> None:
 
     actor.set_transform.side_effect = _set
     actor.set_target_velocity.side_effect = _move
+    actor.get_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_angular_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
 
 
 def _warmup_world(others: Sequence[MagicMock] = ()) -> Tuple[MagicMock, MagicMock]:

@@ -176,17 +176,26 @@ class _CarriedVehicle:
                 / self._step_s,
                 y=(target.location.y - due.location.y + _PULL * (due.location.y - here.location.y))
                 / self._step_s,
-                z=0.0,
+                z=self.actor.get_velocity().z,
             )
             turn = _wrap_deg(target.rotation.yaw - here.rotation.yaw)
         else:  # arrived: carry on at the speed the scenario starts it at
             yaw = math.radians(self.start.rotation.yaw)
             velocity = carla.Vector3D(
-                x=self.speed * math.cos(yaw), y=self.speed * math.sin(yaw), z=0.0
+                x=self.speed * math.cos(yaw),
+                y=self.speed * math.sin(yaw),
+                z=self.actor.get_velocity().z,
             )
             turn = 0.0
+        # Vertically, and in pitch and roll, the vehicle is left to its suspension:
+        # holding those at zero tick after tick keeps the springs off their rest,
+        # and at the handover they bounce the car, which a policy reading its
+        # acceleration back takes for braking.
+        spin = self.actor.get_angular_velocity()
         self.actor.set_target_velocity(velocity)
-        self.actor.set_target_angular_velocity(carla.Vector3D(x=0.0, y=0.0, z=turn / self._step_s))
+        self.actor.set_target_angular_velocity(
+            carla.Vector3D(x=spin.x, y=spin.y, z=turn / self._step_s)
+        )
         release_vehicle(self.actor)
 
 

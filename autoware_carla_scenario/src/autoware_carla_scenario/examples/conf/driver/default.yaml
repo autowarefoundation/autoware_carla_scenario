@@ -57,7 +57,7 @@ driver:
     max_steer_rate: 4.0
     # Integral trim on the measured yaw rate; 0 steers open-loop.
     yaw_rate_ki: 3.0
-    speed_kp: 0.6
+    speed_kp: 0.16
     speed_ki: 0.15
     speed_kd: 0.05
     integral_limit: 1.0
@@ -65,6 +65,8 @@ driver:
     speed_preview_s: 1.0
     # CARLA 0.10's MKZ does not move below 0.2 throttle; positive commands start there.
     throttle_deadband: 0.2
+    standstill_speed_mps: 0.5
+    brake_deadband: 0.05
     # A plan travelling less than this over its horizon holds the vehicle still.
     stop_distance_m: 0.5
     stop_brake: 0.6
