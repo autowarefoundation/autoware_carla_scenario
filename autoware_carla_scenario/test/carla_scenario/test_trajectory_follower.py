@@ -221,7 +221,7 @@ def test_a_plan_pulling_away_from_a_standstill_is_not_a_stop() -> None:
             index * _STEP_US, Pose.from_xyz_yaw(0.5 * 0.4 * t_s * t_s, 0.0, 0.0, 0.0)
         )
     command = TrajectoryFollower().step(plan, Pose.identity(), 0.0, _DT_S)
-    assert command.target_speed_mps == pytest.approx(0.4 * 0.95, rel=0.05)
+    assert command.target_speed_mps < 0.1
     assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
 
 
@@ -263,50 +263,61 @@ def test_a_rolling_car_gets_no_dead_band_offset() -> None:
     assert 0.0 < command.throttle < 0.1
 
 
-def test_a_little_over_the_target_coasts() -> None:
-    """A few tenths of a m/s over the plan lets the car roll off, not brake."""
-    command = TrajectoryFollower().step(
-        _straight(speed_mps=8.2), Pose.identity(), 8.33, _DT_S
+def _accelerating(speed_mps: float, acceleration_mps2: float) -> Trajectory:
+    """A straight 6 s plan from *speed_mps* at a constant *acceleration_mps2*."""
+    plan = Trajectory.empty()
+    for index in range(61):
+        t_s = index * 0.1
+        x = speed_mps * t_s + 0.5 * acceleration_mps2 * t_s * t_s
+        plan.append(index * _STEP_US, Pose.from_xyz_yaw(x, 0.0, 0.0, 0.0))
+    return plan
+
+
+def test_the_plans_acceleration_is_fed_forward() -> None:
+    """On the plan's speed, the throttle is what its acceleration asks for."""
+    config = ControlConfig()
+    command = TrajectoryFollower(config).step(
+        _accelerating(8.0, 1.0), Pose.identity(), 8.05, _DT_S
     )
-    assert command.throttle == pytest.approx(0.0)
-    assert command.brake == pytest.approx(0.0)
-
-
-def test_a_moved_target_is_no_derivative_kick() -> None:
-    """The derivative is on the measured speed: neither the first step nor a new
-    plan asking for less, at an unchanged speed, moves the output through it."""
-    config = ControlConfig(speed_kp=0.0, speed_ki=0.0, speed_kd=1.0, brake_deadband=0.0)
-    follower = TrajectoryFollower(config)
-    for target_mps in (8.0, 6.0):
-        command = follower.step(_straight(speed_mps=target_mps), Pose.identity(), 8.0, _DT_S)
-        assert command.brake == pytest.approx(0.0)
-        assert command.throttle == pytest.approx(0.0)
-
-
-def test_a_car_losing_speed_is_pushed_back_by_the_derivative() -> None:
-    """At an unchanged target, the derivative answers the speed falling with throttle."""
-    config = ControlConfig(speed_kp=0.0, speed_ki=0.0, speed_kd=1.0, throttle_deadband=0.0)
-    follower = TrajectoryFollower(config)
-    follower.step(_straight(speed_mps=8.0), Pose.identity(), 8.0, _DT_S)
-    command = follower.step(_straight(speed_mps=8.0), Pose.identity(), 7.9, _DT_S)
-    assert command.throttle > 0.0
+    assert command.throttle == pytest.approx(config.speed_kff * 1.0, abs=0.03)
 
 
 def test_a_plan_easing_off_brakes_gently() -> None:
-    """A plan 2 m/s slower a second ahead asks for about 2 m/s², not a full brake."""
-    follower = TrajectoryFollower()
-    command = follower.step(_straight(speed_mps=6.0), Pose.identity(), 8.0, _DT_S)
+    """A plan slowing at 2 m/s² asks for a part of the brake, not all of it."""
+    command = TrajectoryFollower().step(
+        _accelerating(8.0, -2.0), Pose.identity(), 8.0, _DT_S
+    )
     assert 0.0 < command.brake < 0.5
 
 
+def test_a_vehicle_behind_the_plan_catches_up() -> None:
+    """Where the plan has the vehicle now is read on the plan's clock: 2 m short
+    of it, the vehicle aims faster than the plan."""
+    plan = _straight(speed_mps=8.0)
+    command = TrajectoryFollower().step(
+        plan, Pose.identity(), 8.0, _DT_S, now_us=plan.timestamps_us[0] + 250_000
+    )
+    assert command.target_speed_mps > 8.0 + 2.0
+    assert command.throttle > 0.0
+
+
+def test_a_car_braked_to_a_stop_pulls_away_when_the_plan_goes() -> None:
+    """The integral wound up braking does not hold the car once it stands."""
+    follower = TrajectoryFollower()
+    for _ in range(40):
+        follower.step(_straight(speed_mps=2.0), Pose.identity(), 8.0, _DT_S)
+    command = follower.step(_accelerating(0.0, 0.5), Pose.identity(), 0.0, _DT_S)
+    assert command.throttle >= follower.config.throttle_deadband
+    assert command.brake == pytest.approx(0.0)
+
+
 def test_a_plan_stopping_within_the_preview_brakes_early() -> None:
-    """A plan reaching its stop within a second asks for (almost) nothing now."""
+    """A plan reaching its stop within a second is braked for now."""
     plan = _plan([(0.0, 0.0), (1.0, 0.0), (1.5, 0.0)], speed_mps=5.0)
     plan.append(
         plan.timestamps_us[-1] + 2_000_000, Pose.from_xyz_yaw(1.5, 0.0, 0.0, 0.0)
     )
     command = TrajectoryFollower().step(plan, Pose.identity(), 5.0, _DT_S)
-    assert command.target_speed_mps == pytest.approx(0.0)
     assert command.brake > 0.0
 
 
@@ -335,7 +346,7 @@ def test_integral_term_is_clamped() -> None:
     """Sustained error must not wind the integral term past its limit."""
     config = ControlConfig(
         speed_kp=0.0,
-        speed_kd=0.0,
+        speed_kff=0.0,
         speed_ki=1.0,
         integral_limit=0.5,
         throttle_deadband=0.0,
@@ -349,7 +360,7 @@ def test_integral_term_is_clamped() -> None:
 
 def test_reset_clears_controller_state() -> None:
     config = ControlConfig(
-        speed_kp=0.0, speed_kd=0.0, speed_ki=1.0, throttle_deadband=0.0
+        speed_kp=0.0, speed_kff=0.0, speed_ki=1.0, throttle_deadband=0.0
     )
     follower = TrajectoryFollower(config)
     plan = _straight(speed_mps=10.0)

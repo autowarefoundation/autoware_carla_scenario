@@ -52,7 +52,7 @@ def test_shipped_yaml_builds_control_gains() -> None:
     assert control.max_steer_angle_rad == pytest.approx(math.radians(56.0))
     assert control.steer_exponent == pytest.approx(2.0)
     assert control.yaw_rate_ki == pytest.approx(3.0)
-    assert control.speed_kp == pytest.approx(0.6)
+    assert control.speed_kp == pytest.approx(0.8)
 
 
 def test_shipped_policy_timestep_is_a_multiple_of_the_tick() -> None:

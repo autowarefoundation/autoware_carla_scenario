@@ -286,14 +286,15 @@ class DriverControlSpec:
     yaw_rate_ki: float = 3.0
     yaw_rate_trim_limit_deg: float = 25.0
     yaw_rate_min_speed_mps: float = 1.0
-    speed_kp: float = 0.16
-    speed_ki: float = 0.15
-    speed_kd: float = 0.05
-    integral_limit: float = 1.0
+    speed_kp: float = 0.8
+    speed_ki: float = 0.4
+    speed_kff: float = 0.15
+    integral_limit: float = 2.0
+    position_gain: float = 1.5
+    max_position_correction_mps: float = 6.0
     speed_preview_s: float = 1.0
-    throttle_deadband: float = 0.2
+    throttle_deadband: float = 0.25
     standstill_speed_mps: float = 0.5
-    brake_deadband: float = 0.05
     stop_distance_m: float = 0.5
     stop_brake: float = 0.6
 
