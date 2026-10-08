@@ -179,7 +179,10 @@ class EgoVehicle:
         raise NotImplementedError()
 
     @property
-    def moves_while_waiting(self) -> bool:
+    def carried_actor_ids(self) -> Set[int]:
+        raise NotImplementedError()
+
+    def set_initial_speeds(self, speeds_mps: Dict[int, float]) -> None:
         raise NotImplementedError()
 
     @property

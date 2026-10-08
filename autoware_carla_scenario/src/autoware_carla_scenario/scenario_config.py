@@ -318,9 +318,10 @@ class DriverConfig:
     #: JPEG quality (1-100) for streamed camera frames.
     image_quality: int = 90
 
-    #: Seconds of run-up onto the spawn pose before the scenario starts, with the
-    #: policy planning but not driving and no one else on the road, so a policy
-    #: that reads a history starts with one.  0 starts the policy cold.
+    #: Seconds of run-up onto the scenario's first frame, every vehicle and
+    #: pedestrian carried onto its first-frame pose at its initial speed and the
+    #: policy planning but not driving, so a policy that reads a history starts
+    #: with one.  0 starts the policy cold.
     warmup_s: float = 0.0
 
     #: How far ahead the submitted route extends, in metres.

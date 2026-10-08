@@ -104,15 +104,21 @@ driver:
 
 A policy that reads a history -- past LiDAR maps, the ego's past poses -- has
 none at the first step and plans as if the ego had stood still: an ego spawned
-moving brakes on those first plans. `driver.warmup_s` gives it a run-up instead.
-Before the scenario's clock starts, the ego is put that far back along its lane
-(the initial speed times `warmup_s`) and carried onto its spawn pose, arriving at
-the initial speed. The policy plans all the way and sees the road it came down,
-but does not drive. Nothing else is on the road meanwhile: other vehicles and
-pedestrians are out of sight, the traffic lights frozen, and both are put back
-as they were when the scenario starts. Set it to the history the policy reads
-(3 s for ResWorld's ego past). An ego with no initial speed waits on its spawn
-pose for the same time.
+moving brakes on those first plans. `driver.warmup_s` gives it a run-up instead:
+the `warmup_s` before the scenario's first frame are played by rule, so that
+everything arrives at its first-frame pose at its initial speed.
+
+- Every vehicle with an initial speed, the ego among them, is put back along its
+  lane by its initial speed times `warmup_s`, keeping its offset from the lane
+  centre and its heading relative to the lane, and driven onto its pose. One with
+  no initial speed stands on its pose.
+- Every pedestrian with an initial speed is moved in a straight line along its
+  heading; one with none stands where it starts.
+- The traffic lights are frozen, so the run-up spends none of their phases.
+
+The policy gets every observation and plans all the way, but does not drive; the
+scenario's clock starts, and the policy takes over, on arrival. Set `warmup_s` to
+the history the policy reads (3 s for ResWorld's ego past).
 
 `ego.entity` selects the entity and accepts three values:
 

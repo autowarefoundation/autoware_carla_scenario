@@ -247,7 +247,7 @@ class _FakeEgo:
     """An ego that becomes ready after a given number of ticks."""
 
     attaches_to_existing_actor = True
-    moves_while_waiting = False
+    carried_actor_ids = frozenset()
     actor = None
 
     def __init__(self, ready_after: int, gives_up_after: int | None = None) -> None:
@@ -393,7 +393,7 @@ def test_the_init_hold_spares_an_ego_that_is_moving_itself():
     ego, other = MagicMock(id=1), MagicMock(id=2)
     world = MagicMock()
     world.get_actors.return_value.filter.return_value = [ego, other]
-    hold_vehicles_still(world, spare=ego)
+    hold_vehicles_still(world, spare={ego.id})
     ego.apply_control.assert_not_called()
     other.apply_control.assert_called_once()
 

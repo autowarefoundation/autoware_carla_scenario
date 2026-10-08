@@ -555,7 +555,7 @@ def _warming_entity(speed_mps: float = 5.0, warmup_s: float = 1.0):  # noqa: ANN
     actor = entity.actor
     actor.id, actor.type_id = 1, "vehicle.lincoln.mkz"
     _placed(actor)
-    entity._initial_speed_mps = speed_mps  # noqa: SLF001 - stands in for spawn()
+    entity.set_initial_speeds({1: speed_mps})
     return entity, client, actor
 
 
@@ -601,25 +601,46 @@ def test_the_policy_sees_the_ego_moving_through_the_run_up() -> None:
     assert all(obs.speed_mps == pytest.approx(5.0) for obs in observations)
 
 
-def test_nothing_else_is_on_the_road_during_the_run_up() -> None:
-    other = MagicMock(type_id="vehicle.audi.tt", id=2)
+def _other(type_id: str, actor_id: int, x: float, y: float = 0.0) -> MagicMock:
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
-    where = carla.Transform(carla.Location(x=30.0, y=0.0, z=0.0), carla.Rotation())
-    other.get_transform.return_value = where
-    entity, _, _ = _warming_entity(warmup_s=0.2)
-    world, light = _warmup_world([other])
+    other = MagicMock(type_id=type_id, id=actor_id)
+    other.get_transform.return_value = carla.Transform(
+        carla.Location(x=x, y=y, z=0.0), carla.Rotation()
+    )
+    _placed(other)
+    return other
+
+
+def test_traffic_runs_up_onto_the_first_frame_with_the_ego() -> None:
+    """A moving vehicle runs up along its lane, a walking pedestrian in a straight
+    line, and a parked vehicle stays put; each arrives on its first-frame pose."""
+    car = _other("vehicle.audi.tt", 2, x=30.0, y=3.5)
+    parked = _other("vehicle.audi.tt", 3, x=50.0)
+    walker = _other("walker.pedestrian.0001", 4, x=20.0, y=6.0)
+    entity, _, _ = _warming_entity(speed_mps=5.0, warmup_s=1.0)
+    entity.set_initial_speeds({1: 5.0, 2: 8.0, 4: 1.5})
+    world, light = _warmup_world([car, parked, walker])
     entity.on_scenario_start(world)
 
-    hidden = other.set_transform.call_args.args[0]
-    assert hidden.location.z < -100.0
+    start = car.set_transform.call_args.args[0]
+    assert (start.location.x, start.location.y) == pytest.approx((22.0, 3.5))
+    first_step = walker.set_transform.call_args.args[0]
+    assert (first_step.location.x, first_step.location.y) == pytest.approx((18.5, 6.0))
+    parked.set_transform.assert_not_called()
+    assert entity.carried_actor_ids == {1, 2}
     light.freeze.assert_called_once_with(True)
 
     while not entity.is_initialized:
         entity.on_tick(world, 0.0)
 
-    assert other.set_transform.call_args.args[0] is where
+    arrived = walker.set_transform.call_args.args[0]
+    assert (arrived.location.x, arrived.location.y) == pytest.approx((20.0, 6.0))
+    assert car.get_transform().location.x == pytest.approx(30.0 + 8.0 * _TICK_S)
+    final = car.set_target_velocity.call_args.args[0]
+    assert (final.x, final.y) == pytest.approx((8.0, 0.0))
     light.freeze.assert_called_with(False)
+    assert entity.carried_actor_ids == frozenset()
 
 
 def test_without_a_warm_up_the_ego_is_ready_at_once() -> None:

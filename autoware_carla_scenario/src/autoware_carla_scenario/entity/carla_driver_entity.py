@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
@@ -40,7 +40,6 @@ from .ego import EgoVehicle
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from ..scenario_base import EgoConfig
     from ..sensor.carla_camera import CarlaCameraSensor
     from ..sensor.carla_lidar import CarlaLidarSensor
 
@@ -103,8 +102,8 @@ class CarlaDriverEntity(EgoVehicle):
         self._drive_count: int = 0
         self._map: Optional["carla.Map"] = None
         self._renderer: Optional[RendererDataBuilder] = None
-        #: The speed the scenario starts the ego at, read at spawn.
-        self._initial_speed_mps: float = 0.0
+        #: The speed each vehicle starts the scenario at, by actor id.
+        self._initial_speeds: Dict[int, float] = {}
         #: The run-up onto the spawn pose while it lasts (``warmup_s``).
         self._warmup: Optional[PolicyWarmup] = None
 
@@ -133,9 +132,13 @@ class CarlaDriverEntity(EgoVehicle):
         return self._warmup is None
 
     @property
-    def moves_while_waiting(self) -> bool:
-        """The run-up carries the ego, so the init phase's brakes must spare it."""
-        return self._warmup is not None
+    def carried_actor_ids(self) -> FrozenSet[int]:
+        """What the run-up is moving, which the init phase's brakes must spare."""
+        return self._warmup.carried_actor_ids if self._warmup is not None else frozenset()
+
+    def set_initial_speeds(self, speeds_mps: Mapping[int, float]) -> None:
+        """Keep each vehicle's initial speed, for the run-up to arrive at."""
+        self._initial_speeds = dict(speeds_mps)
 
     @property
     def drive_count(self) -> int:
@@ -187,12 +190,6 @@ class CarlaDriverEntity(EgoVehicle):
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def spawn(self, world: "carla.World", config: "EgoConfig") -> "carla.Actor":
-        """Spawn the ego, noting the speed the scenario will start it at."""
-        actor = super().spawn(world, config)
-        self._initial_speed_mps = max(0.0, config.initial_speed_kmh) / 3.6
-        return actor
-
     def on_scenario_start(self, world: "carla.World") -> None:
         """Attach the cameras, open the driver session, and send the initial route.
 
@@ -242,7 +239,7 @@ class CarlaDriverEntity(EgoVehicle):
                 actor,
                 self._map,
                 self._config.warmup_s,
-                self._initial_speed_mps,
+                self._initial_speeds,
                 _FIXED_DELTA_S,
             )
             self._pending_egomotion = []
