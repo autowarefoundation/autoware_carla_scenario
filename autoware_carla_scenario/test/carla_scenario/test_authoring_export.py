@@ -725,7 +725,7 @@ class TestWheelhouseInterpreters:
         import autoware_carla_scenario.authoring.wheelhouse as module
 
         (tmp_path / "uv.lock").write_text("", encoding="utf-8")
-        _write_pyproject(tmp_path, ">=3.10,!=3.11.*")
+        _write_pyproject(tmp_path, ">=3.10,!=3.11.*,<3.13")
 
         built: list[str] = []
         filled: list[Path] = []

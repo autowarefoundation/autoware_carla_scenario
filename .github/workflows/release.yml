@@ -30,17 +30,22 @@ jobs:
     outputs:
       bump_type: ${{ steps.pr-labels.outputs.bump_type }}
       new_version: ${{ steps.version.outputs.version }}
+      # Read by the `pypi-*` jobs below: whether this run releases, and the
+      # commit the release was cut from.
+      release: ${{ steps.version.outputs.release }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # GH_PAT is required so that `git push origin master` (version-bump
-          # commit) and `git push origin v<version>` (release tag) can satisfy
-          # the master branch ruleset. The default GITHUB_TOKEN identity
-          # (github-actions[bot]) is not in the ruleset's bypass list, so
-          # direct pushes to master are rejected with GH013.
-          token: ${{ secrets.GH_PAT }}
+          # GH_PAT, when the repository has one, lets `git push origin master`
+          # (version-bump commit) and `git push origin v<version>` (release
+          # tag) satisfy a master branch ruleset whose bypass list does not
+          # include github-actions[bot] (direct pushes are then rejected with
+          # GH013). Without the secret, GITHUB_TOKEN is used -- an empty token
+          # would fail the checkout itself.
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Setup base environment
         uses: ./.github/actions/setup-env
@@ -342,3 +347,112 @@ jobs:
         if: steps.version.outputs.release != 'true'
         run: |
           echo "No version bump label found. Skipping release."
+
+  # Builds the release commit's wheel and sdist and proves the wheel installs on
+  # every interpreter the package supports. The package is pure Python
+  # (`py3-none-any`), so one wheel serves them all -- which is exactly what this
+  # checks, against each interpreter's own resolution of the dependencies.
+  pypi-build:
+    name: build the distributions
+    needs: release
+    if: needs.release.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Check the package version matches the release
+        env:
+          VERSION: ${{ needs.release.outputs.new_version }}
+        run: |
+          pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
+          echo "release=${VERSION} pyproject=${pkg}"
+          test "${pkg}" = "${VERSION}"
+
+      - name: Build the wheel and sdist
+        run: uv build --package autoware-carla-scenario --out-dir dist
+
+      # PyPI rejects an upload whose metadata it cannot render or that names a
+      # file the archive does not carry, and it does so after the OIDC exchange
+      # -- so the same check runs here first, where failing costs nothing.
+      - name: Check the metadata
+        run: uvx twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+          if-no-files-found: error
+
+  pypi-install:
+    name: install on Python ${{ matrix.python-version }}
+    needs: pypi-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The whole of `requires-python`, as CI's test matrix.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+      # From PyPI's dependencies alone, with the `sumo` extra, the way a user
+      # installs it -- not from this repository's lock.
+      - name: Install the wheel into a clean environment
+        run: |
+          uv venv --python "${{ matrix.python-version }}" "${RUNNER_TEMP}/fresh"
+          uv pip install --python "${RUNNER_TEMP}/fresh" "$(ls dist/*.whl)[sumo]"
+
+      - name: Import it and run its console scripts
+        run: |
+          "${RUNNER_TEMP}/fresh/bin/python" - <<'PY'
+          import importlib.metadata as metadata
+          import sys
+
+          import autoware_carla_scenario
+
+          print(sys.version)
+          print("autoware-carla-scenario", metadata.version("autoware-carla-scenario"))
+          PY
+          "${RUNNER_TEMP}/fresh/bin/scenario-new" --help > /dev/null
+
+  # Trusted Publishing: no API token is stored in this repository. Configure it
+  # once on PyPI -- Publishing -> add a (pending) publisher with owner
+  # `autowarefoundation`, repository `autoware_carla_scenario`, workflow
+  # `release.yml`, environment `pypi` -- and create the `pypi` environment in
+  # this repository's settings. Until then this job fails and the
+  # distributions remain available as the `pypi-dist` artifact.
+  pypi-publish:
+    name: publish to PyPI
+    needs: [release, pypi-build, pypi-install]
+    if: needs.release.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/autoware-carla-scenario
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+      # PyPI never replaces a file, so skipping what is already there makes a
+      # manual re-run of a release (workflow_dispatch) upload only what an
+      # earlier attempt did not.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

@@ -237,9 +237,9 @@ If pre-commit hooks fail:
   prebuilt package); `TYPESAFE_CARLA_PYCARLA_BUILD=0` turns a missing build
   into an `ImportError`, as the Docker image does.
   The official `carla` package is not a dependency and must not be imported.
-- Python 3.10 through 3.12. `autoware_carla_scenario` declares
-  `requires-python = ">=3.10,<3.13"` -- the comment on that line is the
-  canonical explanation. CI runs the suite on 3.10, 3.11 and 3.12
+- Python 3.10 through 3.14. `autoware_carla_scenario` declares
+  `requires-python = ">=3.10,<3.15"` -- the comment on that line is the
+  canonical explanation. CI runs the suite on 3.10, 3.11, 3.12, 3.13 and 3.14
 
 ## Static Check (Codon)
 

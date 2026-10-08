@@ -42,7 +42,7 @@ This package provides a framework for creating and running automated scenario te
 - **Repository**: [hakuturu583/autoware_carla_scenario](https://github.com/hakuturu583/autoware_carla_scenario)
 - **Release Notes**: [View all releases on GitHub](https://github.com/hakuturu583/autoware_carla_scenario/releases)
 - **License**: Check the repository for license information
-- **Python Version**: 3.10 - 3.12 (`>=3.10,<3.13`, the interpreters CI tests)
+- **Python Version**: 3.10 - 3.14 (`>=3.10,<3.15`, the interpreters CI tests)
 
 ## Getting Help
 

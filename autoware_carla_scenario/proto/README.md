@@ -14,7 +14,7 @@ Both are Apache-2.0; see `LICENSE.alpasim`.
 ## Why vendor instead of depend
 
 `alpasim-grpc` declares `requires-python = ">=3.11,<3.13"`, while this package supports
-`>=3.10,<3.13` — Autoware's own environment is 3.10, which `alpasim-grpc` excludes. Depending on
+`>=3.10,<3.15` — Autoware's own environment is 3.10, which `alpasim-grpc` excludes. Depending on
 it would drop 3.10 support, so the wire contract is vendored and compiled locally instead.
 
 Only the transitive closure of the two entry points is vendored:

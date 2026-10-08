@@ -99,3 +99,27 @@ def test_object_without_load_segments_is_left_alone(
     path = tmp_path / "empty.so"
     path.write_bytes(_elf64([(_PT_NOTE, 0x1000, 0x1000)]))
     assert not slim.is_loadable(path)
+
+
+def test_prune_removes_test_suites(slim: ModuleType, tmp_path: Path) -> None:
+    suite = tmp_path / "pkg" / "tests"
+    suite.mkdir(parents=True)
+    (suite / "test_pkg.py").write_text("")
+    (tmp_path / "pkg" / "__init__.pyi").write_text("")
+    slim.prune(tmp_path)
+    assert not suite.exists()
+    assert not (tmp_path / "pkg" / "__init__.pyi").exists()
+
+
+def test_prune_keeps_what_numpy_testing_imports(
+    slim: ModuleType, tmp_path: Path
+) -> None:
+    """numpy 2's ``numpy.testing`` imports ``numpy._core.tests._natype``."""
+    suite = tmp_path / "numpy" / "_core" / "tests"
+    (suite / "data").mkdir(parents=True)
+    (suite / "_natype.py").write_text("pd_NA = None\n")
+    (suite / "test_core.py").write_text("")
+    (suite / "data" / "fixture.csv").write_text("")
+    (suite / "__pycache__").mkdir()
+    slim.prune(tmp_path)
+    assert sorted(p.name for p in suite.iterdir()) == ["_natype.py"]

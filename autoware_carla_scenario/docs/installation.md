@@ -13,8 +13,8 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### Python Version
 
-- **Python 3.10 – 3.12** — `pyproject.toml` declares
-  `requires-python = ">=3.10,<3.13"`: the interpreters CI tests. No
+- **Python 3.10 – 3.14** — `pyproject.toml` declares
+  `requires-python = ">=3.10,<3.15"`: the interpreters CI tests. No
   dependency caps it any more; it is raised together with CI's interpreter
   matrix. Check your version with `python --version`.
 
