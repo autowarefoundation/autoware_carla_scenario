@@ -1,6 +1,7 @@
 [tool.uv.workspace]
 members = [
     "autoware_carla_scenario",
+    "autoware_carla_egodriver",
 ]
 
 [dependency-groups]
@@ -53,12 +54,13 @@ exclude = [
 
 [[tool.mypy.overrides]]
 # Generated protobuf modules carry no useful annotations of their own.
-module = ["autoware_carla_scenario.*._proto.*"]
+module = ["autoware_carla_scenario.*._proto.*", "autoware_carla_egodriver._proto.*"]
 ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = [
     "autoware_carla_scenario/test",
+    "autoware_carla_egodriver/test",
 ]
 addopts = "-n auto --testmon"
 markers = [

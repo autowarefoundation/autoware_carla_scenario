@@ -270,7 +270,7 @@ class DriverConfig:
 
     Only used when ``ego.entity`` is ``"carla_driver"``.  The policy is expected to
     serve ``egodriver.EgodriverService`` at :attr:`address` -- for example
-    ``carla-driver-interface serve --policy route_follower --port 50051``.
+    ``autoware-carla-egodriver serve --policy route_follower --port 50051``.
     """
 
     #: ``host:port`` of the policy's gRPC server.

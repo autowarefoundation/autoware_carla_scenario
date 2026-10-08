@@ -64,8 +64,9 @@ dependencies = [
     "pydantic>=2.0.0",
     "ffmpeg-python>=0.2.0",
     # Speaks the alpasim `egodriver` gRPC contract to an external driver policy.
-    # The protobuf definitions are vendored rather than pulled from
-    # `alpasim-grpc`; proto/README.md says why.
+    # The contract (vendored protos, geometry, the policy-side server) is the
+    # sibling workspace member autoware-carla-egodriver.
+    "autoware-carla-egodriver",
     "grpcio>=1.60",
     # The vendored modules are protobuf 4.25 gencode, which every runtime from
     # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
@@ -96,6 +97,9 @@ sumo = [
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+autoware-carla-egodriver = { workspace = true }
 
 [tool.uv.build-backend]
 # `hydra_plugins` is a PEP 420 namespace package shared with Hydra itself, so

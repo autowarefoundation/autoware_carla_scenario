@@ -8,11 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from autoware_carla_scenario.driver._proto import egodriver_pb2, egodriver_pb2_grpc
+from autoware_carla_egodriver.protocol import egodriver_pb2, egodriver_pb2_grpc
 
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 _COMPILE_SCRIPT = _PACKAGE_ROOT / "scripts" / "compile_protos.py"
+#: The vendored egodriver contract lives with the package implementing both its ends.
+_EGODRIVER_PROTO = _PACKAGE_ROOT.parent / "autoware_carla_egodriver" / "proto"
 
 
 def _load_compiler():
@@ -68,13 +70,13 @@ def test_stub_and_servicer_are_available() -> None:
 
 
 def test_vendored_protos_are_present() -> None:
-    proto_dir = _PACKAGE_ROOT / "proto" / "alpasim_grpc" / "v0"
+    proto_dir = _EGODRIVER_PROTO / "alpasim_grpc" / "v0"
     names = {path.name for path in proto_dir.glob("*.proto")}
     assert names == {"common.proto", "sensorsim.proto", "egodriver.proto"}
 
 
 def test_vendored_protos_keep_their_licence_header() -> None:
-    proto_dir = _PACKAGE_ROOT / "proto" / "alpasim_grpc" / "v0"
+    proto_dir = _EGODRIVER_PROTO / "alpasim_grpc" / "v0"
     for path in proto_dir.glob("*.proto"):
         assert "SPDX-License-Identifier: Apache-2.0" in path.read_text()
 

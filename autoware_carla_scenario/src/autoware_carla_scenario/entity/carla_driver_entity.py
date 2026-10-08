@@ -2,9 +2,8 @@
 
 Where :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` hands the vehicle to
 CARLA's TrafficManager and :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEntity`
-leaves it standing still, this entity closes the loop against a driver policy served by
-`carla_driver_interface <https://github.com/hakuturu583/carla_driver_interface>`_ or any
-other implementation of ``egodriver.EgodriverService``.
+leaves it standing still, this entity closes the loop against a driver policy served with
+``autoware-carla-egodriver`` or any other implementation of ``egodriver.EgodriverService``.
 
 Each simulation tick the entity applies control; every
 :attr:`~autoware_carla_scenario.driver.base.DriverClientConfig.policy_timestep_s` it also

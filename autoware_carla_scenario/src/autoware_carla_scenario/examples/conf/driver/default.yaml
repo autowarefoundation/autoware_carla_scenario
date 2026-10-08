@@ -2,7 +2,7 @@
 #
 # Settings for an external driver policy, used when `ego.entity: carla_driver`.
 # The policy is expected to serve `egodriver.EgodriverService`, e.g.
-#   carla-driver-interface serve --policy route_follower --port 50051
+#   autoware-carla-egodriver serve --policy route_follower --port 50051
 driver:
   address: localhost:50051
   timeout_s: 60.0

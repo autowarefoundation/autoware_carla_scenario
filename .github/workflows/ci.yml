@@ -75,6 +75,9 @@ jobs:
     - name: Check package can be built
       run: uv build --package autoware-carla-scenario
 
+    - name: Check the egodriver package can be built
+      run: uv build --package autoware-carla-egodriver
+
   lint-and-format:
     runs-on: ubuntu-latest
     steps:

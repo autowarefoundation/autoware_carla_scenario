@@ -2,9 +2,9 @@
 
 The scenario framework plays the *runtime* role of the alpasim contract: it owns the
 world, renders the observations, and asks a driver policy what to do next.  The policy
-runs elsewhere -- typically as a
-`carla_driver_interface <https://github.com/hakuturu583/carla_driver_interface>`_ gRPC
-server -- and this module defines the seam between the two.
+runs elsewhere -- typically as a gRPC server built on ``autoware-carla-egodriver``, the
+policy-side package in this workspace -- and this module defines the seam between the
+two.
 
 :class:`BaseEgoDriverClient` is deliberately transport-agnostic so tests can substitute a
 fake, mirroring how :class:`~autoware_carla_scenario.sensor.base.CameraSensorBase`
@@ -43,8 +43,8 @@ class DriverCameraConfig:
     """One camera exposed to the driver policy.
 
     Pairs the alpasim *logical id* a policy addresses the camera by with the CARLA
-    camera parameters used to render it.  Defaults match the front-wide camera of
-    ``carla_driver_interface``'s default rig.
+    camera parameters used to render it.  Defaults match alpasim's front-wide camera,
+    which ``autoware-carla-egodriver``'s reference policies look for.
 
     Extrinsics are relative to the vehicle's ``base_link``, in CARLA's convention
     (x forward, y right, z up, degrees).

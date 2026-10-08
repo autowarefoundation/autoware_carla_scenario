@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 import typesafe_carla.carla as carla
 
-from autoware_carla_scenario.driver._proto import carla_driver_pb2
+from autoware_carla_egodriver.protocol import carla_driver_pb2
 from autoware_carla_scenario.driver.base import DriverClientConfig
 from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.driver.renderer import RendererDataBuilder

@@ -132,3 +132,44 @@ def test_camera_maps_onto_a_carla_sensor_config() -> None:
     assert sensor.fov == pytest.approx(90.0)
     # 640 px across 90 deg.
     assert sensor.fx == pytest.approx(320.0, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# The VisionPilot preset (driver=vision_pilot)
+# ---------------------------------------------------------------------------
+
+
+def _composed(overrides: list[str]):
+    from hydra import compose, initialize_config_dir
+
+    with initialize_config_dir(config_dir=str(_CONF.resolve()), version_base=None):
+        return compose(config_name="config", overrides=overrides)
+
+
+def test_vision_pilot_preset_sets_the_rig_and_hands_over_the_ego() -> None:
+    cfg = _composed(["driver=vision_pilot"])
+    assert cfg.ego.entity == "carla_driver"
+    assert cfg.ego.vehicle_type == "vehicle.lincoln.mkz"
+
+    config = DriverClientConfig.from_mapping(cfg.driver)
+    (camera,) = config.cameras
+    assert camera.logical_id == "camera_front_narrow_50fov"
+    assert (camera.image_width, camera.image_height, camera.fov) == (1920, 1280, 50.0)
+    assert (camera.position_x, camera.position_y, camera.position_z) == (
+        1.544,
+        0.0243,
+        2.116,
+    )
+    assert (camera.roll, camera.pitch, camera.yaw) == (-0.10, -0.11, -0.23)
+    assert config.policy_timestep_s == pytest.approx(0.1)
+    assert ControlConfig.from_mapping(cfg.driver.control).wheelbase_m == pytest.approx(
+        2.85
+    )
+
+
+def test_vision_pilot_preset_keeps_the_other_driver_defaults() -> None:
+    """It extends driver/default rather than replacing it."""
+    preset, default = _composed(["driver=vision_pilot"]).driver, _composed([]).driver
+    for key in ("address", "route_horizon_m", "send_renderer_data", "image_quality"):
+        assert preset[key] == default[key]
+    assert preset.control.speed_kp == default.control.speed_kp

@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -20,6 +20,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "autoware-carla-egodriver",
     "autoware-carla-scenario",
 ]
 
@@ -151,10 +152,33 @@ wheels = [
 ]
 
 [[package]]
+name = "autoware-carla-egodriver"
+version = "0.1.0"
+source = { editable = "autoware_carla_egodriver" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pillow" },
+    { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", specifier = ">=1.60" },
+    { name = "numpy", specifier = ">=1.21" },
+    { name = "pillow", specifier = ">=10.0" },
+    { name = "protobuf", specifier = ">=4.25.0,<8" },
+]
+
+[[package]]
 name = "autoware-carla-scenario"
 version = "3.2.0"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
+    { name = "autoware-carla-egodriver" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "grpcio" },
@@ -192,6 +216,7 @@ sumo = [
 
 [package.metadata]
 requires-dist = [
+    { name = "autoware-carla-egodriver", editable = "autoware_carla_egodriver" },
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "ffmpeg-python", specifier = ">=0.2.0" },
