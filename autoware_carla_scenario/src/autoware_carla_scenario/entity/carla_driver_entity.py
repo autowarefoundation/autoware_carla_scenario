@@ -34,11 +34,13 @@ from ..driver.observation import (
     sensor_pose_in_rig,
 )
 from autoware_carla_egodriver.protocol import LidarSweep, pack_lidar_sweep
+from ._policy_warmup import PolicyWarmup
 from .ego import EgoVehicle
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..scenario_base import EgoConfig
     from ..sensor.carla_camera import CarlaCameraSensor
     from ..sensor.carla_lidar import CarlaLidarSensor
 
@@ -101,6 +103,10 @@ class CarlaDriverEntity(EgoVehicle):
         self._drive_count: int = 0
         self._map: Optional["carla.Map"] = None
         self._renderer: Optional[RendererDataBuilder] = None
+        #: The speed the scenario starts the ego at, read at spawn.
+        self._initial_speed_mps: float = 0.0
+        #: The run-up onto the spawn pose while it lasts (``warmup_s``).
+        self._warmup: Optional[PolicyWarmup] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -120,6 +126,16 @@ class CarlaDriverEntity(EgoVehicle):
     def termination_requested(self) -> bool:
         """Whether the policy asked to end the session early."""
         return self._termination_requested
+
+    @property
+    def is_initialized(self) -> bool:
+        """``False`` until the run-up onto the spawn pose (``warmup_s``) is over."""
+        return self._warmup is None
+
+    @property
+    def moves_while_waiting(self) -> bool:
+        """The run-up carries the ego, so the init phase's brakes must spare it."""
+        return self._warmup is not None
 
     @property
     def drive_count(self) -> int:
@@ -171,6 +187,12 @@ class CarlaDriverEntity(EgoVehicle):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def spawn(self, world: "carla.World", config: "EgoConfig") -> "carla.Actor":
+        """Spawn the ego, noting the speed the scenario will start it at."""
+        actor = super().spawn(world, config)
+        self._initial_speed_mps = max(0.0, config.initial_speed_kmh) / 3.6
+        return actor
+
     def on_scenario_start(self, world: "carla.World") -> None:
         """Attach the cameras, open the driver session, and send the initial route.
 
@@ -212,6 +234,19 @@ class CarlaDriverEntity(EgoVehicle):
         self._client.start_session(session_uuid, str(self._map.name))
         self._session_open = True
 
+        if self._config.warmup_s > 0.0:
+            # The ego leaves for its run-up before the first tick: its spawn
+            # pose is where it arrives, not where its history begins.
+            self._warmup = PolicyWarmup(
+                world,
+                actor,
+                self._map,
+                self._config.warmup_s,
+                self._initial_speed_mps,
+                _FIXED_DELTA_S,
+            )
+            self._pending_egomotion = []
+            return
         observation = self._ego_observation(actor)
         self._pending_egomotion = [observation]
         self._submit_route(actor, observation)
@@ -236,6 +271,13 @@ class CarlaDriverEntity(EgoVehicle):
         if self._is_policy_step():
             self._run_policy_step(actor, observation)
 
+        if self._warmup is not None:
+            # The policy plans, but the run-up carries the ego.
+            self._warmup.advance()
+            if self._warmup.done:
+                self._warmup = None
+                logger.info("Policy warm-up over after %d policy step(s)", self._drive_count)
+            return
         self._apply_control(actor, observation)
 
     def on_scenario_end(self, world: "carla.World") -> None:
@@ -244,6 +286,9 @@ class CarlaDriverEntity(EgoVehicle):
         Teardown failures are logged rather than raised so that one unreachable policy
         cannot abort the rest of the scenario cleanup.
         """
+        if self._warmup is not None:
+            self._warmup.restore()
+            self._warmup = None
         if self._session_open:
             try:
                 self._client.close_session()
@@ -343,6 +388,8 @@ class CarlaDriverEntity(EgoVehicle):
 
     def _ego_observation(self, actor: "carla.Actor") -> EgoObservation:
         """Return the ego's state at the current simulation time."""
+        if self._warmup is not None:
+            actor = _CarriedActor(actor, self._warmup)
         return ego_observation(actor, self._sim_time_us, self._rear_axle_offset_m)
 
     def _submit_route(self, actor: "carla.Actor", observation: EgoObservation) -> None:
@@ -466,3 +513,26 @@ class CarlaDriverEntity(EgoVehicle):
             "plan_length": float(len(self._plan)),
             "rear_axle_offset_m": self._rear_axle_offset_m,
         }
+
+
+class _CarriedActor:
+    """The ego as the run-up carries it: its pose, and the motion it is carried at.
+
+    Placed without physics, the actor itself reports no motion.
+    """
+
+    def __init__(self, actor: "carla.Actor", warmup: PolicyWarmup) -> None:
+        self._actor = actor
+        self._warmup = warmup
+
+    def get_transform(self) -> "carla.Transform":
+        return self._actor.get_transform()
+
+    def get_velocity(self) -> "carla.Vector3D":
+        return self._warmup.velocity()
+
+    def get_acceleration(self) -> "carla.Vector3D":
+        return self._warmup.acceleration()
+
+    def get_angular_velocity(self) -> "carla.Vector3D":
+        return self._warmup.angular_velocity()

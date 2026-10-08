@@ -106,6 +106,7 @@ class DriverConfig:
     timeout_s: float = 60.0
     policy_timestep_s: float = 0.1
     image_quality: int = 90
+    warmup_s: float = 0.0
     route_horizon_m: float = 80.0
     route_resolution_m: float = 2.0
     rear_axle_offset_m: Optional[float] = None

@@ -72,6 +72,16 @@ class EgoVehicle(BackendDriven):
         return True
 
     @property
+    def moves_while_waiting(self) -> bool:
+        """Whether the entity moves the ego itself while it is not yet initialized.
+
+        :class:`ScenarioRunner` holds every vehicle on its brakes through the wait
+        for :attr:`is_initialized`; an entity that carries the ego somewhere in
+        that time (a run-up onto its spawn pose) says so, and the hold spares it.
+        """
+        return False
+
+    @property
     def termination_requested(self) -> bool:
         """Whether this entity has asked to end the scenario early.
 

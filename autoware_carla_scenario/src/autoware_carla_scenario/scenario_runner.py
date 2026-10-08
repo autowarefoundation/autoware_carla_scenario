@@ -413,7 +413,9 @@ class ScenarioRunner:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hold_vehicles_still(world: "carla.World") -> None:
+    def _hold_vehicles_still(
+        world: "carla.World", spare: Optional["carla.Actor"] = None
+    ) -> None:
         """Keep every vehicle stopped while the run is still being set up.
 
         See :func:`~autoware_carla_scenario.utils.vehicles.hold_vehicles_still`;
@@ -421,7 +423,7 @@ class ScenarioRunner:
         """
         from .utils.vehicles import hold_vehicles_still  # noqa: PLC0415
 
-        hold_vehicles_still(world)
+        hold_vehicles_still(world, spare)
 
     @staticmethod
     def _release_vehicles(world: "carla.World") -> None:
@@ -453,8 +455,9 @@ class ScenarioRunner:
             return
         logger.info("[%s] Waiting for the ego to be ready ...", scenario_name)
         waited_ticks = 0
+        spare = ego.actor if ego.moves_while_waiting else None
         while not ego.is_initialized and not ego.termination_requested:
-            self._hold_vehicles_still(world)
+            self._hold_vehicles_still(world, spare)
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)

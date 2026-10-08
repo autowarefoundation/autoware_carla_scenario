@@ -74,6 +74,7 @@ driver:
   timeout_s: 60.0
   policy_timestep_s: 0.1     # must be a multiple of the 0.05 s simulation step
   image_quality: 90
+  warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
   route_resolution_m: 2.0
   rear_axle_offset_m: null   # null derives it from the wheel physics
@@ -98,6 +99,20 @@ driver:
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     speed_kp: 0.6
 ```
+
+### Warming up a policy
+
+A policy that reads a history -- past LiDAR maps, the ego's past poses -- has
+none at the first step and plans as if the ego had stood still: an ego spawned
+moving brakes on those first plans. `driver.warmup_s` gives it a run-up instead.
+Before the scenario's clock starts, the ego is put that far back along its lane
+(the initial speed times `warmup_s`) and carried onto its spawn pose, arriving at
+the initial speed. The policy plans all the way and sees the road it came down,
+but does not drive. Nothing else is on the road meanwhile: other vehicles and
+pedestrians are out of sight, the traffic lights frozen, and both are put back
+as they were when the scenario starts. Set it to the history the policy reads
+(3 s for ResWorld's ego past). An ego with no initial speed waits on its spawn
+pose for the same time.
 
 `ego.entity` selects the entity and accepts three values:
 

@@ -9,6 +9,9 @@ driver:
   # Must be a positive integer multiple of the 0.05 s simulation step.
   policy_timestep_s: 0.1
   image_quality: 90
+  # Seconds of run-up onto the spawn pose, the policy planning but not driving,
+  # so a policy that reads a history starts with one. 0 starts it cold.
+  warmup_s: 0.0
   route_horizon_m: 80.0
   route_resolution_m: 2.0
   # null derives the rig origin offset from the vehicle's wheel physics.

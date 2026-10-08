@@ -179,6 +179,10 @@ class EgoVehicle:
         raise NotImplementedError()
 
     @property
+    def moves_while_waiting(self) -> bool:
+        raise NotImplementedError()
+
+    @property
     def termination_requested(self) -> bool:
         raise NotImplementedError()
 
