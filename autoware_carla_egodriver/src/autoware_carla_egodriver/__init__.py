@@ -7,7 +7,7 @@ with :func:`~autoware_carla_egodriver.server.run_server` (or
 (``autoware_carla_scenario``, ``ego.entity=carla_driver``) against CARLA, an upstream
 alpasim runtime, or :mod:`autoware_carla_egodriver.testing` without a simulator.
 
-The package is deliberately light -- numpy, grpcio, protobuf and Pillow -- so a policy
+The package is deliberately light -- numpy, scipy, grpcio, protobuf and Pillow -- so a policy
 depends on it without pulling in the scenario framework, and it runs on Python 3.10.
 The wire contract is vendored from NVlabs/alpasim (see ``proto/README.md``); field
 numbers and service names are unchanged, so it interoperates with upstream.

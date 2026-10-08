@@ -163,6 +163,8 @@ dependencies = [
     { name = "pillow" },
     { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.metadata]
@@ -171,6 +173,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
+    { name = "scipy", specifier = ">=1.8" },
 ]
 
 [[package]]
