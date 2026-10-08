@@ -290,6 +290,7 @@ class DriverControlSpec:
     speed_ki: float = 0.15
     speed_kd: float = 0.05
     integral_limit: float = 1.0
+    speed_preview_s: float = 1.0
     stop_speed_mps: float = 0.2
     stop_brake: float = 0.6
 

@@ -208,6 +208,34 @@ def test_above_target_speed_brakes() -> None:
     assert command.throttle == pytest.approx(0.0)
 
 
+def test_a_plan_pulling_away_from_a_standstill_is_not_a_stop() -> None:
+    """A plan that crawls for its first tenth of a second still asks to move.
+
+    Read at its first segment (a few millimetres in 0.1 s) it is below the stop
+    speed, and the vehicle would be held on the brake forever.
+    """
+    plan = Trajectory.empty()
+    for index in range(31):
+        t_s = index * 0.1
+        plan.append(
+            index * _STEP_US, Pose.from_xyz_yaw(0.5 * 0.4 * t_s * t_s, 0.0, 0.0, 0.0)
+        )
+    command = TrajectoryFollower().step(plan, Pose.identity(), 0.0, _DT_S)
+    assert command.target_speed_mps == pytest.approx(0.4 * 0.95, rel=0.05)
+    assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
+
+
+def test_a_plan_stopping_within_the_preview_brakes_early() -> None:
+    """A plan reaching its stop within a second asks for (almost) nothing now."""
+    plan = _plan([(0.0, 0.0), (1.0, 0.0), (1.5, 0.0)], speed_mps=5.0)
+    plan.append(
+        plan.timestamps_us[-1] + 2_000_000, Pose.from_xyz_yaw(1.5, 0.0, 0.0, 0.0)
+    )
+    command = TrajectoryFollower().step(plan, Pose.identity(), 5.0, _DT_S)
+    assert command.target_speed_mps == pytest.approx(0.0)
+    assert command.brake > 0.0
+
+
 def test_stationary_plan_holds_the_vehicle() -> None:
     """A plan that does not advance is a request to stand still."""
     config = ControlConfig()

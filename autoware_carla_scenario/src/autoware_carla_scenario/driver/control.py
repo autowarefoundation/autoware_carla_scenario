@@ -108,6 +108,13 @@ class ControlConfig:
     integral_limit: float = 1.0
     """Clamp on the integral term, preventing wind-up while braking."""
 
+    speed_preview_s: float = 1.0
+    """How far into the plan the target speed is read, in seconds.
+
+    The plan's speed at this instant, not at its start: a plan pulling away from
+    a standstill starts at a crawl, and read at its first segment it says "stay".
+    """
+
     stop_speed_mps: float = 0.2
     """Target speeds below this are treated as a request to hold still."""
 
@@ -307,22 +314,34 @@ class TrajectoryFollower:
         return candidates[index]
 
     def _target_speed(self, plan_in_rig: Trajectory) -> float:
-        """Return the speed implied by the plan's first timed segment.
+        """Return the speed the plan asks for :attr:`ControlConfig.speed_preview_s` ahead.
 
-        A plan carries positions and timestamps but no explicit speed, so the intended
-        speed is the distance covered over the first segment divided by its duration.
+        A plan carries positions and timestamps but no explicit speed, so the speed is
+        read off the segment spanning the preview instant.  Not the first segment: a
+        plan pulling away from a standstill starts at a crawl (a few millimetres in
+        its first 0.1 s), which read as the target is below
+        :attr:`ControlConfig.stop_speed_mps` -- the vehicle is held on the brake and
+        never pulls away.  Looking ahead also starts braking for a stop the plan
+        reaches within the preview, as a driver would.
         """
         if len(plan_in_rig) < 2:
             return 0.0
+        times_s = (
+            np.asarray(plan_in_rig.timestamps_us, dtype=np.float64)
+            - plan_in_rig.timestamps_us[0]
+        ) * 1e-6
+        if times_s[-1] < _EPSILON:
+            return 0.0
+        preview = min(self._config.speed_preview_s, float(times_s[-1]))
+        index = int(np.clip(np.searchsorted(times_s, preview), 1, len(times_s) - 1))
+        duration_s = times_s[index] - times_s[index - 1]
+        if duration_s < _EPSILON:
+            return 0.0
         positions = plan_in_rig.positions
-        timestamps = plan_in_rig.timestamps_us
-        for index in range(1, len(timestamps)):
-            duration_s = (timestamps[index] - timestamps[0]) * 1e-6
-            if duration_s < _EPSILON:
-                continue
-            distance = float(np.linalg.norm(positions[index][:2] - positions[0][:2]))
-            return distance / duration_s
-        return 0.0
+        return (
+            float(np.linalg.norm(positions[index, :2] - positions[index - 1, :2]))
+            / duration_s
+        )
 
     def _lateral(
         self,
