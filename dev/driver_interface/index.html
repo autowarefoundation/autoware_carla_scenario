@@ -1103,6 +1103,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#lidar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LiDAR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-map-as-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map, as files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#diagnostics-coming-back" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1134,6 +1156,17 @@
     <span class="md-ellipsis">
       
         Early termination
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a policy
       
     </span>
   </a>
@@ -1426,6 +1459,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#lidar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LiDAR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-map-as-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map, as files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#diagnostics-coming-back" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1457,6 +1512,17 @@
     <span class="md-ellipsis">
       
         Early termination
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a policy
       
     </span>
   </a>
@@ -1509,9 +1575,12 @@
 <p>The ego vehicle in a scenario is normally driven by CARLA's TrafficManager. This page
 describes the alternative: handing the ego to an <strong>external driving policy</strong> that plans
 over gRPC, so a scenario becomes a test of that policy rather than of TrafficManager.</p>
-<p>The wire contract is alpasim's <code>egodriver.EgodriverService</code>, the same one
-<a href="https://github.com/hakuturu583/carla_driver_interface"><code>carla_driver_interface</code></a>
-implements, so any policy written against that package works here unchanged.</p>
+<p>The wire contract is alpasim's <code>egodriver.EgodriverService</code>. Its policy side lives in
+this workspace as <strong><code>autoware-carla-egodriver</code></strong>, a light package (grpcio, protobuf,
+numpy, Pillow; Python 3.10+) a policy depends on without pulling in the scenario
+framework. It replaces the driver half of
+<a href="https://github.com/hakuturu583/carla_driver_interface"><code>carla_driver_interface</code></a>, with
+the same names, so policies written against that package port by changing imports.</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <p>The scenario framework plays the <strong>runtime</strong> role: it owns the world, ticks the
 simulation, renders observations, and asks the policy what to do. The policy is a
@@ -1521,7 +1590,7 @@ separate process serving <code>egodriver.EgodriverService</code>.</p>
         SR["ScenarioRunner&lt;br/&gt;owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower&lt;br/&gt;pure pursuit + PID"]
+        TF["TrajectoryFollower&lt;br/&gt;pure pursuit + yaw-rate trim + PID"]
         SR --&gt;|on_tick| CDE
         CAM --&gt;|frames| CDE
         CDE --&gt; TF
@@ -1529,7 +1598,7 @@ separate process serving <code>egodriver.EgodriverService</code>.</p>
     end
 
     subgraph policy["Policy process"]
-        P["egodriver.EgodriverService&lt;br/&gt;e.g. carla-driver-interface serve"]
+        P["egodriver.EgodriverService&lt;br/&gt;e.g. autoware-carla-egodriver serve"]
     end
 
     CDE --&gt;|"observations + drive()"| P
@@ -1543,7 +1612,7 @@ plan keeps being tracked, which is how a policy slower than the simulation stays
 <h2 id="running-a-scenario-against-a-policy">Running a scenario against a policy<a class="headerlink" href="#running-a-scenario-against-a-policy" title="Permanent link">&para;</a></h2>
 <p>Start the policy first — it is a server, the scenario is the client:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># In the policy's own environment</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>carla-driver-interface<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>route_follower<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>autoware-carla-egodriver<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>route_follower<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
 </code></pre></div>
 <p>Then run any scenario with the <code>carla_driver</code> ego entity:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.address<span class="o">=</span>localhost:50051
@@ -1575,10 +1644,12 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">      </span><span class="nt">position_x</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.5</span>
 <a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">      </span><span class="nt">position_z</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.6</span>
 <a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">  </span><span class="nt">control</span><span class="p">:</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">    </span><span class="nt">lookahead_gain_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">    </span><span class="nt">lookahead_gain_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.6</span>
 <a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">    </span><span class="nt">wheelbase_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.8</span>
-<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">    </span><span class="nt">max_steer_angle_deg</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">70.0</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">    </span><span class="nt">speed_kp</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.6</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">    </span><span class="nt">max_steer_angle_deg</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">56.0</span><span class="w">   </span><span class="c1"># CARLA 0.10: angle = 56 deg * steer**2</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">    </span><span class="nt">steer_exponent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">    </span><span class="nt">yaw_rate_ki</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span><span class="w">            </span><span class="c1"># integral trim on the measured yaw rate</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">    </span><span class="nt">speed_kp</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.6</span>
 </code></pre></div>
 <p><code>ego.entity</code> selects the entity and accepts three values:</p>
 <table>
@@ -1603,22 +1674,32 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 </tr>
 </tbody>
 </table>
+<p>A policy is usually built for one rig, so a preset can choose the vehicle and cameras
+along with the rest of the group. <code>driver=vision_pilot</code> is
+<a href="https://github.com/autowarefoundation/vision_pilot">VisionPilot</a>'s: a Lincoln MKZ with
+one 1920×1280, 50° front camera at 10 Hz (its own CARLA rig), and it hands the ego to the
+policy (<code>ego.entity: carla_driver</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>vision-pilot-driver<span class="w"> </span>--model-dir<span class="w"> </span>&lt;weights&gt;<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span><span class="w">   </span><span class="c1"># in vision_pilot</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>vision_pilot
+</code></pre></div>
+<p>A preset extends <code>driver/default</code> (<code>defaults: [default, _self_]</code>) and may set <code>ego.*</code>,
+since the <code>driver</code> group is composed after <code>ego</code>.</p>
 <p><code>logical_id</code> is the name the policy looks a camera up by, so it must match what the
-policy expects. <code>carla_driver_interface</code>'s built-in policies use
+policy expects. <code>autoware-carla-egodriver</code>'s reference policies use
 <code>camera_front_wide_120fov</code>.</p>
 <h2 id="using-it-from-python">Using it from Python<a class="headerlink" href="#using-it-from-python" title="Permanent link">&para;</a></h2>
 <p>Scenarios that build their ego themselves can attach the entity directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">CarlaDriverEntity</span><span class="p">,</span> <span class="n">DriverClientConfig</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">scenario</span><span class="o">.</span><span class="n">ego_entity</span> <span class="o">=</span> <span class="n">CarlaDriverEntity</span><span class="p">(</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">DriverClientConfig</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"localhost:50051"</span><span class="p">,</span> <span class="n">policy_timestep_s</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">CarlaDriverEntity</span><span class="p">,</span> <span class="n">DriverClientConfig</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">scenario</span><span class="o">.</span><span class="n">ego_entity</span> <span class="o">=</span> <span class="n">CarlaDriverEntity</span><span class="p">(</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">DriverClientConfig</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"localhost:50051"</span><span class="p">,</span> <span class="n">policy_timestep_s</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">)</span>
 </code></pre></div>
 <p><code>ScenarioRunner</code> calls <code>BaseScenario.create_ego()</code>, which returns <code>ego_entity</code> when one
 is set and otherwise instantiates <code>ego_type</code>. Assigning <code>ego_entity</code> is the supported
 way to supply an entity that needs constructor arguments.</p>
 <p>To test against a fake policy, pass a <code>BaseEgoDriverClient</code> implementation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">CarlaDriverEntity</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">MyFakeDriverClient</span><span class="p">(</span><span class="n">config</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">CarlaDriverEntity</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">MyFakeDriverClient</span><span class="p">(</span><span class="n">config</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="carla-ground-truth">CARLA ground truth<a class="headerlink" href="#carla-ground-truth" title="Permanent link">&para;</a></h2>
 <p>The alpasim contract has no field for a traffic light and none for other vehicles.
@@ -1652,6 +1733,14 @@ point, as a serialized <code>carla_driver.v0.CarlaRendererData</code>:</p>
 <td><code>weather</code>, <code>map_name</code>, <code>frame_id</code></td>
 <td>Scene context</td>
 </tr>
+<tr>
+<td><code>lidar[]</code></td>
+<td>One sweep per <code>driver.lidars</code> entry, packed <code>[N, 4]</code> float32 (x, y, z, intensity) in the rig frame</td>
+</tr>
+<tr>
+<td><code>map_id</code>, <code>traffic_lights[]</code></td>
+<td>With <code>driver.map_dir</code>: which map file set describes the world, and every light with its state and stop points</td>
+</tr>
 </tbody>
 </table>
 <div class="admonition warning">
@@ -1679,6 +1768,42 @@ stop there hesitates most of a car-and-a-half before the line a driver aims at.<
 <p>This logic is ported from <code>carla_driver_interface</code>'s reference runtime
 (<code>runtime/carla_world.py</code> at <code>af1dcd3</code>) so that a policy tuned against that runtime sees
 the same numbers here.</p>
+<h3 id="lidar">LiDAR<a class="headerlink" href="#lidar" title="Permanent link">&para;</a></h3>
+<p>The contract has no LiDAR submission RPC, so sweeps ride in <code>renderer_data</code> too. Each
+<code>driver.lidars</code> entry mounts a <code>sensor.lidar.ray_cast</code> (mount in CARLA's convention, like
+a camera) spinning one full revolution per simulation tick, and each policy step sends
+that tick's sweep, already converted into the rig frame. A sweep that does not arrive
+within a second is left out rather than replaced by an older one.</p>
+<p>A policy does not see that transport: the servicer records each sweep before <code>drive</code> as
+a <code>LidarFrame</code> in <code>session.frame_history</code>, beside the camera frames, and announces it
+through <code>on_frame</code> -- the one path every sensor takes. <code>frame_history_length</code> applies to
+both, and <code>session.latest_frame("lidar_top").as_array()</code> unpacks the <code>[N, 4]</code> points as
+<code>latest_frame("camera_front").as_array()</code> decodes an image.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> channels</span><span class="p">:</span><span class="w"> </span><span class="nv">64</span><span class="p p-Indicator">,</span><span class="nt"> range_m</span><span class="p">:</span><span class="w"> </span><span class="nv">100.0</span><span class="p p-Indicator">,</span><span class="nt"> position_z</span><span class="p">:</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<h3 id="the-map-as-files">The map, as files<a class="headerlink" href="#the-map-as-files" title="Permanent link">&para;</a></h3>
+<p>alpasim's services read a scene's map from its artifact, never off the wire; this is the
+CARLA counterpart. With <code>driver.map_dir</code> set (and the <code>map</code> extra installed), the world's
+OpenDRIVE is converted by <a href="https://pypi.org/project/roadgen/">roadgen</a> at scenario start
+and written to <code>&lt;map_dir&gt;/&lt;map_id&gt;/</code>, in the formats <code>driver.map_formats</code> names
+(Lanelet2 by default), beside the OpenDRIVE source, roadgen's IR and its traces. <code>map_id</code>
+is <code>&lt;map name&gt;-&lt;first 12 hex digits of the OpenDRIVE's SHA-256&gt;</code>, so a set is written
+once per map and a changed map gets a new id.</p>
+<p>Each step then carries only what changes: every light's state, named by its OpenDRIVE
+signal id, with its stop points on OpenDRIVE lanes. A policy that sets <code>map_dir</code> (its
+own copy of the directory) gets the set opened as <code>ctx.map</code>, and <code>ctx.stop_lines()</code>
+resolves the lights through roadgen's traces into its format's own elements -- for
+Lanelet2, the approach lanelet, the traffic-light regulatory element and the light's
+line strings:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">map_dir</span> <span class="o">=</span> <span class="s2">"/shared/maps"</span>   <span class="c1"># the runtime's driver.map_dir, as this process sees it</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">):</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>        <span class="k">for</span> <span class="n">stop</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">stop_lines</span><span class="p">():</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>            <span class="n">stop</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">lane_ids</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">position_local</span>
+</code></pre></div>
 <h3 id="diagnostics-coming-back">Diagnostics coming back<a class="headerlink" href="#diagnostics-coming-back" title="Permanent link">&para;</a></h3>
 <p><code>DriveResponse.debug_info.unstructured_debug_info</code> is decoded as
 <code>carla_driver.v0.CarlaDriveDebugInfo</code> when it parses as one, surfacing the policy's name,
@@ -1713,12 +1838,34 @@ and fail conditions, so a condition firing on the same tick still decides the ou
 On its own, an early stop is reported as a failure with the message
 <code>Ego entity requested session termination</code>, because the scenario never satisfied its
 pass condition.</p>
+<h2 id="writing-a-policy">Writing a policy<a class="headerlink" href="#writing-a-policy" title="Permanent link">&para;</a></h2>
+<p>A policy subclasses <code>BaseDriver</code> and returns a plan in the rig frame (x forward, y left,
+origin on the ground below the rear axle); the servicer handles sessions, frame
+retention, ego history and the rig/local conversion:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_egodriver.driver</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDriver</span><span class="p">,</span> <span class="n">DriveContext</span><span class="p">,</span> <span class="n">DriveResult</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_egodriver.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_server</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_policy"</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">DriveContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveResult</span><span class="p">:</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="o">...</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">run_server</span><span class="p">(</span><span class="n">MyPolicy</span><span class="p">(),</span> <span class="n">port</span><span class="o">=</span><span class="mi">50051</span><span class="p">)</span>
+</code></pre></div>
+<p>Without CARLA, <code>autoware_carla_egodriver.testing.FakeLoop</code> drives a policy server over
+real gRPC on a straight road, rendering each declared pinhole camera, which is what a
+policy's CI runs (<code>autoware-carla-egodriver demo --driver localhost:50051</code> from the
+command line). The scenario framework is then the CARLA-backed runtime for the same
+server.</p>
 <h2 id="protobuf-definitions">Protobuf definitions<a class="headerlink" href="#protobuf-definitions" title="Permanent link">&para;</a></h2>
-<p>The protobuf definitions are <strong>vendored</strong>, not installed. <code>carla-driver-interface</code> and
-its <code>alpasim-grpc</code> dependency require Python ≥ 3.11, while this package supports 3.10
-onwards -- Autoware's own environment is 3.10 -- so depending on them would drop
-3.10 support. Instead the <code>.proto</code> files are copied verbatim from two upstreams
-(both Apache-2.0) and compiled locally:</p>
+<p>The protobuf definitions are <strong>vendored</strong>, not installed, in <code>autoware_carla_egodriver</code>.
+alpasim's published <code>alpasim-grpc</code> requires Python ≥ 3.11, while this workspace supports
+3.10 onwards -- Autoware's own environment is 3.10 -- so depending on it would drop 3.10
+support. Instead the <code>.proto</code> files are copied verbatim from two upstreams (both
+Apache-2.0) and compiled locally:</p>
 <table>
 <thead>
 <tr>
@@ -1738,21 +1885,18 @@ onwards -- Autoware's own environment is 3.10 -- so depending on them would drop
 <td><code>hakuturu583/carla_driver_interface@af1dcd3</code></td>
 <td>The CARLA extension payloads</td>
 </tr>
-<tr>
-<td>what keeps the messages wire compatible.</td>
-<td></td>
-<td></td>
-</tr>
 </tbody>
 </table>
+<p>Field numbers, package names, and import paths are preserved exactly, which is what
+keeps the messages wire compatible.</p>
 <p>Regenerate the committed modules after updating the vendored protos:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
 </code></pre></div>
 <p><code>test_proto_generated.py</code> fails if the committed output drifts from the <code>.proto</code> files.
-See <code>autoware_carla_scenario/proto/README.md</code> for the full provenance.</p>
+See <code>autoware_carla_egodriver/proto/README.md</code> for the full provenance.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Only RGB cameras are streamed. Lidar is not wired up.</li>
+<li>Only RGB cameras and ray-cast LiDARs are streamed.</li>
 <li>CARLA has no recorded drive, so with <code>send_ground_truth: true</code> the reference sent
   through <code>submit_recording_ground_truth</code> is the route itself: its waypoints, headed
   along the path and spaced <code>policy_timestep_s</code> apart. This is the <em>recorded</em>
@@ -1788,7 +1932,7 @@ See <code>autoware_carla_scenario/proto/README.md</code> for the full provenance
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 8, 2026 04:14:22 UTC"><span class="timeago" datetime="2026-10-08T04:14:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 8, 2026 04:14:22 UTC">2026-10-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 8, 2026 06:05:15 UTC"><span class="timeago" datetime="2026-10-08T06:05:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 8, 2026 06:05:15 UTC">2026-10-08</span>
   </span>
 
     
