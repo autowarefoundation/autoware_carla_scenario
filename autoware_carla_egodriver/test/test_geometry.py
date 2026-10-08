@@ -7,8 +7,8 @@ import math
 import numpy as np
 import pytest
 
-from autoware_carla_scenario.driver._proto import common_pb2
-from autoware_carla_scenario.driver.geometry import (
+from autoware_carla_egodriver._proto import common_pb2
+from autoware_carla_egodriver.geometry import (
     Pose,
     Trajectory,
     waypoints_to_proto,

@@ -3,8 +3,8 @@
 alpasim's contract stops at the plan: the driver policy returns *where the vehicle should
 be*, not throttle and steering.  Upstream that gap is filled by alpasim's vehicle dynamics
 service; here -- as in ``carla_driver_interface``'s runtime -- it is filled by a pure
-pursuit lateral controller and a PID longitudinal controller feeding
-``carla.VehicleControl``.
+pursuit lateral controller, trimmed by feedback on the measured yaw rate, and a PID
+longitudinal controller feeding ``carla.VehicleControl``.
 
 All geometry in this module is in the **rig frame**: x forward, y left, z up,
 right-handed.  Steering angles follow the same convention (positive = left), and the flip
@@ -26,7 +26,13 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 
-__all__ = ["ControlConfig", "TrajectoryFollower", "VehicleCommand"]
+__all__ = [
+    "ControlConfig",
+    "TrajectoryFollower",
+    "VehicleCommand",
+    "steer_angle",
+    "steer_command",
+]
 
 #: Denominator guard for divisions by elapsed time or lookahead distance.
 _EPSILON: float = 1e-6
@@ -41,7 +47,7 @@ class ControlConfig:
     """
 
     # -- Lateral (pure pursuit) ------------------------------------------------
-    lookahead_gain_s: float = 0.9
+    lookahead_gain_s: float = 0.6
     """Lookahead distance per unit speed, in seconds."""
 
     min_lookahead_m: float = 4.0
@@ -53,11 +59,41 @@ class ControlConfig:
     wheelbase_m: float = 2.8
     """Distance between front and rear axles, used by the pure pursuit law."""
 
-    max_steer_angle_rad: float = math.radians(70.0)
-    """Steering angle mapped to full lock, used to normalise the command."""
+    max_steer_angle_rad: float = math.radians(56.0)
+    """Wheel angle at full lock in CARLA's steering response (see :attr:`steer_exponent`)."""
+
+    steer_exponent: float = 2.0
+    """How CARLA's ``[-1, 1]`` steer turns the wheels:
+    ``angle = max_steer_angle * |steer| ** steer_exponent``.
+
+    CARLA 0.10's Chaos vehicles answer quadratically, whatever ``max_steer_angle`` the
+    wheel physics reports (70 degrees): measured on the MKZ at 2 and 8 m/s, steer 0.1
+    turns like 0.56 degrees, 0.3 like 5.0, 0.5 like 13.9 -- ``56 * steer**2`` within a
+    few percent up to 0.5, at every speed.  A linear map asks for a tenth of the needed
+    angle on a gentle curve.  ``1.0`` is a linear map.
+    """
 
     max_steer_rate: float = 4.0
     """Maximum change in normalised steering per second."""
+
+    yaw_rate_ki: float = 3.0
+    """Integral feedback on the yaw rate.
+
+    Pure pursuit asks for the yaw rate ``speed * curvature``; this trims the steering
+    angle until the vehicle delivers it, absorbing what the steering map and the bicycle
+    model miss (understeer, another vehicle's steering response).  The error is taken as
+    the steering angle the bicycle model would need for the missing yaw rate, so the gain
+    is unitless and the same at every speed.  Integral only: the vehicle answers a tick
+    later, and a proportional term on top of that delay oscillates.  ``0`` steers
+    open-loop.
+    """
+
+    yaw_rate_trim_limit_rad: float = math.radians(25.0)
+    """Clamp on the integrated trim, in radians of steering."""
+
+    yaw_rate_min_speed_mps: float = 1.0
+    """Below this speed the yaw rate says little about the steering, so the trim is
+    held rather than integrated."""
 
     # -- Longitudinal (PID) ----------------------------------------------------
     speed_kp: float = 0.6
@@ -82,25 +118,43 @@ class ControlConfig:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "ControlConfig":
         """Return gains built from a plain mapping (e.g. a Hydra node).
 
-        ``max_steer_angle_deg`` is accepted as an alias for
-        :attr:`max_steer_angle_rad`, since degrees read better in YAML.
+        Every ``*_rad`` field is also accepted as ``*_deg`` (``max_steer_angle_deg``,
+        ``yaw_rate_trim_limit_deg``), since degrees read better in YAML.
 
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
-        values = dict(mapping)
-        degrees = values.pop("max_steer_angle_deg", None)
-        if degrees is not None:
-            values["max_steer_angle_rad"] = math.radians(float(degrees))
-
         known = {field.name for field in fields(cls)}
+        aliases = {
+            name[: -len("_rad")] + "_deg": name
+            for name in known
+            if name.endswith("_rad")
+        }
+        values = dict(mapping)
+        for alias, name in aliases.items():
+            degrees = values.pop(alias, None)
+            if degrees is not None:
+                values[name] = math.radians(float(degrees))
+
         unknown = sorted(set(values) - known)
         if unknown:
             raise ValueError(
                 f"Unknown ControlConfig key(s): {unknown}. "
-                f"Known keys: {sorted(known | {'max_steer_angle_deg'})}"
+                f"Known keys: {sorted(known | set(aliases))}"
             )
         return cls(**values)
+
+
+def steer_command(angle_rad: float, config: ControlConfig) -> float:
+    """Return the ``[-1, 1]`` steer that turns the wheels by *angle_rad*, same sign."""
+    ratio = min(1.0, abs(angle_rad) / config.max_steer_angle_rad)
+    return math.copysign(ratio ** (1.0 / config.steer_exponent), angle_rad)
+
+
+def steer_angle(command: float, config: ControlConfig) -> float:
+    """Inverse of :func:`steer_command`: the wheel angle a steer gives."""
+    ratio = min(1.0, abs(command)) ** config.steer_exponent
+    return math.copysign(ratio * config.max_steer_angle_rad, command)
 
 
 @dataclass(frozen=True)
@@ -162,6 +216,8 @@ class TrajectoryFollower:
         self._integral = 0.0
         self._previous_error = 0.0
         self._previous_steer = 0.0
+        self._yaw_rate_trim = 0.0
+        self._asked_curvature: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Control
@@ -173,6 +229,7 @@ class TrajectoryFollower:
         pose_local_to_rig: Pose,
         current_speed_mps: float,
         dt_s: float,
+        yaw_rate_rps: Optional[float] = None,
     ) -> VehicleCommand:
         """Return the command that tracks *plan_in_local* from the current pose.
 
@@ -181,6 +238,8 @@ class TrajectoryFollower:
             pose_local_to_rig: The ego's current pose in the local frame.
             current_speed_mps: Measured ground speed.
             dt_s: Time since the previous call, in seconds.
+            yaw_rate_rps: The ego's measured yaw rate, positive to the left.  ``None``
+                steers on pure pursuit alone.
 
         Returns:
             The actuation command.  An empty plan yields a full stop.
@@ -203,7 +262,7 @@ class TrajectoryFollower:
         if target is None:
             return self._hold_still()
 
-        steer = self._lateral(target, lookahead, dt_s)
+        steer = self._lateral(target, current_speed_mps, dt_s, yaw_rate_rps)
         throttle, brake = self._longitudinal(target_speed, current_speed_mps, dt_s)
 
         return VehicleCommand(
@@ -265,17 +324,23 @@ class TrajectoryFollower:
             return distance / duration_s
         return 0.0
 
-    def _lateral(self, target: np.ndarray, lookahead_m: float, dt_s: float) -> float:
+    def _lateral(
+        self,
+        target: np.ndarray,
+        speed_mps: float,
+        dt_s: float,
+        yaw_rate_rps: Optional[float],
+    ) -> float:
         """Return the normalised steering command for *target*, rate limited."""
         distance = max(float(np.linalg.norm(target[:2])), _EPSILON)
         alpha = math.atan2(float(target[1]), float(target[0]))
-        steer_angle = math.atan2(
-            2.0 * self._config.wheelbase_m * math.sin(alpha), max(distance, _EPSILON)
-        )
+        curvature = 2.0 * math.sin(alpha) / distance
+        angle = math.atan(self._config.wheelbase_m * curvature)
+        if yaw_rate_rps is not None:
+            angle += self._yaw_rate_feedback(speed_mps, yaw_rate_rps, curvature, dt_s)
 
         # Rig frame is right-handed (positive angle = left); CARLA steers positive right.
-        command = -steer_angle / self._config.max_steer_angle_rad
-        command = float(np.clip(command, -1.0, 1.0))
+        command = -steer_command(angle, self._config)
 
         max_delta = self._config.max_steer_rate * max(dt_s, 0.0)
         if max_delta > 0.0:
@@ -286,6 +351,28 @@ class TrajectoryFollower:
             command = float(np.clip(command, lower, upper))
         self._previous_steer = command
         return command
+
+    def _yaw_rate_feedback(
+        self, speed_mps: float, yaw_rate_rps: float, curvature: float, dt_s: float
+    ) -> float:
+        """Return the steering trim, in radians, that closes the gap to the asked yaw rate."""
+        config = self._config
+        # The measured yaw rate answers the previous step's command, so it is held
+        # against the curvature asked then; against this step's, every change in the
+        # plan would read as a steering error for one step.
+        asked, self._asked_curvature = self._asked_curvature, curvature
+        if asked is None or speed_mps < config.yaw_rate_min_speed_mps:
+            return self._yaw_rate_trim
+        # The yaw-rate error as a steering angle: what the bicycle model says it would
+        # take to turn by the missing yaw rate.
+        error = config.wheelbase_m * (asked - yaw_rate_rps / speed_mps)
+        limit = config.yaw_rate_trim_limit_rad
+        self._yaw_rate_trim = float(
+            np.clip(
+                self._yaw_rate_trim + config.yaw_rate_ki * error * dt_s, -limit, limit
+            )
+        )
+        return self._yaw_rate_trim
 
     def _longitudinal(
         self, target_speed_mps: float, current_speed_mps: float, dt_s: float

@@ -7,9 +7,9 @@ repos:
       # protoc output checked byte-for-byte by test_proto_generated.py. Reformatting
       # either would break that guarantee.
       - id: trailing-whitespace
-        exclude: '^autoware_carla_scenario/(proto/|src/autoware_carla_scenario/driver/_proto/)'
+        exclude: '^(autoware_carla_scenario/proto/|autoware_carla_egodriver/(proto/|src/autoware_carla_egodriver/_proto/))'
       - id: end-of-file-fixer
-        exclude: '^autoware_carla_scenario/(proto/|src/autoware_carla_scenario/driver/_proto/)'
+        exclude: '^(autoware_carla_scenario/proto/|autoware_carla_egodriver/(proto/|src/autoware_carla_egodriver/_proto/))'
       - id: check-yaml
         exclude: 'mkdocs\.yml$'
       - id: check-added-large-files
@@ -42,6 +42,8 @@ repos:
           - --ignore-missing-imports
           - autoware_carla_scenario/src
           - autoware_carla_scenario/test
+          - autoware_carla_egodriver/src
+          - autoware_carla_egodriver/test
         pass_filenames: false
         always_run: true
 
@@ -66,4 +68,13 @@ repos:
         entry: uv run pytest --no-testmon -m "not integration and not slow" autoware_carla_scenario/test
         language: system
         pass_filenames: false
-        files: '^(autoware_carla_scenario/|data/|pyproject\.toml$|uv\.lock$)'
+        files: '^(autoware_carla_scenario/|autoware_carla_egodriver/|data/|pyproject\.toml$|uv\.lock$)'
+
+  - repo: local
+    hooks:
+      - id: pytest-egodriver
+        name: pytest (autoware_carla_egodriver)
+        entry: uv run pytest --no-testmon autoware_carla_egodriver/test
+        language: system
+        pass_filenames: false
+        files: '^(autoware_carla_egodriver/|pyproject\.toml$|uv\.lock$)'

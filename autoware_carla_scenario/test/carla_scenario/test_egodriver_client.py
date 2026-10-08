@@ -15,7 +15,7 @@ import grpc
 import numpy as np
 import pytest
 
-from autoware_carla_scenario.driver._proto import (
+from autoware_carla_egodriver.protocol import (
     common_pb2,
     egodriver_pb2,
     egodriver_pb2_grpc,

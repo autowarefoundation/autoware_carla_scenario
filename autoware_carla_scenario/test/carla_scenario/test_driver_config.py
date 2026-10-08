@@ -49,7 +49,9 @@ def test_shipped_yaml_builds_a_client_config() -> None:
 
 def test_shipped_yaml_builds_control_gains() -> None:
     control = ControlConfig.from_mapping(_shipped_driver_config()["control"])
-    assert control.max_steer_angle_rad == pytest.approx(math.radians(70.0))
+    assert control.max_steer_angle_rad == pytest.approx(math.radians(56.0))
+    assert control.steer_exponent == pytest.approx(2.0)
+    assert control.yaw_rate_ki == pytest.approx(3.0)
     assert control.speed_kp == pytest.approx(0.6)
 
 
@@ -104,6 +106,23 @@ def test_control_mapping_accepts_radians_directly() -> None:
     assert control.max_steer_angle_rad == pytest.approx(1.0)
 
 
+def test_control_mapping_accepts_every_angle_in_degrees() -> None:
+    control = ControlConfig.from_mapping({"yaw_rate_trim_limit_deg": 10.0})
+    assert control.yaw_rate_trim_limit_rad == pytest.approx(math.radians(10.0))
+
+
+def test_control_spec_mirrors_the_control_config() -> None:
+    """Every DriverControlSpec field reaches ControlConfig, with the same default."""
+    import dataclasses
+
+    from autoware_carla_scenario.scenario_config import DriverControlSpec
+
+    assert (
+        ControlConfig.from_mapping(dataclasses.asdict(DriverControlSpec()))
+        == ControlConfig()
+    )
+
+
 def test_client_mapping_ignores_the_control_section() -> None:
     """``control`` lives in the same YAML node but configures the follower."""
     config = DriverClientConfig.from_mapping(
@@ -132,3 +151,44 @@ def test_camera_maps_onto_a_carla_sensor_config() -> None:
     assert sensor.fov == pytest.approx(90.0)
     # 640 px across 90 deg.
     assert sensor.fx == pytest.approx(320.0, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# The VisionPilot preset (driver=vision_pilot)
+# ---------------------------------------------------------------------------
+
+
+def _composed(overrides: list[str]):
+    from hydra import compose, initialize_config_dir
+
+    with initialize_config_dir(config_dir=str(_CONF.resolve()), version_base=None):
+        return compose(config_name="config", overrides=overrides)
+
+
+def test_vision_pilot_preset_sets_the_rig_and_hands_over_the_ego() -> None:
+    cfg = _composed(["driver=vision_pilot"])
+    assert cfg.ego.entity == "carla_driver"
+    assert cfg.ego.vehicle_type == "vehicle.lincoln.mkz"
+
+    config = DriverClientConfig.from_mapping(cfg.driver)
+    (camera,) = config.cameras
+    assert camera.logical_id == "camera_front_narrow_50fov"
+    assert (camera.image_width, camera.image_height, camera.fov) == (1920, 1280, 50.0)
+    assert (camera.position_x, camera.position_y, camera.position_z) == (
+        1.544,
+        0.0243,
+        2.116,
+    )
+    assert (camera.roll, camera.pitch, camera.yaw) == (-0.10, -0.11, -0.23)
+    assert config.policy_timestep_s == pytest.approx(0.1)
+    assert ControlConfig.from_mapping(cfg.driver.control).wheelbase_m == pytest.approx(
+        2.85
+    )
+
+
+def test_vision_pilot_preset_keeps_the_other_driver_defaults() -> None:
+    """It extends driver/default rather than replacing it."""
+    preset, default = _composed(["driver=vision_pilot"]).driver, _composed([]).driver
+    for key in ("address", "route_horizon_m", "send_renderer_data", "image_quality"):
+        assert preset[key] == default[key]
+    assert preset.control.speed_kp == default.control.speed_kp

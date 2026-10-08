@@ -24,13 +24,14 @@ produces a policy that brakes too late and stops too early.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ..utils.traffic_light import traffic_light_state_name
-from ._proto import carla_driver_pb2, common_pb2
+from autoware_carla_egodriver.protocol import carla_driver_pb2, common_pb2
+
 from .base import DriverClientConfig
 from .geometry import Pose
 from .observation import to_local_pose, to_local_vector
@@ -88,6 +89,10 @@ class RendererDataBuilder:
         ego_actor: The ego vehicle actor.
         config: Driver settings; supplies the sight distance, the actor horizon
             and the lane-walk step.
+        map_id: The map file set written for the policy
+            (:func:`~autoware_carla_scenario.driver.hdmap_export.export_map`); with
+            one, every light in the world is sent with where to stop for it.
+            ``""`` sends neither.
     """
 
     def __init__(
@@ -95,11 +100,14 @@ class RendererDataBuilder:
         world: "carla.World",
         ego_actor: "carla.Actor",
         config: DriverClientConfig,
+        map_id: str = "",
     ) -> None:
         self._world = world
         self._ego = ego_actor
         self._config = config
         self._map = world.get_map()
+        self._map_id = map_id
+        self._lights: Optional[List[Tuple[Any, str, List[Any]]]] = None
         self._stop_lines: Optional[Dict[Tuple[int, int], List[Any]]] = None
         self._stop_line_points: Dict[int, List[NDArray[np.float64]]] = {}
 
@@ -107,25 +115,39 @@ class RendererDataBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def build(self, timestamp_us: int, ego_pose: Pose) -> bytes:
+    def build(
+        self,
+        timestamp_us: int,
+        ego_pose: Pose,
+        lidar: Sequence[carla_driver_pb2.LidarSweep] = (),
+    ) -> bytes:
         """Return the serialized payload for this instant.
 
         Args:
             timestamp_us: Simulation time of the snapshot.
             ego_pose: The ego's rig pose in the local frame, used to resolve
                 distances along the ego's heading.
+            lidar: This step's LiDAR sweeps, already in the rig frame.
 
         Returns:
-            The serialized ``CarlaRendererData``, or ``b""`` if collection
-            failed -- a ground-truth hiccup must not abort a scenario.
+            The serialized ``CarlaRendererData``.  If collecting the ground truth
+            failed -- a hiccup that must not abort a scenario -- only the sweeps, or
+            ``b""`` without any.
         """
         try:
-            return self._build(timestamp_us, ego_pose).SerializeToString()
+            data = self._build(timestamp_us, ego_pose)
         except (RuntimeError, AttributeError, TypeError, ValueError):
             # Best-effort by design: the payload is an optional extension, and a
-            # CARLA hiccup here must not take the scenario down with it.
+            # CARLA hiccup here must not take the scenario down with it -- nor
+            # cost the policy its sweep, which is sensor data, not ground truth.
             logger.warning("Failed to collect CARLA ground truth", exc_info=True)
-            return b""
+            if not lidar:
+                return b""
+            data = carla_driver_pb2.CarlaRendererData(
+                snapshot_timestamp_us=timestamp_us
+            )
+        data.lidar.extend(lidar)
+        return data.SerializeToString()
 
     def _build(
         self, timestamp_us: int, ego_pose: Pose
@@ -145,6 +167,8 @@ class RendererDataBuilder:
                 if self._config.send_actor_ground_truth
                 else []
             ),
+            map_id=self._map_id,
+            traffic_lights=self._traffic_lights() if self._map_id else [],
         )
 
     # ------------------------------------------------------------------
@@ -189,6 +213,41 @@ class RendererDataBuilder:
         except (RuntimeError, AttributeError):
             logger.debug("is_at_traffic_light() unavailable", exc_info=True)
         return None
+
+    def _traffic_lights(self) -> List[carla_driver_pb2.TrafficLight]:
+        """Every light in the world with its state now -- the map's dynamic layer.
+
+        Where to stop for each is cached: lights do not move.  The stop points are
+        CARLA's stop waypoints as they are, named by OpenDRIVE road, lane section
+        and lane, which is how the policy finds them in its map file.
+        """
+        if self._lights is None:
+            self._lights = [
+                (
+                    light,
+                    str(light.get_opendrive_id()),
+                    [
+                        carla_driver_pb2.StopPoint(
+                            road_id=int(waypoint.road_id),
+                            section_id=int(waypoint.section_id),
+                            lane_id=int(waypoint.lane_id),
+                            position_local=_vec3(
+                                to_local_pose(waypoint.transform).position
+                            ),
+                        )
+                        for waypoint in self._stop_waypoints(light)
+                    ],
+                )
+                for light in self._world.get_actors().filter("traffic.traffic_light*")
+            ]
+        return [
+            carla_driver_pb2.TrafficLight(
+                opendrive_id=opendrive_id,
+                state=self._light_state(light),
+                stop_points=stops,
+            )
+            for light, opendrive_id, stops in self._lights
+        ]
 
     def _ego_waypoint(self) -> Optional[Any]:
         """Where the ego sits on the lane graph, or ``None`` if nowhere."""

@@ -2,9 +2,8 @@
 
 Where :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` hands the vehicle to
 CARLA's TrafficManager and :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEntity`
-leaves it standing still, this entity closes the loop against a driver policy served by
-`carla_driver_interface <https://github.com/hakuturu583/carla_driver_interface>`_ or any
-other implementation of ``egodriver.EgodriverService``.
+leaves it standing still, this entity closes the loop against a driver policy served with
+``autoware-carla-egodriver`` or any other implementation of ``egodriver.EgodriverService``.
 
 Each simulation tick the entity applies control; every
 :attr:`~autoware_carla_scenario.driver.base.DriverClientConfig.policy_timestep_s` it also
@@ -23,21 +22,25 @@ from ..constants import FIXED_DELTA_SECONDS
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
-from ..driver.geometry import Trajectory
+from ..driver.geometry import Pose, Trajectory
 from ..driver.renderer import RendererDataBuilder
 from ..driver.observation import (
     ego_observation,
     encode_frame_jpeg,
+    lidar_points_to_rig,
     rear_axle_offset,
     route_reference_trajectory,
     route_waypoints_in_rig,
+    sensor_pose_in_rig,
 )
+from autoware_carla_egodriver.protocol import LidarSweep, pack_lidar_sweep
 from .ego import EgoVehicle
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
     from ..sensor.carla_camera import CarlaCameraSensor
+    from ..sensor.carla_lidar import CarlaLidarSensor
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +86,9 @@ class CarlaDriverEntity(EgoVehicle):
         self._follower = TrajectoryFollower(control_config)
 
         self._cameras: List[Tuple[str, "CarlaCameraSensor"]] = []
+        #: ``(logical_id, sensor, mount in the rig frame)`` per LiDAR.
+        self._lidars: List[Tuple[str, "CarlaLidarSensor", Pose]] = []
+        self._world: Optional["carla.World"] = None
         self._plan: Trajectory = Trajectory.empty()
         self._sim_time_us: int = 0
         self._last_policy_time_us: Optional[int] = None
@@ -185,13 +191,22 @@ class CarlaDriverEntity(EgoVehicle):
         )
 
         self._attach_cameras(world, actor)
+        self._world = world
 
         # CARLA rebuilds the map object on every ``get_map()`` call, so it is fetched
         # once here and reused for the rolling route walk.
         self._map = world.get_map()
 
         if self._config.send_renderer_data:
-            self._renderer = RendererDataBuilder(world, actor, self._config)
+            self._attach_lidars(world, actor)
+            self._renderer = RendererDataBuilder(
+                world, actor, self._config, map_id=self._write_map()
+            )
+        elif self._config.lidars or self._config.map_dir:
+            logger.warning(
+                "driver.lidars / driver.map_dir need send_renderer_data, which is off; "
+                "the policy gets neither sweeps nor traffic lights"
+            )
 
         session_uuid = str(uuid.uuid4())
         self._client.start_session(session_uuid, str(self._map.name))
@@ -242,6 +257,13 @@ class CarlaDriverEntity(EgoVehicle):
             except Exception:  # noqa: BLE001 - teardown must not raise
                 logger.warning("Failed to destroy camera %s", logical_id, exc_info=True)
         self._cameras = []
+        for logical_id, lidar, _ in self._lidars:
+            try:
+                lidar.destroy()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.warning("Failed to destroy LiDAR %s", logical_id, exc_info=True)
+        self._lidars = []
+        self._world = None
         self._pending_egomotion = []
         self._map = None
         self._renderer = None
@@ -265,6 +287,59 @@ class CarlaDriverEntity(EgoVehicle):
             camera.attach(world, actor)
             self._cameras.append((logical_id, camera))
         logger.info("Attached %d driver camera(s) to the ego", len(self._cameras))
+
+    def _attach_lidars(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Spawn and attach every configured LiDAR to the ego actor."""
+        from ..sensor.carla_lidar import CarlaLidarSensor  # noqa: PLC0415
+
+        for config in self._config.lidars:
+            lidar = CarlaLidarSensor(config)
+            lidar.attach(world, actor)
+            mount = sensor_pose_in_rig(
+                config.position_x,
+                config.position_y,
+                config.position_z,
+                config.roll,
+                config.pitch,
+                config.yaw,
+                self._rear_axle_offset_m,
+            )
+            self._lidars.append((config.logical_id, lidar, mount))
+        if self._lidars:
+            logger.info("Attached %d driver LiDAR(s) to the ego", len(self._lidars))
+
+    def _write_map(self) -> str:
+        """Write the world's map for the policy (``map_dir``); its id, or ``""``."""
+        if self._config.map_dir is None or self._map is None:
+            return ""
+        from ..driver.hdmap_export import export_map  # noqa: PLC0415
+
+        return export_map(
+            str(self._map.to_opendrive()),
+            str(self._map.name),
+            self._config.map_dir,
+            self._config.map_formats,
+        )
+
+    def _lidar_sweeps(self) -> List[LidarSweep]:
+        """This tick's sweep from every LiDAR that delivered one, in the rig frame."""
+        if not self._lidars or self._world is None:
+            return []
+        frame = int(self._world.get_snapshot().frame)
+        sweeps = []
+        for logical_id, lidar, mount in self._lidars:
+            raw = lidar.get_sweep(frame)
+            if raw is None:
+                continue
+            sweeps.append(
+                pack_lidar_sweep(
+                    logical_id,
+                    self._sim_time_us,
+                    lidar_points_to_rig(raw, mount),
+                    mount.to_proto(),
+                )
+            )
+        return sweeps
 
     def _ego_observation(self, actor: "carla.Actor") -> EgoObservation:
         """Return the ego's state at the current simulation time."""
@@ -351,7 +426,9 @@ class CarlaDriverEntity(EgoVehicle):
         """
         if self._renderer is None:
             return b""
-        return self._renderer.build(self._sim_time_us, observation.pose)
+        return self._renderer.build(
+            self._sim_time_us, observation.pose, lidar=self._lidar_sweeps()
+        )
 
     def _submit_camera_frames(self) -> None:
         """Encode and send the latest frame from each camera."""
@@ -377,6 +454,7 @@ class CarlaDriverEntity(EgoVehicle):
             observation.pose,
             observation.speed_mps,
             _FIXED_DELTA_S,
+            yaw_rate_rps=float(observation.angular_velocity[2]),
         )
         actor.apply_control(command.to_carla_control())
 

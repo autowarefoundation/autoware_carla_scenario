@@ -1,0 +1,41 @@
+# @package _global_
+#
+# VisionPilot (autowarefoundation/vision_pilot) driving the ego over the egodriver
+# contract, with the vehicle and camera it is tuned for:
+#
+#   uv run vision-pilot-driver --model-dir <weights> --port 50051   # in vision_pilot
+#   uv run scenario driver=vision_pilot
+#
+# The rig is VisionPilot's own CARLA rig, Simulation/CARLA/ROS2/config/carla916.json
+# in that repository: a Lincoln MKZ with one 1920x1280, 50 degree front camera at
+# 10 Hz. carla916.json is written in ROS axes; the values below are what its
+# launcher passes to carla.Transform (y, pitch and yaw negated, roll as is), which
+# is the convention `driver.cameras` uses.
+defaults:
+  - default
+  - _self_
+
+ego:
+  # The mount was measured on this vehicle (`vehicle.lincoln.mkz_2020` in CARLA
+  # 0.9.16, whose model CARLA 0.10 names `vehicle.lincoln.mkz`).
+  vehicle_type: vehicle.lincoln.mkz
+  entity: carla_driver
+
+driver:
+  # VisionPilot runs at the camera's 10 Hz.
+  policy_timestep_s: 0.1
+  cameras:
+    - logical_id: camera_front_narrow_50fov
+      image_width: 1920
+      image_height: 1280
+      fov: 50.0
+      fps: 10.0
+      position_x: 1.544
+      position_y: 0.0243
+      position_z: 2.116
+      roll: -0.10
+      pitch: -0.11
+      yaw: -0.23
+  control:
+    # Lincoln MKZ.
+    wheelbase_m: 2.85

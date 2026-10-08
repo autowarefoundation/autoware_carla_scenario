@@ -2,7 +2,7 @@
 #
 # Settings for an external driver policy, used when `ego.entity: carla_driver`.
 # The policy is expected to serve `egodriver.EgodriverService`, e.g.
-#   carla-driver-interface serve --policy route_follower --port 50051
+#   autoware-carla-egodriver serve --policy route_follower --port 50051
 driver:
   address: localhost:50051
   timeout_s: 60.0
@@ -35,13 +35,25 @@ driver:
       roll: 0.0
       pitch: 0.0
       yaw: 0.0
+  # LiDARs whose sweeps ride in renderer_data (rig frame), e.g.
+  #   lidars:
+  #     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
+  lidars: []
+  # Write the world's map here at scenario start (<map_dir>/<map_id>/, via roadgen:
+  # the `map` extra); every traffic light is then sent with where to stop for it.
+  map_dir: null
+  map_formats: [lanelet2]
   control:
-    lookahead_gain_s: 0.9
+    lookahead_gain_s: 0.6
     min_lookahead_m: 4.0
     max_lookahead_m: 20.0
     wheelbase_m: 2.8
-    max_steer_angle_deg: 70.0
+    # CARLA 0.10 turns the wheels by about 56 deg * steer**2 (see ControlConfig).
+    max_steer_angle_deg: 56.0
+    steer_exponent: 2.0
     max_steer_rate: 4.0
+    # Integral trim on the measured yaw rate; 0 steers open-loop.
+    yaw_rate_ki: 3.0
     speed_kp: 0.6
     speed_ki: 0.15
     speed_kd: 0.05

@@ -35,9 +35,11 @@ __all__ = [
     "camera_extrinsics_to_rig",
     "encode_frame_jpeg",
     "ego_observation",
+    "lidar_points_to_rig",
     "rear_axle_offset",
     "route_reference_trajectory",
     "route_waypoints_in_rig",
+    "sensor_pose_in_rig",
     "to_local_pose",
     "to_local_vector",
 ]
@@ -111,6 +113,48 @@ def camera_extrinsics_to_rig(
     )
     position = np.array([position_x, -position_y, position_z], dtype=np.float64)
     return Pose(position, rotation.quat_xyzw)
+
+
+def sensor_pose_in_rig(
+    position_x: float,
+    position_y: float,
+    position_z: float,
+    roll_deg: float,
+    pitch_deg: float,
+    yaw_deg: float,
+    rear_axle_offset_m: float,
+) -> Pose:
+    """Return a sensor mount, relative to the vehicle actor, as a pose in the rig frame.
+
+    :func:`camera_extrinsics_to_rig` reads the mount as if it were relative to the rig
+    origin; this also moves it from the actor origin to the rig origin (the rear axle),
+    which is what points carried into the rig frame need.
+    """
+    mount = camera_extrinsics_to_rig(
+        position_x, position_y, position_z, roll_deg, pitch_deg, yaw_deg
+    )
+    return Pose.from_xyz_yaw(-rear_axle_offset_m, 0.0, 0.0, 0.0) @ mount
+
+
+def lidar_points_to_rig(
+    points_xyzi_in_sensor: NDArray[np.float32], pose_in_rig: Pose
+) -> NDArray[np.float32]:
+    """Return a raw ``sensor.lidar.ray_cast`` buffer as ``[N, 4]`` rig-frame points.
+
+    CARLA reports the points in the sensor's own frame, which is left-handed like the
+    rest of CARLA: mirroring y makes them right-handed in the sensor frame, and the
+    mount (*pose_in_rig*, from :func:`sensor_pose_in_rig`) then carries them into the
+    rig.  Intensity passes through untouched.
+    """
+    raw = np.asarray(points_xyzi_in_sensor, dtype=np.float32).reshape(-1, 4)
+    # The mirror folded into the rotation, and float32 throughout: a sweep is up to
+    # ~10^5-10^6 points, and float32 is centimetre-exact at LiDAR range.
+    rotation = pose_in_rig.rotation_matrix * np.array([1.0, -1.0, 1.0])
+    out = np.empty_like(raw)
+    np.matmul(raw[:, :3], rotation.T.astype(np.float32), out=out[:, :3])
+    out[:, :3] += pose_in_rig.position.astype(np.float32)
+    out[:, 3] = raw[:, 3]
+    return out
 
 
 def rear_axle_offset(actor: "carla.Actor", override: Optional[float] = None) -> float:

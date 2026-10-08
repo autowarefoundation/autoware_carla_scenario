@@ -4,9 +4,12 @@ The ego vehicle in a scenario is normally driven by CARLA's TrafficManager. This
 describes the alternative: handing the ego to an **external driving policy** that plans
 over gRPC, so a scenario becomes a test of that policy rather than of TrafficManager.
 
-The wire contract is alpasim's `egodriver.EgodriverService`, the same one
-[`carla_driver_interface`](https://github.com/hakuturu583/carla_driver_interface)
-implements, so any policy written against that package works here unchanged.
+The wire contract is alpasim's `egodriver.EgodriverService`. Its policy side lives in
+this workspace as **`autoware-carla-egodriver`**, a light package (grpcio, protobuf,
+numpy, Pillow; Python 3.10+) a policy depends on without pulling in the scenario
+framework. It replaces the driver half of
+[`carla_driver_interface`](https://github.com/hakuturu583/carla_driver_interface), with
+the same names, so policies written against that package port by changing imports.
 
 ## Architecture
 
@@ -20,7 +23,7 @@ flowchart LR
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower<br/>pure pursuit + PID"]
+        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim + PID"]
         SR -->|on_tick| CDE
         CAM -->|frames| CDE
         CDE --> TF
@@ -28,7 +31,7 @@ flowchart LR
     end
 
     subgraph policy["Policy process"]
-        P["egodriver.EgodriverService<br/>e.g. carla-driver-interface serve"]
+        P["egodriver.EgodriverService<br/>e.g. autoware-carla-egodriver serve"]
     end
 
     CDE -->|"observations + drive()"| P
@@ -48,7 +51,7 @@ Start the policy first — it is a server, the scenario is the client:
 
 ```bash
 # In the policy's own environment
-uv run carla-driver-interface serve --policy route_follower --port 50051
+uv run autoware-carla-egodriver serve --policy route_follower --port 50051
 ```
 
 Then run any scenario with the `carla_driver` ego entity:
@@ -88,9 +91,11 @@ driver:
       position_x: 1.5
       position_z: 1.6
   control:
-    lookahead_gain_s: 0.9
+    lookahead_gain_s: 0.6
     wheelbase_m: 2.8
-    max_steer_angle_deg: 70.0
+    max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
+    steer_exponent: 2.0
+    yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     speed_kp: 0.6
 ```
 
@@ -102,8 +107,22 @@ driver:
 | `autoware` | Nothing drives the ego; the actor is left for an external stack. |
 | `carla_driver` | An external policy drives the ego over the contract described here. |
 
+A policy is usually built for one rig, so a preset can choose the vehicle and cameras
+along with the rest of the group. `driver=vision_pilot` is
+[VisionPilot](https://github.com/autowarefoundation/vision_pilot)'s: a Lincoln MKZ with
+one 1920×1280, 50° front camera at 10 Hz (its own CARLA rig), and it hands the ego to the
+policy (`ego.entity: carla_driver`):
+
+```bash
+uv run vision-pilot-driver --model-dir <weights> --port 50051   # in vision_pilot
+uv run scenario driver=vision_pilot
+```
+
+A preset extends `driver/default` (`defaults: [default, _self_]`) and may set `ego.*`,
+since the `driver` group is composed after `ego`.
+
 `logical_id` is the name the policy looks a camera up by, so it must match what the
-policy expects. `carla_driver_interface`'s built-in policies use
+policy expects. `autoware-carla-egodriver`'s reference policies use
 `camera_front_wide_120fov`.
 
 ## Using it from Python
@@ -141,6 +160,8 @@ point, as a serialized `carla_driver.v0.CarlaRendererData`:
 | `speed_limit_mps` | Posted limit for the ego lane, 0 when unknown |
 | `actors[]` | Other vehicles: pose, bounding box, and velocity, all in the local frame |
 | `weather`, `map_name`, `frame_id` | Scene context |
+| `lidar[]` | One sweep per `driver.lidars` entry, packed `[N, 4]` float32 (x, y, z, intensity) in the rig frame |
+| `map_id`, `traffic_lights[]` | With `driver.map_dir`: which map file set describes the world, and every light with its state and stop points |
 
 !!! warning "Turning this off is not a no-op"
     A policy reads the payload defensively — a missing one means "no light applies" and
@@ -170,6 +191,52 @@ stop there hesitates most of a car-and-a-half before the line a driver aims at.
 This logic is ported from `carla_driver_interface`'s reference runtime
 (`runtime/carla_world.py` at `af1dcd3`) so that a policy tuned against that runtime sees
 the same numbers here.
+
+### LiDAR
+
+The contract has no LiDAR submission RPC, so sweeps ride in `renderer_data` too. Each
+`driver.lidars` entry mounts a `sensor.lidar.ray_cast` (mount in CARLA's convention, like
+a camera) spinning one full revolution per simulation tick, and each policy step sends
+that tick's sweep, already converted into the rig frame. A sweep that does not arrive
+within a second is left out rather than replaced by an older one.
+
+A policy does not see that transport: the servicer records each sweep before `drive` as
+a `LidarFrame` in `session.frame_history`, beside the camera frames, and announces it
+through `on_frame` -- the one path every sensor takes. `frame_history_length` applies to
+both, and `session.latest_frame("lidar_top").as_array()` unpacks the `[N, 4]` points as
+`latest_frame("camera_front").as_array()` decodes an image.
+
+```yaml
+driver:
+  lidars:
+    - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
+```
+
+### The map, as files
+
+alpasim's services read a scene's map from its artifact, never off the wire; this is the
+CARLA counterpart. With `driver.map_dir` set (and the `map` extra installed), the world's
+OpenDRIVE is converted by [roadgen](https://pypi.org/project/roadgen/) at scenario start
+and written to `<map_dir>/<map_id>/`, in the formats `driver.map_formats` names
+(Lanelet2 by default), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
+is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>`, so a set is written
+once per map and a changed map gets a new id.
+
+Each step then carries only what changes: every light's state, named by its OpenDRIVE
+signal id, with its stop points on OpenDRIVE lanes. A policy that sets `map_dir` (its
+own copy of the directory) gets the set opened as `ctx.map`, and `ctx.stop_lines()`
+resolves the lights through roadgen's traces into its format's own elements -- for
+Lanelet2, the approach lanelet, the traffic-light regulatory element and the light's
+line strings:
+
+```python
+class MyPolicy(BaseDriver):
+    map_dir = "/shared/maps"   # the runtime's driver.map_dir, as this process sees it
+
+    def drive(self, ctx):
+        for stop in ctx.stop_lines():
+            stop.state, stop.lane_ids, stop.position_local
+```
 
 ### Diagnostics coming back
 
@@ -210,19 +277,48 @@ On its own, an early stop is reported as a failure with the message
 `Ego entity requested session termination`, because the scenario never satisfied its
 pass condition.
 
+## Writing a policy
+
+A policy subclasses `BaseDriver` and returns a plan in the rig frame (x forward, y left,
+origin on the ground below the rear axle); the servicer handles sessions, frame
+retention, ego history and the rig/local conversion:
+
+```python
+from autoware_carla_egodriver.driver import BaseDriver, DriveContext, DriveResult
+from autoware_carla_egodriver.server import run_server
+
+
+class MyPolicy(BaseDriver):
+    name = "my_policy"
+
+    def drive(self, ctx: DriveContext) -> DriveResult:
+        ...
+
+
+run_server(MyPolicy(), port=50051)
+```
+
+Without CARLA, `autoware_carla_egodriver.testing.FakeLoop` drives a policy server over
+real gRPC on a straight road, rendering each declared pinhole camera, which is what a
+policy's CI runs (`autoware-carla-egodriver demo --driver localhost:50051` from the
+command line). The scenario framework is then the CARLA-backed runtime for the same
+server.
+
 ## Protobuf definitions
 
-The protobuf definitions are **vendored**, not installed. `carla-driver-interface` and
-its `alpasim-grpc` dependency require Python ≥ 3.11, while this package supports 3.10
-onwards -- Autoware's own environment is 3.10 -- so depending on them would drop
-3.10 support. Instead the `.proto` files are copied verbatim from two upstreams
-(both Apache-2.0) and compiled locally:
+The protobuf definitions are **vendored**, not installed, in `autoware_carla_egodriver`.
+alpasim's published `alpasim-grpc` requires Python ≥ 3.11, while this workspace supports
+3.10 onwards -- Autoware's own environment is 3.10 -- so depending on it would drop 3.10
+support. Instead the `.proto` files are copied verbatim from two upstreams (both
+Apache-2.0) and compiled locally:
 
 | Proto | Source | Carries |
 | --- | --- | --- |
 | `alpasim_grpc/v0/*` | `NVlabs/alpasim@6870924` | The `egodriver` service and its messages |
-| `carla_driver/v0/*` | `hakuturu583/carla_driver_interface@af1dcd3` | The CARLA extension payloads | Field numbers, package names, and import paths are preserved exactly, which is
-what keeps the messages wire compatible.
+| `carla_driver/v0/*` | `hakuturu583/carla_driver_interface@af1dcd3` | The CARLA extension payloads |
+
+Field numbers, package names, and import paths are preserved exactly, which is what
+keeps the messages wire compatible.
 
 Regenerate the committed modules after updating the vendored protos:
 
@@ -231,11 +327,11 @@ uv run python autoware_carla_scenario/scripts/compile_protos.py
 ```
 
 `test_proto_generated.py` fails if the committed output drifts from the `.proto` files.
-See `autoware_carla_scenario/proto/README.md` for the full provenance.
+See `autoware_carla_egodriver/proto/README.md` for the full provenance.
 
 ## Limitations
 
-* Only RGB cameras are streamed. Lidar is not wired up.
+* Only RGB cameras and ray-cast LiDARs are streamed.
 * CARLA has no recorded drive, so with `send_ground_truth: true` the reference sent
   through `submit_recording_ground_truth` is the route itself: its waypoints, headed
   along the path and spaced `policy_timestep_s` apart. This is the *recorded*

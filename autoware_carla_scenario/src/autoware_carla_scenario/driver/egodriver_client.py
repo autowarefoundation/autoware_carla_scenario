@@ -2,11 +2,11 @@
 
 This is the *runtime* half of the conversation: the scenario framework renders
 observations from CARLA and asks a driver policy -- running as a separate gRPC server,
-for example ``carla-driver-interface serve`` -- what to do next.
+for example ``autoware-carla-egodriver serve`` -- what to do next.
 
-Because the generated stubs come from the vendored alpasim protos, the messages are wire
-compatible with an upstream alpasim driver as well; see
-``autoware_carla_scenario/proto/README.md``.
+The generated stubs come from the alpasim protos vendored in ``autoware-carla-egodriver``,
+so the messages are wire compatible with an upstream alpasim driver as well; see
+``autoware_carla_egodriver/proto/README.md``.
 """
 
 from __future__ import annotations
@@ -19,13 +19,17 @@ import numpy as np
 from google.protobuf.message import DecodeError
 from numpy.typing import NDArray
 
-from ._proto import (
+from autoware_carla_egodriver.protocol import (
+    EGODRIVER_SERVICE_FULL_NAME,
+    MAX_MESSAGE_BYTES,
     carla_driver_pb2,
+    channel_options,
     common_pb2,
     egodriver_pb2,
     egodriver_pb2_grpc,
     sensorsim_pb2,
 )
+
 from .base import BaseEgoDriverClient, DriveOutcome, DriverClientConfig, EgoObservation
 from .geometry import Trajectory, waypoints_to_proto
 from .observation import camera_extrinsics_to_rig
@@ -33,21 +37,13 @@ from .observation import camera_extrinsics_to_rig
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EgoDriverGrpcClient"]
-
-#: Maximum gRPC message size, matching alpasim's own limit.  Camera frames dominate.
-MAX_MESSAGE_BYTES: int = 64 * 1024 * 1024
-
-#: Full service name, used only for log messages and error text.
-EGODRIVER_SERVICE_FULL_NAME: str = "egodriver.EgodriverService"
-
-
-def channel_options() -> list[tuple[str, int]]:
-    """Return the gRPC channel options used for driver connections."""
-    return [
-        ("grpc.max_send_message_length", MAX_MESSAGE_BYTES),
-        ("grpc.max_receive_message_length", MAX_MESSAGE_BYTES),
-    ]
+# The wire constants live with the contract; re-exported for existing callers.
+__all__ = [
+    "EGODRIVER_SERVICE_FULL_NAME",
+    "MAX_MESSAGE_BYTES",
+    "EgoDriverGrpcClient",
+    "channel_options",
+]
 
 
 class EgoDriverGrpcClient(BaseEgoDriverClient):
