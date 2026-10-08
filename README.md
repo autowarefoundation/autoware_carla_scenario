@@ -29,7 +29,7 @@ Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 
 ## Quick start
 
-Python 3.10 to 3.12. Every dependency installs from a wheel or from git — no apt
+Python 3.10 to 3.14. Every dependency installs from a wheel or from git — no apt
 packages, no C++ toolchain, no container. `git` has to be on `PATH`, because
 uv clones the converter.
 
@@ -78,19 +78,30 @@ merged into `master` with exactly one version bump label (`bump patch`,
 `bump minor` or `bump major`). The workflow bumps `version` in
 `autoware_carla_scenario/pyproject.toml`, re-locks, tags `v<version>`, creates
 the GitHub Release with the documentation attached, and deploys the docs to
-GitHub Pages. A merge without a label releases nothing.
+GitHub Pages. It then builds the wheel and sdist, installs the wheel on every
+supported Python (3.10 to 3.14), and publishes both to
+[PyPI](https://pypi.org/project/autoware-carla-scenario/) as
+`autoware-carla-scenario`. A merge without a label releases nothing.
+
+PyPI uploads use Trusted Publishing, so no API token is stored. Before the
+first release, add a (pending) trusted publisher on PyPI with owner
+`autowarefoundation`, repository `autoware_carla_scenario`, workflow
+`release.yml` and environment `pypi`, and create the `pypi` environment in
+this repository's settings.
 
 If a labelled merge bumped the version but a later step failed, run the
 workflow by hand (Actions → Release → Run workflow) with that version, e.g.
 `2.63.0`. A manual run does not bump: it builds from the version's tag, or else
 from its `chore: bump version to X` commit on `master`, so merges that landed
 since do not leak in, and it reuses any tag, Release or asset the failed run
-already created. Do not re-run the failed push run: it would bump a second time
-from the old merge commit.
+already created and uploads to PyPI only the files that are not there yet. Do
+not re-run the failed push run: it would bump a second time from the old merge
+commit.
 
 The version line continues from `autoware_lanelet2_to_opendrive`, where this
 package started: it was split out at 2.62.0, so the first release here is
-2.62.1. The workflow pushes with the `GH_PAT` repository secret.
+2.62.1. The workflow pushes with the `GH_PAT` repository secret when there is
+one, and with `GITHUB_TOKEN` otherwise.
 
 ## License
 

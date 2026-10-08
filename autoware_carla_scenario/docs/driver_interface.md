@@ -16,7 +16,7 @@ separate process serving `egodriver.EgodriverService`.
 
 ```mermaid
 flowchart LR
-    subgraph scenario["Scenario process (Python 3.10-3.12)"]
+    subgraph scenario["Scenario process (Python 3.10-3.14)"]
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
