@@ -80,7 +80,7 @@ class CarlaActorState(_message.Message):
     def __init__(self, track_id: _Optional[str] = ..., type_id: _Optional[str] = ..., pose_local_to_aabb: _Optional[_Union[_common_pb2.Pose, _Mapping]] = ..., aabb: _Optional[_Union[_common_pb2.AABB, _Mapping]] = ..., dynamic_state: _Optional[_Union[_common_pb2.DynamicState, _Mapping]] = ...) -> None: ...
 
 class CarlaRendererData(_message.Message):
-    __slots__ = ("snapshot_timestamp_us", "frame_id", "map_name", "weather", "ego_traffic_light", "ego_traffic_light_distance_m", "speed_limit_mps", "actors")
+    __slots__ = ("snapshot_timestamp_us", "frame_id", "map_name", "weather", "ego_traffic_light", "ego_traffic_light_distance_m", "speed_limit_mps", "actors", "lidar", "map_id", "traffic_lights")
     SNAPSHOT_TIMESTAMP_US_FIELD_NUMBER: _ClassVar[int]
     FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     MAP_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -89,6 +89,9 @@ class CarlaRendererData(_message.Message):
     EGO_TRAFFIC_LIGHT_DISTANCE_M_FIELD_NUMBER: _ClassVar[int]
     SPEED_LIMIT_MPS_FIELD_NUMBER: _ClassVar[int]
     ACTORS_FIELD_NUMBER: _ClassVar[int]
+    LIDAR_FIELD_NUMBER: _ClassVar[int]
+    MAP_ID_FIELD_NUMBER: _ClassVar[int]
+    TRAFFIC_LIGHTS_FIELD_NUMBER: _ClassVar[int]
     snapshot_timestamp_us: int
     frame_id: int
     map_name: str
@@ -97,7 +100,46 @@ class CarlaRendererData(_message.Message):
     ego_traffic_light_distance_m: float
     speed_limit_mps: float
     actors: _containers.RepeatedCompositeFieldContainer[CarlaActorState]
-    def __init__(self, snapshot_timestamp_us: _Optional[int] = ..., frame_id: _Optional[int] = ..., map_name: _Optional[str] = ..., weather: _Optional[_Union[CarlaWeather, _Mapping]] = ..., ego_traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., ego_traffic_light_distance_m: _Optional[float] = ..., speed_limit_mps: _Optional[float] = ..., actors: _Optional[_Iterable[_Union[CarlaActorState, _Mapping]]] = ...) -> None: ...
+    lidar: _containers.RepeatedCompositeFieldContainer[LidarSweep]
+    map_id: str
+    traffic_lights: _containers.RepeatedCompositeFieldContainer[TrafficLight]
+    def __init__(self, snapshot_timestamp_us: _Optional[int] = ..., frame_id: _Optional[int] = ..., map_name: _Optional[str] = ..., weather: _Optional[_Union[CarlaWeather, _Mapping]] = ..., ego_traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., ego_traffic_light_distance_m: _Optional[float] = ..., speed_limit_mps: _Optional[float] = ..., actors: _Optional[_Iterable[_Union[CarlaActorState, _Mapping]]] = ..., lidar: _Optional[_Iterable[_Union[LidarSweep, _Mapping]]] = ..., map_id: _Optional[str] = ..., traffic_lights: _Optional[_Iterable[_Union[TrafficLight, _Mapping]]] = ...) -> None: ...
+
+class TrafficLight(_message.Message):
+    __slots__ = ("opendrive_id", "state", "stop_points")
+    OPENDRIVE_ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    STOP_POINTS_FIELD_NUMBER: _ClassVar[int]
+    opendrive_id: str
+    state: TrafficLightState
+    stop_points: _containers.RepeatedCompositeFieldContainer[StopPoint]
+    def __init__(self, opendrive_id: _Optional[str] = ..., state: _Optional[_Union[TrafficLightState, str]] = ..., stop_points: _Optional[_Iterable[_Union[StopPoint, _Mapping]]] = ...) -> None: ...
+
+class StopPoint(_message.Message):
+    __slots__ = ("road_id", "section_id", "lane_id", "position_local")
+    ROAD_ID_FIELD_NUMBER: _ClassVar[int]
+    SECTION_ID_FIELD_NUMBER: _ClassVar[int]
+    LANE_ID_FIELD_NUMBER: _ClassVar[int]
+    POSITION_LOCAL_FIELD_NUMBER: _ClassVar[int]
+    road_id: int
+    section_id: int
+    lane_id: int
+    position_local: _common_pb2.Vec3
+    def __init__(self, road_id: _Optional[int] = ..., section_id: _Optional[int] = ..., lane_id: _Optional[int] = ..., position_local: _Optional[_Union[_common_pb2.Vec3, _Mapping]] = ...) -> None: ...
+
+class LidarSweep(_message.Message):
+    __slots__ = ("logical_id", "timestamp_us", "rig_to_lidar", "num_points", "points_xyzi")
+    LOGICAL_ID_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_US_FIELD_NUMBER: _ClassVar[int]
+    RIG_TO_LIDAR_FIELD_NUMBER: _ClassVar[int]
+    NUM_POINTS_FIELD_NUMBER: _ClassVar[int]
+    POINTS_XYZI_FIELD_NUMBER: _ClassVar[int]
+    logical_id: str
+    timestamp_us: int
+    rig_to_lidar: _common_pb2.Pose
+    num_points: int
+    points_xyzi: bytes
+    def __init__(self, logical_id: _Optional[str] = ..., timestamp_us: _Optional[int] = ..., rig_to_lidar: _Optional[_Union[_common_pb2.Pose, _Mapping]] = ..., num_points: _Optional[int] = ..., points_xyzi: _Optional[bytes] = ...) -> None: ...
 
 class CarlaDriveDebugInfo(_message.Message):
     __slots__ = ("policy_name", "inference_seconds", "scalars")

@@ -33,6 +33,11 @@ class MyPolicy(BaseDriver):
 run_server(MyPolicy(), port=50051)
 ```
 
+Beyond alpasim's observations, a policy run by the scenario framework can read LiDAR
+sweeps (`ctx.lidar_points()`, rig frame) and, with `map_dir` set to its copy of the
+runtime's `driver.map_dir`, the world's map as files (`ctx.map`) and every traffic light
+resolved into that map's own elements (`ctx.stop_lines()`, `autoware_carla_egodriver.hdmap`).
+
 Dependencies: grpcio, protobuf 4.x, numpy, Pillow; Python 3.10–3.14. The wire contract
 is vendored from alpasim and carla_driver_interface (`proto/README.md`), with field
 numbers and service names unchanged, so the package also interoperates with an

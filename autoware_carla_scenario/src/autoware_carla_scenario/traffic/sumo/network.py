@@ -25,7 +25,6 @@ import hashlib
 import importlib.metadata
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ...utils.opendrive import sanitize_opendrive
 from ..base import TrafficBackendError, TrafficBackendUnavailable
 
 logger = logging.getLogger(__name__)
@@ -140,21 +140,6 @@ def _binary(name: str) -> str:
     if found is None:
         raise TrafficBackendUnavailable(f"SUMO's {name} was not found: {_INSTALL}")
     return found
-
-
-def sanitize_opendrive(text: str) -> str:
-    """Make CARLA's OpenDRIVE acceptable to roadgen's OpenDRIVE 1.7 parser.
-
-    CARLA's maps (made with RoadRunner) bend the schema in four places the
-    strict parser refuses the whole document for, none of which carries road
-    geometry: ``<userData>`` without a ``code``, ``<roadMark>`` without a
-    ``color``, objects of type ``-1`` and ``<cornerLocal>`` without a
-    ``height``.
-    """
-    text = re.sub(r"<userData\b[^>]*/>|<userData\b.*?</userData>", "", text, flags=re.S)
-    text = re.sub(r'(<object [^>]*?)type="-1"', r'\1type="none"', text)
-    text = re.sub(r"<roadMark (?![^>]*color=)", '<roadMark color="standard" ', text)
-    return re.sub(r"<cornerLocal (?![^>]*height=)", '<cornerLocal height="0" ', text)
 
 
 def _versions() -> str:

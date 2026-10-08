@@ -21,7 +21,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .geometry import Pose, Trajectory
-from .protocol import AvailableCamera, CarlaRendererData, DynamicState
+from .hdmap import MapFiles, StopLine
+from .protocol import (
+    AvailableCamera,
+    CarlaRendererData,
+    DynamicState,
+    LidarSweep,
+    unpack_lidar_points,
+)
 
 __all__ = ["BaseDriver", "CameraFrame", "DriveContext", "DriveResult", "SessionState"]
 
@@ -105,9 +112,48 @@ class DriveContext:
     time_now_us: int
     #: The instant the runtime will next step the vehicle to.
     time_query_us: int
-    #: CARLA ground truth (lights, other vehicles, speed limit) when the runtime
-    #: sends it; ``None`` under an upstream alpasim runtime.
+    #: CARLA ground truth (lights, other vehicles, speed limit, LiDAR) when the
+    #: runtime sends it; ``None`` under an upstream alpasim runtime.
     renderer_data: Optional[CarlaRendererData]
+    #: The world's map in the policy's format (:attr:`BaseDriver.map_format`),
+    #: opened from :attr:`BaseDriver.map_dir` by ``CarlaRendererData.map_id``.
+    #: ``None`` when the policy sets no ``map_dir`` or the runtime wrote no map.
+    map: Optional[MapFiles] = None
+
+    def lidar_sweep(self, logical_id: Optional[str] = None) -> Optional[LidarSweep]:
+        """One sweep as it arrived, with its own timestamp and mount.
+
+        *logical_id* selects the LiDAR; ``None`` means the only one, and is refused
+        when there are several -- silently picking the first would make which sensor
+        a policy reads depend on the runtime's configuration order.  ``None`` is
+        returned when the runtime sent no such sweep.
+        """
+        sweeps = (
+            list(self.renderer_data.lidar) if self.renderer_data is not None else []
+        )
+        if logical_id is None:
+            if len(sweeps) > 1:
+                names = sorted(sweep.logical_id for sweep in sweeps)
+                raise ValueError(f"several LiDAR sweeps arrived ({names}); name one")
+            return sweeps[0] if sweeps else None
+        return next((sweep for sweep in sweeps if sweep.logical_id == logical_id), None)
+
+    def lidar_points(
+        self, logical_id: Optional[str] = None
+    ) -> Optional[NDArray[np.float32]]:
+        """:meth:`lidar_sweep`'s points, ``[N, 4]`` float32 x, y, z, intensity, rig frame."""
+        sweep = self.lidar_sweep(logical_id)
+        return None if sweep is None else unpack_lidar_points(sweep)
+
+    def stop_lines(self) -> List[StopLine]:
+        """Every traffic light's stop lines, named by :attr:`map`'s own elements.
+
+        Empty without a map or without lights.  The state is this step's; the
+        positions are in the ``local`` frame, the map's.
+        """
+        if self.map is None or self.renderer_data is None:
+            return []
+        return self.map.stop_lines(self.renderer_data.traffic_lights)
 
 
 @dataclass
@@ -136,6 +182,14 @@ class BaseDriver(ABC):
 
     #: Reported through ``get_version`` and ``CarlaDriveDebugInfo.policy_name``.
     name: str = "base"
+
+    #: Your copy of the runtime's ``driver.map_dir``.  When set, each
+    #: :class:`DriveContext` carries the world's map from it (``ctx.map``) and the
+    #: lights resolved against it (``ctx.stop_lines()``).
+    map_dir: Optional[str] = None
+    #: The format to read the map in; the runtime must write it
+    #: (``driver.map_formats``).
+    map_format: str = "lanelet2"
 
     #: Frames per camera kept in ``SessionState.frame_history``.
     frame_history_length: int = 1

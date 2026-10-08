@@ -23,6 +23,7 @@ from .base import (
     DriveOutcome,
     DriverCameraConfig,
     DriverClientConfig,
+    DriverLidarConfig,
     EgoObservation,
 )
 from .control import ControlConfig, TrajectoryFollower, VehicleCommand
@@ -35,6 +36,7 @@ __all__ = [
     "DriveOutcome",
     "DriverCameraConfig",
     "DriverClientConfig",
+    "DriverLidarConfig",
     "EgoDriverGrpcClient",
     "EgoObservation",
     "Pose",

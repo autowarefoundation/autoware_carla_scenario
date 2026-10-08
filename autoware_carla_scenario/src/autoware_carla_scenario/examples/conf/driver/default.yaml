@@ -35,6 +35,14 @@ driver:
       roll: 0.0
       pitch: 0.0
       yaw: 0.0
+  # LiDARs whose sweeps ride in renderer_data (rig frame), e.g.
+  #   lidars:
+  #     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
+  lidars: []
+  # Write the world's map here at scenario start (<map_dir>/<map_id>/, via roadgen:
+  # the `map` extra); every traffic light is then sent with where to stop for it.
+  map_dir: null
+  map_formats: [lanelet2]
   control:
     lookahead_gain_s: 0.6
     min_lookahead_m: 4.0

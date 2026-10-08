@@ -40,6 +40,7 @@ __all__ = [
     "EgoVehicleConfig",
     "NpcVehicleConfig",
     "DriverCameraSpec",
+    "DriverLidarSpec",
     "DriverControlSpec",
     "DriverConfig",
     "SweepConfig",
@@ -242,6 +243,30 @@ class DriverCameraSpec:
 
 
 @dataclass
+class DriverLidarSpec:
+    """One LiDAR mounted on the ego, its sweeps sent to the driver policy.
+
+    Mirrors :class:`~autoware_carla_scenario.driver.base.DriverLidarConfig`; see that
+    class for the meaning of each field.  The mount uses CARLA's convention relative
+    to the vehicle (x forward, y right, z up; angles in degrees), as for a camera.
+    """
+
+    logical_id: str = "lidar_top"
+    channels: int = 64
+    range_m: float = 100.0
+    points_per_second: int = 1200000
+    upper_fov_deg: float = 15.0
+    lower_fov_deg: float = -25.0
+    dropoff_general_rate: float = 0.0
+    position_x: float = 0.0
+    position_y: float = 0.0
+    position_z: float = 2.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+
+@dataclass
 class DriverControlSpec:
     """Gains for the controller that tracks the policy's plan.
 
@@ -329,6 +354,19 @@ class DriverConfig:
     cameras: list[DriverCameraSpec] = field(
         default_factory=lambda: [DriverCameraSpec()]
     )
+
+    #: LiDARs mounted on the ego, their sweeps sent in ``renderer_data``.  None by
+    #: default: a sweep is megabytes per policy step and most policies read none.
+    lidars: list[DriverLidarSpec] = field(default_factory=list)
+
+    #: Where the world's map is written at scenario start, as
+    #: ``<map_dir>/<map_id>/``, for the policy to read from its own copy; every
+    #: light is then sent with where to stop for it.  ``null`` writes no map.
+    #: Needs roadgen (the ``map`` extra).
+    map_dir: str | None = None
+
+    #: The formats to write, by roadgen exporter name.
+    map_formats: list[str] = field(default_factory=lambda: ["lanelet2"])
 
     #: Trajectory-following gains.
     control: DriverControlSpec = field(default_factory=DriverControlSpec)

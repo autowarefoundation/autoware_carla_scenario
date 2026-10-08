@@ -37,7 +37,7 @@ from .entity_role import EntityRole
 from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
                          FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
 from .scenario_base import BaseScenario, EgoConfig
-from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
+from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import LaneChangeDirection, TurnDirection

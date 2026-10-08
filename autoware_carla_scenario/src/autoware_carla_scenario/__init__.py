@@ -158,6 +158,7 @@ if TYPE_CHECKING:
         BaseEgoDriverClient as BaseEgoDriverClient,
         ControlConfig as ControlConfig,
         DriverCameraConfig as DriverCameraConfig,
+        DriverLidarConfig as DriverLidarConfig,
         DriverClientConfig as DriverClientConfig,
         EgoDriverGrpcClient as EgoDriverGrpcClient,
     )
@@ -214,6 +215,7 @@ if TYPE_CHECKING:
         DriverCameraSpec as DriverCameraSpec,
         DriverConfig as DriverConfig,
         DriverControlSpec as DriverControlSpec,
+        DriverLidarSpec as DriverLidarSpec,
         EgoVehicleConfig as EgoVehicleConfig,
         EntityConfig as EntityConfig,
         MapConfig as MapConfig,
@@ -326,6 +328,8 @@ __all__ = [
     "DriverClientConfig",
     "DriverConfig",
     "DriverControlSpec",
+    "DriverLidarConfig",
+    "DriverLidarSpec",
     "EgoDriverGrpcClient",
     "EgoConfig",
     "EgoVehicle",
@@ -542,6 +546,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "DriverConfig": (".scenario_config", "DriverConfig"),
     "DriverCameraSpec": (".scenario_config", "DriverCameraSpec"),
     "DriverControlSpec": (".scenario_config", "DriverControlSpec"),
+    "DriverLidarSpec": (".scenario_config", "DriverLidarSpec"),
     # traffic backends
     "NullTrafficBackend": (".traffic", "NullTrafficBackend"),
     "TrafficBackend": (".traffic", "TrafficBackend"),
@@ -562,6 +567,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BaseEgoDriverClient": (".driver", "BaseEgoDriverClient"),
     "ControlConfig": (".driver", "ControlConfig"),
     "DriverCameraConfig": (".driver", "DriverCameraConfig"),
+    "DriverLidarConfig": (".driver", "DriverLidarConfig"),
     "DriverClientConfig": (".driver", "DriverClientConfig"),
     "EgoDriverGrpcClient": (".driver", "EgoDriverGrpcClient"),
     # utils

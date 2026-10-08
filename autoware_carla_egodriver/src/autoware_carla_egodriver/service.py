@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 import grpc
 import numpy as np
@@ -20,10 +20,12 @@ import numpy as np
 from . import __version__
 from .driver import BaseDriver, CameraFrame, DriveContext, SessionState
 from .geometry import Pose, Trajectory
+from .hdmap import MapFiles
 from .protocol import (
     ALPASIM_API_VERSION,
     ALPASIM_REV,
     CarlaDriveDebugInfo,
+    CarlaRendererData,
     DriveRequest,
     DriveResponse,
     DriveSessionCloseRequest,
@@ -53,6 +55,8 @@ class EgodriverServicer(EgodriverServiceServicer):
         self._driver = driver
         self._sessions: Dict[str, SessionState] = {}
         self._sessions_lock = threading.Lock()
+        #: Opened map sets by ``map_id``; a map does not change under its id.
+        self._maps: Dict[str, MapFiles] = {}
 
     # -- session lifecycle -----------------------------------------------------
 
@@ -206,11 +210,13 @@ class EgodriverServicer(EgodriverServiceServicer):
     ) -> DriveResponse:
         session = self._require_session(request.session_uuid, context)
         time_now_us = int(request.time_now_us)
+        renderer_data = unpack_renderer_data(request.renderer_data)
         ctx = DriveContext(
             session=session,
             time_now_us=time_now_us,
             time_query_us=int(request.time_query_us),
-            renderer_data=unpack_renderer_data(request.renderer_data),
+            renderer_data=renderer_data,
+            map=self._map(renderer_data),
         )
 
         started = time.perf_counter()
@@ -252,6 +258,20 @@ class EgodriverServicer(EgodriverServiceServicer):
         )
 
     # -- helpers ---------------------------------------------------------------
+
+    def _map(self, renderer_data: Optional[CarlaRendererData]) -> Optional[MapFiles]:
+        """The map set *renderer_data* names, opened once per id."""
+        map_dir = self._driver.map_dir
+        if map_dir is None or renderer_data is None or not renderer_data.map_id:
+            return None
+        map_id = renderer_data.map_id
+        with self._sessions_lock:
+            if map_id not in self._maps:
+                self._maps[map_id] = MapFiles.open(
+                    map_dir, map_id, self._driver.map_format
+                )
+                logger.info("opened map %s from %s", map_id, map_dir)
+            return self._maps[map_id]
 
     def _require_session(
         self, uuid: str, context: grpc.ServicerContext
