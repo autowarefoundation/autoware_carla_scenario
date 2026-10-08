@@ -60,5 +60,8 @@ driver:
     integral_limit: 1.0
     # Read the plan's speed this far ahead, so a gentle pull-away is not a stop.
     speed_preview_s: 1.0
-    stop_speed_mps: 0.2
+    # CARLA 0.10's MKZ does not move below 0.2 throttle; positive commands start there.
+    throttle_deadband: 0.2
+    # A plan travelling less than this over its horizon holds the vehicle still.
+    stop_distance_m: 0.5
     stop_brake: 0.6

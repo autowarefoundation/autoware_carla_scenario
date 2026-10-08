@@ -225,6 +225,36 @@ def test_a_plan_pulling_away_from_a_standstill_is_not_a_stop() -> None:
     assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
 
 
+def test_a_plan_that_crawls_then_goes_is_driven_not_held() -> None:
+    """Standing still is decided by how far the plan goes, not by its first second.
+
+    OnePlanner's plan from a standstill on an open road: 4 cm in the first second,
+    8 m in six.  Its speed a second ahead is a crawl, but it is a plan to go.
+    """
+    plan = Trajectory.empty()
+    for index in range(61):
+        t_s = index * 0.1
+        plan.append(
+            index * _STEP_US, Pose.from_xyz_yaw(8.4 * (t_s / 6.0) ** 3, 0.0, 0.0, 0.0)
+        )
+    command = TrajectoryFollower().step(plan, Pose.identity(), 0.0, _DT_S)
+    assert command.target_speed_mps < 0.2
+    assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
+
+
+def test_any_throttle_starts_past_the_dead_band() -> None:
+    """A gentle pull-away must still command a throttle that moves the car."""
+    config = ControlConfig(throttle_deadband=0.2)
+    command = TrajectoryFollower(config).step(
+        _straight(speed_mps=0.1), Pose.identity(), 0.0, _DT_S
+    )
+    assert 0.2 < command.throttle < 0.4
+    full = TrajectoryFollower(config).step(
+        _straight(speed_mps=30.0), Pose.identity(), 0.0, _DT_S
+    )
+    assert full.throttle == pytest.approx(1.0)
+
+
 def test_a_plan_stopping_within_the_preview_brakes_early() -> None:
     """A plan reaching its stop within a second asks for (almost) nothing now."""
     plan = _plan([(0.0, 0.0), (1.0, 0.0), (1.5, 0.0)], speed_mps=5.0)
@@ -259,7 +289,13 @@ def test_empty_plan_brakes_and_resets() -> None:
 
 def test_integral_term_is_clamped() -> None:
     """Sustained error must not wind the integral term past its limit."""
-    config = ControlConfig(speed_kp=0.0, speed_kd=0.0, speed_ki=1.0, integral_limit=0.5)
+    config = ControlConfig(
+        speed_kp=0.0,
+        speed_kd=0.0,
+        speed_ki=1.0,
+        integral_limit=0.5,
+        throttle_deadband=0.0,
+    )
     follower = TrajectoryFollower(config)
     plan = _straight(speed_mps=10.0)
     for _ in range(200):
@@ -268,7 +304,9 @@ def test_integral_term_is_clamped() -> None:
 
 
 def test_reset_clears_controller_state() -> None:
-    config = ControlConfig(speed_kp=0.0, speed_kd=0.0, speed_ki=1.0)
+    config = ControlConfig(
+        speed_kp=0.0, speed_kd=0.0, speed_ki=1.0, throttle_deadband=0.0
+    )
     follower = TrajectoryFollower(config)
     plan = _straight(speed_mps=10.0)
     for _ in range(10):

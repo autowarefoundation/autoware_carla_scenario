@@ -115,8 +115,26 @@ class ControlConfig:
     a standstill starts at a crawl, and read at its first segment it says "stay".
     """
 
-    stop_speed_mps: float = 0.2
-    """Target speeds below this are treated as a request to hold still."""
+    throttle_deadband: float = 0.2
+    """Throttle below which the vehicle does not move at all; a positive command is
+    mapped onto ``[throttle_deadband, 1]``.
+
+    The PID asks for acceleration-like effort, but CARLA's throttle has a dead band:
+    a standing Lincoln MKZ on flat road (CARLA 0.10) stays put at 0.2 and pulls away
+    at 0.25.  Without the offset a gentle pull-away -- a target of a few cm/s --
+    commands a throttle that moves nothing, and the car never leaves.  ``0`` passes
+    the PID output through.
+    """
+
+    stop_distance_m: float = 0.5
+    """A plan travelling less than this over its whole horizon is a request to stand
+    still, and the vehicle is held on the brake.
+
+    Decided by distance, not by the target speed, as Autoware's longitudinal
+    controller decides its stop state: a plan pulling away from a standstill asks
+    for almost no speed in its first second yet goes metres over its horizon, and
+    holding the vehicle there would keep it on the line for good.
+    """
 
     stop_brake: float = 0.6
     """Brake applied when holding still."""
@@ -257,6 +275,8 @@ class TrajectoryFollower:
         plan_in_rig = plan_in_local.transform(pose_local_to_rig.inverse())
         points = plan_in_rig.positions
 
+        if _travel_m(points) < self._config.stop_distance_m:
+            return self._hold_still()
         target_speed = self._target_speed(plan_in_rig)
         lookahead = float(
             np.clip(
@@ -319,9 +339,7 @@ class TrajectoryFollower:
         A plan carries positions and timestamps but no explicit speed, so the speed is
         read off the segment spanning the preview instant.  Not the first segment: a
         plan pulling away from a standstill starts at a crawl (a few millimetres in
-        its first 0.1 s), which read as the target is below
-        :attr:`ControlConfig.stop_speed_mps` -- the vehicle is held on the brake and
-        never pulls away.  Looking ahead also starts braking for a stop the plan
+        its first 0.1 s).  Looking ahead also starts braking for a stop the plan
         reaches within the preview, as a driver would.
         """
         if len(plan_in_rig) < 2:
@@ -397,11 +415,6 @@ class TrajectoryFollower:
         self, target_speed_mps: float, current_speed_mps: float, dt_s: float
     ) -> tuple[float, float]:
         """Return ``(throttle, brake)`` for the requested speed."""
-        if target_speed_mps < self._config.stop_speed_mps:
-            self._integral = 0.0
-            self._previous_error = 0.0
-            return 0.0, self._config.stop_brake
-
         error = target_speed_mps - current_speed_mps
         if dt_s > _EPSILON:
             self._integral = float(
@@ -421,6 +434,14 @@ class TrajectoryFollower:
             + self._config.speed_ki * self._integral
             + self._config.speed_kd * derivative
         )
-        if output >= 0.0:
-            return float(np.clip(output, 0.0, 1.0)), 0.0
+        if output > 0.0:
+            deadband = self._config.throttle_deadband
+            return deadband + (1.0 - deadband) * float(min(output, 1.0)), 0.0
         return 0.0, float(np.clip(-output, 0.0, 1.0))
+
+
+def _travel_m(points: np.ndarray) -> float:
+    """How far a plan's ``(N, 3)`` points travel, end to end along the path."""
+    if len(points) < 2:
+        return 0.0
+    return float(np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1).sum())
