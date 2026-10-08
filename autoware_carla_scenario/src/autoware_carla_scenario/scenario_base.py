@@ -754,7 +754,9 @@ class BaseScenario(ABC):
     # Initial speed (called by ScenarioRunner after warm-up)
     # ------------------------------------------------------------------
 
-    def initial_speeds_mps(self, ego_actor: Optional["carla.Actor"]) -> Dict[int, float]:
+    def initial_speeds_mps(
+        self, ego_actor: Optional["carla.Actor"]
+    ) -> Dict[int, float]:
         """The speed each vehicle starts the scenario at, by actor id, in m/s.
 
         What :meth:`set_initial_speed` will apply: the registered entities and

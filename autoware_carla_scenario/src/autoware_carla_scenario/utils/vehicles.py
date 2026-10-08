@@ -54,6 +54,10 @@ def release_vehicle(actor: "carla.Actor", throttle: float = 0.0) -> None:
 
     actor.apply_control(
         carla.VehicleControl(
-            throttle=float(throttle), brake=0.0, hand_brake=False, manual_gear_shift=False, gear=1
+            throttle=float(throttle),
+            brake=0.0,
+            hand_brake=False,
+            manual_gear_shift=False,
+            gear=1,
         )
     )

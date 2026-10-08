@@ -149,7 +149,9 @@ class ChaosPowertrain:
         keys = [(float(k.x), float(k.y)) for k in physics.torque_curve]
         gears = [float(r) for r in physics.forward_gear_ratios]
         if not wheels or not gears or not keys:
-            raise ValueError("a Chaos vehicle needs wheels, forward gears and a torque curve")
+            raise ValueError(
+                "a Chaos vehicle needs wheels, forward gears and a torque curve"
+            )
         max_rpm = float(physics.max_rpm)
         peak = max(value for _, value in keys)
         graph = []
@@ -169,7 +171,12 @@ class ChaosPowertrain:
         radius = float(wheels[0].wheel_radius) / 100.0  # CARLA reports centimetres
         mass = float(physics.mass)
         load = mass * _GRAVITY / len(wheels)
-        grip = _TRACTION_SCALING * road_friction * float(wheels[0].friction_force_multiplier) * load
+        grip = (
+            _TRACTION_SCALING
+            * road_friction
+            * float(wheels[0].friction_force_multiplier)
+            * load
+        )
         final = float(physics.final_ratio)
         return cls(
             mass_kg=mass,
@@ -206,13 +213,19 @@ class ChaosPowertrain:
         if index >= len(graph) - 1:
             value = graph[-1]
         else:
-            value = graph[index] + (graph[index + 1] - graph[index]) * (rpm - index * step) / step
+            value = (
+                graph[index]
+                + (graph[index + 1] - graph[index]) * (rpm - index * step) / step
+            )
         return value * self.max_torque_nm
 
     def gear_for(self, speed_mps: float) -> int:
         """The gear the automatic box is in at *speed_mps* after pulling away from rest."""
         for gear in range(1, len(self.gear_ratios) + 1):
-            if self._wheel_rpm(speed_mps) * self.gear_ratios[gear - 1] < self.change_up_rpm:
+            if (
+                self._wheel_rpm(speed_mps) * self.gear_ratios[gear - 1]
+                < self.change_up_rpm
+            ):
                 return gear
         return len(self.gear_ratios)
 
@@ -232,15 +245,21 @@ class ChaosPowertrain:
         if self._wheel_rpm(speed_mps) * ratio > self.max_rpm:
             return 0.0  # past the engine's top rpm Chaos cuts the drive
         torque = throttle**2 * self.engine_torque(self._engine_rpm(speed_mps, ratio))
-        per_wheel = torque * ratio * self.transmission_efficiency / len(self.driven_wheels)
-        return len(self.driven_wheels) * min(per_wheel / self.wheel_radius_m, self.wheel_grip_n)
+        per_wheel = (
+            torque * ratio * self.transmission_efficiency / len(self.driven_wheels)
+        )
+        return len(self.driven_wheels) * min(
+            per_wheel / self.wheel_radius_m, self.wheel_grip_n
+        )
 
     def _full_brake_force(self) -> float:
         return sum(self.wheel_brake_torques_nm) / self.wheel_radius_m
 
     # -- forward and inverse ---------------------------------------------------------
 
-    def acceleration(self, speed_mps: float, throttle: float, brake: float, gear: int) -> float:
+    def acceleration(
+        self, speed_mps: float, throttle: float, brake: float, gear: int
+    ) -> float:
         """Settled acceleration at *speed_mps* in *gear* with these pedals, m/s².
 
         Forward travel only; a standing car is taken to stay put under the brakes.
@@ -248,20 +267,37 @@ class ChaosPowertrain:
         ratio = self._ratio(gear)
         drag = self.drag_n_per_mps2 * speed_mps * abs(speed_mps)
         if speed_mps <= 0.0:
-            return max(self._drive_force(throttle, 0.0, ratio) - brake * self._full_brake_force(), 0.0) / self.mass_kg
+            return (
+                max(
+                    self._drive_force(throttle, 0.0, ratio)
+                    - brake * self._full_brake_force(),
+                    0.0,
+                )
+                / self.mass_kg
+            )
         engine_brake = (
-            self._engine_rpm(speed_mps, ratio) * self.engine_brake_effect if throttle < 1e-8 else 0.0
+            self._engine_rpm(speed_mps, ratio) * self.engine_brake_effect
+            if throttle < 1e-8
+            else 0.0
         )
-        drive_per_wheel = self._drive_force(throttle, speed_mps, ratio) / len(self.driven_wheels)
+        drive_per_wheel = self._drive_force(throttle, speed_mps, ratio) / len(
+            self.driven_wheels
+        )
         force = 0.0
         for index, brake_torque in enumerate(self.wheel_brake_torques_nm):
             driven = index in self.driven_wheels
             braking = brake * brake_torque + (engine_brake if driven else 0.0)
             pushing = drive_per_wheel * self.wheel_radius_m if driven else 0.0
-            force += -braking / self.wheel_radius_m if braking > pushing else pushing / self.wheel_radius_m
+            force += (
+                -braking / self.wheel_radius_m
+                if braking > pushing
+                else pushing / self.wheel_radius_m
+            )
         return (force - drag) / self.mass_kg
 
-    def pedals(self, acceleration: float, speed_mps: float, gear: int) -> Tuple[float, float]:
+    def pedals(
+        self, acceleration: float, speed_mps: float, gear: int
+    ) -> Tuple[float, float]:
         """``(throttle, brake)`` that settle at *acceleration* at *speed_mps* in *gear*.
 
         Slowing down is left to the brakes: the throttle stays at
@@ -278,28 +314,42 @@ class ChaosPowertrain:
         if full <= force:
             return 1.0, 0.0
         # Below the grip limit the drive force goes with the throttle's square.
-        ungripped = self.engine_torque(self._engine_rpm(speed, ratio)) * ratio * self.transmission_efficiency
+        ungripped = (
+            self.engine_torque(self._engine_rpm(speed, ratio))
+            * ratio
+            * self.transmission_efficiency
+        )
         throttle = math.sqrt(force * self.wheel_radius_m / ungripped)
         return max(min(throttle, 1.0), CREEP_THROTTLE), 0.0
 
     # -- tables ----------------------------------------------------------------------
 
-    def accel_map(self, speeds_mps: Sequence[float], throttles: Sequence[float]) -> np.ndarray:
+    def accel_map(
+        self, speeds_mps: Sequence[float], throttles: Sequence[float]
+    ) -> np.ndarray:
         """Autoware's ``accel_map.csv`` body: acceleration per (throttle row, speed column).
 
         Each speed is taken in the gear the automatic box reaches pulling away
         (:meth:`gear_for`).
         """
         return np.array(
-            [[self.acceleration(v, t, 0.0, self.gear_for(v)) for v in speeds_mps] for t in throttles]
+            [
+                [self.acceleration(v, t, 0.0, self.gear_for(v)) for v in speeds_mps]
+                for t in throttles
+            ]
         )
 
-    def brake_map(self, speeds_mps: Sequence[float], brakes: Sequence[float]) -> np.ndarray:
+    def brake_map(
+        self, speeds_mps: Sequence[float], brakes: Sequence[float]
+    ) -> np.ndarray:
         """Autoware's ``brake_map.csv`` body: acceleration per (brake row, speed column).
 
         Taken with the throttle at zero, engine braking and all, as Autoware's
         vehicle interface would send it.
         """
         return np.array(
-            [[self.acceleration(v, 0.0, b, self.gear_for(v)) for v in speeds_mps] for b in brakes]
+            [
+                [self.acceleration(v, 0.0, b, self.gear_for(v)) for v in speeds_mps]
+                for b in brakes
+            ]
         )

@@ -66,7 +66,13 @@ class _LanePath:
     heading most like the lane walked so far is taken.
     """
 
-    def __init__(self, carla_map: "carla.Map", start: "carla.Transform", length_m: float, name: str) -> None:
+    def __init__(
+        self,
+        carla_map: "carla.Map",
+        start: "carla.Transform",
+        length_m: float,
+        name: str,
+    ) -> None:
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
         waypoint = carla_map.get_waypoint(start.location, project_to_road=True)
@@ -91,7 +97,9 @@ class _LanePath:
                 )
                 break
             yaw = waypoint.transform.rotation.yaw
-            waypoint = min(behind, key=lambda w: abs(_wrap_deg(w.transform.rotation.yaw - yaw)))
+            waypoint = min(
+                behind, key=lambda w: abs(_wrap_deg(w.transform.rotation.yaw - yaw))
+            )
             travelled += _PATH_STEP_M
             at = waypoint.transform
             right = math.radians(at.rotation.yaw + 90.0)
@@ -145,15 +153,24 @@ class _CarriedVehicle:
     """A vehicle driven onto its first-frame pose along its lane."""
 
     def __init__(
-        self, carla_map: "carla.Map", actor: "carla.Actor", speed_mps: float, ticks: int, step_s: float
+        self,
+        carla_map: "carla.Map",
+        actor: "carla.Actor",
+        speed_mps: float,
+        ticks: int,
+        step_s: float,
     ) -> None:
         self.actor = actor
         self.speed = speed_mps
         self._ticks = ticks
         self._step_s = step_s
         self.start = actor.get_transform()
-        self.path = _LanePath(carla_map, self.start, speed_mps * ticks * step_s, actor.type_id)
-        self._powertrain = ChaosPowertrain.from_physics_control(actor.get_physics_control())
+        self.path = _LanePath(
+            carla_map, self.start, speed_mps * ticks * step_s, actor.type_id
+        )
+        self._powertrain = ChaosPowertrain.from_physics_control(
+            actor.get_physics_control()
+        )
 
     def back_m(self, tick: int) -> float:
         """How far behind its first-frame pose the vehicle is at ``tick``."""
@@ -175,11 +192,22 @@ class _CarriedVehicle:
         if tick < self._ticks:
             # The path's own step, plus half the way back onto the path: aiming
             # the whole error at one tick overshoots, tick after tick.
-            due, target = self.path.at(self.back_m(tick)), self.path.at(self.back_m(tick + 1))
+            due, target = (
+                self.path.at(self.back_m(tick)),
+                self.path.at(self.back_m(tick + 1)),
+            )
             velocity = carla.Vector3D(
-                x=(target.location.x - due.location.x + _PULL * (due.location.x - here.location.x))
+                x=(
+                    target.location.x
+                    - due.location.x
+                    + _PULL * (due.location.x - here.location.x)
+                )
                 / self._step_s,
-                y=(target.location.y - due.location.y + _PULL * (due.location.y - here.location.y))
+                y=(
+                    target.location.y
+                    - due.location.y
+                    + _PULL * (due.location.y - here.location.y)
+                )
                 / self._step_s,
                 z=self.actor.get_velocity().z,
             )
@@ -201,14 +229,18 @@ class _CarriedVehicle:
         self.actor.set_target_angular_velocity(
             carla.Vector3D(x=spin.x, y=spin.y, z=turn / self._step_s)
         )
-        throttle, _ = self._powertrain.pedals(0.0, self.speed, int(self.actor.get_control().gear))
+        throttle, _ = self._powertrain.pedals(
+            0.0, self.speed, int(self.actor.get_control().gear)
+        )
         release_vehicle(self.actor, throttle)
 
 
 class _CarriedWalker:
     """A pedestrian moved in a straight line onto its first-frame pose."""
 
-    def __init__(self, actor: "carla.Actor", speed_mps: float, ticks: int, step_s: float) -> None:
+    def __init__(
+        self, actor: "carla.Actor", speed_mps: float, ticks: int, step_s: float
+    ) -> None:
         self.actor = actor
         self._ticks = ticks
         self._step_s = step_s
@@ -223,7 +255,9 @@ class _CarriedWalker:
         at = self.start.location
         self.actor.set_transform(
             carla.Transform(
-                carla.Location(x=at.x - self._vx * back_s, y=at.y - self._vy * back_s, z=at.z),
+                carla.Location(
+                    x=at.x - self._vx * back_s, y=at.y - self._vy * back_s, z=at.z
+                ),
                 self.start.rotation,
             )
         )
@@ -256,13 +290,19 @@ class PolicyWarmup:
         self._step_s = step_s
         actors = world.get_actors()
         self._ego = _CarriedVehicle(
-            carla_map, ego, max(0.0, initial_speeds.get(ego.id, 0.0)), self._ticks, step_s
+            carla_map,
+            ego,
+            max(0.0, initial_speeds.get(ego.id, 0.0)),
+            self._ticks,
+            step_s,
         )
         self._vehicles: List[_CarriedVehicle] = [self._ego]
         for actor in actors.filter("vehicle.*"):
             speed = initial_speeds.get(actor.id, 0.0)
             if actor.id != ego.id and speed > 0.0:
-                self._vehicles.append(_CarriedVehicle(carla_map, actor, speed, self._ticks, step_s))
+                self._vehicles.append(
+                    _CarriedVehicle(carla_map, actor, speed, self._ticks, step_s)
+                )
         self._walkers: List[_CarriedWalker] = [
             _CarriedWalker(actor, speed, self._ticks, step_s)
             for actor in actors.filter("walker.pedestrian.*")

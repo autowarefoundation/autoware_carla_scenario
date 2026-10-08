@@ -582,7 +582,9 @@ def test_a_warm_up_carries_the_ego_onto_its_spawn_pose() -> None:
     # Placed once, at the start of the run-up; moved by its velocity after that,
     # aimed each tick a quarter metre on and, at the end, at the spawn pose.
     assert xs[0] == pytest.approx(-5.0)
-    assert actor.get_transform().location.x == pytest.approx(0.25)  # spawn pose + a tick
+    assert actor.get_transform().location.x == pytest.approx(
+        0.25
+    )  # spawn pose + a tick
     actor.set_transform.assert_called_once()
     aims = [call.args[0] for call in actor.set_target_velocity.call_args_list]
     assert [v.x for v in aims[:-1]] == pytest.approx([5.0] * 20)

@@ -32,7 +32,9 @@ def test_the_torque_curve_is_read_as_chaos_samples_it() -> None:
 
 def test_released_pedals_engine_brake_in_gear() -> None:
     """Measured: 8.33 -> 7.83 m/s over a second in first, throttle and brake at zero."""
-    assert mkz_powertrain().acceleration(_KMH30, 0.0, 0.0, 1) == pytest.approx(-0.50, abs=0.03)
+    assert mkz_powertrain().acceleration(_KMH30, 0.0, 0.0, 1) == pytest.approx(
+        -0.50, abs=0.03
+    )
 
 
 def test_any_throttle_takes_the_engine_braking_off() -> None:
@@ -55,13 +57,17 @@ def test_brakes_are_linear_in_the_pedal() -> None:
     powertrain = mkz_powertrain()
     a1 = powertrain.acceleration(_KMH30, CREEP_THROTTLE, 0.2, 1)
     a2 = powertrain.acceleration(_KMH30, CREEP_THROTTLE, 0.6, 1)
-    assert a1 == pytest.approx(-1.35, abs=0.05)  # 4 x 1000 N·m x 0.2 / 0.355 m / 1696 kg, plus drag
+    assert a1 == pytest.approx(
+        -1.35, abs=0.05
+    )  # 4 x 1000 N·m x 0.2 / 0.355 m / 1696 kg, plus drag
     assert a2 - a1 == pytest.approx(2.0 * (a1 + 0.02), rel=0.02)
 
 
 def test_traction_control_caps_a_full_throttle_pull_away() -> None:
     """Measured: an MKZ pulls at about 6.9 m/s² flat out in first, not the engine's 10."""
-    assert mkz_powertrain().acceleration(_KMH30, 1.0, 0.0, 1) == pytest.approx(6.9, abs=0.3)
+    assert mkz_powertrain().acceleration(_KMH30, 1.0, 0.0, 1) == pytest.approx(
+        6.9, abs=0.3
+    )
 
 
 def test_a_higher_gear_pulls_less() -> None:
@@ -79,7 +85,9 @@ def test_neutral_counts_as_first() -> None:
 
 @pytest.mark.parametrize("acceleration", [-4.0, -1.0, -0.01, 0.0, 0.3, 1.5, 4.0])
 @pytest.mark.parametrize("gear", [1, 2])
-def test_pedals_settle_at_the_asked_acceleration(acceleration: float, gear: int) -> None:
+def test_pedals_settle_at_the_asked_acceleration(
+    acceleration: float, gear: int
+) -> None:
     powertrain = mkz_powertrain()
     throttle, brake = powertrain.pedals(acceleration, _KMH30, gear)
     assert powertrain.acceleration(_KMH30, throttle, brake, gear) == pytest.approx(
@@ -110,7 +118,13 @@ def test_holding_a_speed_takes_a_light_throttle() -> None:
 def test_the_gear_after_pulling_away() -> None:
     """First up to 4000 rpm in first -- 11.6 m/s -- then second."""
     powertrain = mkz_powertrain()
-    assert [powertrain.gear_for(v) for v in (0.0, 8.33, 11.5, 11.7, 18.0)] == [1, 1, 1, 2, 2]
+    assert [powertrain.gear_for(v) for v in (0.0, 8.33, 11.5, 11.7, 18.0)] == [
+        1,
+        1,
+        1,
+        2,
+        2,
+    ]
 
 
 def test_the_physics_control_is_read_live() -> None:
@@ -120,7 +134,9 @@ def test_the_physics_control_is_read_live() -> None:
     heavier.mass = 2 * physics.mass
     base = ChaosPowertrain.from_physics_control(physics)
     loaded = ChaosPowertrain.from_physics_control(heavier)
-    assert loaded.acceleration(_KMH30, 0.3, 0.0, 1) < base.acceleration(_KMH30, 0.3, 0.0, 1)
+    assert loaded.acceleration(_KMH30, 0.3, 0.0, 1) < base.acceleration(
+        _KMH30, 0.3, 0.0, 1
+    )
 
 
 def test_the_differential_picks_the_driven_wheels() -> None:

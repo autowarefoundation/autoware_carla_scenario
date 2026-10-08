@@ -13,10 +13,19 @@ def mkz_physics() -> SimpleNamespace:
     The torque curve's keys are in the order CARLA hands them back, unsorted.
     """
     curve = [
-        (0.0, 500.0), (5000.0, 500.0), (1000.0, 347.0), (1500.0, 523.0), (2000.0, 606.0),
-        (2800.0, 670.0), (4300.0, 677.0), (5300.0, 607.0), (6500.0, 466.0),
+        (0.0, 500.0),
+        (5000.0, 500.0),
+        (1000.0, 347.0),
+        (1500.0, 523.0),
+        (2000.0, 606.0),
+        (2800.0, 670.0),
+        (4300.0, 677.0),
+        (5300.0, 607.0),
+        (6500.0, 466.0),
     ]
-    wheel = dict(wheel_radius=35.5, max_brake_torque=1000.0, friction_force_multiplier=3.5)
+    wheel = dict(
+        wheel_radius=35.5, max_brake_torque=1000.0, friction_force_multiplier=3.5
+    )
     return SimpleNamespace(
         torque_curve=[SimpleNamespace(x=x, y=y) for x, y in curve],
         max_torque=550.0,

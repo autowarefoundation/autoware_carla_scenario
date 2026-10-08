@@ -139,7 +139,9 @@ class CarlaDriverEntity(EgoVehicle):
     @property
     def carried_actor_ids(self) -> FrozenSet[int]:
         """What the run-up is moving, which the init phase's brakes must spare."""
-        return self._warmup.carried_actor_ids if self._warmup is not None else frozenset()
+        return (
+            self._warmup.carried_actor_ids if self._warmup is not None else frozenset()
+        )
 
     def set_initial_speeds(self, speeds_mps: Mapping[int, float]) -> None:
         """Keep each vehicle's initial speed, for the run-up to arrive at."""
@@ -284,7 +286,9 @@ class CarlaDriverEntity(EgoVehicle):
             self._warmup.advance()
             if self._warmup.done:
                 self._warmup = None
-                logger.info("Policy warm-up over after %d policy step(s)", self._drive_count)
+                logger.info(
+                    "Policy warm-up over after %d policy step(s)", self._drive_count
+                )
             return
         self._apply_control(actor, observation)
 

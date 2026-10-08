@@ -135,9 +135,7 @@ def test_pure_pursuit_recovers_the_geometric_steering_angle() -> None:
     config = ControlConfig(
         min_lookahead_m=4.0, max_lookahead_m=4.0, max_steer_rate=100.0
     )
-    command = _follower(config).step(
-        _arc(radius, 8.0), Pose.identity(), 8.0, _DT_S
-    )
+    command = _follower(config).step(_arc(radius, 8.0), Pose.identity(), 8.0, _DT_S)
     expected = math.atan(config.wheelbase_m / radius)
     assert -steer_angle(command.steer, config) == pytest.approx(expected, rel=0.1)
 
@@ -270,9 +268,7 @@ def test_any_throttle_starts_past_the_dead_band() -> None:
 
 def test_a_rolling_car_gets_no_dead_band_offset() -> None:
     """Rolling, a small correction is a small throttle: the offset is for pull-aways."""
-    command = _follower().step(
-        _straight(speed_mps=8.4), Pose.identity(), 8.33, _DT_S
-    )
+    command = _follower().step(_straight(speed_mps=8.4), Pose.identity(), 8.33, _DT_S)
     assert 0.0 < command.throttle < 0.1
 
 
@@ -307,9 +303,7 @@ def test_a_follower_without_a_powertrain_refuses_to_drive() -> None:
 
 def test_a_plan_easing_off_brakes_gently() -> None:
     """A plan slowing at 2 m/s² asks for a part of the brake, not all of it."""
-    command = _follower().step(
-        _accelerating(8.0, -2.0), Pose.identity(), 8.0, _DT_S
-    )
+    command = _follower().step(_accelerating(8.0, -2.0), Pose.identity(), 8.0, _DT_S)
     assert 0.0 < command.brake < 0.5
 
 
@@ -320,7 +314,9 @@ def test_a_vehicle_behind_the_plan_catches_up() -> None:
     command = _follower().step(
         plan, Pose.identity(), 8.0, _DT_S, now_us=plan.timestamps_us[0] + 250_000
     )
-    assert command.target_speed_mps == pytest.approx(8.0 + ControlConfig().position_gain * 2.0, abs=0.05)
+    assert command.target_speed_mps == pytest.approx(
+        8.0 + ControlConfig().position_gain * 2.0, abs=0.05
+    )
     assert command.throttle > 0.0
 
 

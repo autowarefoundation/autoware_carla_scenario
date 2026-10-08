@@ -252,7 +252,9 @@ class TrajectoryFollower:
     """
 
     def __init__(
-        self, config: Optional[ControlConfig] = None, powertrain: Optional[ChaosPowertrain] = None
+        self,
+        config: Optional[ControlConfig] = None,
+        powertrain: Optional[ChaosPowertrain] = None,
     ) -> None:
         self._config = config or ControlConfig()
         self.powertrain = powertrain
@@ -430,9 +432,13 @@ class TrajectoryFollower:
     ) -> tuple[float, float, float]:
         """Return ``(throttle, brake, target speed)`` that keep the vehicle on the plan."""
         if self.powertrain is None:
-            raise RuntimeError("TrajectoryFollower has no powertrain to turn accelerations into pedals")
+            raise RuntimeError(
+                "TrajectoryFollower has no powertrain to turn accelerations into pedals"
+            )
         config = self._config
-        speed, acceleration, gap = _reference(plan_in_rig, now_us, config.speed_preview_s)
+        speed, acceleration, gap = _reference(
+            plan_in_rig, now_us, config.speed_preview_s
+        )
         standing = current_speed_mps < config.standstill_speed_mps
         if standing:
             # The brake has nothing left to take off a standing car: what the
@@ -448,9 +454,15 @@ class TrajectoryFollower:
         target = max(0.0, speed + correction)
         error = target - max(0.0, current_speed_mps)
         self._integral = float(
-            np.clip(self._integral + error * dt_s, -config.integral_limit, config.integral_limit)
+            np.clip(
+                self._integral + error * dt_s,
+                -config.integral_limit,
+                config.integral_limit,
+            )
         )
-        asked = acceleration + config.speed_kp * error + config.speed_ki * self._integral
+        asked = (
+            acceleration + config.speed_kp * error + config.speed_ki * self._integral
+        )
         throttle, brake = self.powertrain.pedals(asked, current_speed_mps, gear)
         if standing and asked > 0.0:
             throttle = max(throttle, config.throttle_deadband)
@@ -467,7 +479,8 @@ def _reference(
     the rig origin (negative behind), in metres.
     """
     times_s = (
-        np.asarray(plan_in_rig.timestamps_us, dtype=np.float64) - plan_in_rig.timestamps_us[0]
+        np.asarray(plan_in_rig.timestamps_us, dtype=np.float64)
+        - plan_in_rig.timestamps_us[0]
     ) * 1e-6
     points = plan_in_rig.positions[:, :2]
     lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
