@@ -80,14 +80,18 @@ class VehicleEntity(BackendDriven):
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def spawn(self, world: "carla.World") -> "carla.Actor":
+    def spawn(self, world: "carla.World", *, mid_run: bool = False) -> "carla.Actor":
         """Spawn the NPC vehicle in the CARLA world.
 
         Must be called during :meth:`BaseScenario.setup`, **before** the
-        warm-up ticks run.  Spawning after warm-up raises :class:`RuntimeError`.
+        warm-up ticks run.  Spawning after warm-up raises :class:`RuntimeError`
+        -- unless *mid_run* says the scenario means it: an entity brought in
+        partway through (``spawn_entity``) settles over the ticks after it
+        appears instead, which is what appearing partway through is.
 
         Args:
             world: The CARLA world instance.
+            mid_run: The spawn is deliberate, after warm-up.
 
         Returns:
             The spawned vehicle actor.
@@ -99,7 +103,7 @@ class VehicleEntity(BackendDriven):
             RuntimeError: If the vehicle could not be spawned at the
                 requested location.
         """
-        if _warmup_done:
+        if _warmup_done and not mid_run:
             raise RuntimeError(
                 "CARLA NPCs require ~5 ticks to stabilise after spawning. "
                 "Spawn operations must be performed in setup() before "

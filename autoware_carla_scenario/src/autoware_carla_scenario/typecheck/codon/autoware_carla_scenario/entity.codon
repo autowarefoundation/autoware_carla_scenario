@@ -114,7 +114,7 @@ class VehicleEntity:
     def actor(self) -> Optional[carla.Actor]:
         raise NotImplementedError()
 
-    def spawn(self, world: carla.World) -> carla.Actor:
+    def spawn(self, world: carla.World, *_kw, mid_run: bool = False) -> carla.Actor:
         raise NotImplementedError()
 
     def destroy(self) -> None:

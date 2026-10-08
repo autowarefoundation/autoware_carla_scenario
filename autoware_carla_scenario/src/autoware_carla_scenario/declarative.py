@@ -356,16 +356,23 @@ class DeclarativeScenario(BaseScenario):
                 t=authored.t,
                 heading=authored.heading,
             )
-        self._spawn(entity, world, authored)
+        self._spawn(entity, world, authored, mid_run=True)
 
-    def _spawn(self, entity: Entity, world: "object", pose: Lanelet2Pose) -> None:
+    def _spawn(
+        self,
+        entity: Entity,
+        world: "object",
+        pose: Lanelet2Pose,
+        *,
+        mid_run: bool = False,
+    ) -> None:
         if entity.kind == "pedestrian":
             walker = self._build_pedestrian(entity, world, pose)
             walker.spawn(world)
             self.register_pedestrian(walker)
         else:
             npc_entity = self._build_npc(entity, world, pose)
-            npc_entity.spawn(world)
+            npc_entity.spawn(world, mid_run=mid_run)
             self.register_entity(npc_entity)
         logger.info(
             "Spawned %s %s (%s) on lanelet %d at s=%.1f",

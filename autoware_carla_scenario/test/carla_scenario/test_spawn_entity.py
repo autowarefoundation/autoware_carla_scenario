@@ -155,7 +155,9 @@ class TestTheScenario:
         spawned: list[str] = []
         monkeypatch.setattr(DeclarativeScenario, "world", property(lambda self: None))
         monkeypatch.setattr(
-            scenario, "_spawn", lambda entity, world, pose: spawned.append(entity.id)
+            scenario,
+            "_spawn",
+            lambda entity, world, pose, **kw: spawned.append(entity.id),
         )
         scenario._spawn_npcs()
         assert spawned == []
@@ -164,15 +166,58 @@ class TestTheScenario:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         scenario = self._scenario(_deferred_document())
-        spawned: list[Lanelet2Pose] = []
+        spawned: list[tuple[Lanelet2Pose, bool]] = []
         monkeypatch.setattr(
-            scenario, "_spawn", lambda entity, world, pose: spawned.append(pose)
+            scenario,
+            "_spawn",
+            lambda entity, world, pose, mid_run=False: spawned.append((pose, mid_run)),
         )
         role = scenario._compiled.role_of("npc1")
         scenario.spawn_entity(role, None, Lanelet2Pose(lanelet_id=184, s=42.0))
-        assert spawned == [Lanelet2Pose(lanelet_id=184, s=42.0, t=1.5, heading=0.25)]
+        # Mid-run, and said so: the vehicle's warm-up guard lets it through.
+        assert spawned == [
+            (Lanelet2Pose(lanelet_id=184, s=42.0, t=1.5, heading=0.25), True)
+        ]
 
     def test_an_unknown_role_is_refused(self) -> None:
         scenario = self._scenario(_deferred_document())
         with pytest.raises(LookupError):
             scenario.spawn_entity("npc99", None)
+
+
+class TestAVehicleAfterTheWarmUp:
+    """The warm-up guard stops a late spawn by mistake, not one meant."""
+
+    @pytest.fixture
+    def warmed_up(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        from autoware_carla_scenario.entity import vehicle_entity
+
+        monkeypatch.setattr(vehicle_entity, "_warmup_done", True)
+        actor = MagicMock()
+        monkeypatch.setattr(
+            vehicle_entity, "spawn_vehicle_actor", lambda *a, **kw: actor
+        )
+        return actor
+
+    @staticmethod
+    def _vehicle() -> Any:
+        from autoware_carla_scenario.entity.vehicle_entity import (
+            VehicleEntity,
+            VehicleEntityConfig,
+        )
+
+        return VehicleEntity(
+            VehicleEntityConfig(
+                role_name="npc1",
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
+                ),
+            )
+        )
+
+    def test_spawning_after_it_by_mistake_is_refused(self, warmed_up) -> None:
+        with pytest.raises(RuntimeError, match="warm-up"):
+            self._vehicle().spawn(MagicMock())
+
+    def test_spawning_after_it_on_purpose_goes_through(self, warmed_up) -> None:
+        assert self._vehicle().spawn(MagicMock(), mid_run=True) is warmed_up
