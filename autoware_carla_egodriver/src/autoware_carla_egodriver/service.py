@@ -18,7 +18,14 @@ import grpc
 import numpy as np
 
 from . import __version__
-from .driver import BaseDriver, CameraFrame, DriveContext, SessionState
+from .driver import (
+    BaseDriver,
+    CameraFrame,
+    DriveContext,
+    LidarFrame,
+    SensorFrame,
+    SessionState,
+)
 from .geometry import Pose, Trajectory
 from .hdmap import MapFiles
 from .protocol import (
@@ -135,17 +142,15 @@ class EgodriverServicer(EgodriverServiceServicer):
                 f"Camera {image.logical_id!r} was not declared in start_session; "
                 f"known cameras: {sorted(session.cameras)}",
             )
-        frame = CameraFrame(
-            logical_id=image.logical_id,
-            frame_start_us=int(image.frame_start_us),
-            frame_end_us=int(image.frame_end_us),
-            image_bytes=image.image_bytes,
+        self._record_frame(
+            session,
+            CameraFrame(
+                logical_id=image.logical_id,
+                frame_start_us=int(image.frame_start_us),
+                frame_end_us=int(image.frame_end_us),
+                image_bytes=image.image_bytes,
+            ),
         )
-        with session.lock:
-            history = session.frame_history.setdefault(frame.logical_id, [])
-            history.append(frame)
-            del history[: -max(1, self._driver.frame_history_length)]
-        self._driver.on_image(session, frame)
         return Empty()
 
     def submit_egomotion_observation(
@@ -211,6 +216,11 @@ class EgodriverServicer(EgodriverServiceServicer):
         session = self._require_session(request.session_uuid, context)
         time_now_us = int(request.time_now_us)
         renderer_data = unpack_renderer_data(request.renderer_data)
+        # The contract has no LiDAR RPC, so sweeps ride in renderer_data; recorded
+        # here, before drive, they reach the policy exactly as camera frames do.
+        if renderer_data is not None:
+            for sweep in renderer_data.lidar:
+                self._record_frame(session, LidarFrame.from_proto(sweep))
         ctx = DriveContext(
             session=session,
             time_now_us=time_now_us,
@@ -258,6 +268,14 @@ class EgodriverServicer(EgodriverServiceServicer):
         )
 
     # -- helpers ---------------------------------------------------------------
+
+    def _record_frame(self, session: SessionState, frame: SensorFrame) -> None:
+        """Record one sensor frame in ``session`` and announce it; every sensor's path."""
+        with session.lock:
+            history = session.frame_history.setdefault(frame.logical_id, [])
+            history.append(frame)
+            del history[: -max(1, self._driver.frame_history_length)]
+        self._driver.on_frame(session, frame)
 
     def _map(self, renderer_data: Optional[CarlaRendererData]) -> Optional[MapFiles]:
         """The map set *renderer_data* names, opened once per id."""

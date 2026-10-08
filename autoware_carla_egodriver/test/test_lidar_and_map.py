@@ -1,4 +1,4 @@
-"""What the runtime adds to the alpasim contract: LiDAR sweeps and map-file stop lines.
+"""What the runtime adds to the alpasim contract: LiDAR frames and map-file stop lines.
 
 The map set here is written by hand -- a manifest, roadgen's IR and two traces --
 so the reader is pinned without roadgen; the scenario framework's tests write
@@ -9,16 +9,30 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Dict, List, Optional
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from autoware_carla_egodriver import protocol
-from autoware_carla_egodriver.driver import DriveContext, SessionState
-from autoware_carla_egodriver.geometry import Pose
+from autoware_carla_egodriver.driver import (
+    BaseDriver,
+    DriveContext,
+    DriveResult,
+    LidarFrame,
+    SensorFrame,
+    SessionState,
+)
+from autoware_carla_egodriver.geometry import Pose, Trajectory
 from autoware_carla_egodriver.hdmap import MapFiles
+from autoware_carla_egodriver.service import EgodriverServicer
 from autoware_carla_egodriver.protocol import (
+    AvailableCamera,
     CarlaRendererData,
+    DriveRequest,
+    DriveSessionRequest,
+    RolloutCameraImage,
     LidarSweep,
     StopPoint,
     TrafficLight,
@@ -34,7 +48,7 @@ from autoware_carla_egodriver.protocol import (
 
 
 def _context(
-    data: CarlaRendererData, map_files: MapFiles | None = None
+    data: CarlaRendererData, map_files: Optional[MapFiles] = None
 ) -> DriveContext:
     session = SessionState(uuid="s", seed=0, scene_id="Town", cameras={})
     return DriveContext(session, 0, 100_000, data, map=map_files)
@@ -51,9 +65,13 @@ def test_a_sweep_round_trips_through_the_renderer_payload() -> None:
     out = unpack_lidar_points(restored.lidar[0])
     np.testing.assert_array_equal(out, points)
     assert out.flags.writeable
-    from_context = _context(restored).lidar_points()
-    assert from_context is not None
-    np.testing.assert_array_equal(from_context, points)
+    frame = LidarFrame.from_proto(restored.lidar[0])
+    assert (frame.logical_id, frame.timestamp_us, frame.num_points) == (
+        "lidar_top",
+        123,
+        1000,
+    )
+    np.testing.assert_array_equal(frame.as_array(), points)
 
 
 def test_a_truncated_sweep_is_refused_rather_than_read_short() -> None:
@@ -65,28 +83,13 @@ def test_a_truncated_sweep_is_refused_rather_than_read_short() -> None:
     broken.points_xyzi = sweep.points_xyzi[:-4]
     with pytest.raises(ValueError, match="declares 10 points"):
         unpack_lidar_points(broken)
+    with pytest.raises(ValueError, match="declares 10 points"):
+        LidarFrame.from_proto(broken).as_array()
 
 
 def test_packing_refuses_the_wrong_number_of_columns() -> None:
     with pytest.raises(ValueError, match=r"\[N, 4\]"):
         pack_lidar_sweep("lidar_top", 0, np.zeros((3, 5)), Pose.identity().to_proto())
-
-
-def test_lidar_points_refuses_to_guess_between_several_sensors() -> None:
-    pose = Pose.identity().to_proto()
-    data = CarlaRendererData(
-        lidar=[
-            pack_lidar_sweep("lidar_top", 0, np.zeros((1, 4)), pose),
-            pack_lidar_sweep("lidar_rear", 0, np.ones((2, 4)), pose),
-        ]
-    )
-    ctx = _context(data)
-    with pytest.raises(ValueError, match="name one"):
-        ctx.lidar_sweep()
-    points = ctx.lidar_points("lidar_rear")
-    assert points is not None and points.shape == (2, 4)
-    assert ctx.lidar_sweep("lidar_side") is None
-    assert _context(CarlaRendererData()).lidar_points() is None
 
 
 # ---------------------------------------------------------------------------
@@ -187,3 +190,73 @@ def test_stop_lines_need_a_map_and_lights(tmp_path: Path) -> None:
         CarlaRendererData(traffic_lights=[_light()]), map_files
     ).stop_lines()
     assert stop.lane_ids == ("100",)
+
+
+# ---------------------------------------------------------------------------
+# One path for every sensor
+# ---------------------------------------------------------------------------
+
+
+class _Frames(BaseDriver):
+    """Keeps two frames per sensor and notes every frame it is told about."""
+
+    name = "frames"
+    frame_history_length = 2
+
+    def __init__(self) -> None:
+        self.announced: List[str] = []
+        self.seen: List[Dict[str, List[int]]] = []
+
+    def on_frame(self, session: SessionState, frame: SensorFrame) -> None:
+        self.announced.append(f"{type(frame).__name__}:{frame.logical_id}")
+
+    def drive(self, ctx: DriveContext) -> DriveResult:
+        self.seen.append(
+            {
+                logical_id: [frame.timestamp_us for frame in frames]
+                for logical_id, frames in ctx.session.frame_history.items()
+            }
+        )
+        return DriveResult(trajectory_in_rig=Trajectory.empty())
+
+
+def test_camera_frames_and_lidar_sweeps_reach_the_policy_the_same_way() -> None:
+    policy = _Frames()
+    servicer = EgodriverServicer(policy)
+    context = MagicMock()
+    camera = AvailableCamera(logical_id="camera_front")
+    start = DriveSessionRequest(session_uuid="s")
+    start.rollout_spec.vehicle.available_cameras.append(camera)
+    servicer.start_session(start, context)
+
+    for step in range(3):
+        now = step * 100_000
+        image = RolloutCameraImage(session_uuid="s")
+        image.camera_image.logical_id = "camera_front"
+        image.camera_image.frame_end_us = now
+        image.camera_image.image_bytes = b"jpeg"
+        servicer.submit_image_observation(image, context)
+        sweep = pack_lidar_sweep(
+            "lidar_top", now, np.ones((4, 4)), Pose.identity().to_proto()
+        )
+        servicer.drive(
+            DriveRequest(
+                session_uuid="s",
+                time_now_us=now,
+                renderer_data=protocol.pack_renderer_data(
+                    CarlaRendererData(lidar=[sweep])
+                ),
+            ),
+            context,
+        )
+
+    context.abort.assert_not_called()
+    # Both kinds are announced, each before the drive that reads it...
+    assert policy.announced == ["CameraFrame:camera_front", "LidarFrame:lidar_top"] * 3
+    # ...and kept to the same history length, oldest first.
+    assert policy.seen[-1] == {
+        "camera_front": [100_000, 200_000],
+        "lidar_top": [100_000, 200_000],
+    }
+    lidar = servicer._sessions["s"].latest_frame("lidar_top")  # noqa: SLF001
+    assert isinstance(lidar, LidarFrame) and lidar.as_array().shape == (4, 4)

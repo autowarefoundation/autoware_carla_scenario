@@ -198,8 +198,13 @@ The contract has no LiDAR submission RPC, so sweeps ride in `renderer_data` too.
 `driver.lidars` entry mounts a `sensor.lidar.ray_cast` (mount in CARLA's convention, like
 a camera) spinning one full revolution per simulation tick, and each policy step sends
 that tick's sweep, already converted into the rig frame. A sweep that does not arrive
-within a second is left out rather than replaced by an older one. Policies read them with
-`ctx.lidar_points("lidar_top")`.
+within a second is left out rather than replaced by an older one.
+
+A policy does not see that transport: the servicer records each sweep before `drive` as
+a `LidarFrame` in `session.frame_history`, beside the camera frames, and announces it
+through `on_frame` -- the one path every sensor takes. `frame_history_length` applies to
+both, and `session.latest_frame("lidar_top").as_array()` unpacks the `[N, 4]` points as
+`latest_frame("camera_front").as_array()` decodes an image.
 
 ```yaml
 driver:

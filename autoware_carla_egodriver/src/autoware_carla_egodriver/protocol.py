@@ -176,17 +176,26 @@ def pack_lidar_sweep(
 
 
 def unpack_lidar_points(sweep: carla_driver_pb2.LidarSweep) -> NDArray[np.float32]:
-    """The sweep's points as a writable ``[N, 4]`` float32 array, rig frame.
+    """The sweep's points as a writable ``[N, 4]`` float32 array, rig frame."""
+    return decode_lidar_points(
+        sweep.logical_id, int(sweep.num_points), sweep.points_xyzi
+    )
+
+
+def decode_lidar_points(
+    logical_id: str, num_points: int, points_xyzi: bytes
+) -> NDArray[np.float32]:
+    """Packed ``points_xyzi`` as a writable ``[N, 4]`` float32 array.
 
     Raises rather than truncating when ``num_points`` and the payload disagree:
     unlike the outer ``renderer_data`` bytes, a sweep that parsed as one is ours,
     and a short buffer means it was corrupted, not that it belongs to a peer.
     """
-    expected = int(sweep.num_points) * LIDAR_POINT_COLUMNS * _LIDAR_WIRE_DTYPE.itemsize
-    if len(sweep.points_xyzi) != expected:
+    expected = num_points * LIDAR_POINT_COLUMNS * _LIDAR_WIRE_DTYPE.itemsize
+    if len(points_xyzi) != expected:
         raise ValueError(
-            f"LiDAR sweep {sweep.logical_id!r} declares {sweep.num_points} points "
-            f"({expected} bytes) but carries {len(sweep.points_xyzi)} bytes"
+            f"LiDAR sweep {logical_id!r} declares {num_points} points "
+            f"({expected} bytes) but carries {len(points_xyzi)} bytes"
         )
-    flat = np.frombuffer(sweep.points_xyzi, dtype=_LIDAR_WIRE_DTYPE)
+    flat = np.frombuffer(points_xyzi, dtype=_LIDAR_WIRE_DTYPE)
     return flat.reshape(-1, LIDAR_POINT_COLUMNS).astype(np.float32, copy=True)
