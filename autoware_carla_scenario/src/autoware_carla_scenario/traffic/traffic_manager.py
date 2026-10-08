@@ -156,6 +156,21 @@ class TrafficManagerBackend(TrafficBackend):
                 ", ".join(str(actor_id) for actor_id in sorted(skip)),
             )
 
+    def adopt(self, entity: Any) -> None:
+        """Drive a scenario vehicle that joins after :meth:`start`.
+
+        :meth:`start` hands every vehicle in the world to the TrafficManager
+        once, when the run begins.  One spawned partway through
+        (``spawn_entity``) was not there to be handed over and would stand
+        where it appeared; it is handed over as it joins.
+        """
+        if not self._started:
+            return
+        actor = getattr(entity, "actor", None)
+        if actor is None:
+            return
+        actor.set_autopilot(True, self.port)
+
     def close(self) -> None:
         """Shut the TrafficManager down so the next run gets a fresh one.
 

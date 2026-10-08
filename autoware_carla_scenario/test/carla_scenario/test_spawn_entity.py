@@ -221,3 +221,24 @@ class TestAVehicleAfterTheWarmUp:
 
     def test_spawning_after_it_on_purpose_goes_through(self, warmed_up) -> None:
         assert self._vehicle().spawn(MagicMock(), mid_run=True) is warmed_up
+
+
+class TestAVehicleSpawnedMidRun:
+    def test_it_is_driven_and_set_moving(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import autoware_carla_scenario.declarative as declarative
+
+        scenario = TestTheScenario._scenario(_deferred_document())
+        actor = MagicMock()
+        npc = MagicMock(actor=actor, initial_speed_kmh=36.0)
+        monkeypatch.setattr(scenario, "_build_npc", lambda entity, world, pose: npc)
+        registered: list[Any] = []
+        monkeypatch.setattr(scenario, "register_entity", registered.append)
+        moving: list[tuple[Any, float]] = []
+        monkeypatch.setattr(
+            declarative, "apply_initial_speed", lambda a, kmh: moving.append((a, kmh))
+        )
+        role = scenario._compiled.role_of("npc1")
+        scenario.spawn_entity(role, None, Lanelet2Pose(lanelet_id=184, s=42.0))
+        npc.spawn.assert_called_once_with(None, mid_run=True)
+        assert registered == [npc]  # which hands it to the traffic backend
+        assert moving == [(actor, 36.0)]

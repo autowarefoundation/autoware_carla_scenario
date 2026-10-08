@@ -95,6 +95,17 @@ class EgoConfig(VehicleEntityConfig):
         self.waypoint_poses = list(waypoint_poses or ())
 
 
+def apply_initial_speed(actor: "carla.Actor", speed_kmh: float) -> None:
+    """Set *actor* moving forward at *speed_kmh* (nothing at zero or below)."""
+    if speed_kmh <= 0.0:
+        return
+    speed_ms = speed_kmh / 3.6
+    fwd = actor.get_transform().get_forward_vector()
+    actor.set_target_velocity(
+        carla.Vector3D(x=fwd.x * speed_ms, y=fwd.y * speed_ms, z=0.0)
+    )
+
+
 class BaseScenario(ABC):
     """Abstract base class for CARLA test scenarios.
 
@@ -764,18 +775,9 @@ class BaseScenario(ABC):
             ego_actor: The ego vehicle CARLA actor.
         """
 
-        def _apply(actor: "carla.Actor", speed_kmh: float) -> None:
-            if speed_kmh <= 0.0:
-                return
-            speed_ms = speed_kmh / 3.6
-            fwd = actor.get_transform().get_forward_vector()
-            actor.set_target_velocity(
-                carla.Vector3D(x=fwd.x * speed_ms, y=fwd.y * speed_ms, z=0.0)
-            )
-
         for entity in self._entities:
             if entity.actor is not None:
-                _apply(entity.actor, entity.initial_speed_kmh)
+                apply_initial_speed(entity.actor, entity.initial_speed_kmh)
 
         if ego_actor is not None:
-            _apply(ego_actor, self.ego_config.initial_speed_kmh)
+            apply_initial_speed(ego_actor, self.ego_config.initial_speed_kmh)

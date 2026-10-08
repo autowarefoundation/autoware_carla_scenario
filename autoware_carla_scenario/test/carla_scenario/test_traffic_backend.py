@@ -174,6 +174,23 @@ class TestTrafficManagerStart:
         backend.start(world)
         assert [a.autopilot for a in actors] == [[(True, 8123)], [(True, 8123)]]
 
+    def test_a_vehicle_that_joins_later_is_handed_over_as_it_joins(self) -> None:
+        """A vehicle spawned mid-run was not there when the run started."""
+
+        class _Entity:
+            def __init__(self, actor: _Actor) -> None:
+                self.actor = actor
+
+        backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123), client=_Client()
+        )
+        early, late = _Actor(1), _Actor(2)
+        backend.adopt(_Entity(early))  # registered during setup
+        assert early.autopilot == []  # start() hands it over, not adopt()
+        backend.start(_World([early]))
+        backend.adopt(_Entity(late))
+        assert late.autopilot == [(True, 8123)]
+
     def test_only_vehicles(self) -> None:
         """Walkers and sensors are nobody's to autopilot."""
         world = _World([_Actor(1)])

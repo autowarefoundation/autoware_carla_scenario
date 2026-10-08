@@ -34,7 +34,7 @@ from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
 from .entity._spawn import SpawnTransform
 from .entity.pedestrian_entity import PedestrianEntity, PedestrianEntityConfig
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
-from .scenario_base import BaseScenario, EgoConfig
+from .scenario_base import BaseScenario, EgoConfig, apply_initial_speed
 
 if TYPE_CHECKING:
     from .coordinate import OpenDrivePose
@@ -374,6 +374,10 @@ class DeclarativeScenario(BaseScenario):
             npc_entity = self._build_npc(entity, world, pose)
             npc_entity.spawn(world, mid_run=mid_run)
             self.register_entity(npc_entity)
+            if mid_run and npc_entity.actor is not None:
+                # The run's initial speeds were set when the warm-up ended,
+                # before this one existed.
+                apply_initial_speed(npc_entity.actor, npc_entity.initial_speed_kmh)
         logger.info(
             "Spawned %s %s (%s) on lanelet %d at s=%.1f",
             entity.kind,
