@@ -57,15 +57,16 @@ driver:
     max_steer_rate: 4.0
     # Integral trim on the measured yaw rate; 0 steers open-loop.
     yaw_rate_ki: 3.0
-    speed_kp: 0.8
-    speed_ki: 0.4
-    speed_kff: 0.15
-    integral_limit: 2.0
-    position_gain: 1.5
+    # The plan's acceleration plus a PI on its speed, in m/s², turned into pedals by the
+    # ego's powertrain model (read from its CARLA physics control).
+    speed_kp: 1.0
+    speed_ki: 0.1
+    integral_limit: 3.0
+    position_gain: 0.5
     max_position_correction_mps: 6.0
     # Read the plan's acceleration over this much of it, so a gentle pull-away is not a stop.
     speed_preview_s: 1.0
-    # CARLA 0.10's MKZ pulls away at 0.25 throttle; from a standstill, positive commands start there.
+    # CARLA 0.10's MKZ pulls away at 0.25 throttle; a standing car asked to go gets at least this.
     throttle_deadband: 0.25
     standstill_speed_mps: 0.5
     # A plan travelling less than this over its horizon holds the vehicle still.

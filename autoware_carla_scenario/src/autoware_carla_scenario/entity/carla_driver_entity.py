@@ -23,6 +23,7 @@ from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservatio
 from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
+from ..utils.powertrain import ChaosPowertrain
 from ..driver.renderer import RendererDataBuilder
 from ..driver.observation import (
     AccelerationEstimate,
@@ -216,6 +217,11 @@ class CarlaDriverEntity(EgoVehicle):
         self._attach_cameras(world, actor)
         self._world = world
         self._acceleration.reset()
+        # The ego drives on CARLA's own (Chaos) vehicle physics: this entity puts it
+        # on no other, so its pedals are worked out from that model.
+        self._follower.powertrain = ChaosPowertrain.from_physics_control(
+            actor.get_physics_control()
+        )
 
         # CARLA rebuilds the map object on every ``get_map()`` call, so it is fetched
         # once here and reused for the rolling route walk.
@@ -507,6 +513,7 @@ class CarlaDriverEntity(EgoVehicle):
             _FIXED_DELTA_S,
             yaw_rate_rps=float(observation.angular_velocity[2]),
             now_us=observation.timestamp_us,
+            gear=int(actor.get_control().gear),
         )
         actor.apply_control(command.to_carla_control())
 

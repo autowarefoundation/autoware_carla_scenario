@@ -39,8 +39,8 @@ def hold_vehicles_still(world: "carla.World", spare: Collection[int] = ()) -> No
         actor.apply_control(stopped)
 
 
-def release_vehicle(actor: "carla.Actor") -> None:
-    """Take the init phase's brakes off one vehicle.
+def release_vehicle(actor: "carla.Actor", throttle: float = 0.0) -> None:
+    """Take the init phase's brakes off one vehicle, at *throttle*.
 
     CARLA's client sends a vehicle control only when it differs from the last
     one sent through the same actor handle, and a handle that has sent nothing
@@ -53,5 +53,7 @@ def release_vehicle(actor: "carla.Actor") -> None:
     import typesafe_carla.carla as carla  # noqa: PLC0415 -- this helper is CARLA-side by definition
 
     actor.apply_control(
-        carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False, manual_gear_shift=False, gear=1)
+        carla.VehicleControl(
+            throttle=float(throttle), brake=0.0, hand_brake=False, manual_gear_shift=False, gear=1
+        )
     )

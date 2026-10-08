@@ -26,6 +26,8 @@ from autoware_carla_egodriver.protocol import carla_driver_pb2
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
 
+from ._vehicle_physics import mkz_physics, mkz_powertrain
+
 
 _TICK_S = 0.05
 
@@ -114,6 +116,8 @@ def _actor(x: float = 0.0, y: float = 0.0, yaw_deg: float = 0.0) -> MagicMock:
     actor.get_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     actor.get_acceleration.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     actor.get_angular_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_physics_control.return_value = mkz_physics()
+    actor.get_control.return_value = SimpleNamespace(gear=1)
     return actor
 
 
@@ -538,6 +542,8 @@ def _placed(actor: MagicMock) -> None:
     actor.set_target_velocity.side_effect = _move
     actor.get_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     actor.get_angular_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_physics_control.return_value = mkz_physics()
+    actor.get_control.return_value = SimpleNamespace(gear=1)
 
 
 def _warmup_world(others: Sequence[MagicMock] = ()) -> Tuple[MagicMock, MagicMock]:
@@ -583,10 +589,11 @@ def test_a_warm_up_carries_the_ego_onto_its_spawn_pose() -> None:
     assert (aims[-1].x, aims[-1].y) == pytest.approx((5.0, 0.0))
     # The policy planned all the way, but the run-up drove.
     assert len(client.drives) == 10
-    # Released and coasting, never the follower's throttle; physics never
-    # switched off.
+    # Released onto the throttle that holds 5 m/s in gear, never the follower's;
+    # physics never switched off.
+    hold, _ = mkz_powertrain().pedals(0.0, 5.0, 1)
     controls = [call.args[0] for call in actor.apply_control.call_args_list]
-    assert all(control.throttle == 0.0 for control in controls)
+    assert all(control.throttle == pytest.approx(hold) for control in controls)
     assert controls[-1].brake == 0.0 and not controls[-1].hand_brake
     actor.set_simulate_physics.assert_not_called()
 

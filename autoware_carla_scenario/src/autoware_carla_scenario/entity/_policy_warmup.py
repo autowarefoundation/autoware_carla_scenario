@@ -13,7 +13,10 @@ first-frame pose at its initial speed:
   as their initial speed covers in ``warmup_s``, keeping their Frenet offset
   from the lane, and carried forward onto their pose.  Each is placed once and
   then moved by its velocity, set each tick and aimed at the path's next point,
-  its physics left on, so it is handed over as a car that has been driving.  A
+  its physics left on, so it is handed over as a car that has been driving.  It
+  is driven meanwhile on the throttle that holds its speed, by its powertrain
+  model, so it arrives in the gear and at the engine speed it would be in; carried
+  on a released throttle it would arrive in neutral, the engine idling.  A
   vehicle with no initial speed stands on its pose, held on its brakes like
   any vehicle in the init phase.
 * **Pedestrians** are moved in a straight line, in world coordinates, along
@@ -33,6 +36,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, FrozenSet, List, Mapping, Tuple
 
+from ..utils.powertrain import ChaosPowertrain
 from ..utils.vehicles import release_vehicle
 
 if TYPE_CHECKING:
@@ -149,6 +153,7 @@ class _CarriedVehicle:
         self._step_s = step_s
         self.start = actor.get_transform()
         self.path = _LanePath(carla_map, self.start, speed_mps * ticks * step_s, actor.type_id)
+        self._powertrain = ChaosPowertrain.from_physics_control(actor.get_physics_control())
 
     def back_m(self, tick: int) -> float:
         """How far behind its first-frame pose the vehicle is at ``tick``."""
@@ -196,7 +201,8 @@ class _CarriedVehicle:
         self.actor.set_target_angular_velocity(
             carla.Vector3D(x=spin.x, y=spin.y, z=turn / self._step_s)
         )
-        release_vehicle(self.actor)
+        throttle, _ = self._powertrain.pedals(0.0, self.speed, int(self.actor.get_control().gear))
+        release_vehicle(self.actor, throttle)
 
 
 class _CarriedWalker:

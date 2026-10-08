@@ -3,8 +3,13 @@
 alpasim's contract stops at the plan: the driver policy returns *where the vehicle should
 be*, not throttle and steering.  Upstream that gap is filled by alpasim's vehicle dynamics
 service; here -- as in ``carla_driver_interface``'s runtime -- it is filled by a pure
-pursuit lateral controller, trimmed by feedback on the measured yaw rate, and the SUMO
-bridge's speed controller tracking the plan in time, feeding ``carla.VehicleControl``.
+pursuit lateral controller, trimmed by feedback on the measured yaw rate, and a speed
+controller tracking the plan in time, feeding ``carla.VehicleControl``.
+
+The speed controller works in accelerations, as Autoware's longitudinal controller does:
+the plan's own acceleration plus a PI on the speed it misses, turned into pedals by the
+vehicle's powertrain model (:class:`~..utils.powertrain.ChaosPowertrain`), as Autoware's
+vehicle interface turns them with its accel and brake maps.
 
 All geometry in this module is in the **rig frame**: x forward, y left, z up,
 right-handed.  Steering angles follow the same convention (positive = left), and the flip
@@ -20,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 import numpy as np
 
-from ..traffic.sumo.physics_control import SpeedTuning, longitudinal
+from ..utils.powertrain import ChaosPowertrain
 from .geometry import Pose, Trajectory
 
 if TYPE_CHECKING:
@@ -97,27 +102,25 @@ class ControlConfig:
     held rather than integrated."""
 
     # -- Longitudinal -----------------------------------------------------------
-    # The plan is tracked in time by the SUMO bridge's speed controller
-    # (:func:`..traffic.sumo.physics_control.longitudinal`, tuned on CARLA 0.10's
-    # Lincoln MKZ): where the plan has the vehicle now, how fast and how hard it is
-    # speeding up there, with a PI on what the vehicle misses of that.  The policy
-    # reads the vehicle's speed and acceleration back, so a follower that over- or
-    # undershoots the plan is planned onward -- a runaway or a crawl.
-    speed_kp: float = 0.8
-    """Throttle (or brake) per m/s the vehicle is slower (faster) than the plan."""
+    # The plan is tracked in time: where the plan has the vehicle now, how fast and
+    # how hard it is speeding up there, with a PI on what the vehicle misses of that,
+    # all in m/s²; the vehicle's powertrain model turns the sum into pedals.  The
+    # policy reads the vehicle's speed and acceleration back, so a follower that over-
+    # or undershoots the plan is planned onward -- a runaway or a crawl.
+    speed_kp: float = 1.0
+    """m/s² asked per m/s the vehicle is slower (faster) than the plan."""
 
-    speed_ki: float = 0.4
-    """Per m·s of accumulated speed error."""
+    speed_ki: float = 0.1
+    """m/s² per m·s of accumulated speed error."""
 
-    speed_kff: float = 0.15
-    """Throttle (or brake) per m/s² of the plan's own acceleration."""
+    integral_limit: float = 3.0
+    """Anti-windup bound on the accumulated speed error, m (``speed_ki`` times it
+    bounds the integral's share of the asked acceleration)."""
 
-    integral_limit: float = 2.0
-    """Anti-windup bound on the accumulated speed error, m."""
-
-    position_gain: float = 1.5
+    position_gain: float = 0.5
     """m/s of extra target speed per metre the vehicle is behind the plan (less
-    when ahead)."""
+    when ahead).  With :attr:`speed_kp` it makes the gap close like a spring of
+    ``sqrt(speed_kp * position_gain)`` rad/s, damped ``sqrt(speed_kp / position_gain) / 2``."""
 
     max_position_correction_mps: float = 6.0
     """Bound on that correction, m/s."""
@@ -130,16 +133,15 @@ class ControlConfig:
     """
 
     throttle_deadband: float = 0.25
-    """The throttle a standing vehicle pulls away at; a positive command to a
-    standing vehicle (below :attr:`standstill_speed_mps`) is mapped onto
-    ``[throttle_deadband, 1]``.
+    """The least throttle a standing vehicle (below :attr:`standstill_speed_mps`) is
+    asked to speed up with.
 
     A standing Lincoln MKZ on flat road (CARLA 0.10) stays put at 0.2 and pulls
-    away at 0.25.  A car with an automatic gearbox creeps off the brake, and the
-    policy's plans from a standstill assume it: a few cm/s in the first second,
-    some metres in six.  Tracked as asked, that is a throttle short of moving the
-    car, so it would never leave.  Moving, the command passes through: a rolling
-    MKZ holds 30 km/h at about 0.1.  ``0`` never offsets.
+    away at 0.25, where its powertrain model has it already pulling away at 0.2.
+    A car with an automatic gearbox creeps off the brake, and the policy's plans
+    from a standstill assume it: a few cm/s in the first second, some metres in
+    six.  Tracked as asked, that is a throttle short of moving the car, so it would
+    never leave.  ``0`` sets no floor.
     """
 
     standstill_speed_mps: float = 0.5
@@ -244,10 +246,16 @@ class TrajectoryFollower:
 
     Args:
         config: Gains and limits.  ``None`` uses the defaults.
+        powertrain: The vehicle's powertrain model, which turns an acceleration into
+            pedals.  May be set later (:attr:`powertrain`), before the first plan is
+            tracked.
     """
 
-    def __init__(self, config: Optional[ControlConfig] = None) -> None:
+    def __init__(
+        self, config: Optional[ControlConfig] = None, powertrain: Optional[ChaosPowertrain] = None
+    ) -> None:
         self._config = config or ControlConfig()
+        self.powertrain = powertrain
         self.reset()
 
     @property
@@ -274,6 +282,7 @@ class TrajectoryFollower:
         dt_s: float,
         yaw_rate_rps: Optional[float] = None,
         now_us: Optional[int] = None,
+        gear: int = 0,
     ) -> VehicleCommand:
         """Return the command that tracks *plan_in_local* from the current pose.
 
@@ -286,6 +295,12 @@ class TrajectoryFollower:
                 steers on pure pursuit alone.
             now_us: The current time, on the plan's clock.  ``None`` takes the
                 plan's first instant as now.
+            gear: The gear the vehicle is in, as ``carla.VehicleControl.gear``
+                reports it (``0``, neutral, is taken as the first gear a throttle
+                selects).
+
+        Raises:
+            RuntimeError: If no :attr:`powertrain` has been set.
 
         Returns:
             The actuation command.  An empty plan yields a full stop.
@@ -311,7 +326,7 @@ class TrajectoryFollower:
 
         steer = self._lateral(target, current_speed_mps, dt_s, yaw_rate_rps)
         throttle, brake, target_speed = self._longitudinal(
-            plan_in_rig, now_us, current_speed_mps, dt_s
+            plan_in_rig, now_us, current_speed_mps, dt_s, gear
         )
 
         return VehicleCommand(
@@ -411,8 +426,11 @@ class TrajectoryFollower:
         now_us: Optional[int],
         current_speed_mps: float,
         dt_s: float,
+        gear: int,
     ) -> tuple[float, float, float]:
         """Return ``(throttle, brake, target speed)`` that keep the vehicle on the plan."""
+        if self.powertrain is None:
+            raise RuntimeError("TrajectoryFollower has no powertrain to turn accelerations into pedals")
         config = self._config
         speed, acceleration, gap = _reference(plan_in_rig, now_us, config.speed_preview_s)
         standing = current_speed_mps < config.standstill_speed_mps
@@ -420,30 +438,23 @@ class TrajectoryFollower:
             # The brake has nothing left to take off a standing car: what the
             # integral wound up slowing it down must not hold it once the plan goes.
             self._integral = max(self._integral, 0.0)
-        command = longitudinal(
-            speed=current_speed_mps,
-            sumo_speed=speed,
-            sumo_acceleration=acceleration,
-            longitudinal_error=gap,
-            integral=self._integral,
-            dt=dt_s,
-            tuning=SpeedTuning(
-                kp=config.speed_kp,
-                ki=config.speed_ki,
-                kff=config.speed_kff,
-                integral_limit=config.integral_limit,
-                k_position=config.position_gain,
-                max_position_correction=config.max_position_correction_mps,
-                # Standing still is decided here, by the plan's travel.
-                stop_speed=0.0,
-            ),
+        correction = float(
+            np.clip(
+                config.position_gain * gap,
+                -config.max_position_correction_mps,
+                config.max_position_correction_mps,
+            )
         )
-        self._integral = command.integral
-        throttle = command.throttle
-        if throttle > 0.0 and standing:
-            deadband = config.throttle_deadband
-            throttle = deadband + (1.0 - deadband) * throttle
-        return throttle, command.brake, command.target_speed
+        target = max(0.0, speed + correction)
+        error = target - max(0.0, current_speed_mps)
+        self._integral = float(
+            np.clip(self._integral + error * dt_s, -config.integral_limit, config.integral_limit)
+        )
+        asked = acceleration + config.speed_kp * error + config.speed_ki * self._integral
+        throttle, brake = self.powertrain.pedals(asked, current_speed_mps, gear)
+        if standing and asked > 0.0:
+            throttle = max(throttle, config.throttle_deadband)
+        return throttle, brake, target
 
 
 def _reference(
