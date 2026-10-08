@@ -1,0 +1,8 @@
+# Stand-ins for the parts of Python's standard library Codon lacks (standalone build).
+# The rewrite (standalone/transform.py) drops ABC bases and @abstractmethod.
+# abc for the standalone build: the rewrite drops ABC bases and @abstractmethod.
+class ABC:
+    pass
+
+def abstractmethod(f):
+    return f

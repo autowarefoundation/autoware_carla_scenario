@@ -1,0 +1,110 @@
+import _acs_fmt  # Python formatting, program-wide
+# What the standalone rewrite (standalone/transform.py) puts in the sources.
+
+def _acs_or(a, b):
+    """Python's `a or b()` (b evaluated only when needed). An Optional[T] on the
+    left gives a T, the fallback upcast to it."""
+    if isinstance(a, Optional):
+        if a is not None:
+            value = unwrap(a)
+            if hasattr(value, "__bool__") or hasattr(value, "__len__"):
+                if value:
+                    return value
+            else:
+                return value
+        out: type(unwrap(a)) = b()
+        return out
+    else:
+        if a:
+            return a
+        return b()
+
+
+def _acs_default(value, fallback):
+    """`value if value is not None else fallback()`, typed as value's T."""
+    if isinstance(value, Optional):
+        if value is not None:
+            return unwrap(value)
+        out: type(unwrap(value)) = fallback()
+        return out
+    else:
+        return value
+
+
+@tuple
+class _AcsRequired:
+    _u: int = 0
+
+
+def _acs_unrequire(value, name: Literal[str]):
+    if isinstance(value, _AcsRequired):
+        compile_error("missing required keyword argument: " + name)
+    else:
+        return value
+
+
+def _acs_list(*items):
+    """What the check's rewrite puts in place of a list display of two or more
+    non-literals: a list of conditions (or actions), as Python's is, when the
+    first item is one; else a list of the first item's type."""
+    if hasattr(items[0], "check") and hasattr(items[0], "label"):
+        from autoware_carla_scenario.conditions.base import BaseCondition
+        conditions = List[BaseCondition]()
+        for item in items:
+            conditions.append(item)
+        return conditions
+    elif hasattr(items[0], "execute") and hasattr(items[0], "label"):
+        from autoware_carla_scenario.actions.base import BaseAction
+        actions = List[BaseAction]()
+        for item in items:
+            actions.append(item)
+        return actions
+    else:
+        out = List[type(items[0])]()
+        for item in items:
+            out.append(item)
+        return out
+
+
+class _AcsEnum[T]:
+    """The base the rewrite gives an Enum: each member is a singleton of its class."""
+    value: T
+    name: str
+    _cls: str
+
+    def __init__(self, value: T, name: str, cls: str):
+        self.value = value
+        self.name = name
+        self._cls = cls
+
+    def __eq__(self, other) -> bool:
+        return self is other
+
+    def __ne__(self, other) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return hash(self._cls + "." + self.name)
+
+    def __repr__(self) -> str:
+        return "<" + self._cls + "." + self.name + ": " + repr(self.value) + ">"
+
+    def __str__(self) -> str:
+        return self._cls + "." + self.name
+
+
+def _acs_opt(value, T: type) -> Optional[T]:
+    """An argument for an `Optional[T]` parameter, as an Optional[T]: Codon's
+    Optional[T] takes neither a subclass of T nor an Optional of one."""
+    if isinstance(value, None):
+        return None
+    elif isinstance(value, Optional[NoneType]):
+        return None
+    elif isinstance(value, Optional):
+        if value is None:
+            return None
+        inner: T = unwrap(value)
+        return inner
+    else:
+        out: T = value
+        return out

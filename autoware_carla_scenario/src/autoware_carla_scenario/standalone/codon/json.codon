@@ -1,0 +1,3 @@
+# json is not part of a standalone binary: nothing on its run path serializes JSON.
+def dumps(obj, **kwargs) -> str:
+    compile_error("json.dumps() is not available in a standalone binary")

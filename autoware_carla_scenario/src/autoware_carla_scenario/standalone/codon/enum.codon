@@ -1,0 +1,7 @@
+# The rewrite (standalone/transform.py) turns each Enum into an _AcsEnum class;
+# these names only resolve the import.
+class Enum:
+    pass
+
+def auto() -> int:
+    return 0

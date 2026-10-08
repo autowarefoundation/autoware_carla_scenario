@@ -208,10 +208,13 @@ class BaseCondition(ABC):
         :meth:`get_details` into a single dict suitable for nesting
         inside parent conditions.
         """
-        return {
+        summary: dict[str, Any] = {
             "condition_type": type(self).__name__,
             "label": self.label,
             "satisfied": self._last_satisfied,
             "message": self._last_message,
-            **self.get_details(),
         }
+        # update() rather than a `**` display: Codon's parser cannot read one
+        # (docs/standalone.md), and the keys and their order are the same.
+        summary.update(self.get_details())
+        return summary
