@@ -41,6 +41,13 @@ from pathlib import Path
 PRUNE_DIRS = frozenset({"__pycache__", "tests", "include"})
 #: Files in the same category.
 PRUNE_SUFFIXES = (".pyi", ".pyx", ".pxd", ".a")
+#: Files inside a pruned directory that run-time code imports, relative to
+#: site-packages.  numpy 2 moved part of ``numpy.testing`` into its own test
+#: suite -- ``numpy/testing/_private/utils.py`` imports ``pd_NA`` from
+#: ``numpy._core.tests._natype`` -- so pruning that file breaks every package
+#: that imports ``numpy.testing``, scipy among them.  The directory has no
+#: ``__init__.py``; the one file is enough for the import to resolve.
+PRUNE_KEEP = frozenset({"numpy/_core/tests/_natype.py"})
 #: x86-64 Linux maps segments at this granularity, whatever p_align claims.
 PAGE_SIZE = 4096
 
@@ -87,14 +94,29 @@ def is_loadable(path: Path) -> bool:
     )
 
 
+def prune_directory(directory: Path, keep: set[Path]) -> None:
+    """Delete *directory*, except the files in *keep* and their parents."""
+    if not any(directory in path.parents for path in keep):
+        shutil.rmtree(directory, ignore_errors=True)
+        return
+    for child in list(directory.iterdir()):
+        if child in keep:
+            continue
+        if child.is_dir() and not child.is_symlink():
+            prune_directory(child, keep)
+        else:
+            child.unlink(missing_ok=True)
+
+
 def prune(site: Path) -> None:
     """Delete the build-time-only files under *site*."""
+    keep = {site / relative for relative in PRUNE_KEEP if (site / relative).is_file()}
     for directory in sorted(
         (p for p in site.rglob("*") if p.is_dir() and p.name in PRUNE_DIRS),
         key=lambda p: len(p.parts),
         reverse=True,
     ):
-        shutil.rmtree(directory, ignore_errors=True)
+        prune_directory(directory, keep)
     # Materialised before deleting: unlinking while the walk is still open is
     # asking the directory iterator to cope with entries vanishing under it.
     for path in list(site.rglob("*")):

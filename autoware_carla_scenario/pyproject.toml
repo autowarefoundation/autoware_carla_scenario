@@ -2,6 +2,7 @@
 name = "autoware-carla-scenario"
 version = "3.1.2"
 description = "CARLA scenario testing framework for Autoware"
+readme = "README.md"
 license = "Apache-2.0"
 # A copy of the repository's LICENSE: license files have to live inside the
 # package directory to reach the sdist and wheel.
@@ -9,11 +10,24 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
 ]
-# The interpreters CI tests. The ceiling came from the official CARLA client
-# (its wheels stopped at cp312), which the framework no longer uses: the CARLA
-# client is typesafe_carla, whose wheel carries its CPython package prebuilt
-# for any Python 3.10+. Raise it together with CI's interpreter matrix.
-requires-python = ">=3.10,<3.13"
+# The interpreters CI tests: every CPython line upstream still supports, 3.10
+# (Autoware's own environment, and ROS 2 Humble's) through 3.14. The CARLA
+# client, typesafe_carla, carries its CPython package prebuilt for any Python
+# 3.10+, and every other dependency ships wheels for the whole range. Raise the
+# ceiling together with CI's interpreter matrix and
+# `authoring.wheelhouse.TESTED_PYTHONS` (a test checks the three agree).
+requires-python = ">=3.10,<3.15"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     # The CARLA client: `import typesafe_carla.carla as carla` at run time (its
     # CPython package, prebuilt in the wheel; docs/installation.md), and its
@@ -53,8 +67,18 @@ dependencies = [
     # The protobuf definitions are vendored rather than pulled from
     # `alpasim-grpc`; proto/README.md says why.
     "grpcio>=1.60",
-    "protobuf>=4.25.0,<5.0.0",
+    # The vendored modules are protobuf 4.25 gencode, which every runtime from
+    # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
+    # so the range has to reach past it; the ceiling is the newest major tested.
+    "protobuf>=4.25.0,<8",
 ]
+
+[project.urls]
+Homepage = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Documentation = "https://autowarefoundation.github.io/autoware_carla_scenario/"
+Repository = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Issues = "https://github.com/autowarefoundation/autoware_carla_scenario/issues"
+Changelog = "https://github.com/autowarefoundation/autoware_carla_scenario/releases"
 
 [project.optional-dependencies]
 # The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the
