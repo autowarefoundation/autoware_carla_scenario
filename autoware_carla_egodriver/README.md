@@ -33,7 +33,14 @@ class MyPolicy(BaseDriver):
 run_server(MyPolicy(), port=50051)
 ```
 
-Dependencies: grpcio, protobuf 4.x, numpy, Pillow; Python 3.10–3.14. The wire contract
+Every sensor reaches a policy the same way: as a frame in `session.frame_history`
+(`CameraFrame`, `LidarFrame`), announced through `on_frame`, each with `as_array()`.
+Beyond alpasim's cameras, a policy run by the scenario framework gets LiDAR sweeps (rig
+frame) that way and, with `map_dir` set to its copy of the
+runtime's `driver.map_dir`, the world's map as files (`ctx.map`) and every traffic light
+resolved into that map's own elements (`ctx.stop_lines()`, `autoware_carla_egodriver.hdmap`).
+
+Dependencies: grpcio, protobuf (4.25+), numpy, scipy, Pillow; Python 3.10–3.14. The wire contract
 is vendored from alpasim and carla_driver_interface (`proto/README.md`), with field
 numbers and service names unchanged, so the package also interoperates with an
 upstream alpasim runtime.

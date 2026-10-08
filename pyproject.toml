@@ -32,7 +32,8 @@ dev = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.14.0",
+    # ...and the `map` extra (driver map files) and its tests.
+    "roadgen>=0.18.0",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",

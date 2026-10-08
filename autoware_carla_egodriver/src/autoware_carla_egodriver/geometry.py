@@ -6,10 +6,15 @@ list of timestamped poses
 (:class:`~autoware_carla_egodriver.protocol.Trajectory`).  This module
 provides the Python-side counterparts and the conversions between them.
 
+The rotation maths is scipy's (:class:`scipy.spatial.transform.Rotation` and
+:class:`~scipy.spatial.transform.Slerp`); this module only adds what the wire needs on
+top -- a pose type pairing a translation with a rotation, timestamped sequences of them,
+and the protobuf conversions.
+
 Conventions, matching alpasim:
 
-* Quaternions are stored in **scipy order** ``(x, y, z, w)`` internally and converted to
-  the protobuf's ``(w, x, y, z)`` field order on the wire.
+* Quaternions are in scipy's ``(x, y, z, w)`` order and converted to the protobuf's
+  ``(w, x, y, z)`` field order on the wire.
 * Composition is the standard rigid transform: ``(a @ b).position ==
   a.rotation_matrix @ b.position + a.position``.  So ``ego_pose @ pose_in_rig`` lifts a
   rig-frame pose into the local frame, and ``ego_pose.inverse() @ pose_in_local`` does
@@ -24,12 +29,12 @@ this package replaces, so code written against it ports by changing the import.
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
+from scipy.spatial.transform import Rotation, Slerp
 
 from ._proto import common_pb2
 
@@ -39,39 +44,22 @@ __all__ = ["Pose", "Trajectory", "waypoints_to_proto"]
 #: Quaternion norms below this are treated as degenerate and replaced by the identity.
 _QUAT_NORM_EPSILON: float = 1e-12
 
-#: Timestamp gaps below this (microseconds) are treated as coincident when interpolating.
-_TIME_EPSILON_US: int = 1
+_AXES = "xyz"
 
 
-def _as_vector3(values: Iterable[float]) -> NDArray[np.float64]:
-    """Return *values* as a ``(3,)`` float array.
+def _rotation(quat_xyzw: ArrayLike) -> Rotation:
+    """*quat_xyzw* as a rotation; a zero quaternion is the identity.
 
-    Raises:
-        ValueError: If *values* does not hold exactly three components.
+    scipy refuses a zero-norm quaternion, but a default-constructed protobuf
+    message (all fields zero) is one, and must round-trip to the identity rather
+    than fail.
     """
-    array = np.asarray(values, dtype=np.float64).reshape(-1)
-    if array.size != 3:
-        raise ValueError(f"expected 3 components, got {array.size}")
-    return array
-
-
-def _normalize_quat(values: Iterable[float]) -> NDArray[np.float64]:
-    """Return *values* as a unit ``(4,)`` quaternion in ``(x, y, z, w)`` order.
-
-    A zero-norm quaternion is replaced by the identity rather than producing NaNs, so a
-    default-constructed protobuf message (all fields zero) round-trips to an identity
-    rotation instead of poisoning downstream maths.
-
-    Raises:
-        ValueError: If *values* does not hold exactly four components.
-    """
-    array = np.asarray(values, dtype=np.float64).reshape(-1)
-    if array.size != 4:
-        raise ValueError(f"expected 4 quaternion components, got {array.size}")
-    norm = float(np.linalg.norm(array))
-    if norm < _QUAT_NORM_EPSILON:
-        return np.array([0.0, 0.0, 0.0, 1.0])
-    return array / norm
+    quat = np.asarray(quat_xyzw, dtype=np.float64).reshape(-1)
+    if quat.size != 4:
+        raise ValueError(f"expected 4 quaternion components, got {quat.size}")
+    if float(np.linalg.norm(quat)) < _QUAT_NORM_EPSILON:
+        return Rotation.identity()
+    return Rotation.from_quat(quat)
 
 
 @dataclass(frozen=True, eq=False)
@@ -80,20 +68,31 @@ class Pose:
 
     Args:
         position: ``(3,)`` translation in metres.
-        quat_xyzw: ``(4,)`` unit quaternion in ``(x, y, z, w)`` order.  Normalised on
-            construction.
+        quat_xyzw: ``(4,)`` quaternion in ``(x, y, z, w)`` order.  Normalised on
+            construction; all zeros means the identity.
     """
 
     position: NDArray[np.float64]
     quat_xyzw: NDArray[np.float64]
+    rotation: Rotation = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "position", _as_vector3(self.position))
-        object.__setattr__(self, "quat_xyzw", _normalize_quat(self.quat_xyzw))
+        position = np.asarray(self.position, dtype=np.float64).reshape(-1)
+        if position.size != 3:
+            raise ValueError(f"expected 3 components, got {position.size}")
+        rotation = _rotation(self.quat_xyzw)
+        object.__setattr__(self, "position", position)
+        object.__setattr__(self, "rotation", rotation)
+        object.__setattr__(self, "quat_xyzw", rotation.as_quat())
 
     # ------------------------------------------------------------------
     # Constructors
     # ------------------------------------------------------------------
+
+    @classmethod
+    def from_rotation(cls, position: ArrayLike, rotation: Rotation) -> "Pose":
+        """Return the pose translating by *position* and rotating by *rotation*."""
+        return cls(np.asarray(position, dtype=np.float64), rotation.as_quat())
 
     @classmethod
     def identity(cls) -> "Pose":
@@ -102,19 +101,8 @@ class Pose:
 
     @classmethod
     def from_xyz_yaw(cls, x: float, y: float, z: float, yaw: float) -> "Pose":
-        """Return a pose with a yaw-only rotation.
-
-        Args:
-            x: Translation along the frame's x axis (metres).
-            y: Translation along the frame's y axis (metres).
-            z: Translation along the frame's z axis (metres).
-            yaw: Rotation about the z axis (radians, counter-clockwise).
-        """
-        half = 0.5 * yaw
-        return cls(
-            np.array([x, y, z], dtype=np.float64),
-            np.array([0.0, 0.0, math.sin(half), math.cos(half)]),
-        )
+        """Return a pose with a yaw-only rotation (radians, counter-clockwise)."""
+        return cls.from_rotation([x, y, z], Rotation.from_euler("z", yaw))
 
     @classmethod
     def from_proto(cls, message: common_pb2.Pose) -> "Pose":
@@ -129,16 +117,10 @@ class Pose:
 
     @classmethod
     def from_axis_angle(cls, axis: int, angle_rad: float) -> "Pose":
-        """Return a rotation-only pose about a principal axis.
-
-        Args:
-            axis: ``0``, ``1`` or ``2`` for the x, y or z axis.
-            angle_rad: Rotation angle in radians (counter-clockwise).
-        """
-        half = 0.5 * angle_rad
-        quat = [0.0, 0.0, 0.0, math.cos(half)]
-        quat[axis] = math.sin(half)
-        return cls(np.zeros(3), np.array(quat, dtype=np.float64))
+        """Return a rotation-only pose about principal axis ``0``, ``1`` or ``2`` (x, y, z)."""
+        return cls.from_rotation(
+            np.zeros(3), Rotation.from_euler(_AXES[axis], angle_rad)
+        )
 
     # ------------------------------------------------------------------
     # Derived quantities
@@ -147,20 +129,12 @@ class Pose:
     @property
     def rotation_matrix(self) -> NDArray[np.float64]:
         """Return the ``(3, 3)`` rotation matrix for this pose."""
-        x, y, z, w = self.quat_xyzw
-        return np.array(
-            [
-                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-            ]
-        )
+        return self.rotation.as_matrix()
 
     @property
     def yaw(self) -> float:
         """Return the rotation about the z axis in radians."""
-        x, y, z, w = self.quat_xyzw
-        return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        return float(self.rotation.as_euler("ZYX")[0])
 
     def as_matrix(self) -> NDArray[np.float64]:
         """Return the ``(4, 4)`` homogeneous transform for this pose."""
@@ -175,35 +149,22 @@ class Pose:
 
     def __matmul__(self, other: "Pose") -> "Pose":
         """Compose two transforms: ``self`` applied after *other*."""
-        sx, sy, sz, sw = self.quat_xyzw
-        ox, oy, oz, ow = other.quat_xyzw
-        quat = np.array(
-            [
-                sw * ox + sx * ow + sy * oz - sz * oy,
-                sw * oy - sx * oz + sy * ow + sz * ox,
-                sw * oz + sx * oy - sy * ox + sz * ow,
-                sw * ow - sx * ox - sy * oy - sz * oz,
-            ]
+        return Pose.from_rotation(
+            self.rotation.apply(other.position) + self.position,
+            self.rotation * other.rotation,
         )
-        return Pose(self.rotation_matrix @ other.position + self.position, quat)
 
     def inverse(self) -> "Pose":
         """Return the inverse transform."""
-        x, y, z, w = self.quat_xyzw
-        inv_quat = np.array([-x, -y, -z, w])
-        inv = Pose(np.zeros(3), inv_quat)
-        return Pose(-(inv.rotation_matrix @ self.position), inv_quat)
+        inverse = self.rotation.inv()
+        return Pose.from_rotation(-inverse.apply(self.position), inverse)
 
-    def transform_points(self, points: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Apply this transform to an ``(N, 3)`` array of points.
-
-        Args:
-            points: Points to transform.  An empty array is returned unchanged.
-        """
+    def transform_points(self, points: ArrayLike) -> NDArray[np.float64]:
+        """Apply this transform to an ``(N, 3)`` array of points."""
         array = np.asarray(points, dtype=np.float64).reshape(-1, 3)
         if array.size == 0:
             return array
-        return array @ self.rotation_matrix.T + self.position
+        return self.rotation.apply(array) + self.position
 
     # ------------------------------------------------------------------
     # Serialisation
@@ -306,8 +267,8 @@ class Trajectory:
     def interpolate(self, timestamp_us: int) -> Optional[Pose]:
         """Return the pose at *timestamp_us*, interpolating between samples.
 
-        Positions are interpolated linearly and yaw angles along the shortest arc.
-        Timestamps outside the trajectory's span clamp to the nearest endpoint.
+        Positions are interpolated linearly and rotations by slerp.  Timestamps
+        outside the trajectory's span clamp to the nearest endpoint.
 
         Returns:
             The interpolated pose, or ``None`` when the trajectory is empty.
@@ -322,18 +283,16 @@ class Trajectory:
         index = int(np.searchsorted(self.timestamps_us, timestamp_us))
         previous, following = self.poses[index - 1], self.poses[index]
         start, end = self.timestamps_us[index - 1], self.timestamps_us[index]
-        span = end - start
-        if span < _TIME_EPSILON_US:
+        if end <= start:
             return following
-
-        alpha = (timestamp_us - start) / span
-        position = previous.position + alpha * (following.position - previous.position)
-        delta_yaw = math.atan2(
-            math.sin(following.yaw - previous.yaw),
-            math.cos(following.yaw - previous.yaw),
+        alpha = (timestamp_us - start) / (end - start)
+        slerp = Slerp(
+            [0.0, 1.0], Rotation.concatenate([previous.rotation, following.rotation])
         )
-        yaw = previous.yaw + alpha * delta_yaw
-        return Pose.from_xyz_yaw(position[0], position[1], position[2], yaw)
+        return Pose.from_rotation(
+            previous.position + alpha * (following.position - previous.position),
+            slerp([alpha])[0],
+        )
 
     # ------------------------------------------------------------------
     # Serialisation

@@ -23,7 +23,7 @@ flowchart LR
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower<br/>pure pursuit + PID"]
+        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim + PID"]
         SR -->|on_tick| CDE
         CAM -->|frames| CDE
         CDE --> TF
@@ -91,9 +91,11 @@ driver:
       position_x: 1.5
       position_z: 1.6
   control:
-    lookahead_gain_s: 0.9
+    lookahead_gain_s: 0.6
     wheelbase_m: 2.8
-    max_steer_angle_deg: 70.0
+    max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
+    steer_exponent: 2.0
+    yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     speed_kp: 0.6
 ```
 
@@ -158,6 +160,8 @@ point, as a serialized `carla_driver.v0.CarlaRendererData`:
 | `speed_limit_mps` | Posted limit for the ego lane, 0 when unknown |
 | `actors[]` | Other vehicles: pose, bounding box, and velocity, all in the local frame |
 | `weather`, `map_name`, `frame_id` | Scene context |
+| `lidar[]` | One sweep per `driver.lidars` entry, packed `[N, 4]` float32 (x, y, z, intensity) in the rig frame |
+| `map_id`, `traffic_lights[]` | With `driver.map_dir`: which map file set describes the world, and every light with its state and stop points |
 
 !!! warning "Turning this off is not a no-op"
     A policy reads the payload defensively — a missing one means "no light applies" and
@@ -187,6 +191,52 @@ stop there hesitates most of a car-and-a-half before the line a driver aims at.
 This logic is ported from `carla_driver_interface`'s reference runtime
 (`runtime/carla_world.py` at `af1dcd3`) so that a policy tuned against that runtime sees
 the same numbers here.
+
+### LiDAR
+
+The contract has no LiDAR submission RPC, so sweeps ride in `renderer_data` too. Each
+`driver.lidars` entry mounts a `sensor.lidar.ray_cast` (mount in CARLA's convention, like
+a camera) spinning one full revolution per simulation tick, and each policy step sends
+that tick's sweep, already converted into the rig frame. A sweep that does not arrive
+within a second is left out rather than replaced by an older one.
+
+A policy does not see that transport: the servicer records each sweep before `drive` as
+a `LidarFrame` in `session.frame_history`, beside the camera frames, and announces it
+through `on_frame` -- the one path every sensor takes. `frame_history_length` applies to
+both, and `session.latest_frame("lidar_top").as_array()` unpacks the `[N, 4]` points as
+`latest_frame("camera_front").as_array()` decodes an image.
+
+```yaml
+driver:
+  lidars:
+    - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
+```
+
+### The map, as files
+
+alpasim's services read a scene's map from its artifact, never off the wire; this is the
+CARLA counterpart. With `driver.map_dir` set (and the `map` extra installed), the world's
+OpenDRIVE is converted by [roadgen](https://pypi.org/project/roadgen/) at scenario start
+and written to `<map_dir>/<map_id>/`, in the formats `driver.map_formats` names
+(Lanelet2 by default), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
+is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>`, so a set is written
+once per map and a changed map gets a new id.
+
+Each step then carries only what changes: every light's state, named by its OpenDRIVE
+signal id, with its stop points on OpenDRIVE lanes. A policy that sets `map_dir` (its
+own copy of the directory) gets the set opened as `ctx.map`, and `ctx.stop_lines()`
+resolves the lights through roadgen's traces into its format's own elements -- for
+Lanelet2, the approach lanelet, the traffic-light regulatory element and the light's
+line strings:
+
+```python
+class MyPolicy(BaseDriver):
+    map_dir = "/shared/maps"   # the runtime's driver.map_dir, as this process sees it
+
+    def drive(self, ctx):
+        for stop in ctx.stop_lines():
+            stop.state, stop.lane_ids, stop.position_local
+```
 
 ### Diagnostics coming back
 
@@ -281,7 +331,7 @@ See `autoware_carla_egodriver/proto/README.md` for the full provenance.
 
 ## Limitations
 
-* Only RGB cameras are streamed. Lidar is not wired up.
+* Only RGB cameras and ray-cast LiDARs are streamed.
 * CARLA has no recorded drive, so with `send_ground_truth: true` the reference sent
   through `submit_recording_ground_truth` is the route itself: its waypoints, headed
   along the path and spaced `policy_timestep_s` apart. This is the *recorded*

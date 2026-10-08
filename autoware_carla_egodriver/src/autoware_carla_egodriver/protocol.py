@@ -8,6 +8,8 @@ codec for the CARLA payloads that ride in alpasim's two free-form ``bytes`` fiel
 * ``DriveResponse.DebugInfo.unstructured_debug_info`` (policy to runtime):
   ``CarlaDriveDebugInfo``
 
+and for the LiDAR sweeps ``CarlaRendererData.lidar`` carries packed.
+
 Unpacking never raises: those fields are free-form by definition, so a peer may
 legitimately put something else there, and an unparseable payload means "no CARLA
 data", not "the rollout is broken".
@@ -18,6 +20,8 @@ from __future__ import annotations
 import logging
 from typing import Optional, Type, TypeVar
 
+import numpy as np
+from numpy.typing import NDArray
 from google.protobuf.message import DecodeError, Message
 
 # The generated modules themselves are public too, for code that works with them
@@ -74,6 +78,9 @@ CarlaActorState = carla_driver_pb2.CarlaActorState
 CarlaDriveDebugInfo = carla_driver_pb2.CarlaDriveDebugInfo
 CarlaRendererData = carla_driver_pb2.CarlaRendererData
 CarlaWeather = carla_driver_pb2.CarlaWeather
+LidarSweep = carla_driver_pb2.LidarSweep
+StopPoint = carla_driver_pb2.StopPoint
+TrafficLight = carla_driver_pb2.TrafficLight
 TrafficLightState = carla_driver_pb2.TrafficLightState
 
 #: NVlabs/alpasim revision the contract was vendored from (proto/README.md).
@@ -102,6 +109,12 @@ def channel_options() -> list[tuple[str, int]]:
 
 
 _M = TypeVar("_M", bound=Message)
+
+#: ``LidarSweep.points_xyzi`` is ``[N, 4]``: x, y, z, intensity.
+LIDAR_POINT_COLUMNS = 4
+
+#: The wire byte order of the packed LiDAR points, stated rather than left to the host.
+_LIDAR_WIRE_DTYPE = np.dtype("<f4")
 
 
 def pack_renderer_data(data: carla_driver_pb2.CarlaRendererData) -> bytes:
@@ -138,3 +151,51 @@ def _unpack(payload: bytes, message_type: Type[_M], field: str) -> Optional[_M]:
         logger.debug("%s is not a %s; ignoring", field, message_type.__name__)
         return None
     return message
+
+
+def pack_lidar_sweep(
+    logical_id: str,
+    timestamp_us: int,
+    points_xyzi_in_rig: NDArray[np.floating],
+    rig_to_lidar: common_pb2.Pose,
+) -> carla_driver_pb2.LidarSweep:
+    """Build one ``LidarSweep`` from ``[N, 4]`` rig-frame points."""
+    points = np.ascontiguousarray(points_xyzi_in_rig, dtype=_LIDAR_WIRE_DTYPE)
+    if points.ndim != 2 or points.shape[1] != LIDAR_POINT_COLUMNS:
+        raise ValueError(
+            f"LiDAR points must be [N, {LIDAR_POINT_COLUMNS}] (x, y, z, intensity); "
+            f"got shape {points.shape}"
+        )
+    return carla_driver_pb2.LidarSweep(
+        logical_id=logical_id,
+        timestamp_us=int(timestamp_us),
+        rig_to_lidar=rig_to_lidar,
+        num_points=int(points.shape[0]),
+        points_xyzi=points.tobytes(),
+    )
+
+
+def unpack_lidar_points(sweep: carla_driver_pb2.LidarSweep) -> NDArray[np.float32]:
+    """The sweep's points as a writable ``[N, 4]`` float32 array, rig frame."""
+    return decode_lidar_points(
+        sweep.logical_id, int(sweep.num_points), sweep.points_xyzi
+    )
+
+
+def decode_lidar_points(
+    logical_id: str, num_points: int, points_xyzi: bytes
+) -> NDArray[np.float32]:
+    """Packed ``points_xyzi`` as a writable ``[N, 4]`` float32 array.
+
+    Raises rather than truncating when ``num_points`` and the payload disagree:
+    unlike the outer ``renderer_data`` bytes, a sweep that parsed as one is ours,
+    and a short buffer means it was corrupted, not that it belongs to a peer.
+    """
+    expected = num_points * LIDAR_POINT_COLUMNS * _LIDAR_WIRE_DTYPE.itemsize
+    if len(points_xyzi) != expected:
+        raise ValueError(
+            f"LiDAR sweep {logical_id!r} declares {num_points} points "
+            f"({expected} bytes) but carries {len(points_xyzi)} bytes"
+        )
+    flat = np.frombuffer(points_xyzi, dtype=_LIDAR_WIRE_DTYPE)
+    return flat.reshape(-1, LIDAR_POINT_COLUMNS).astype(np.float32, copy=True)

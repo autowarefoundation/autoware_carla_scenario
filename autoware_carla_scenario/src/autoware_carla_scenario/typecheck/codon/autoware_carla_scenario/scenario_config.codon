@@ -64,13 +64,33 @@ class DriverCameraSpec:
     yaw: float = 0.0
 
 
+class DriverLidarSpec:
+    logical_id: str = "lidar_top"
+    channels: int = 64
+    range_m: float = 100.0
+    points_per_second: int = 1200000
+    upper_fov_deg: float = 15.0
+    lower_fov_deg: float = -25.0
+    dropoff_general_rate: float = 0.0
+    position_x: float = 0.0
+    position_y: float = 0.0
+    position_z: float = 2.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+
 class DriverControlSpec:
-    lookahead_gain_s: float = 0.9
+    lookahead_gain_s: float = 0.6
     min_lookahead_m: float = 4.0
     max_lookahead_m: float = 20.0
     wheelbase_m: float = 2.8
-    max_steer_angle_deg: float = 70.0
+    max_steer_angle_deg: float = 56.0
+    steer_exponent: float = 2.0
     max_steer_rate: float = 4.0
+    yaw_rate_ki: float = 3.0
+    yaw_rate_trim_limit_deg: float = 25.0
+    yaw_rate_min_speed_mps: float = 1.0
     speed_kp: float = 0.6
     speed_ki: float = 0.15
     speed_kd: float = 0.05
@@ -94,6 +114,9 @@ class DriverConfig:
     actor_horizon_m: float = 150.0
     random_seed: int = 0
     cameras: List[DriverCameraSpec] = [DriverCameraSpec()]
+    lidars: List[DriverLidarSpec] = List[DriverLidarSpec]()
+    map_dir: Optional[str] = None
+    map_formats: List[str] = ["lanelet2"]
     control: DriverControlSpec = DriverControlSpec()
 
 

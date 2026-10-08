@@ -12,6 +12,12 @@ reads alongside it, without depending on either distribution.
 
 Both are Apache-2.0; see `LICENSE.alpasim`.
 
+`carla_driver/` is no longer verbatim: carla_driver_interface is retired in favour of this
+package, and the extension is maintained here. `CarlaRendererData` fields 9–12 (`lidar`,
+`map_id`, `traffic_lights`, field 9 reserved) and the `LidarSweep`, `TrafficLight` and
+`StopPoint` messages carry over carla_driver_interface#12's `driver_extension.proto`
+with the same field numbers.
+
 ## Why vendor instead of depend
 
 `alpasim-grpc` declares `requires-python = ">=3.11,<3.13"`, while this package (and the

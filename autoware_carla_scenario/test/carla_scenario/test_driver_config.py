@@ -49,7 +49,9 @@ def test_shipped_yaml_builds_a_client_config() -> None:
 
 def test_shipped_yaml_builds_control_gains() -> None:
     control = ControlConfig.from_mapping(_shipped_driver_config()["control"])
-    assert control.max_steer_angle_rad == pytest.approx(math.radians(70.0))
+    assert control.max_steer_angle_rad == pytest.approx(math.radians(56.0))
+    assert control.steer_exponent == pytest.approx(2.0)
+    assert control.yaw_rate_ki == pytest.approx(3.0)
     assert control.speed_kp == pytest.approx(0.6)
 
 
@@ -102,6 +104,23 @@ def test_unknown_control_key_is_rejected() -> None:
 def test_control_mapping_accepts_radians_directly() -> None:
     control = ControlConfig.from_mapping({"max_steer_angle_rad": 1.0})
     assert control.max_steer_angle_rad == pytest.approx(1.0)
+
+
+def test_control_mapping_accepts_every_angle_in_degrees() -> None:
+    control = ControlConfig.from_mapping({"yaw_rate_trim_limit_deg": 10.0})
+    assert control.yaw_rate_trim_limit_rad == pytest.approx(math.radians(10.0))
+
+
+def test_control_spec_mirrors_the_control_config() -> None:
+    """Every DriverControlSpec field reaches ControlConfig, with the same default."""
+    import dataclasses
+
+    from autoware_carla_scenario.scenario_config import DriverControlSpec
+
+    assert (
+        ControlConfig.from_mapping(dataclasses.asdict(DriverControlSpec()))
+        == ControlConfig()
+    )
 
 
 def test_client_mapping_ignores_the_control_section() -> None:

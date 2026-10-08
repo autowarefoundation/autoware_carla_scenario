@@ -12,18 +12,27 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 import grpc
 import numpy as np
 
 from . import __version__
-from .driver import BaseDriver, CameraFrame, DriveContext, SessionState
+from .driver import (
+    BaseDriver,
+    CameraFrame,
+    DriveContext,
+    LidarFrame,
+    SensorFrame,
+    SessionState,
+)
 from .geometry import Pose, Trajectory
+from .hdmap import MapFiles
 from .protocol import (
     ALPASIM_API_VERSION,
     ALPASIM_REV,
     CarlaDriveDebugInfo,
+    CarlaRendererData,
     DriveRequest,
     DriveResponse,
     DriveSessionCloseRequest,
@@ -53,6 +62,8 @@ class EgodriverServicer(EgodriverServiceServicer):
         self._driver = driver
         self._sessions: Dict[str, SessionState] = {}
         self._sessions_lock = threading.Lock()
+        #: Opened map sets by ``map_id``; a map does not change under its id.
+        self._maps: Dict[str, MapFiles] = {}
 
     # -- session lifecycle -----------------------------------------------------
 
@@ -131,17 +142,15 @@ class EgodriverServicer(EgodriverServiceServicer):
                 f"Camera {image.logical_id!r} was not declared in start_session; "
                 f"known cameras: {sorted(session.cameras)}",
             )
-        frame = CameraFrame(
-            logical_id=image.logical_id,
-            frame_start_us=int(image.frame_start_us),
-            frame_end_us=int(image.frame_end_us),
-            image_bytes=image.image_bytes,
+        self._record_frame(
+            session,
+            CameraFrame(
+                logical_id=image.logical_id,
+                frame_start_us=int(image.frame_start_us),
+                frame_end_us=int(image.frame_end_us),
+                image_bytes=image.image_bytes,
+            ),
         )
-        with session.lock:
-            history = session.frame_history.setdefault(frame.logical_id, [])
-            history.append(frame)
-            del history[: -max(1, self._driver.frame_history_length)]
-        self._driver.on_image(session, frame)
         return Empty()
 
     def submit_egomotion_observation(
@@ -206,11 +215,18 @@ class EgodriverServicer(EgodriverServiceServicer):
     ) -> DriveResponse:
         session = self._require_session(request.session_uuid, context)
         time_now_us = int(request.time_now_us)
+        renderer_data = unpack_renderer_data(request.renderer_data)
+        # The contract has no LiDAR RPC, so sweeps ride in renderer_data; recorded
+        # here, before drive, they reach the policy exactly as camera frames do.
+        if renderer_data is not None:
+            for sweep in renderer_data.lidar:
+                self._record_frame(session, LidarFrame.from_proto(sweep))
         ctx = DriveContext(
             session=session,
             time_now_us=time_now_us,
             time_query_us=int(request.time_query_us),
-            renderer_data=unpack_renderer_data(request.renderer_data),
+            renderer_data=renderer_data,
+            map=self._map(renderer_data),
         )
 
         started = time.perf_counter()
@@ -252,6 +268,28 @@ class EgodriverServicer(EgodriverServiceServicer):
         )
 
     # -- helpers ---------------------------------------------------------------
+
+    def _record_frame(self, session: SessionState, frame: SensorFrame) -> None:
+        """Record one sensor frame in ``session`` and announce it; every sensor's path."""
+        with session.lock:
+            history = session.frame_history.setdefault(frame.logical_id, [])
+            history.append(frame)
+            del history[: -max(1, self._driver.frame_history_length)]
+        self._driver.on_frame(session, frame)
+
+    def _map(self, renderer_data: Optional[CarlaRendererData]) -> Optional[MapFiles]:
+        """The map set *renderer_data* names, opened once per id."""
+        map_dir = self._driver.map_dir
+        if map_dir is None or renderer_data is None or not renderer_data.map_id:
+            return None
+        map_id = renderer_data.map_id
+        with self._sessions_lock:
+            if map_id not in self._maps:
+                self._maps[map_id] = MapFiles.open(
+                    map_dir, map_id, self._driver.map_format
+                )
+                logger.info("opened map %s from %s", map_id, map_dir)
+            return self._maps[map_id]
 
     def _require_session(
         self, uuid: str, context: grpc.ServicerContext

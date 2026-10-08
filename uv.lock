@@ -43,7 +43,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-testmon", specifier = ">=2.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "roadgen", specifier = ">=0.14.0" },
+    { name = "roadgen", specifier = ">=0.18.0" },
     { name = "sumolib", specifier = ">=1.23" },
     { name = "traci", specifier = ">=1.23" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260815" },
@@ -163,6 +163,8 @@ dependencies = [
     { name = "pillow" },
     { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.metadata]
@@ -171,6 +173,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
+    { name = "scipy", specifier = ">=1.8" },
 ]
 
 [[package]]
@@ -206,6 +209,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+map = [
+    { name = "roadgen" },
+]
 sumo = [
     { name = "eclipse-sumo" },
     { name = "libsumo" },
@@ -235,6 +241,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyxodr", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.18.0" },
     { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.16.0" },
     { name = "simple-lanelet2", specifier = ">=1.1.2" },
     { name = "sumolib", marker = "extra == 'sumo'", specifier = ">=1.23" },
@@ -244,7 +251,7 @@ requires-dist = [
     { name = "typesafe-carla", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=0.3.0,<0.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["sumo"]
+provides-extras = ["sumo", "map"]
 
 [[package]]
 name = "babel"
@@ -3298,12 +3305,12 @@ wheels = [
 
 [[package]]
 name = "roadgen"
-version = "0.16.0"
+version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/da/b7/1b577b85bf1b4d287a751bb7297293ba02fdaa9f4bd6ae1bb3c2e83c03e7/roadgen-0.16.0.tar.gz", hash = "sha256:d50183f9a24fe387911de9623ada31c816365e3069229d0eca1b9cb04b88d513", size = 682379, upload-time = "2026-10-06T02:00:05.239Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/f0/0106ccc61b3a11db572a4f6261a3da8e4cbe4ba4eca0284c8b04319c6301/roadgen-0.18.0.tar.gz", hash = "sha256:8ceda44899eab64f864bdde5a005f790a237553bafa72a4eb121a8f699b242c2", size = 699030, upload-time = "2026-10-08T03:12:06.42Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/aa/6436ccd50ad432c16026457e94ab4d3cc0166ba9552d618199a4d5df991c/roadgen-0.16.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5bd04f3b8ba01ef9be994274b918ade531a7e5c1754b5bb64907ed8a6b3f9239", size = 4516273, upload-time = "2026-10-06T02:00:00.918Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/57/a08c34d14962d10d83d59558a5bdcc5aec565306fcdb49a2610838b045b9/roadgen-0.16.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5180a942f556db1ad7aa70628f617d21c6b79a6d758d6aa663382394e406b3da", size = 4920282, upload-time = "2026-10-06T02:00:03.501Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/81/2bc7f6f7826300717898d3a8f20d0dc8da77f55b47d32aab6057bd0eab68/roadgen-0.18.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e7b8616e79d479a31664196eab46d5dbd9ef8675b932f3ce7d3a7fa4e3a6437e", size = 4548575, upload-time = "2026-10-08T03:12:02.856Z" },
+    { url = "https://files.pythonhosted.org/packages/53/41/71f5eec3e089fdd8d67119650159d5f223b4c11556a3186c71a9edd467f9/roadgen-0.18.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e28903fb3dc59078a3fd403a2d381841bcb12225f8bc8b4b3116d19fcca33ad3", size = 4954251, upload-time = "2026-10-08T03:12:04.686Z" },
 ]
 
 [[package]]

@@ -93,6 +93,12 @@ sumo = [
     "traci>=1.23",
     "roadgen>=0.16.0",
 ]
+# Map files for a driver policy (`driver.map_dir`): roadgen converts the
+# world's OpenDRIVE into Lanelet2 and friends, with the stop lines and the
+# traffic-light regulatory elements on the approach lanes (0.18).
+map = [
+    "roadgen>=0.18.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
