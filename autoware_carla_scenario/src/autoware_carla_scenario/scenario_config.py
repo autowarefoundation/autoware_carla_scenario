@@ -246,16 +246,21 @@ class DriverControlSpec:
     """Gains for the controller that tracks the policy's plan.
 
     Mirrors :class:`~autoware_carla_scenario.driver.control.ControlConfig`; see that
-    class for the meaning of each field.  ``max_steer_angle_deg`` is expressed in
-    degrees here for readability and converted on the way in.
+    class for the meaning of each field.  ``max_steer_angle_deg`` and
+    ``yaw_rate_trim_limit_deg`` are expressed in degrees here for readability and
+    converted on the way in.
     """
 
-    lookahead_gain_s: float = 0.9
+    lookahead_gain_s: float = 0.6
     min_lookahead_m: float = 4.0
     max_lookahead_m: float = 20.0
     wheelbase_m: float = 2.8
-    max_steer_angle_deg: float = 70.0
+    max_steer_angle_deg: float = 56.0
+    steer_exponent: float = 2.0
     max_steer_rate: float = 4.0
+    yaw_rate_ki: float = 3.0
+    yaw_rate_trim_limit_deg: float = 25.0
+    yaw_rate_min_speed_mps: float = 1.0
     speed_kp: float = 0.6
     speed_ki: float = 0.15
     speed_kd: float = 0.05

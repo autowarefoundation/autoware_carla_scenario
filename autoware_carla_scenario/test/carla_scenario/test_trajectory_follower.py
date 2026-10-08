@@ -10,6 +10,8 @@ from autoware_carla_scenario.driver.control import (
     ControlConfig,
     TrajectoryFollower,
     VehicleCommand,
+    steer_angle,
+    steer_command,
 )
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 
@@ -90,6 +92,100 @@ def test_points_behind_the_vehicle_are_ignored() -> None:
     plan = _plan([(-4.0, 0.0), *[(step * 2.0, 0.0) for step in range(1, 21)]])
     command = follower.step(plan, Pose.identity(), 8.0, _DT_S)
     assert command.steer == pytest.approx(0.0, abs=1e-9)
+
+
+def _arc(radius_m: float, speed_mps: float) -> Trajectory:
+    """A left-hand arc of *radius_m* starting at the rig origin, heading +x."""
+    angles = [step * 2.0 / radius_m for step in range(21)]
+    return _plan(
+        [(radius_m * math.sin(a), radius_m * (1.0 - math.cos(a))) for a in angles],
+        speed_mps=speed_mps,
+    )
+
+
+def test_steer_map_inverts_carla_quadratic_response() -> None:
+    """CARLA 0.10 turns the wheels by about 56 deg * steer**2."""
+    config = ControlConfig()
+    # 5 degrees needs steer 0.3 on the MKZ; a linear map over 70 would send 0.07.
+    assert steer_command(math.radians(5.0), config) == pytest.approx(0.3, abs=0.01)
+    for angle in (-0.6, -0.1, 0.0, 0.02, 0.4):
+        assert steer_angle(steer_command(angle, config), config) == pytest.approx(
+            angle, abs=1e-9
+        )
+    assert steer_command(math.radians(90.0), config) == 1.0
+    linear = ControlConfig(max_steer_angle_rad=math.radians(70.0), steer_exponent=1.0)
+    assert steer_command(math.radians(7.0), linear) == pytest.approx(0.1)
+
+
+def test_pure_pursuit_recovers_the_geometric_steering_angle() -> None:
+    radius = 40.0
+    config = ControlConfig(
+        min_lookahead_m=4.0, max_lookahead_m=4.0, max_steer_rate=100.0
+    )
+    command = TrajectoryFollower(config).step(
+        _arc(radius, 8.0), Pose.identity(), 8.0, _DT_S
+    )
+    expected = math.atan(config.wheelbase_m / radius)
+    assert -steer_angle(command.steer, config) == pytest.approx(expected, rel=0.1)
+
+
+def _yaw_rate_trace(
+    plant, radius_m: float = 60.0, speed_mps: float = 13.0, steps: int = 80
+):
+    """Yaw rate (rad/s) per tick, closing the loop through *plant*.
+
+    *plant* maps the steering angle the follower commands to the one the vehicle
+    actually turns on; the measured yaw rate answers one tick later, as in CARLA.
+    """
+    config = ControlConfig()
+    follower = TrajectoryFollower(config)
+    plan = _arc(radius_m, speed_mps)
+    yaw_rate, trace = 0.0, []
+    for _ in range(steps):
+        command = follower.step(
+            plan, Pose.identity(), speed_mps, _DT_S, yaw_rate_rps=yaw_rate
+        )
+        wheel_angle = plant(-steer_angle(command.steer, config))
+        yaw_rate = speed_mps * math.tan(wheel_angle) / config.wheelbase_m
+        trace.append(yaw_rate)
+    return trace
+
+
+def test_yaw_rate_feedback_makes_a_weakly_steering_vehicle_turn() -> None:
+    """A vehicle turning half as much as the map promises still gets its yaw rate."""
+    radius, speed = 60.0, 13.0
+    asked = _yaw_rate_trace(lambda angle: angle, radius, speed)[-1]
+    open_loop = TrajectoryFollower(ControlConfig(yaw_rate_ki=0.0, max_steer_rate=100.0))
+    command = open_loop.step(_arc(radius, speed), Pose.identity(), speed, _DT_S)
+    weak = 0.5 * -steer_angle(command.steer, open_loop.config)
+    assert speed * math.tan(weak) / open_loop.config.wheelbase_m < 0.6 * asked
+
+    trace = _yaw_rate_trace(lambda angle: 0.5 * angle, radius, speed)
+    assert trace[-1] == pytest.approx(asked, rel=0.02)
+
+
+def test_yaw_rate_feedback_does_not_disturb_a_vehicle_that_steers_as_modelled() -> None:
+    """The yaw rate is held against the curvature it answers, so no trim builds up."""
+    follower = TrajectoryFollower()
+    plan = _arc(60.0, 13.0)
+    follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=0.0)
+    curvature = follower._asked_curvature  # noqa: SLF001
+    assert curvature is not None
+    asked = 13.0 * curvature
+    follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=asked)
+    assert follower._yaw_rate_trim == pytest.approx(0.0, abs=1e-12)  # noqa: SLF001
+
+
+def test_yaw_rate_trim_is_held_at_a_standstill() -> None:
+    """At walking pace the yaw rate says nothing about the steering."""
+    follower = TrajectoryFollower()
+    plan = _arc(30.0, 8.0)
+    follower.step(plan, Pose.identity(), 8.0, _DT_S, yaw_rate_rps=0.0)
+    follower.step(plan, Pose.identity(), 8.0, _DT_S, yaw_rate_rps=0.0)
+    trim = follower._yaw_rate_trim  # noqa: SLF001
+    assert trim != 0.0
+    follower.step(plan, Pose.identity(), 0.2, _DT_S, yaw_rate_rps=0.0)
+    assert follower._yaw_rate_trim == trim  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------

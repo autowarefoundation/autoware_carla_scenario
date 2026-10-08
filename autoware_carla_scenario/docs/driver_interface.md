@@ -23,7 +23,7 @@ flowchart LR
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower<br/>pure pursuit + PID"]
+        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim + PID"]
         SR -->|on_tick| CDE
         CAM -->|frames| CDE
         CDE --> TF
@@ -91,9 +91,11 @@ driver:
       position_x: 1.5
       position_z: 1.6
   control:
-    lookahead_gain_s: 0.9
+    lookahead_gain_s: 0.6
     wheelbase_m: 2.8
-    max_steer_angle_deg: 70.0
+    max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
+    steer_exponent: 2.0
+    yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     speed_kp: 0.6
 ```
 

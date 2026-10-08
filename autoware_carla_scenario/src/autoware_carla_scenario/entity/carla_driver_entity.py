@@ -376,6 +376,7 @@ class CarlaDriverEntity(EgoVehicle):
             observation.pose,
             observation.speed_mps,
             _FIXED_DELTA_S,
+            yaw_rate_rps=float(observation.angular_velocity[2]),
         )
         actor.apply_control(command.to_carla_control())
 
