@@ -363,10 +363,12 @@ class _Rewriter(ast.NodeVisitor):
             value = None  # replaced as a whole
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
         if converted is None and node.value is not None and not class_level:
+            # Drop `: annotation` alone: the value may open a bracket on the
+            # `=` line (`x: T = (` ...), which has to stay where it is.
             self.edits.replace(
                 self.edits.node_span(node.target)[1],
-                self.edits.node_span(node.value)[0],
-                " = ",
+                self.edits.node_span(node.annotation)[1],
+                "",
             )
         self.visit(node.target)
         if value is not None:

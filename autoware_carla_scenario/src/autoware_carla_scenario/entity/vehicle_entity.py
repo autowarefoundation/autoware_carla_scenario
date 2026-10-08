@@ -21,6 +21,12 @@ from ._spawn import SpawnLocation, spawn_vehicle_actor
 _warmup_done: bool = False
 
 
+def set_warmup_done(done: bool) -> None:
+    """Record whether the runner's warm-up ticks have run (spawning refuses after)."""
+    global _warmup_done
+    _warmup_done = done
+
+
 @dataclass
 class VehicleEntityConfig:
     """Configuration for spawning a vehicle entity (ego or NPC).

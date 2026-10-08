@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
     from ..autoware_bridge.base import AutowareBridge, BridgePose
     from ..coordinate import GroundProjectionConfig, Lanelet2Pose
-    from ..scenario_base import EgoConfig
+    from .ego_config import EgoConfig
 
 from ..autoware_bridge.base import AutowareBridgeConfig
 from ..constants import EGO_ROLE_NAME

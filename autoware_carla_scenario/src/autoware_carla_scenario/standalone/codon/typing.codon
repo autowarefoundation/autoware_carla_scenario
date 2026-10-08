@@ -23,3 +23,9 @@ def overload(f):
     return f
 def cast(t, v):
     return v
+Iterator = Generator
+Hashable = object
+Sized = object
+Container = object
+IO = File
+TextIO = File

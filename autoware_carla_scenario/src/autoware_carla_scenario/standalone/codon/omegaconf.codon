@@ -1,0 +1,5 @@
+# omegaconf, for the standalone runtime: the config dataclasses mark a value
+# Hydra must supply with MISSING. A binary's config is composed at build time,
+# so the marker only has to be the same string omegaconf uses.
+
+MISSING = "???"

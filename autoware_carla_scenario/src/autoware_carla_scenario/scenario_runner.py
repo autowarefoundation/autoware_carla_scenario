@@ -23,7 +23,7 @@ from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
 from .coordinate.transform import to_opendrive
-from .entity import vehicle_entity as _vehicle_entity_module
+from .entity.vehicle_entity import set_warmup_done
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
@@ -801,7 +801,7 @@ class ScenarioRunner:
             # starts at rather than ones a long wait has bled off.
             scenario.set_initial_speed(ego_actor)
 
-            _vehicle_entity_module._warmup_done = True
+            set_warmup_done(True)
 
             # Start native CARLA recorder
             output_path = self.output_dir / f"{scenario_name}.log"
@@ -976,7 +976,7 @@ class ScenarioRunner:
 
         finally:
             logger.info("[%s] === Cleanup start ===", scenario_name)
-            _vehicle_entity_module._warmup_done = False
+            set_warmup_done(False)
 
             # Let the ego entity tear down its own resources (driver session,
             # sensors) while the world is still alive.

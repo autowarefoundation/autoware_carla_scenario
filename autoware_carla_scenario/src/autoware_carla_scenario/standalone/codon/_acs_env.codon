@@ -1,0 +1,10 @@
+# Imported first by a standalone scenario binary (standalone/driver.py), before
+# typesafe_carla loads its native library: that library reads $HOME as it is
+# loaded and crashes (SIGSEGV) when it is unset, as it is under `env -i`,
+# some systemd units and minimal containers. Give it one.
+
+from C import getenv(cobj) -> cobj
+from C import setenv(cobj, cobj, i32) -> i32
+
+if getenv("HOME".c_str()) == cobj():
+    setenv("HOME".c_str(), "/".c_str(), i32(0))

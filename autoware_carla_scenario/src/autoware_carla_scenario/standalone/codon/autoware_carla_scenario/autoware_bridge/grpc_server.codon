@@ -1,0 +1,64 @@
+# autoware_bridge.grpc_server for a standalone binary (docs/standalone.md).
+#
+# The Python server serves the mission over gRPC with grpcio. A binary keeps
+# the same class and contract -- configure() stores the mission, is_ready()
+# reports what ReportReadiness said -- but has no gRPC transport yet: start()
+# refuses, so a run reaches it, says so and stops, instead of waiting on an
+# Autoware that can never connect. The transport (grpc++ behind a thin C
+# layer) replaces start() and close() without changing the rest.
+
+import logging
+
+from .base import AutowareBridge, AutowareBridgeConfig, BridgePose
+
+_logger = logging.getLogger("autoware_carla_scenario.autoware_bridge.grpc_server")
+
+
+class GrpcAutowareBridgeServer(AutowareBridge):
+    _config: AutowareBridgeConfig
+    _initial: Optional[BridgePose]
+    _goal: Optional[BridgePose]
+    _waypoints: List[BridgePose]
+    _ready: bool
+    _closed: bool
+    _port: Optional[int]
+
+    def __init__(self, config: Optional[AutowareBridgeConfig] = None, *_kw,
+                 max_workers: int = 4, autostart: bool = True):
+        self._config = config if config is not None else AutowareBridgeConfig()
+        self._initial = None
+        self._goal = None
+        self._waypoints = List[BridgePose]()
+        self._ready = False
+        self._closed = False
+        self._port = None
+        if autostart:
+            self.start()
+
+    def start(self) -> None:
+        if self._port is not None:
+            return
+        raise RuntimeError(
+            "AutowareBridge server: this binary has no gRPC transport yet, so Autoware "
+            "cannot be handed its mission (" + self._config.address + ")")
+
+    @property
+    def config(self) -> AutowareBridgeConfig:
+        return self._config
+
+    @property
+    def port(self) -> Optional[int]:
+        return self._port
+
+    def configure(self, initial_pose: BridgePose, goal: BridgePose, waypoints = ()) -> None:
+        self._initial = initial_pose
+        self._goal = goal
+        self._waypoints = [w for w in waypoints]
+        _logger.info("AutowareBridge mission configured (%d waypoint(s)); awaiting Autoware "
+                     "readiness", len(self._waypoints))
+
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def close(self) -> None:
+        self._closed = True

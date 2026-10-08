@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
     from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
-    from ..scenario_base import EgoConfig
+    from .ego_config import EgoConfig
 
 from ..constants import EGO_ROLE_NAME
 from ._spawn import spawn_vehicle_actor

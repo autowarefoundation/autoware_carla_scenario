@@ -1,0 +1,2 @@
+# coordinate.projection for a standalone binary: the projection happened when
+# the map was baked (standalone/bake.py); nothing here runs.

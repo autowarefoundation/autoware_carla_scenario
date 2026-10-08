@@ -1,0 +1,314 @@
+# coordinate.transform for a standalone binary (docs/standalone.md).
+#
+# The conversions of coordinate/transform.py, step for step (the same arc
+# lengths, nearest-point rules and tie breaks), on the geometry the binary
+# baked instead of Lanelet2 and pyxodr. The poses are the framework's own
+# (coordinate/poses.py, compiled from its source).
+
+import math
+import logging
+import typesafe_carla.carla as carla
+
+from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from .map_manager import (MapManager, _MapData, _Lanelet, _Polyline, _clip, _covered_by,
+                          _segment_distance, _find_nearest, _lanelet, _road)
+
+_logger = logging.getLogger("autoware_carla_scenario.coordinate.transform")
+
+_SEAM_TOLERANCE = 0.001
+_STACKED_CANDIDATES = 8
+
+
+# --- numpy's interp / searchsorted / argmin, on one polyline -------------------------
+
+
+def _searchsorted_right(arc: List[float], s: float) -> int:
+    lo = 0
+    hi = len(arc)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if s < arc[mid]:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def _interp(s: float, arc: List[float], f: List[float]) -> float:
+    """np.interp(s, arc, f) for a non-decreasing arc."""
+    n = len(arc)
+    if s <= arc[0]:
+        return f[0]
+    if s >= arc[n - 1]:
+        return f[n - 1]
+    j = _searchsorted_right(arc, s) - 1
+    if arc[j] == s:
+        return f[j]
+    slope = (f[j + 1] - f[j]) / (arc[j + 1] - arc[j])
+    return slope * (s - arc[j]) + f[j]  # numpy's order of operations
+
+
+def _segment_index(arc: List[float], s_clamped: float) -> int:
+    idx = _searchsorted_right(arc, s_clamped) - 1
+    return max(0, min(idx, len(arc) - 2))
+
+
+def _heading_at_s(line: _Polyline, s: float) -> float:
+    arc = line.arc
+    idx = _segment_index(arc, _clip(s, arc[0], arc[len(arc) - 1]))
+    return math.atan2(line.ys[idx + 1] - line.ys[idx], line.xs[idx + 1] - line.xs[idx])
+
+
+def _interpolate_at_s(line: _Polyline, s: float) -> Tuple[float, float, float, float]:
+    arc = line.arc
+    s_clamped = _clip(s, arc[0], arc[len(arc) - 1])
+    x = _interp(s_clamped, arc, line.xs)
+    y = _interp(s_clamped, arc, line.ys)
+    z = _interp(s_clamped, arc, line.zs)
+    idx = _segment_index(arc, s_clamped)
+    heading = math.atan2(line.ys[idx + 1] - line.ys[idx], line.xs[idx + 1] - line.xs[idx])
+    return (x, y, z, heading)
+
+
+def _argmin_point(line: _Polyline, x: float, y: float) -> Tuple[int, float]:
+    """np.argmin of the distances to the points (the first on a tie), and that distance."""
+    best = 0
+    best_d = math.inf
+    for i in range(len(line)):
+        dx = line.xs[i] - x
+        dy = line.ys[i] - y
+        d = math.sqrt(dx * dx + dy * dy)
+        if d < best_d:
+            best_d = d
+            best = i
+    return (best, best_d)
+
+
+def _signed_perp_distance(x: float, y: float, line: _Polyline, idx: int, heading_ref: float) -> float:
+    return math.cos(heading_ref) * (y - line.ys[idx]) - math.sin(heading_ref) * (x - line.xs[idx])
+
+
+def _normalize_angle(angle: float) -> float:
+    # Python's float % (the result takes the divisor's sign).
+    m = 2.0 * math.pi
+    r = math.fmod(angle + math.pi, m)
+    if r < 0.0:
+        r += m
+    return r - math.pi
+
+
+def _to_arc_coordinates(line: _Polyline, x: float, y: float) -> Tuple[float, float]:
+    """lanelet2.geometry.toArcCoordinates(to2D(line), point): (length, distance)."""
+    n = len(line)
+    best = 0
+    best_d = math.inf
+    for i in range(n - 1):
+        d = _segment_distance(x, y, line.xs[i], line.ys[i], line.xs[i + 1], line.ys[i + 1])
+        if d < best_d:
+            best_d = d
+            best = i
+    ax = line.xs[best]
+    ay = line.ys[best]
+    dx = line.xs[best + 1] - ax
+    dy = line.ys[best + 1] - ay
+    seg_len = math.hypot(dx, dy)
+    along = 0.0
+    if seg_len > 0.0:
+        # The projection onto the closest segment, clamped to it: a point past
+        # a vertex gets the vertex's arc length, from either segment.
+        along = _clip(((x - ax) * dx + (y - ay) * dy) / seg_len, 0.0, seg_len)
+    side = dx * (y - ay) - dy * (x - ax)
+    distance = best_d if side >= 0.0 else -best_d
+    return (line.arc[best] + along, distance)
+
+
+# --- Frame conversions (coordinate/transform.py) ----------------------------------
+
+
+def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> Tuple[float, float, float]:
+    mm = MapManager.get_instance()._map()
+    return (pose.x + mm.mgrs_offset_x, -pose.y + mm.mgrs_offset_y, -math.radians(pose.yaw))
+
+
+def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
+    raise NotImplementedError(
+        "project_onto_road() needs the OpenDRIVE lane widths, which the standalone runtime "
+        "does not bake yet")
+
+
+def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
+    mm = MapManager.get_instance()._map()
+    lanelet = _lanelet(mm, lanelet_id)
+    x, y, heading = _carla_to_lanelet2_frame(pose)
+    cl = lanelet.centerline
+    arc_length, arc_distance = _to_arc_coordinates(cl, x, y)
+    length = cl.arc[len(cl) - 1]
+    s = min(max(arc_length, 0.0), length)
+    heading_cl = _heading_at_s(cl, s)
+    return Lanelet2Pose(lanelet_id, s, arc_distance, _normalize_angle(heading - heading_cl))
+
+
+def on_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> bool:
+    mm = MapManager.get_instance()._map()
+    lanelet = _lanelet(mm, lanelet_id)
+    x, y, _heading = _carla_to_lanelet2_frame(pose)
+    return _covered_by(lanelet, x, y)
+
+
+def lanelet_length(lanelet_id: int) -> float:
+    cl = _lanelet(_map(), lanelet_id).centerline
+    return cl.arc[len(cl) - 1]
+
+
+def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
+    mm = MapManager.get_instance()._map()
+    cl = _lanelet(mm, pose.lanelet_id).centerline
+    x_cl, y_cl, z_cl, heading_cl = _interpolate_at_s(cl, pose.s)
+    total_heading = heading_cl + pose.heading
+    x = x_cl + pose.t * -math.sin(heading_cl)
+    y = y_cl + pose.t * math.cos(heading_cl)
+    return CarlaWorldPose(x - mm.mgrs_offset_x, -(y - mm.mgrs_offset_y), z_cl - mm.z_offset,
+                          yaw=-math.degrees(total_heading))
+
+
+def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
+    ref = _road(_map(), pose.road_id)
+    x_ref = _interp(pose.s, ref.arc, ref.xs)
+    y_ref = _interp(pose.s, ref.arc, ref.ys)
+    z_ref = _interp(pose.s, ref.arc, ref.zs)
+    heading_ref = _heading_at_s(ref, pose.s)
+    total_heading = heading_ref + pose.heading
+    x = x_ref + pose.t * -math.sin(heading_ref)
+    y = y_ref + pose.t * math.cos(heading_ref)
+    return CarlaWorldPose(x, -y, z_ref, yaw=-math.degrees(total_heading))
+
+
+def _carla_to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose:
+    mm = MapManager.get_instance()._map()
+    if mm.carla_map is not None:
+        result = _carla_to_opendrive_via_waypoint(pose, unwrap(mm.carla_map), mm)
+        if result is not None:
+            return unwrap(result)
+        _logger.warning("Waypoint lookup failed for (%.2f, %.2f); falling back to brute-force search",
+                        pose.x, pose.y)
+    raise NotImplementedError(
+        "converting a CARLA pose to OpenDRIVE without the CARLA map needs the OpenDRIVE lane "
+        "widths, which the standalone runtime does not bake yet")
+
+
+def _carla_to_opendrive_via_waypoint(pose: CarlaWorldPose, carla_map: carla.Map,
+                                     mm: _MapData) -> Optional[OpenDrivePose]:
+    try:
+        found = carla_map.get_waypoint(carla.Location(x=pose.x, y=pose.y, z=pose.z))
+    except carla.CarlaError:
+        return None
+    if found is None:
+        return None
+    wp = unwrap(found)
+    road_id = str(wp.road_id)
+    lane_id = wp.lane_id
+    if road_id not in mm.roads:
+        return None
+    ref = mm.roads[road_id]
+    if len(ref) < 2:
+        return None
+    od_x = pose.x
+    od_y = -pose.y
+    od_heading = -math.radians(pose.yaw)
+    nearest_idx, _d = _argmin_point(ref, od_x, od_y)
+    s = ref.arc[nearest_idx]
+    heading_ref = _heading_at_s(ref, s)
+    t = _signed_perp_distance(od_x, od_y, ref, nearest_idx, heading_ref)
+    return OpenDrivePose(road_id, lane_id, s, t, _normalize_angle(od_heading - heading_ref))
+
+
+def _project_to_centerline(line: _Polyline, x: float, y: float) -> Tuple[float, float, float]:
+    idx, _d = _argmin_point(line, x, y)
+    s = line.arc[idx]
+    seg_idx = max(0, min(idx, len(line) - 2))
+    heading = math.atan2(line.ys[seg_idx + 1] - line.ys[seg_idx],
+                         line.xs[seg_idx + 1] - line.xs[seg_idx])
+    t = _signed_perp_distance(x, y, line, idx, heading)
+    return (s, t, heading)
+
+
+def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
+    mm = MapManager.get_instance()._map()
+    ll2_x = pose.x + mm.mgrs_offset_x
+    ll2_y = -pose.y + mm.mgrs_offset_y
+    ll2_heading = -math.radians(pose.yaw)
+    results = _find_nearest(mm, ll2_x, ll2_y, _STACKED_CANDIDATES)
+    nearest = results[0][0]
+    ll2_z = pose.z + mm.z_offset
+    found = False
+    best_dz = 0.0
+    best_id = 0
+    best_s = 0.0
+    best_t = 0.0
+    best_heading = 0.0
+    for distance, candidate in results:
+        if distance > nearest + _SEAM_TOLERANCE:
+            break
+        s, t, heading_cl = _project_to_centerline(candidate.centerline, ll2_x, ll2_y)
+        dz = abs(_interpolate_at_s(candidate.centerline, s)[2] - ll2_z)
+        if not found or dz < best_dz:
+            found = True
+            best_dz = dz
+            best_id = candidate.id
+            best_s = s
+            best_t = t
+            best_heading = heading_cl
+    return Lanelet2Pose(best_id, best_s, best_t, _normalize_angle(ll2_heading - best_heading))
+
+
+def to_carla_world(pose) -> CarlaWorldPose:
+    """A Lanelet2Pose or an OpenDrivePose, in CARLA world coordinates."""
+    if isinstance(pose, Lanelet2Pose):
+        return _lanelet2_to_carla(pose)
+    elif isinstance(pose, OpenDrivePose):
+        return _opendrive_to_carla(pose)
+    else:
+        compile_error("to_carla_world takes a Lanelet2Pose or an OpenDrivePose")
+
+
+def to_opendrive(pose) -> OpenDrivePose:
+    if isinstance(pose, OpenDrivePose):
+        return pose
+    elif isinstance(pose, CarlaWorldPose):
+        return _carla_to_opendrive(pose)
+    elif isinstance(pose, Lanelet2Pose):
+        return _carla_to_opendrive(_lanelet2_to_carla(pose))
+    else:
+        compile_error("expected a pose: a Lanelet2Pose, an OpenDrivePose or a CarlaWorldPose")
+
+
+def to_lanelet2(pose: OpenDrivePose) -> Lanelet2Pose:
+    return _carla_to_lanelet2(_opendrive_to_carla(pose))
+
+
+def to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
+    return _carla_to_lanelet2(pose)
+
+
+def to_carla_location(pose) -> carla.Location:
+    if isinstance(pose, carla.Location):
+        return pose
+    elif isinstance(pose, CarlaWorldPose):
+        return carla.Location(x=pose.x, y=pose.y, z=pose.z)
+    else:
+        world_pose = to_carla_world(pose)
+        return carla.Location(x=world_pose.x, y=world_pose.y, z=world_pose.z)
+
+
+
+
+def to_map_frame(pose):
+    """A pose in Autoware's map frame (coordinate/transform.py to_map_frame)."""
+    from ..autoware_bridge.base import BridgePose
+    carla_pose = pose
+    if isinstance(pose, Lanelet2Pose) or isinstance(pose, OpenDrivePose):
+        carla_pose = to_carla_world(pose)
+    mm = MapManager.get_instance()._map()
+    return BridgePose.from_rpy(carla_pose.x + mm.mgrs_offset_x, -carla_pose.y + mm.mgrs_offset_y,
+                               carla_pose.z + mm.z_offset, math.radians(carla_pose.roll),
+                               -math.radians(carla_pose.pitch), -math.radians(carla_pose.yaw))

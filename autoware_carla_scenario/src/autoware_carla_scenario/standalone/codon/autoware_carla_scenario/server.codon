@@ -1,0 +1,66 @@
+# CarlaServerManager for a standalone binary (docs/standalone.md).
+#
+# The Python one launches CarlaUE5.sh as a child process group when no server
+# is reachable. A binary runs beside ROS and Autoware against a CARLA that is
+# started on its own, so this one only connects: start() waits up to
+# *timeout* seconds for the server to answer (it may still be booting) and
+# never launches one; stop() leaves it running, as the Python one does with a
+# server it reused.
+
+import time
+
+import typesafe_carla.carla as carla
+
+
+class CarlaServerManager:
+    ENV_VAR: ClassVar[str] = "CARLA_EXECUTABLE"
+    host: str
+    port: int
+    timeout: float
+    extra_args: List[str]
+    reuse_if_running: bool
+    _reused: bool
+
+    def __init__(self, host: str = "localhost", port: int = 2000, timeout: float = 120.0,
+                 extra_args: Optional[List[str]] = None, reuse_if_running: bool = True):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.extra_args = extra_args if extra_args is not None else List[str]()
+        self.reuse_if_running = reuse_if_running
+        self._reused = False
+
+    def start(self) -> None:
+        deadline = time.monotonic() + self.timeout
+        while True:
+            if self._ping():
+                self._reused = True
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(1.0)
+        raise RuntimeError(
+            "CARLA server is not reachable at " + self.host + ":" + str(self.port)
+            + "; a standalone binary connects to a running server and does not launch one")
+
+    def stop(self) -> None:
+        pass  # not ours to stop
+
+    def is_alive(self) -> bool:
+        return self._ping()
+
+    def __enter__(self) -> CarlaServerManager:
+        self.start()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.stop()
+
+    def _ping(self) -> bool:
+        try:
+            client = carla.Client(self.host, self.port)
+            client.set_timeout(2.0)
+            client.get_server_version()
+            return True
+        except:
+            return False

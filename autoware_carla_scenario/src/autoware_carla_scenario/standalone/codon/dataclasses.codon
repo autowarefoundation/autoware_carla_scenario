@@ -29,3 +29,9 @@ def replace(obj, **changes):
         else:
             setattr(out, name, value)
     return out
+
+
+def fields(cls):
+    """Only resolves the import: the mapping-validation code that calls it
+    (utils/config.py) does not run in a binary, whose config is compiled in."""
+    compile_error("dataclasses.fields() is not available in a standalone binary")

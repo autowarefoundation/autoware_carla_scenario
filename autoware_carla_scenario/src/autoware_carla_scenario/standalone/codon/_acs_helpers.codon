@@ -4,6 +4,8 @@ import _acs_fmt  # Python formatting, program-wide
 def _acs_or(a, b):
     """Python's `a or b()` (b evaluated only when needed). An Optional[T] on the
     left gives a T, the fallback upcast to it."""
+    if hasattr(a, "_acs_is_class"):
+        return a  # a class is true; and `C or Default` would be two types
     if isinstance(a, Optional):
         if a is not None:
             value = unwrap(a)
@@ -18,6 +20,21 @@ def _acs_or(a, b):
         if a:
             return a
         return b()
+
+
+def _acs_or_empty(a):
+    """Python's `a or []` (or `{}`, `()`, `set()`): a when true, else an empty
+    collection of a's type -- an empty literal alone has none in Codon."""
+    if isinstance(a, Optional):
+        if a is not None:
+            value = unwrap(a)
+            if value:
+                return value
+        return type(unwrap(a))()
+    else:
+        if a:
+            return a
+        return type(a)()
 
 
 def _acs_default(value, fallback):
@@ -108,3 +125,34 @@ def _acs_opt(value, T: type) -> Optional[T]:
     else:
         out: T = value
         return out
+
+
+# Python builtins Codon lacks; every rewritten module imports them (transform.py).
+frozenset = Set
+
+
+@tuple
+class _AcsClass[T]:
+    """A class as a value, which Codon has no type for: `type[C]` -> `_AcsClass[C]`.
+
+    Calling it constructs a T; a class attribute read off it is T's
+    (standalone/transform.py, and `_acs_classes`, which build.py generates).
+    """
+
+    def __call__(self, *args, **kwargs):
+        return T(*args, **kwargs)
+
+    def _acs_is_class(self) -> bool:
+        return True
+
+
+def _acs_class(value, T: type):
+    """The argument of a `type[T]` parameter. Only its default -- None, the
+    class the function falls back to -- can be given: Codon cannot pass a
+    class as a value."""
+    if isinstance(value, None) or isinstance(value, Optional[NoneType]):
+        return _AcsClass[T]()
+    elif hasattr(value, "_acs_is_class"):
+        return value
+    else:
+        compile_error("a class as an argument is not supported in a standalone binary")

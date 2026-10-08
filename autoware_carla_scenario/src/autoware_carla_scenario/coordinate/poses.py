@@ -9,12 +9,13 @@ Three coordinate systems:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, Union
+from typing import ClassVar, Union
 
 import typesafe_carla.carla as carla  # noqa: F401
 
-if TYPE_CHECKING:
-    from .frames import CoordinateFrame
+# frames imports this module only for annotations, so importing it here closes
+# no cycle at run time.
+from .frames import CoordinateFrame
 
 
 @dataclass
@@ -25,7 +26,7 @@ class Lanelet2Pose:
     Positive t is to the left of the driving direction.
     """
 
-    FRAME: ClassVar[CoordinateFrame]
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2
 
     lanelet_id: int
     s: float  # Arc length along centerline from lanelet start (m)
@@ -46,7 +47,7 @@ class OpenDrivePose:
     lane_id is provided as context but is not used for position calculation.
     """
 
-    FRAME: ClassVar[CoordinateFrame]
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.OPENDRIVE
 
     road_id: str  # Road ID string as found in the OpenDRIVE XML
     lane_id: int  # Lane ID (negative=right, positive=left) — context only
@@ -67,7 +68,7 @@ class CarlaWorldPose:
     yaw=0 points East; positive yaw rotates clockwise when viewed from above.
     """
 
-    FRAME: ClassVar[CoordinateFrame]
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.CARLA_WORLD
 
     x: float
     y: float
@@ -100,15 +101,3 @@ class CarlaWorldPose:
 
 AnyPose = Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose]
 """Union of all supported pose types for coordinate transformations."""
-
-
-def _init_frames() -> None:
-    """Assign FRAME class variables at import time (avoids circular imports)."""
-    from .frames import CoordinateFrame  # noqa: PLC0415
-
-    Lanelet2Pose.FRAME = CoordinateFrame.LANELET2
-    OpenDrivePose.FRAME = CoordinateFrame.OPENDRIVE
-    CarlaWorldPose.FRAME = CoordinateFrame.CARLA_WORLD
-
-
-_init_frames()
