@@ -426,11 +426,10 @@ class ScenarioRunner:
     @staticmethod
     def _release_vehicles(world: "carla.World") -> None:
         """Let go of the brakes the init phase held on."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
+        from .utils.vehicles import release_vehicle  # noqa: PLC0415
 
-        released = carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False)
         for actor in world.get_actors().filter("vehicle.*"):
-            actor.apply_control(released)
+            release_vehicle(actor)
 
     def _wait_for_ego(
         self, world: "carla.World", ego: "EgoVehicle", scenario_name: str

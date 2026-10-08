@@ -383,3 +383,16 @@ class TestNothingMovesDuringInit:
         released = vehicle.apply_control.call_args[0][0]
         assert released.hand_brake is False
         assert released.brake == 0.0
+
+
+def test_the_release_is_not_the_default_control():
+    """CARLA's client drops a control equal to the last one sent through the same
+    handle, and a fresh handle's last is the default: a release equal to the
+    default never reaches the vehicle."""
+    from autoware_carla_scenario.utils.vehicles import release_vehicle
+
+    vehicle = MagicMock()
+    release_vehicle(vehicle)
+    released = vehicle.apply_control.call_args[0][0]
+    assert (released.throttle, released.brake, released.hand_brake) == (0.0, 0.0, False)
+    assert released.gear == 1 and released.manual_gear_shift is False
