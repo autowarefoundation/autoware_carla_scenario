@@ -11,6 +11,8 @@ map:
   # simulator before the world is loaded. Off everywhere it is not asked for.
   overwrite_xodr: true
   lanelet2_path: ${oc.env:NISHISHINJUKU_LANELET2_PATH,data/nishishinjuku.osm}
+  # Tokyo: traffic keeps left, so the oncoming lane is on the driver's right.
+  traffic_side: left
   # Lanelet IDs to exclude from scenario sweeps (e.g. lanelets without
   # a matching 3D model in CARLA that cause spawn or rendering failures).
   no_3d_model_lanelet_ids:

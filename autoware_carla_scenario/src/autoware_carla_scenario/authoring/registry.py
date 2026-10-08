@@ -35,7 +35,13 @@ from ..action_state import ActionState
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
+#: The map's traffic side, which an oncoming-lane binding reads (see
+#: :data:`autoware_carla_scenario.sweeper.bindings.TRAFFIC_SIDES`).  Resolved by
+#: Hydra from the ``map`` group; the editor substitutes the document's own.
+MAP_TRAFFIC_SIDE_REF = "${map.traffic_side}"
+
 __all__ = [
+    "MAP_TRAFFIC_SIDE_REF",
     "ActionSpec",
     "ArgumentCase",
     "BuiltArgument",
@@ -2963,6 +2969,9 @@ register_binding_spec(
         title="Along the road from the matched lanelet",
         produces="lanelet",
         fields=_ROUTE_OFFSET_FIELDS,
+        # Where the oncoming lane is depends on the side traffic keeps to,
+        # which is the map's: the exported config reads it from there.
+        fixed=(("traffic_side", MAP_TRAFFIC_SIDE_REF),),
         description=(
             "The lanelet a point that far along the road from the pick lies "
             "on, in the pick's lane or the one beside or opposite it.  Pair it "
@@ -2975,6 +2984,9 @@ register_binding_spec(
         type_id="route_offset_s",
         title="Along the road (s)",
         fields=_ROUTE_OFFSET_FIELDS,
+        # Where the oncoming lane is depends on the side traffic keeps to,
+        # which is the map's: the exported config reads it from there.
+        fixed=(("traffic_side", MAP_TRAFFIC_SIDE_REF),),
         relative_to_pick=True,
         description=(
             "The offset along the lanelet Along the road from the matched "

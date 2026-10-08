@@ -548,9 +548,14 @@ sweep:
 ```
 
 `left` / `right` are the lanes a vehicle may change into; `opposite` is the
-nearest lane running the other way on the left of this direction's innermost
-lane. A pick where the point runs off the road, or has no such lane, is dropped
-from the sweep.
+nearest lane running the other way across the centre line from this
+direction's innermost lane -- on its left where traffic keeps right, on its
+right where traffic keeps left. Which one is the map's `map.traffic_side`
+(`right` by default, `left` for Nishi-Shinjuku); the exported binding carries
+`traffic_side: ${map.traffic_side}` so it follows whichever map the run
+selects, and a document whose map no group describes sets `map.traffic_side`
+itself. A pick where the point runs off the road, or has no such lane, is
+dropped from the sweep.
 
 Two more families place road users that are not in the pick's lane at all:
 

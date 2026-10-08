@@ -33,6 +33,9 @@ map:
   xodr_path: null
   lanelet2_path: null
   no_3d_model_lanelet_ids: []
+  # Which side of the road traffic keeps to: right (CARLA's towns) or left
+  # (Japan). It places the oncoming lane a scenario's road users are put in.
+  traffic_side: right
 
 ego:
   vehicle_type: vehicle.mini.cooper

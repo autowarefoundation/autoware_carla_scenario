@@ -267,6 +267,7 @@ Controls ground projection (ray casting) and spawn retry behavior:
 | `map.xodr_path` | str \| null | `null` | Path to custom OpenDRIVE file. If `null`, loads built-in CARLA map by name |
 | `map.lanelet2_path` | str \| null | `null` | Path to Lanelet2 .osm file (required for lanelet-based spawn) |
 | `map.no_3d_model_lanelet_ids` | list[int] | `[]` | Lanelet IDs to exclude from sweeps (no ground geometry) |
+| `map.traffic_side` | `right` \| `left` | `right` | Side of the road traffic keeps to; places a scenario's oncoming lane. `left` for Japan (Nishi-Shinjuku sets it) |
 
 Map paths can use environment variables with Hydra's OmegaConf resolver:
 

@@ -795,6 +795,11 @@ class MapRef(_Node):
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     no_3d_model_lanelet_ids: list[int] = Field(default_factory=list)
+    #: Which side of the road traffic keeps to, which is where an oncoming
+    #: lane is.  ``None`` leaves it to the ``map`` group the run selects
+    #: (``left`` for Nishi-Shinjuku, ``right`` otherwise); set it for a map
+    #: named by ``source`` or ``directory``, which no group describes.
+    traffic_side: Optional[Literal["right", "left"]] = None
     #: Which signals move together on this road, and which movements conflict.
     #: Map data: the same on every scenario that runs here.
     signal_groups: list[SignalGroupRef] = Field(default_factory=list)

@@ -6,7 +6,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from omegaconf import OmegaConf
 
+from autoware_carla_scenario.authoring.models import (
+    BindingRef,
+    MapRef,
+    ScenarioDocument,
+)
+from autoware_carla_scenario.authoring.registry import MAP_TRAFFIC_SIDE_REF
+from autoware_carla_scenario.editor.map_preview import resolve_map_refs
 from autoware_carla_scenario.sweeper.bindings import (
     RouteOffsetBinding,
     RouteOffsetSBinding,
@@ -55,13 +63,32 @@ class TestRouteOffsetPose:
         # Projected across, not copied: the lanes differ in length.
         assert s == pytest.approx(60.0, abs=0.5)
 
-    def test_the_oncoming_lane_runs_the_other_way(self, nishishinjuku) -> None:
+    def test_where_traffic_keeps_left_the_oncoming_lane_is_on_the_right(
+        self, nishishinjuku
+    ) -> None:
+        # Tokyo: across the centre line is the driver's right.
         lanelet_map, graph = nishishinjuku
-        lanelet_id, _ = route_offset_pose(
-            183, lanelet_map, graph, distance=-40.0, side="opposite"
+        lanelet_id, s = route_offset_pose(
+            183,
+            lanelet_map,
+            graph,
+            distance=60.0,
+            side="opposite",
+            traffic_side="left",
         )
-        ego_lane = route_offset_pose(183, lanelet_map, graph, distance=-40.0)[0]
-        assert lanelet_id not in {ego_lane, 182, 183, 184}
+        assert lanelet_id not in {182, 183, 184}
+        side, alignment = _beside(lanelet_map, 183, 60.0, lanelet_id)
+        assert side == "right"
+        assert alignment < -0.9  # it runs the other way
+
+    def test_where_traffic_keeps_right_it_is_looked_for_on_the_left(
+        self, nishishinjuku
+    ) -> None:
+        # The same lane read as right-hand traffic finds nothing across a
+        # centre line on its left: there is none, the oncoming road is right.
+        lanelet_map, graph = nishishinjuku
+        with pytest.raises(ValueError, match="no opposite lane"):
+            route_offset_pose(183, lanelet_map, graph, distance=60.0, side="opposite")
 
     def test_running_off_the_road_raises_so_the_case_is_dropped(
         self, nishishinjuku
@@ -74,6 +101,13 @@ class TestRouteOffsetPose:
         lanelet_map, graph = nishishinjuku
         with pytest.raises(ValueError, match="side"):
             route_offset_pose(183, lanelet_map, graph, distance=0.0, side="up")
+
+    def test_an_unknown_traffic_side_is_refused(self, nishishinjuku) -> None:
+        lanelet_map, graph = nishishinjuku
+        with pytest.raises(ValueError, match="traffic side"):
+            route_offset_pose(
+                183, lanelet_map, graph, distance=0.0, traffic_side="middle"
+            )
 
 
 class TestBindings:
@@ -108,3 +142,84 @@ class TestBindings:
     def test_an_unknown_side_is_refused_when_it_is_written(self) -> None:
         with pytest.raises(ValueError, match="side"):
             RouteOffsetBinding("k", side="up")
+        with pytest.raises(ValueError, match="traffic_side"):
+            RouteOffsetBinding("k", traffic_side="middle")
+
+    def test_the_traffic_side_reaches_the_walk(self, nishishinjuku) -> None:
+        lanelet_map, graph = nishishinjuku
+        binding = parse_binding(
+            "k",
+            {
+                "type": "route_offset",
+                "distance": 60.0,
+                "side": "opposite",
+                "traffic_side": "left",
+            },
+        )
+        assert (
+            binding.resolve(183, lanelet_map, graph).value
+            == route_offset_pose(
+                183,
+                lanelet_map,
+                graph,
+                distance=60.0,
+                side="opposite",
+                traffic_side="left",
+            )[0]
+        )
+
+
+class TestTrafficSideComesFromTheMap:
+    def test_the_exported_binding_reads_the_map_group(self) -> None:
+        swept = BindingRef(
+            type="route_offset", params={"distance": 10.0, "side": "opposite"}
+        ).to_sweep_dict()
+        assert swept["traffic_side"] == MAP_TRAFFIC_SIDE_REF
+
+    @pytest.mark.parametrize(
+        ("group", "side"), [("nishishinjuku", "left"), ("town10hd_opt", "right")]
+    )
+    def test_each_map_group_resolves_it(self, group: str, side: str) -> None:
+        conf = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "autoware_carla_scenario"
+            / "examples"
+            / "conf"
+        )
+        cfg = OmegaConf.merge(
+            OmegaConf.load(conf / "config.yaml"),
+            OmegaConf.load(conf / "map" / f"{group}.yaml"),
+        )
+        assert cfg.map.traffic_side == side
+
+    def test_the_editor_fills_it_from_the_document(self) -> None:
+        ref = {"type": "route_offset", "traffic_side": MAP_TRAFFIC_SIDE_REF}
+        tokyo = ScenarioDocument(id="t", map=MapRef(group="nishishinjuku"))
+        assert resolve_map_refs(ref, tokyo)["traffic_side"] == "left"
+        named = ScenarioDocument(
+            id="n", map=MapRef(group="town10hd_opt", traffic_side="left")
+        )
+        assert resolve_map_refs(ref, named)["traffic_side"] == "left"
+        elsewhere = ScenarioDocument(id="e", map=MapRef(group="no_such_group"))
+        assert resolve_map_refs(ref, elsewhere)["traffic_side"] == "right"
+
+
+def _beside(
+    lanelet_map: Any, ego_id: int, s: float, other_id: int
+) -> tuple[str, float]:
+    """Which side of the ego's lane *other_id* is at *s*, and how its heading aligns."""
+    import lanelet2.geometry
+
+    centre = lanelet2.geometry.to2D(lanelet_map.laneletLayer[ego_id].centerline)
+    p = lanelet2.geometry.interpolatedPointAtDistance(centre, s)
+    q = lanelet2.geometry.interpolatedPointAtDistance(centre, s + 1.0)
+    hx, hy = q.x - p.x, q.y - p.y
+    other = list(lanelet2.geometry.to2D(lanelet_map.laneletLayer[other_id].centerline))
+    k = min(
+        range(len(other) - 1),
+        key=lambda i: (other[i].x - p.x) ** 2 + (other[i].y - p.y) ** 2,
+    )
+    side = "left" if hx * (other[k].y - p.y) - hy * (other[k].x - p.x) > 0 else "right"
+    ox, oy = other[k + 1].x - other[k].x, other[k + 1].y - other[k].y
+    return side, (hx * ox + hy * oy) / ((hx**2 + hy**2) ** 0.5 * (ox**2 + oy**2) ** 0.5)

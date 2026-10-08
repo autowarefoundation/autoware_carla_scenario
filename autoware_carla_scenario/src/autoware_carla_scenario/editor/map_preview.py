@@ -22,7 +22,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+import yaml
+
 from ..authoring.models import ConstraintNode, LaneletSlot, ScenarioDocument
+from ..authoring.registry import MAP_TRAFFIC_SIDE_REF
 from ..authoring.validator import MAP_EXCLUSION_REF
 from ..maps import MapCacheError, MapPaths, MapSource, MapSourceError, map_root
 from ..maps.config import resolve_map_paths
@@ -30,7 +33,12 @@ from ..maps.resolver import MapResolutionError
 
 logger = logging.getLogger(__name__)
 
+#: The framework's built-in ``map`` groups, read for a group's traffic side.
+_MAP_GROUP_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf" / "map"
+
 __all__ = [
+    "document_traffic_side",
+    "resolve_map_refs",
     "MAP_ROOTS_ENV",
     "PreviewResult",
     "clear_cache",
@@ -141,6 +149,40 @@ def materialize_constraints(
         return raw
 
     return [_resolve(node.to_sweep_dict()) for node in nodes]
+
+
+def document_traffic_side(document: ScenarioDocument) -> str:
+    """Return the side traffic keeps to on *document*'s map.
+
+    The document's own when it names one, else the one its ``map`` group sets
+    -- read from the group's YAML, since the editor composes no Hydra config --
+    else ``right``, the config's default.
+    """
+    if document.map.traffic_side:
+        return document.map.traffic_side
+    group = _MAP_GROUP_DIR / f"{document.map.group}.yaml"
+    try:
+        side = (
+            (yaml.safe_load(group.read_text(encoding="utf-8")) or {})
+            .get("map", {})
+            .get("traffic_side")
+        )
+    except (OSError, yaml.YAMLError, AttributeError):
+        side = None
+    return side if side in ("right", "left") else "right"
+
+
+def resolve_map_refs(raw: Any, document: ScenarioDocument) -> Any:
+    """Return a binding's sweeper dict with its map references substituted.
+
+    The counterpart of :func:`materialize_constraints` for ``sweep.bindings``:
+    ``${map.traffic_side}`` is filled from the document's map.
+    """
+    if isinstance(raw, dict):
+        return {key: resolve_map_refs(value, document) for key, value in raw.items()}
+    if raw == MAP_TRAFFIC_SIDE_REF:
+        return document_traffic_side(document)
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +591,8 @@ def derive_lanelet(
         return None
     if loaded is None:
         return None
-    asked = (json.dumps(binding.to_sweep_dict(), sort_keys=True), picked_id)
+    as_swept = resolve_map_refs(binding.to_sweep_dict(), document)
+    asked = (json.dumps(as_swept, sort_keys=True), picked_id)
     if asked in loaded.derived:
         return loaded.derived[asked]
 
@@ -557,7 +600,7 @@ def derive_lanelet(
 
     try:
         value = (
-            parse_binding(slot.key, binding.to_sweep_dict())
+            parse_binding(slot.key, as_swept)
             .resolve(picked_id, loaded.lanelet_map, loaded.routing_graph)
             .value
         )

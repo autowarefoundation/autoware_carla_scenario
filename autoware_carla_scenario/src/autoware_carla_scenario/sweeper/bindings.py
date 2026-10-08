@@ -419,6 +419,11 @@ class StopLineApproachBinding:
 
 #: The lanes :class:`RouteOffsetBinding` can land beside the pick's own.
 ROUTE_OFFSET_SIDES = ("same", "left", "right", "opposite")
+#: Which side of the road traffic keeps to: ``right`` (CARLA's towns, most of
+#: the world) or ``left`` (Japan, the UK).  It decides where the oncoming lane
+#: is -- across the centre line, which is on the driver's left when traffic
+#: keeps right and on the driver's right when it keeps left.
+TRAFFIC_SIDES = ("right", "left")
 
 
 #: How far to the left of a lane's middle an oncoming lane's middle may lie.
@@ -436,15 +441,20 @@ def _unit_direction(points: list[Any], index: int) -> tuple[float, float]:
     return dx / norm, dy / norm
 
 
-def _opposite_lanelet(lanelet: Any, lanelet_map: Any) -> Any | None:
-    """The nearest lanelet running the other way on *lanelet*'s left, if any.
+def _opposite_lanelet(
+    lanelet: Any, lanelet_map: Any, traffic_side: str = "right"
+) -> Any | None:
+    """The nearest lanelet running the other way across the centre, if any.
 
     The routing graph only knows lanes a vehicle may change into, and maps do
     not agree on whether the two directions share a centre line (Nishi-Shinjuku
     has a median), so it is answered geometrically: the closest lanelet whose
-    middle lies to the left within :data:`_OPPOSITE_SEARCH_RADIUS_M` and points
-    the other way.  Junction lanelets are skipped -- they cross, not oppose.
+    middle lies on the centre-line side within
+    :data:`_OPPOSITE_SEARCH_RADIUS_M` and points the other way -- the left
+    where traffic keeps right, the right where it keeps left.  Junction
+    lanelets are skipped -- they cross, not oppose.
     """
+    toward = 1.0 if traffic_side == "right" else -1.0
     centre = list(lanelet2.geometry.to2D(lanelet.centerline))
     if len(centre) < 2:
         return None
@@ -466,8 +476,9 @@ def _opposite_lanelet(lanelet: Any, lanelet_map: Any) -> Any | None:
         )
         dx, dy = points[index].x - middle.x, points[index].y - middle.y
         gap = math.hypot(dx, dy)
-        # Left of the lane (positive cross product) and within reach.
-        if gap > _OPPOSITE_SEARCH_RADIUS_M or hx * dy - hy * dx <= 0:
+        # On the centre-line side of the lane (the cross product is positive
+        # to its left) and within reach.
+        if gap > _OPPOSITE_SEARCH_RADIUS_M or toward * (hx * dy - hy * dx) <= 0:
             continue
         ox, oy = _unit_direction(points, index)
         if hx * ox + hy * oy > -0.9:
@@ -484,6 +495,7 @@ def route_offset_pose(
     *,
     distance: float,
     side: str = "same",
+    traffic_side: str = "right",
 ) -> tuple[int, float]:
     """Where ``distance`` metres along the road from the pick's start lands.
 
@@ -492,7 +504,8 @@ def route_offset_pose(
     through the first predecessor, as :class:`StopLineOffsetBinding` does, so a
     point measured from an ego that offset walked back lands on the ego's own
     approach.  The lane it ends on is then swapped for the one on ``side``,
-    with the point projected across onto it.
+    with the point projected across onto it; ``opposite`` is the oncoming lane,
+    found across the centre line on the side ``traffic_side`` puts it.
 
     Returns:
         ``(lanelet_id, s)`` of the landed point.
@@ -504,6 +517,10 @@ def route_offset_pose(
     if side not in ROUTE_OFFSET_SIDES:
         raise ValueError(
             f"route offset side must be one of {ROUTE_OFFSET_SIDES}, got {side!r}"
+        )
+    if traffic_side not in TRAFFIC_SIDES:
+        raise ValueError(
+            f"traffic side must be one of {TRAFFIC_SIDES}, got {traffic_side!r}"
         )
     current = lanelet_map.laneletLayer[lanelet_id]
     s = float(distance)
@@ -531,12 +548,14 @@ def route_offset_pose(
     if side == "same":
         return current.id, s
     if side == "opposite":
-        # Measured from the innermost lane of this direction, so a pick in the
-        # middle of a wide road still finds the lane across the centre.
+        # Measured from the innermost lane of this direction -- the one next to
+        # the centre line -- so a pick in the middle of a wide road still finds
+        # the lane across it.
+        inward = routing_graph.left if traffic_side == "right" else routing_graph.right
         innermost = current
-        while (further := routing_graph.left(innermost)) is not None:
+        while (further := inward(innermost)) is not None:
             innermost = further
-        beside = _opposite_lanelet(innermost, lanelet_map)
+        beside = _opposite_lanelet(innermost, lanelet_map, traffic_side)
     else:
         beside = (
             routing_graph.left(current)
@@ -568,17 +587,26 @@ class RouteOffsetBinding:
     Where another vehicle is *relative to* the case: 40 m ahead in the lane to
     the left.  Pair it with :class:`RouteOffsetSBinding` on the same entity's
     ``s`` -- this names the lanelet, that the offset along it.
+
+    ``traffic_side`` is the map's, not the scenario's: the exported config
+    fills it from ``${map.traffic_side}``.
     """
 
     target_key: str
     distance: float = 0.0
     side: str = "same"
+    traffic_side: str = "right"
 
     def __post_init__(self) -> None:
         if self.side not in ROUTE_OFFSET_SIDES:
             raise ValueError(
                 f"route_offset side must be one of {ROUTE_OFFSET_SIDES}, "
                 f"got {self.side!r}"
+            )
+        if self.traffic_side not in TRAFFIC_SIDES:
+            raise ValueError(
+                f"route_offset traffic_side must be one of {TRAFFIC_SIDES}, "
+                f"got {self.traffic_side!r}"
             )
 
     def resolve(
@@ -595,6 +623,7 @@ class RouteOffsetBinding:
             routing_graph,
             distance=self.distance,
             side=self.side,
+            traffic_side=self.traffic_side,
         )
         return BindingResult(value=landed)
 
@@ -622,6 +651,7 @@ class RouteOffsetSBinding(RouteOffsetBinding):
             routing_graph,
             distance=self.distance,
             side=self.side,
+            traffic_side=self.traffic_side,
         )
         return BindingResult(value=round(s, 3))
 

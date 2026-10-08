@@ -180,6 +180,8 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
         overrides["xodr_path"] = map_ref.xodr_path
     if map_ref.lanelet2_path:
         overrides["lanelet2_path"] = map_ref.lanelet2_path
+    if map_ref.traffic_side:
+        overrides["traffic_side"] = map_ref.traffic_side
     if map_ref.no_3d_model_lanelet_ids or map_ref.source or map_ref.directory:
         overrides["no_3d_model_lanelet_ids"] = list(map_ref.no_3d_model_lanelet_ids)
     return overrides
