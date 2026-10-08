@@ -7,7 +7,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Collection, Optional
 
 import typesafe_carla.carla as carla
 
@@ -413,7 +413,7 @@ class ScenarioRunner:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hold_vehicles_still(world: "carla.World") -> None:
+    def _hold_vehicles_still(world: "carla.World", spare: Collection[int] = ()) -> None:
         """Keep every vehicle stopped while the run is still being set up.
 
         See :func:`~autoware_carla_scenario.utils.vehicles.hold_vehicles_still`;
@@ -421,16 +421,15 @@ class ScenarioRunner:
         """
         from .utils.vehicles import hold_vehicles_still  # noqa: PLC0415
 
-        hold_vehicles_still(world)
+        hold_vehicles_still(world, spare)
 
     @staticmethod
     def _release_vehicles(world: "carla.World") -> None:
         """Let go of the brakes the init phase held on."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
+        from .utils.vehicles import release_vehicle  # noqa: PLC0415
 
-        released = carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False)
         for actor in world.get_actors().filter("vehicle.*"):
-            actor.apply_control(released)
+            release_vehicle(actor)
 
     def _wait_for_ego(
         self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
@@ -455,7 +454,7 @@ class ScenarioRunner:
         logger.info("[%s] Waiting for the ego to be ready ...", scenario_name)
         waited_ticks = 0
         while not ego.is_initialized and not ego.termination_requested:
-            self._hold_vehicles_still(world)
+            self._hold_vehicles_still(world, ego.carried_actor_ids)
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)
@@ -774,7 +773,9 @@ class ScenarioRunner:
 
             # Let the ego entity bring up whatever it needs now that the actor
             # exists and physics have settled (e.g. sensors and an external
-            # driver session).
+            # driver session).  It is told first what every vehicle starts at,
+            # for an entity that plays the run-up to the first frame.
+            ego.set_initial_speeds(scenario.initial_speeds_mps(ego_actor))
             ego.on_scenario_start(world)
 
             self._wait_for_ego(world, ego, scenario_name)

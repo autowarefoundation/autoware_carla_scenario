@@ -1,4 +1,4 @@
-"""Unit tests for the pure-pursuit + PID trajectory follower."""
+"""Unit tests for the pure-pursuit + speed PI trajectory follower."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from autoware_carla_scenario.driver.control import (
     steer_command,
 )
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
+from autoware_carla_scenario.utils.powertrain import CREEP_THROTTLE
+
+from ._vehicle_physics import mkz_powertrain
 
 
 _DT_S = 0.05
@@ -38,6 +41,16 @@ def _plan(points, *, speed_mps: float = 8.0) -> Trajectory:
     return plan
 
 
+def _follower(config: ControlConfig | None = None) -> TrajectoryFollower:
+    """A follower driving a Lincoln MKZ."""
+    return TrajectoryFollower(config, mkz_powertrain())
+
+
+def _asked(command: VehicleCommand, speed_mps: float) -> float:
+    """The acceleration *command*'s pedals settle at, in first."""
+    return mkz_powertrain().acceleration(speed_mps, command.throttle, command.brake, 1)
+
+
 def _straight(speed_mps: float = 8.0) -> Trajectory:
     return _plan([(step * 2.0, 0.0) for step in range(21)], speed_mps=speed_mps)
 
@@ -48,21 +61,21 @@ def _straight(speed_mps: float = 8.0) -> Trajectory:
 
 
 def test_straight_plan_steers_straight() -> None:
-    follower = TrajectoryFollower()
+    follower = _follower()
     command = follower.step(_straight(), Pose.identity(), 8.0, _DT_S)
     assert command.steer == pytest.approx(0.0, abs=1e-9)
 
 
 def test_plan_to_the_left_steers_left() -> None:
     """The rig frame is right-handed, CARLA steers positive to the right."""
-    follower = TrajectoryFollower()
+    follower = _follower()
     plan = _plan([(step * 2.0, step * 0.6) for step in range(21)])
     command = follower.step(plan, Pose.identity(), 8.0, _DT_S)
     assert command.steer < 0.0
 
 
 def test_plan_to_the_right_steers_right() -> None:
-    follower = TrajectoryFollower()
+    follower = _follower()
     plan = _plan([(step * 2.0, -step * 0.6) for step in range(21)])
     command = follower.step(plan, Pose.identity(), 8.0, _DT_S)
     assert command.steer > 0.0
@@ -71,7 +84,7 @@ def test_plan_to_the_right_steers_right() -> None:
 def test_steering_is_rate_limited() -> None:
     """A hard turn cannot exceed max_steer_rate * dt in a single tick."""
     config = ControlConfig(max_steer_rate=1.0)
-    follower = TrajectoryFollower(config)
+    follower = _follower(config)
     plan = _plan([(step * 1.0, -step * 3.0) for step in range(21)])
     command = follower.step(plan, Pose.identity(), 8.0, _DT_S)
     assert command.steer == pytest.approx(config.max_steer_rate * _DT_S, abs=1e-9)
@@ -79,7 +92,7 @@ def test_steering_is_rate_limited() -> None:
 
 def test_steering_accounts_for_the_ego_pose() -> None:
     """A plan that is straight in local coordinates curves once the ego is yawed."""
-    follower = TrajectoryFollower()
+    follower = _follower()
     yawed = Pose.from_xyz_yaw(0.0, 0.0, 0.0, math.radians(-20.0))
     command = follower.step(_straight(), yawed, 8.0, _DT_S)
     # The path now runs off to the ego's left, so the command steers left.
@@ -88,7 +101,7 @@ def test_steering_accounts_for_the_ego_pose() -> None:
 
 def test_points_behind_the_vehicle_are_ignored() -> None:
     """A plan starting behind the rig origin must not fold the steering backwards."""
-    follower = TrajectoryFollower()
+    follower = _follower()
     plan = _plan([(-4.0, 0.0), *[(step * 2.0, 0.0) for step in range(1, 21)]])
     command = follower.step(plan, Pose.identity(), 8.0, _DT_S)
     assert command.steer == pytest.approx(0.0, abs=1e-9)
@@ -122,9 +135,7 @@ def test_pure_pursuit_recovers_the_geometric_steering_angle() -> None:
     config = ControlConfig(
         min_lookahead_m=4.0, max_lookahead_m=4.0, max_steer_rate=100.0
     )
-    command = TrajectoryFollower(config).step(
-        _arc(radius, 8.0), Pose.identity(), 8.0, _DT_S
-    )
+    command = _follower(config).step(_arc(radius, 8.0), Pose.identity(), 8.0, _DT_S)
     expected = math.atan(config.wheelbase_m / radius)
     assert -steer_angle(command.steer, config) == pytest.approx(expected, rel=0.1)
 
@@ -138,7 +149,7 @@ def _yaw_rate_trace(
     actually turns on; the measured yaw rate answers one tick later, as in CARLA.
     """
     config = ControlConfig()
-    follower = TrajectoryFollower(config)
+    follower = _follower(config)
     plan = _arc(radius_m, speed_mps)
     yaw_rate, trace = 0.0, []
     for _ in range(steps):
@@ -155,7 +166,7 @@ def test_yaw_rate_feedback_makes_a_weakly_steering_vehicle_turn() -> None:
     """A vehicle turning half as much as the map promises still gets its yaw rate."""
     radius, speed = 60.0, 13.0
     asked = _yaw_rate_trace(lambda angle: angle, radius, speed)[-1]
-    open_loop = TrajectoryFollower(ControlConfig(yaw_rate_ki=0.0, max_steer_rate=100.0))
+    open_loop = _follower(ControlConfig(yaw_rate_ki=0.0, max_steer_rate=100.0))
     command = open_loop.step(_arc(radius, speed), Pose.identity(), speed, _DT_S)
     weak = 0.5 * -steer_angle(command.steer, open_loop.config)
     assert speed * math.tan(weak) / open_loop.config.wheelbase_m < 0.6 * asked
@@ -166,7 +177,7 @@ def test_yaw_rate_feedback_makes_a_weakly_steering_vehicle_turn() -> None:
 
 def test_yaw_rate_feedback_does_not_disturb_a_vehicle_that_steers_as_modelled() -> None:
     """The yaw rate is held against the curvature it answers, so no trim builds up."""
-    follower = TrajectoryFollower()
+    follower = _follower()
     plan = _arc(60.0, 13.0)
     follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=0.0)
     curvature = follower._asked_curvature  # noqa: SLF001
@@ -178,7 +189,7 @@ def test_yaw_rate_feedback_does_not_disturb_a_vehicle_that_steers_as_modelled() 
 
 def test_yaw_rate_trim_is_held_at_a_standstill() -> None:
     """At walking pace the yaw rate says nothing about the steering."""
-    follower = TrajectoryFollower()
+    follower = _follower()
     plan = _arc(30.0, 8.0)
     follower.step(plan, Pose.identity(), 8.0, _DT_S, yaw_rate_rps=0.0)
     follower.step(plan, Pose.identity(), 8.0, _DT_S, yaw_rate_rps=0.0)
@@ -194,7 +205,7 @@ def test_yaw_rate_trim_is_held_at_a_standstill() -> None:
 
 
 def test_below_target_speed_opens_the_throttle() -> None:
-    follower = TrajectoryFollower()
+    follower = _follower()
     command = follower.step(_straight(speed_mps=10.0), Pose.identity(), 1.0, _DT_S)
     assert command.throttle > 0.0
     assert command.brake == pytest.approx(0.0)
@@ -202,16 +213,137 @@ def test_below_target_speed_opens_the_throttle() -> None:
 
 
 def test_above_target_speed_brakes() -> None:
-    follower = TrajectoryFollower()
+    follower = _follower()
     command = follower.step(_straight(speed_mps=2.0), Pose.identity(), 15.0, _DT_S)
     assert command.brake > 0.0
-    assert command.throttle == pytest.approx(0.0)
+    assert command.throttle == CREEP_THROTTLE
+
+
+def test_a_plan_pulling_away_from_a_standstill_is_not_a_stop() -> None:
+    """A plan that crawls for its first tenth of a second still asks to move.
+
+    Read at its first segment (a few millimetres in 0.1 s) it is below the stop
+    speed, and the vehicle would be held on the brake forever.
+    """
+    plan = Trajectory.empty()
+    for index in range(31):
+        t_s = index * 0.1
+        plan.append(
+            index * _STEP_US, Pose.from_xyz_yaw(0.5 * 0.4 * t_s * t_s, 0.0, 0.0, 0.0)
+        )
+    command = _follower().step(plan, Pose.identity(), 0.0, _DT_S)
+    assert command.target_speed_mps < 0.1
+    assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
+
+
+def test_a_plan_that_crawls_then_goes_is_driven_not_held() -> None:
+    """Standing still is decided by how far the plan goes, not by its first second.
+
+    OnePlanner's plan from a standstill on an open road: 4 cm in the first second,
+    8 m in six.  Its speed a second ahead is a crawl, but it is a plan to go.
+    """
+    plan = Trajectory.empty()
+    for index in range(61):
+        t_s = index * 0.1
+        plan.append(
+            index * _STEP_US, Pose.from_xyz_yaw(8.4 * (t_s / 6.0) ** 3, 0.0, 0.0, 0.0)
+        )
+    command = _follower().step(plan, Pose.identity(), 0.0, _DT_S)
+    assert command.target_speed_mps < 0.2
+    assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
+
+
+def test_any_throttle_starts_past_the_dead_band() -> None:
+    """A gentle pull-away must still command a throttle that moves the car."""
+    config = ControlConfig(throttle_deadband=0.2)
+    command = _follower(config).step(
+        _straight(speed_mps=0.1), Pose.identity(), 0.0, _DT_S
+    )
+    assert 0.2 <= command.throttle < 0.4
+    full = _follower(config).step(
+        _straight(speed_mps=30.0), Pose.identity(), 0.0, _DT_S
+    )
+    assert full.throttle == pytest.approx(1.0)
+
+
+def test_a_rolling_car_gets_no_dead_band_offset() -> None:
+    """Rolling, a small correction is a small throttle: the offset is for pull-aways."""
+    command = _follower().step(_straight(speed_mps=8.4), Pose.identity(), 8.33, _DT_S)
+    assert 0.0 < command.throttle < 0.1
+
+
+def _accelerating(speed_mps: float, acceleration_mps2: float) -> Trajectory:
+    """A straight 6 s plan from *speed_mps* at a constant *acceleration_mps2*."""
+    plan = Trajectory.empty()
+    for index in range(61):
+        t_s = index * 0.1
+        x = speed_mps * t_s + 0.5 * acceleration_mps2 * t_s * t_s
+        plan.append(index * _STEP_US, Pose.from_xyz_yaw(x, 0.0, 0.0, 0.0))
+    return plan
+
+
+def test_the_plans_acceleration_is_fed_forward() -> None:
+    """On the plan's speed, the pedals are the ones that settle at its acceleration."""
+    command = _follower().step(_accelerating(8.0, 1.0), Pose.identity(), 8.0, _DT_S)
+    assert _asked(command, 8.0) == pytest.approx(1.0, abs=0.05)
+
+
+def test_the_gear_the_vehicle_is_in_sets_the_throttle() -> None:
+    """The same push takes more throttle in second than in first."""
+    plan = _accelerating(8.0, 1.0)
+    first = _follower().step(plan, Pose.identity(), 8.0, _DT_S, gear=1)
+    second = _follower().step(plan, Pose.identity(), 8.0, _DT_S, gear=2)
+    assert second.throttle > first.throttle
+
+
+def test_a_follower_without_a_powertrain_refuses_to_drive() -> None:
+    with pytest.raises(RuntimeError):
+        TrajectoryFollower().step(_straight(), Pose.identity(), 8.0, _DT_S)
+
+
+def test_a_plan_easing_off_brakes_gently() -> None:
+    """A plan slowing at 2 m/s² asks for a part of the brake, not all of it."""
+    command = _follower().step(_accelerating(8.0, -2.0), Pose.identity(), 8.0, _DT_S)
+    assert 0.0 < command.brake < 0.5
+
+
+def test_a_vehicle_behind_the_plan_catches_up() -> None:
+    """Where the plan has the vehicle now is read on the plan's clock: 2 m short
+    of it, the vehicle aims faster than the plan."""
+    plan = _straight(speed_mps=8.0)
+    command = _follower().step(
+        plan, Pose.identity(), 8.0, _DT_S, now_us=plan.timestamps_us[0] + 250_000
+    )
+    assert command.target_speed_mps == pytest.approx(
+        8.0 + ControlConfig().position_gain * 2.0, abs=0.05
+    )
+    assert command.throttle > 0.0
+
+
+def test_a_car_braked_to_a_stop_pulls_away_when_the_plan_goes() -> None:
+    """The integral wound up braking does not hold the car once it stands."""
+    follower = _follower()
+    for _ in range(40):
+        follower.step(_straight(speed_mps=2.0), Pose.identity(), 8.0, _DT_S)
+    command = follower.step(_accelerating(0.0, 0.5), Pose.identity(), 0.0, _DT_S)
+    assert command.throttle >= follower.config.throttle_deadband
+    assert command.brake == pytest.approx(0.0)
+
+
+def test_a_plan_stopping_within_the_preview_brakes_early() -> None:
+    """A plan reaching its stop within a second is braked for now."""
+    plan = _plan([(0.0, 0.0), (1.0, 0.0), (1.5, 0.0)], speed_mps=5.0)
+    plan.append(
+        plan.timestamps_us[-1] + 2_000_000, Pose.from_xyz_yaw(1.5, 0.0, 0.0, 0.0)
+    )
+    command = _follower().step(plan, Pose.identity(), 5.0, _DT_S)
+    assert command.brake > 0.0
 
 
 def test_stationary_plan_holds_the_vehicle() -> None:
     """A plan that does not advance is a request to stand still."""
     config = ControlConfig()
-    follower = TrajectoryFollower(config)
+    follower = _follower(config)
     plan = Trajectory.empty()
     for index in range(5):
         plan.append(index * _STEP_US, Pose.from_xyz_yaw(0.0, 0.0, 0.0, 0.0))
@@ -222,7 +354,7 @@ def test_stationary_plan_holds_the_vehicle() -> None:
 
 def test_empty_plan_brakes_and_resets() -> None:
     config = ControlConfig()
-    follower = TrajectoryFollower(config)
+    follower = _follower(config)
     follower.step(_straight(), Pose.identity(), 1.0, _DT_S)
     command = follower.step(Trajectory.empty(), Pose.identity(), 5.0, _DT_S)
     assert command.brake == pytest.approx(config.stop_brake)
@@ -231,23 +363,28 @@ def test_empty_plan_brakes_and_resets() -> None:
 
 def test_integral_term_is_clamped() -> None:
     """Sustained error must not wind the integral term past its limit."""
-    config = ControlConfig(speed_kp=0.0, speed_kd=0.0, speed_ki=1.0, integral_limit=0.5)
-    follower = TrajectoryFollower(config)
+    config = ControlConfig(
+        speed_kp=0.0,
+        speed_ki=1.0,
+        integral_limit=0.5,
+        throttle_deadband=0.0,
+    )
+    follower = _follower(config)
     plan = _straight(speed_mps=10.0)
     for _ in range(200):
         command = follower.step(plan, Pose.identity(), 0.0, _DT_S)
-    assert command.throttle == pytest.approx(0.5, abs=1e-6)
+    assert _asked(command, 0.0) == pytest.approx(0.5, abs=1e-6)
 
 
 def test_reset_clears_controller_state() -> None:
-    config = ControlConfig(speed_kp=0.0, speed_kd=0.0, speed_ki=1.0)
-    follower = TrajectoryFollower(config)
+    config = ControlConfig(speed_kp=0.0, speed_ki=1.0, throttle_deadband=0.0)
+    follower = _follower(config)
     plan = _straight(speed_mps=10.0)
     for _ in range(10):
         follower.step(plan, Pose.identity(), 0.0, _DT_S)
     follower.reset()
     command = follower.step(plan, Pose.identity(), 0.0, _DT_S)
-    assert command.throttle == pytest.approx(1.0 * 10.0 * _DT_S, abs=1e-6)
+    assert _asked(command, 0.0) == pytest.approx(1.0 * 10.0 * _DT_S, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------

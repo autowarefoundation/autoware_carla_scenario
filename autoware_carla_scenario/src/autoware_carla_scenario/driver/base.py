@@ -142,6 +142,18 @@ class DriverClientConfig:
     Needs :attr:`send_renderer_data`.
     """
 
+    warmup_s: float = 0.0
+    """Length of a run-up onto the scenario's first frame, or 0 for none.
+
+    A policy that reads a history (past LiDAR maps, past poses) has none at the
+    first step and plans as if the ego had stood still.  With a run-up, the
+    ``warmup_s`` before the first frame are played by rule: every vehicle is
+    carried along its lane, and every pedestrian in a straight line, onto its
+    first-frame pose at its initial speed, with the policy planning all the way
+    but not driving and the lights frozen.  The scenario's clock starts on
+    arrival.  Set it to the history the policy reads.
+    """
+
     route_horizon_m: float = 80.0
     """How far ahead the route sent to the policy extends."""
 

@@ -26,6 +26,8 @@ from autoware_carla_egodriver.protocol import carla_driver_pb2
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
 
+from ._vehicle_physics import mkz_physics, mkz_powertrain
+
 
 _TICK_S = 0.05
 
@@ -114,6 +116,8 @@ def _actor(x: float = 0.0, y: float = 0.0, yaw_deg: float = 0.0) -> MagicMock:
     actor.get_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     actor.get_acceleration.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     actor.get_angular_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_physics_control.return_value = mkz_physics()
+    actor.get_control.return_value = SimpleNamespace(gear=1)
     return actor
 
 
@@ -485,3 +489,188 @@ def test_yawed_ego_reports_a_rig_frame_route() -> None:
     # the road runs along +x, so the road is off to the ego's right (negative y in rig).
     assert route[-1][1] < 0.0
     assert math.isfinite(float(route[-1][0]))
+
+
+# ---------------------------------------------------------------------------
+# Warm-up run onto the spawn pose
+# ---------------------------------------------------------------------------
+
+
+class _Lane:
+    """A straight lane along +x; ``previous`` walks back down it."""
+
+    @staticmethod
+    def waypoint_at(x: float) -> MagicMock:
+        waypoint = MagicMock()
+        waypoint.transform = SimpleNamespace(
+            location=SimpleNamespace(x=x, y=0.0, z=0.0),
+            rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=0.0),
+        )
+        waypoint.next.side_effect = lambda step: [_Lane.waypoint_at(x + step)]
+        waypoint.previous.side_effect = lambda step: [_Lane.waypoint_at(x - step)]
+        return waypoint
+
+
+class _Actors(list):
+    def filter(self, pattern: str) -> list:
+        prefix = pattern.rstrip("*")
+        return [actor for actor in self if actor.type_id.startswith(prefix)]
+
+
+def _placed(actor: MagicMock) -> None:
+    """Make the actor go where it is placed, and move by the velocity it is set,
+    one tick's worth (the run-up reads its pose back on the next tick)."""
+
+    def _set(transform) -> None:  # noqa: ANN001
+        actor.get_transform.return_value = transform
+        actor.get_location.return_value = transform.location
+
+    def _move(velocity) -> None:  # noqa: ANN001
+        at = actor.get_transform.return_value
+        _set(
+            SimpleNamespace(
+                location=SimpleNamespace(
+                    x=at.location.x + velocity.x * _TICK_S,
+                    y=at.location.y + velocity.y * _TICK_S,
+                    z=at.location.z,
+                ),
+                rotation=at.rotation,
+            )
+        )
+
+    actor.set_transform.side_effect = _set
+    actor.set_target_velocity.side_effect = _move
+    actor.get_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_angular_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_physics_control.return_value = mkz_physics()
+    actor.get_control.return_value = SimpleNamespace(gear=1)
+
+
+def _warmup_world(others: Sequence[MagicMock] = ()) -> Tuple[MagicMock, MagicMock]:
+    world = MagicMock()
+    world.get_map.return_value.get_waypoint.side_effect = (
+        lambda location, **_: _Lane.waypoint_at(location.x)
+    )
+    world.get_map.return_value.name = "Town10HD_Opt"
+    light = MagicMock(type_id="traffic.traffic_light", id=99)
+    light.is_frozen.return_value = False
+    world.get_actors.return_value = _Actors([*others, light])
+    return world, light
+
+
+def _warming_entity(speed_mps: float = 5.0, warmup_s: float = 1.0):  # noqa: ANN202
+    entity, client = _entity(warmup_s=warmup_s, policy_timestep_s=0.1)
+    actor = entity.actor
+    assert actor is not None
+    actor.id, actor.type_id = 1, "vehicle.lincoln.mkz"
+    _placed(actor)
+    entity.set_initial_speeds({1: speed_mps})
+    return entity, client, actor
+
+
+def test_a_warm_up_carries_the_ego_onto_its_spawn_pose() -> None:
+    entity, client, actor = _warming_entity(speed_mps=5.0, warmup_s=1.0)
+    world, _ = _warmup_world()
+    entity.on_scenario_start(world)
+
+    xs = [actor.set_transform.call_args.args[0].location.x]
+    ticks = 0
+    while not entity.is_initialized:
+        entity.on_tick(world, 0.0)
+        ticks += 1
+
+    assert ticks == 20
+    # Placed once, at the start of the run-up; moved by its velocity after that,
+    # aimed each tick a quarter metre on and, at the end, at the spawn pose.
+    assert xs[0] == pytest.approx(-5.0)
+    assert actor.get_transform().location.x == pytest.approx(
+        0.25
+    )  # spawn pose + a tick
+    actor.set_transform.assert_called_once()
+    aims = [call.args[0] for call in actor.set_target_velocity.call_args_list]
+    assert [v.x for v in aims[:-1]] == pytest.approx([5.0] * 20)
+    assert (aims[-1].x, aims[-1].y) == pytest.approx((5.0, 0.0))
+    # The policy planned all the way, but the run-up drove.
+    assert len(client.drives) == 10
+    # Released onto the throttle that holds 5 m/s in gear, never the follower's;
+    # physics never switched off.
+    hold, _ = mkz_powertrain().pedals(0.0, 5.0, 1)
+    controls = [call.args[0] for call in actor.apply_control.call_args_list]
+    assert all(control.throttle == pytest.approx(hold) for control in controls)
+    assert controls[-1].brake == 0.0 and not controls[-1].hand_brake
+    actor.set_simulate_physics.assert_not_called()
+
+
+def test_the_policy_sees_the_ego_moving_through_the_run_up() -> None:
+    entity, client, _ = _warming_entity(speed_mps=5.0, warmup_s=0.5)
+    world, _ = _warmup_world()
+    entity.on_scenario_start(world)
+    while not entity.is_initialized:
+        entity.on_tick(world, 0.0)
+
+    observations = [obs for batch in client.egomotion for obs in batch]
+    assert observations
+    assert all(obs.speed_mps == pytest.approx(5.0) for obs in observations)
+
+
+def _other(type_id: str, actor_id: int, x: float, y: float = 0.0) -> MagicMock:
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    other = MagicMock(type_id=type_id, id=actor_id)
+    other.get_transform.return_value = carla.Transform(
+        carla.Location(x=x, y=y, z=0.0), carla.Rotation()
+    )
+    _placed(other)
+    return other
+
+
+def test_traffic_runs_up_onto_the_first_frame_with_the_ego() -> None:
+    """A moving vehicle runs up along its lane, a walking pedestrian in a straight
+    line, and a parked vehicle stays put; each arrives on its first-frame pose."""
+    car = _other("vehicle.audi.tt", 2, x=30.0, y=3.5)
+    parked = _other("vehicle.audi.tt", 3, x=50.0)
+    walker = _other("walker.pedestrian.0001", 4, x=20.0, y=6.0)
+    entity, _, _ = _warming_entity(speed_mps=5.0, warmup_s=1.0)
+    entity.set_initial_speeds({1: 5.0, 2: 8.0, 4: 1.5})
+    world, light = _warmup_world([car, parked, walker])
+    entity.on_scenario_start(world)
+
+    start = car.set_transform.call_args.args[0]
+    assert (start.location.x, start.location.y) == pytest.approx((22.0, 3.5))
+    first_step = walker.set_transform.call_args.args[0]
+    assert (first_step.location.x, first_step.location.y) == pytest.approx((18.5, 6.0))
+    parked.set_transform.assert_not_called()
+    assert entity.carried_actor_ids == {1, 2}
+    light.freeze.assert_called_once_with(True)
+
+    while not entity.is_initialized:
+        entity.on_tick(world, 0.0)
+
+    arrived = walker.set_transform.call_args.args[0]
+    assert (arrived.location.x, arrived.location.y) == pytest.approx((20.0, 6.0))
+    assert car.get_transform().location.x == pytest.approx(30.0 + 8.0 * _TICK_S)
+    final = car.set_target_velocity.call_args.args[0]
+    assert (final.x, final.y) == pytest.approx((8.0, 0.0))
+    light.freeze.assert_called_with(False)
+    assert entity.carried_actor_ids == frozenset()
+
+
+def test_without_a_warm_up_the_ego_is_ready_at_once() -> None:
+    entity, client = _entity()
+    entity.on_scenario_start(_world_with_route())
+    assert entity.is_initialized
+
+
+def test_the_run_up_keeps_the_spawn_pose_s_offset_from_its_lane() -> None:
+    """Spawned 0.8 m to the side of the centre line, the ego runs up 0.8 m to the side."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    entity, _, actor = _warming_entity(speed_mps=5.0, warmup_s=1.0)
+    actor.get_transform.return_value = carla.Transform(
+        carla.Location(x=0.0, y=0.8, z=0.0), carla.Rotation()
+    )
+    world, _ = _warmup_world()
+    entity.on_scenario_start(world)
+
+    first = actor.set_transform.call_args.args[0]
+    assert (first.location.x, first.location.y) == pytest.approx((-5.0, 0.8))

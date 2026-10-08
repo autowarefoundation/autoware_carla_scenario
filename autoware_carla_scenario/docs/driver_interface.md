@@ -23,7 +23,7 @@ flowchart LR
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim + PID"]
+        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim + speed PI<br/>through the powertrain model"]
         SR -->|on_tick| CDE
         CAM -->|frames| CDE
         CDE --> TF
@@ -74,6 +74,7 @@ driver:
   timeout_s: 60.0
   policy_timestep_s: 0.1     # must be a multiple of the 0.05 s simulation step
   image_quality: 90
+  warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
   route_resolution_m: 2.0
   rear_axle_offset_m: null   # null derives it from the wheel physics
@@ -96,8 +97,29 @@ driver:
     max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
     steer_exponent: 2.0
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
-    speed_kp: 0.6
+    speed_kp: 1.0               # plan tracked in time: plan acceleration + speed PI, in m/s²,
+                                # turned into pedals by the ego's Chaos powertrain model
 ```
+
+### Warming up a policy
+
+A policy that reads a history -- past LiDAR maps, the ego's past poses -- has
+none at the first step and plans as if the ego had stood still: an ego spawned
+moving brakes on those first plans. `driver.warmup_s` gives it a run-up instead:
+the `warmup_s` before the scenario's first frame are played by rule, so that
+everything arrives at its first-frame pose at its initial speed.
+
+- Every vehicle with an initial speed, the ego among them, is put back along its
+  lane by its initial speed times `warmup_s`, keeping its offset from the lane
+  centre and its heading relative to the lane, and driven onto its pose. One with
+  no initial speed stands on its pose.
+- Every pedestrian with an initial speed is moved in a straight line along its
+  heading; one with none stands where it starts.
+- The traffic lights are frozen, so the run-up spends none of their phases.
+
+The policy gets every observation and plans all the way, but does not drive; the
+scenario's clock starts, and the policy takes over, on arrival. Set `warmup_s` to
+the history the policy reads (3 s for ResWorld's ego past).
 
 `ego.entity` selects the entity and accepts three values:
 

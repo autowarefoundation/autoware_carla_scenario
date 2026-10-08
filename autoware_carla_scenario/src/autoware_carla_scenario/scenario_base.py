@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Union
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
@@ -753,6 +753,23 @@ class BaseScenario(ABC):
     # ------------------------------------------------------------------
     # Initial speed (called by ScenarioRunner after warm-up)
     # ------------------------------------------------------------------
+
+    def initial_speeds_mps(
+        self, ego_actor: Optional["carla.Actor"]
+    ) -> Dict[int, float]:
+        """The speed each vehicle starts the scenario at, by actor id, in m/s.
+
+        What :meth:`set_initial_speed` will apply: the registered entities and
+        the ego.  A vehicle not named starts still.
+        """
+        speeds = {
+            entity.actor.id: entity.initial_speed_kmh / 3.6
+            for entity in self._entities
+            if entity.actor is not None and entity.initial_speed_kmh > 0.0
+        }
+        if ego_actor is not None and self.ego_config.initial_speed_kmh > 0.0:
+            speeds[ego_actor.id] = self.ego_config.initial_speed_kmh / 3.6
+        return speeds
 
     def set_initial_speed(self, ego_actor: "carla.Actor") -> None:
         """Apply initial speed to all registered entities and the ego vehicle.

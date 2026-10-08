@@ -3,8 +3,13 @@
 alpasim's contract stops at the plan: the driver policy returns *where the vehicle should
 be*, not throttle and steering.  Upstream that gap is filled by alpasim's vehicle dynamics
 service; here -- as in ``carla_driver_interface``'s runtime -- it is filled by a pure
-pursuit lateral controller, trimmed by feedback on the measured yaw rate, and a PID
-longitudinal controller feeding ``carla.VehicleControl``.
+pursuit lateral controller, trimmed by feedback on the measured yaw rate, and a speed
+controller tracking the plan in time, feeding ``carla.VehicleControl``.
+
+The speed controller works in accelerations, as Autoware's longitudinal controller does:
+the plan's own acceleration plus a PI on the speed it misses, turned into pedals by the
+vehicle's powertrain model (:class:`~..utils.powertrain.ChaosPowertrain`), as Autoware's
+vehicle interface turns them with its accel and brake maps.
 
 All geometry in this module is in the **rig frame**: x forward, y left, z up,
 right-handed.  Steering angles follow the same convention (positive = left), and the flip
@@ -20,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 import numpy as np
 
+from ..utils.powertrain import ChaosPowertrain
 from .geometry import Pose, Trajectory
 
 if TYPE_CHECKING:
@@ -95,21 +101,61 @@ class ControlConfig:
     """Below this speed the yaw rate says little about the steering, so the trim is
     held rather than integrated."""
 
-    # -- Longitudinal (PID) ----------------------------------------------------
-    speed_kp: float = 0.6
-    """Proportional gain on speed error."""
+    # -- Longitudinal -----------------------------------------------------------
+    # The plan is tracked in time: where the plan has the vehicle now, how fast and
+    # how hard it is speeding up there, with a PI on what the vehicle misses of that,
+    # all in m/s²; the vehicle's powertrain model turns the sum into pedals.  The
+    # policy reads the vehicle's speed and acceleration back, so a follower that over-
+    # or undershoots the plan is planned onward -- a runaway or a crawl.
+    speed_kp: float = 1.0
+    """m/s² asked per m/s the vehicle is slower (faster) than the plan."""
 
-    speed_ki: float = 0.15
-    """Integral gain on speed error."""
+    speed_ki: float = 0.1
+    """m/s² per m·s of accumulated speed error."""
 
-    speed_kd: float = 0.05
-    """Derivative gain on speed error."""
+    integral_limit: float = 3.0
+    """Anti-windup bound on the accumulated speed error, m (``speed_ki`` times it
+    bounds the integral's share of the asked acceleration)."""
 
-    integral_limit: float = 1.0
-    """Clamp on the integral term, preventing wind-up while braking."""
+    position_gain: float = 0.5
+    """m/s of extra target speed per metre the vehicle is behind the plan (less
+    when ahead).  With :attr:`speed_kp` it makes the gap close like a spring of
+    ``sqrt(speed_kp * position_gain)`` rad/s, damped ``sqrt(speed_kp / position_gain) / 2``."""
 
-    stop_speed_mps: float = 0.2
-    """Target speeds below this are treated as a request to hold still."""
+    max_position_correction_mps: float = 6.0
+    """Bound on that correction, m/s."""
+
+    speed_preview_s: float = 1.0
+    """Over how much of the plan, from now, its acceleration is read, in seconds.
+
+    Not its first segment alone: a plan pulling away from a standstill starts at a
+    crawl, a few millimetres in its first 0.1 s.
+    """
+
+    throttle_deadband: float = 0.25
+    """The least throttle a standing vehicle (below :attr:`standstill_speed_mps`) is
+    asked to speed up with.
+
+    A standing Lincoln MKZ on flat road (CARLA 0.10) stays put at 0.2 and pulls
+    away at 0.25, where its powertrain model has it already pulling away at 0.2.
+    A car with an automatic gearbox creeps off the brake, and the policy's plans
+    from a standstill assume it: a few cm/s in the first second, some metres in
+    six.  Tracked as asked, that is a throttle short of moving the car, so it would
+    never leave.  ``0`` sets no floor.
+    """
+
+    standstill_speed_mps: float = 0.5
+    """Below this speed the vehicle counts as standing, for :attr:`throttle_deadband`."""
+
+    stop_distance_m: float = 0.5
+    """A plan travelling less than this over its whole horizon is a request to stand
+    still, and the vehicle is held on the brake.
+
+    Decided by distance, not by the target speed, as Autoware's longitudinal
+    controller decides its stop state: a plan pulling away from a standstill asks
+    for almost no speed in its first second yet goes metres over its horizon, and
+    holding the vehicle there would keep it on the line for good.
+    """
 
     stop_brake: float = 0.6
     """Brake applied when holding still."""
@@ -193,17 +239,25 @@ class VehicleCommand:
 
 
 class TrajectoryFollower:
-    """Tracks a planned trajectory with pure pursuit plus a speed PID.
+    """Tracks a planned trajectory with pure pursuit plus a speed controller.
 
     One instance drives one vehicle; call :meth:`reset` when the plan's provenance
     changes (e.g. a new session).
 
     Args:
         config: Gains and limits.  ``None`` uses the defaults.
+        powertrain: The vehicle's powertrain model, which turns an acceleration into
+            pedals.  May be set later (:attr:`powertrain`), before the first plan is
+            tracked.
     """
 
-    def __init__(self, config: Optional[ControlConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[ControlConfig] = None,
+        powertrain: Optional[ChaosPowertrain] = None,
+    ) -> None:
         self._config = config or ControlConfig()
+        self.powertrain = powertrain
         self.reset()
 
     @property
@@ -212,9 +266,8 @@ class TrajectoryFollower:
         return self._config
 
     def reset(self) -> None:
-        """Clear the integral term, the derivative memory, and the steering state."""
+        """Clear the integral term and the steering state."""
         self._integral = 0.0
-        self._previous_error = 0.0
         self._previous_steer = 0.0
         self._yaw_rate_trim = 0.0
         self._asked_curvature: Optional[float] = None
@@ -230,6 +283,8 @@ class TrajectoryFollower:
         current_speed_mps: float,
         dt_s: float,
         yaw_rate_rps: Optional[float] = None,
+        now_us: Optional[int] = None,
+        gear: int = 0,
     ) -> VehicleCommand:
         """Return the command that tracks *plan_in_local* from the current pose.
 
@@ -240,6 +295,14 @@ class TrajectoryFollower:
             dt_s: Time since the previous call, in seconds.
             yaw_rate_rps: The ego's measured yaw rate, positive to the left.  ``None``
                 steers on pure pursuit alone.
+            now_us: The current time, on the plan's clock.  ``None`` takes the
+                plan's first instant as now.
+            gear: The gear the vehicle is in, as ``carla.VehicleControl.gear``
+                reports it (``0``, neutral, is taken as the first gear a throttle
+                selects).
+
+        Raises:
+            RuntimeError: If no :attr:`powertrain` has been set.
 
         Returns:
             The actuation command.  An empty plan yields a full stop.
@@ -250,7 +313,8 @@ class TrajectoryFollower:
         plan_in_rig = plan_in_local.transform(pose_local_to_rig.inverse())
         points = plan_in_rig.positions
 
-        target_speed = self._target_speed(plan_in_rig)
+        if _travel_m(points) < self._config.stop_distance_m:
+            return self._hold_still()
         lookahead = float(
             np.clip(
                 self._config.lookahead_gain_s * max(current_speed_mps, 0.0),
@@ -263,7 +327,9 @@ class TrajectoryFollower:
             return self._hold_still()
 
         steer = self._lateral(target, current_speed_mps, dt_s, yaw_rate_rps)
-        throttle, brake = self._longitudinal(target_speed, current_speed_mps, dt_s)
+        throttle, brake, target_speed = self._longitudinal(
+            plan_in_rig, now_us, current_speed_mps, dt_s, gear
+        )
 
         return VehicleCommand(
             throttle=throttle,
@@ -305,24 +371,6 @@ class TrajectoryFollower:
         if distances[index] < _EPSILON:
             return None
         return candidates[index]
-
-    def _target_speed(self, plan_in_rig: Trajectory) -> float:
-        """Return the speed implied by the plan's first timed segment.
-
-        A plan carries positions and timestamps but no explicit speed, so the intended
-        speed is the distance covered over the first segment divided by its duration.
-        """
-        if len(plan_in_rig) < 2:
-            return 0.0
-        positions = plan_in_rig.positions
-        timestamps = plan_in_rig.timestamps_us
-        for index in range(1, len(timestamps)):
-            duration_s = (timestamps[index] - timestamps[0]) * 1e-6
-            if duration_s < _EPSILON:
-                continue
-            distance = float(np.linalg.norm(positions[index][:2] - positions[0][:2]))
-            return distance / duration_s
-        return 0.0
 
     def _lateral(
         self,
@@ -375,33 +423,97 @@ class TrajectoryFollower:
         return self._yaw_rate_trim
 
     def _longitudinal(
-        self, target_speed_mps: float, current_speed_mps: float, dt_s: float
-    ) -> tuple[float, float]:
-        """Return ``(throttle, brake)`` for the requested speed."""
-        if target_speed_mps < self._config.stop_speed_mps:
-            self._integral = 0.0
-            self._previous_error = 0.0
-            return 0.0, self._config.stop_brake
-
-        error = target_speed_mps - current_speed_mps
-        if dt_s > _EPSILON:
-            self._integral = float(
-                np.clip(
-                    self._integral + error * dt_s,
-                    -self._config.integral_limit,
-                    self._config.integral_limit,
-                )
+        self,
+        plan_in_rig: Trajectory,
+        now_us: Optional[int],
+        current_speed_mps: float,
+        dt_s: float,
+        gear: int,
+    ) -> tuple[float, float, float]:
+        """Return ``(throttle, brake, target speed)`` that keep the vehicle on the plan."""
+        if self.powertrain is None:
+            raise RuntimeError(
+                "TrajectoryFollower has no powertrain to turn accelerations into pedals"
             )
-            derivative = (error - self._previous_error) / dt_s
-        else:
-            derivative = 0.0
-        self._previous_error = error
-
-        output = (
-            self._config.speed_kp * error
-            + self._config.speed_ki * self._integral
-            + self._config.speed_kd * derivative
+        config = self._config
+        speed, acceleration, gap = _reference(
+            plan_in_rig, now_us, config.speed_preview_s
         )
-        if output >= 0.0:
-            return float(np.clip(output, 0.0, 1.0)), 0.0
-        return 0.0, float(np.clip(-output, 0.0, 1.0))
+        standing = current_speed_mps < config.standstill_speed_mps
+        if standing:
+            # The brake has nothing left to take off a standing car: what the
+            # integral wound up slowing it down must not hold it once the plan goes.
+            self._integral = max(self._integral, 0.0)
+        correction = float(
+            np.clip(
+                config.position_gain * gap,
+                -config.max_position_correction_mps,
+                config.max_position_correction_mps,
+            )
+        )
+        target = max(0.0, speed + correction)
+        error = target - max(0.0, current_speed_mps)
+        self._integral = float(
+            np.clip(
+                self._integral + error * dt_s,
+                -config.integral_limit,
+                config.integral_limit,
+            )
+        )
+        asked = (
+            acceleration + config.speed_kp * error + config.speed_ki * self._integral
+        )
+        throttle, brake = self.powertrain.pedals(asked, current_speed_mps, gear)
+        if standing and asked > 0.0:
+            throttle = max(throttle, config.throttle_deadband)
+        return throttle, brake, target
+
+
+def _reference(
+    plan_in_rig: Trajectory, now_us: Optional[int], preview_s: float
+) -> tuple[float, float, float]:
+    """Where the plan has the vehicle at *now_us*: ``(speed, acceleration, gap)``.
+
+    The speed is the plan's at that instant, the acceleration its mean over the
+    next *preview_s*, and the gap how far along the plan that point is ahead of
+    the rig origin (negative behind), in metres.
+    """
+    times_s = (
+        np.asarray(plan_in_rig.timestamps_us, dtype=np.float64)
+        - plan_in_rig.timestamps_us[0]
+    ) * 1e-6
+    points = plan_in_rig.positions[:, :2]
+    lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    durations = np.diff(times_s)
+    moving = durations > _EPSILON
+    if not moving.any():
+        return 0.0, 0.0, 0.0
+    arc = np.concatenate(([0.0], np.cumsum(lengths)))
+    middles = (times_s[:-1] + durations / 2.0)[moving]
+    speeds = lengths[moving] / durations[moving]
+
+    now_s = 0.0 if now_us is None else (now_us - plan_in_rig.timestamps_us[0]) * 1e-6
+    now_s = float(np.clip(now_s, 0.0, times_s[-1]))
+    ahead_s = min(now_s + preview_s, float(times_s[-1]))
+    speed = float(np.interp(now_s, middles, speeds))
+    acceleration = (
+        (float(np.interp(ahead_s, middles, speeds)) - speed) / (ahead_s - now_s)
+        if ahead_s - now_s > _EPSILON
+        else 0.0
+    )
+
+    # The rig origin's projection onto the plan, as a distance along it.
+    starts, steps = points[:-1], np.diff(points, axis=0)
+    squared = np.maximum((steps**2).sum(axis=1), _EPSILON)
+    fractions = np.clip((-starts * steps).sum(axis=1) / squared, 0.0, 1.0)
+    nearest = starts + fractions[:, None] * steps
+    closest = int(np.argmin((nearest**2).sum(axis=1)))
+    along = arc[closest] + fractions[closest] * lengths[closest]
+    return speed, acceleration, float(np.interp(now_s, times_s, arc)) - along
+
+
+def _travel_m(points: np.ndarray) -> float:
+    """How far a plan's ``(N, 3)`` points travel, end to end along the path."""
+    if len(points) < 2:
+        return 0.0
+    return float(np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1).sum())

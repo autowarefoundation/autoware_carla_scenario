@@ -286,11 +286,15 @@ class DriverControlSpec:
     yaw_rate_ki: float = 3.0
     yaw_rate_trim_limit_deg: float = 25.0
     yaw_rate_min_speed_mps: float = 1.0
-    speed_kp: float = 0.6
-    speed_ki: float = 0.15
-    speed_kd: float = 0.05
-    integral_limit: float = 1.0
-    stop_speed_mps: float = 0.2
+    speed_kp: float = 1.0
+    speed_ki: float = 0.1
+    integral_limit: float = 3.0
+    position_gain: float = 0.5
+    max_position_correction_mps: float = 6.0
+    speed_preview_s: float = 1.0
+    throttle_deadband: float = 0.25
+    standstill_speed_mps: float = 0.5
+    stop_distance_m: float = 0.5
     stop_brake: float = 0.6
 
 
@@ -315,6 +319,12 @@ class DriverConfig:
 
     #: JPEG quality (1-100) for streamed camera frames.
     image_quality: int = 90
+
+    #: Seconds of run-up onto the scenario's first frame, every vehicle and
+    #: pedestrian carried onto its first-frame pose at its initial speed and the
+    #: policy planning but not driving, so a policy that reads a history starts
+    #: with one.  0 starts the policy cold.
+    warmup_s: float = 0.0
 
     #: How far ahead the submitted route extends, in metres.
     route_horizon_m: float = 80.0

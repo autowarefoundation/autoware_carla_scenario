@@ -13,8 +13,10 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from autoware_carla_scenario.driver.base import EgoObservation
 from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.driver.observation import (
+    AccelerationEstimate,
     camera_extrinsics_to_rig,
     ego_observation,
     encode_frame_jpeg,
@@ -293,3 +295,48 @@ def test_a_single_waypoint_faces_forward() -> None:
 
 def test_an_empty_route_gives_an_empty_reference() -> None:
     assert len(route_reference_trajectory(np.zeros((0, 3)), 0, 100_000)) == 0
+
+
+def _moving(timestamp_us: int, speed_mps: float) -> EgoObservation:
+    return EgoObservation(
+        timestamp_us=timestamp_us,
+        pose=Pose.identity(),
+        linear_velocity=np.array([speed_mps, 0.0, 0.0]),
+        angular_velocity=np.zeros(3),
+        linear_acceleration=np.array([-6.0, 0.0, 0.0]),
+        speed_mps=speed_mps,
+    )
+
+
+def test_acceleration_is_the_filtered_derivative_of_the_velocity() -> None:
+    """Not CARLA's own reading: a steady 1 m/s² converges on 1 m/s², whatever the
+    observation says."""
+    estimate = AccelerationEstimate()
+    for tick in range(60):
+        observed = estimate(_moving(tick * 50_000, 8.0 + tick * 0.05))
+    assert observed.linear_acceleration[0] == pytest.approx(1.0, abs=1e-3)
+
+
+def test_a_one_tick_jolt_reads_as_a_fraction_of_itself() -> None:
+    """A seam taking 0.1 m/s off in one tick (-2 m/s²) is about a quarter of that
+    at once, as Autoware's 0.9 gain at 50 Hz makes it over 50 ms."""
+    estimate = AccelerationEstimate()
+    estimate(_moving(0, 8.3))
+    jolt = estimate(_moving(50_000, 8.2)).linear_acceleration[0]
+    assert jolt == pytest.approx(-2.0 * (1.0 - 0.9**2.5), rel=1e-6)
+
+
+def test_the_same_instant_gets_the_same_estimate() -> None:
+    estimate = AccelerationEstimate()
+    estimate(_moving(0, 8.0))
+    first = estimate(_moving(50_000, 9.0)).linear_acceleration
+    again = estimate(_moving(50_000, 9.0)).linear_acceleration
+    np.testing.assert_allclose(first, again)
+
+
+def test_reset_starts_the_estimate_from_rest() -> None:
+    estimate = AccelerationEstimate()
+    estimate(_moving(0, 0.0))
+    estimate(_moving(50_000, 5.0))
+    estimate.reset()
+    assert estimate(_moving(100_000, 5.0)).linear_acceleration[0] == 0.0

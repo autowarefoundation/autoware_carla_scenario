@@ -152,5 +152,8 @@ class BaseScenario:
         _expect_actor_getter(actor_getter)
         raise NotImplementedError()
 
+    def initial_speeds_mps(self, ego_actor: Optional[carla.Actor]) -> Dict[int, float]:
+        raise NotImplementedError()
+
     def set_initial_speed(self, ego_actor: carla.Actor) -> None:
         raise NotImplementedError()
