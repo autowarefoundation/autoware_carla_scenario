@@ -15,6 +15,7 @@ overrides it when the derived value is wrong.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from typing import TYPE_CHECKING, List, Optional
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AccelerationEstimate",
     "camera_extrinsics_to_rig",
     "encode_frame_jpeg",
     "ego_observation",
@@ -253,6 +255,51 @@ def ego_observation(
         linear_acceleration=rotation.T @ accel_local,
         speed_mps=float(np.linalg.norm(linear_local)),
     )
+
+
+class AccelerationEstimate:
+    """The ego's acceleration as Autoware's localization reports it.
+
+    CARLA's ``get_acceleration`` is the physics step's own: a seam in the road
+    reads as -2 to -6 m/s² for a tick.  A policy trained on Autoware's logs has
+    seen ``twist2accel``'s instead -- the twist differentiated in the vehicle
+    frame and low-passed, ``a = g * a + (1 - g) * dv / dt`` with ``g = 0.9`` on
+    a 50 Hz twist -- and it plans the acceleration it is given onward, so a raw
+    spike becomes a hard stop.  This applies that filter, its gain rescaled to
+    the interval between observations so its time constant stays Autoware's.
+
+    Args:
+        gain: ``twist2accel``'s ``accel_lowpass_gain``.
+        rate_hz: The rate that gain applies at.
+    """
+
+    def __init__(self, gain: float = 0.9, rate_hz: float = 50.0) -> None:
+        self._gain = gain
+        self._rate_hz = rate_hz
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget the history: the next observation starts at zero acceleration."""
+        self._last: Optional[EgoObservation] = None
+        self._acceleration = np.zeros(3)
+
+    def __call__(self, observation: EgoObservation) -> EgoObservation:
+        """Return *observation* with its acceleration replaced by the estimate.
+
+        Idempotent per instant: a second observation at the same time gets the
+        same estimate.
+        """
+        last = self._last
+        if last is not None and observation.timestamp_us > last.timestamp_us:
+            dt_s = (observation.timestamp_us - last.timestamp_us) * 1e-6
+            gain = self._gain ** (dt_s * self._rate_hz)
+            rate = (observation.linear_velocity - last.linear_velocity) / dt_s
+            self._acceleration = gain * self._acceleration + (1.0 - gain) * rate
+        if last is None or observation.timestamp_us > last.timestamp_us:
+            self._last = observation
+        return dataclasses.replace(
+            observation, linear_acceleration=self._acceleration.copy()
+        )
 
 
 def encode_frame_jpeg(

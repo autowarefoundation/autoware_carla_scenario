@@ -25,6 +25,7 @@ from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
 from ..driver.renderer import RendererDataBuilder
 from ..driver.observation import (
+    AccelerationEstimate,
     ego_observation,
     encode_frame_jpeg,
     lidar_points_to_rig,
@@ -106,6 +107,9 @@ class CarlaDriverEntity(EgoVehicle):
         self._initial_speeds: Dict[int, float] = {}
         #: The run-up onto the spawn pose while it lasts (``warmup_s``).
         self._warmup: Optional[PolicyWarmup] = None
+        #: What the policy is told the ego accelerates at: Autoware's estimate,
+        #: not CARLA's per-step one.
+        self._acceleration = AccelerationEstimate()
 
     # ------------------------------------------------------------------
     # Properties
@@ -211,6 +215,7 @@ class CarlaDriverEntity(EgoVehicle):
 
         self._attach_cameras(world, actor)
         self._world = world
+        self._acceleration.reset()
 
         # CARLA rebuilds the map object on every ``get_map()`` call, so it is fetched
         # once here and reused for the rolling route walk.
@@ -387,7 +392,9 @@ class CarlaDriverEntity(EgoVehicle):
         """Return the ego's state at the current simulation time."""
         if self._warmup is not None:
             actor = _CarriedActor(actor, self._warmup)
-        return ego_observation(actor, self._sim_time_us, self._rear_axle_offset_m)
+        return self._acceleration(
+            ego_observation(actor, self._sim_time_us, self._rear_axle_offset_m)
+        )
 
     def _submit_route(self, actor: "carla.Actor", observation: EgoObservation) -> None:
         """Send the road ahead of the ego to the policy.
@@ -499,6 +506,7 @@ class CarlaDriverEntity(EgoVehicle):
             observation.speed_mps,
             _FIXED_DELTA_S,
             yaw_rate_rps=float(observation.angular_velocity[2]),
+            now_us=observation.timestamp_us,
         )
         actor.apply_control(command.to_carla_control())
 
