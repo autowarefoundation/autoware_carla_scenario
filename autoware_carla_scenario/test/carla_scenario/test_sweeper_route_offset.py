@@ -81,6 +81,26 @@ class TestRouteOffsetPose:
         assert side == "right"
         assert alignment < -0.9  # it runs the other way
 
+    def test_inside_a_junction_the_oncoming_lane_goes_straight_through(
+        self, nishishinjuku
+    ) -> None:
+        # 296 runs straight through a junction; across it, so does 298 the
+        # other way.  A turning junction lanelet crosses, but a straight one is
+        # the oncoming lane there.
+        lanelet_map, graph = nishishinjuku
+        lanelet_id, _ = route_offset_pose(
+            296,
+            lanelet_map,
+            graph,
+            distance=9.7,
+            side="opposite",
+            traffic_side="left",
+        )
+        assert lanelet_id == 298
+        assert lanelet_map.laneletLayer[298].attributes["turn_direction"] == "straight"
+        side, alignment = _beside(lanelet_map, 296, 9.7, 298)
+        assert (side, alignment < -0.9) == ("right", True)
+
     def test_where_traffic_keeps_right_it_is_looked_for_on_the_left(
         self, nishishinjuku
     ) -> None:

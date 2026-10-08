@@ -441,6 +441,13 @@ def _unit_direction(points: list[Any], index: int) -> tuple[float, float]:
     return dx / norm, dy / norm
 
 
+def _turns(lanelet: Any) -> bool:
+    """Whether *lanelet* turns through a junction (left or right, not straight)."""
+    if "turn_direction" not in lanelet.attributes:
+        return False
+    return lanelet.attributes["turn_direction"] in ("left", "right")
+
+
 def _opposite_lanelet(
     lanelet: Any, lanelet_map: Any, traffic_side: str = "right"
 ) -> Any | None:
@@ -451,8 +458,9 @@ def _opposite_lanelet(
     has a median), so it is answered geometrically: the closest lanelet whose
     middle lies on the centre-line side within
     :data:`_OPPOSITE_SEARCH_RADIUS_M` and points the other way -- the left
-    where traffic keeps right, the right where it keeps left.  Junction
-    lanelets are skipped -- they cross, not oppose.
+    where traffic keeps right, the right where it keeps left.  Turning junction
+    lanelets are skipped -- they cross, not oppose -- but one going straight
+    through is the oncoming lane inside the junction.
     """
     toward = 1.0 if traffic_side == "right" else -1.0
     centre = list(lanelet2.geometry.to2D(lanelet.centerline))
@@ -465,7 +473,7 @@ def _opposite_lanelet(
         lanelet2.core.BasicPoint2d(middle.x, middle.y), _OPPOSITE_CANDIDATES
     )
     for other in nearby:
-        if other.id == lanelet.id or "turn_direction" in other.attributes:
+        if other.id == lanelet.id or _turns(other):
             continue
         points = list(lanelet2.geometry.to2D(other.centerline))
         if len(points) < 2:
