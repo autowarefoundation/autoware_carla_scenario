@@ -247,7 +247,7 @@ class _FakeEgo:
     """An ego that becomes ready after a given number of ticks."""
 
     attaches_to_existing_actor = True
-    carried_actor_ids = frozenset()
+    carried_actor_ids: frozenset[int] = frozenset()
     actor = None
 
     def __init__(self, ready_after: int, gives_up_after: int | None = None) -> None:

@@ -561,6 +561,7 @@ def _warmup_world(others: Sequence[MagicMock] = ()) -> Tuple[MagicMock, MagicMoc
 def _warming_entity(speed_mps: float = 5.0, warmup_s: float = 1.0):  # noqa: ANN202
     entity, client = _entity(warmup_s=warmup_s, policy_timestep_s=0.1)
     actor = entity.actor
+    assert actor is not None
     actor.id, actor.type_id = 1, "vehicle.lincoln.mkz"
     _placed(actor)
     entity.set_initial_speeds({1: speed_mps})
