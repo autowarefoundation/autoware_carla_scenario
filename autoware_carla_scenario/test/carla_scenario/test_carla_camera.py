@@ -78,10 +78,20 @@ def test_get_image_produces_a_bgr_array() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _attach(config: CarlaCameraSensorConfig) -> dict[str, str]:
-    """Attach *config* to a fake world; the attributes set on its blueprint."""
+def _attach(
+    config: CarlaCameraSensorConfig, missing: frozenset[str] = frozenset()
+) -> dict[str, str]:
+    """Attach *config* to a fake world whose camera lacks *missing*; the
+    attributes set on its blueprint."""
     blueprint = SimpleNamespace(attributes={})
-    blueprint.set_attribute = blueprint.attributes.__setitem__
+    blueprint.has_attribute = lambda name: name not in missing
+
+    def set_attribute(name: str, value: str) -> None:
+        if name in missing:  # what CARLA does: IndexError
+            raise IndexError(f"blueprint has no attribute {name!r}")
+        blueprint.attributes[name] = value
+
+    blueprint.set_attribute = set_attribute
     world = SimpleNamespace(
         get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
         spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
@@ -121,3 +131,16 @@ def test_attach_sets_the_attributes_a_config_overrides() -> None:
 def test_every_blueprint_attribute_is_a_config_field() -> None:
     fields = set(CarlaCameraSensorConfig.__dataclass_fields__)
     assert set(carla_camera.BLUEPRINT_ATTRIBUTES) <= fields
+
+
+def test_an_attribute_the_server_lacks_is_skipped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CARLA's nightly camera has no bloom_intensity: a config naming it still attaches."""
+    attributes = _attach(
+        CarlaCameraSensorConfig(bloom_intensity=0.675, iso=100.0),
+        missing=frozenset({"bloom_intensity"}),
+    )
+    assert "bloom_intensity" not in attributes
+    assert attributes["iso"] == "100.0"
+    assert "bloom_intensity" in caplog.text
