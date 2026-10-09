@@ -226,8 +226,9 @@ class DriverClientConfig:
     """
 
     map_formats: Tuple[str, ...] = ("lanelet2",)
-    """The formats to write, by roadgen exporter name.  The OpenDRIVE source and
-    roadgen's IR are always written as well; a policy resolves lights through them."""
+    """The formats to write, by roadgen exporter name.  The OpenDRIVE source is
+    always written as well, and with any format roadgen converts, roadgen's IR and
+    read trace too; a policy resolves lights through them."""
 
     lanelet2_path: Optional[str] = None
     """A local Lanelet2 (``.osm``) file written into the map set as its Lanelet2 map,
@@ -236,13 +237,18 @@ class DriverClientConfig:
     Implies ``lanelet2`` in :attr:`map_formats`.  The file carries no roadgen
     trace, so the stop lines a policy resolves against it hold each light's stop
     point and OpenDRIVE lane but no lanelet ids.  roadgen is needed only for the
-    other formats :attr:`map_formats` names, if any.
+    other formats :attr:`map_formats` names, if any.  Needs :attr:`map_dir`.
     """
 
     def __post_init__(self) -> None:
         ids = [lidar.logical_id for lidar in self.lidars]
         if len(set(ids)) != len(ids):
             raise ValueError(f"LiDAR logical ids must be unique, got {ids}")
+        if self.lanelet2_path is not None and self.map_dir is None:
+            raise ValueError(
+                "driver.lanelet2_path is written into the map set under "
+                "driver.map_dir, which is unset; set map_dir too"
+            )
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverClientConfig":

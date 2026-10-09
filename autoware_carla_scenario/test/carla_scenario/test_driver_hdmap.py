@@ -206,7 +206,8 @@ def test_a_given_lanelet2_map_is_copied_without_roadgen(
     manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
     assert manifest["ir"] is None and manifest["read_trace"] is None
     entry = manifest["formats"]["lanelet2"]
-    assert entry["trace"] is None and entry["provided"] == str(local_osm.resolve())
+    assert entry["trace"] is None and entry["provided"] is True
+    assert "projector" not in entry
     assert (maps / map_id / entry["path"]).read_text() == _LOCAL_OSM
 
     # The policy still gets the stop point and OpenDRIVE lane, but no lanelet.
@@ -232,6 +233,22 @@ def test_a_given_lanelet2_map_sits_beside_converted_formats(
         [_light_on_road_0(opendrive)]
     )
     assert stop.lane_ids, "the converted format still resolves lanes"
+
+
+def test_the_projector_beside_a_given_map_is_copied(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    (local_osm.parent / "map_projector_info.yaml").write_text("projector_type: MGRS\n")
+    maps = tmp_path / "maps"
+    map_id = export_map(opendrive, "Town", maps, lanelet2_path=local_osm)
+    manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
+    projector = maps / map_id / manifest["formats"]["lanelet2"]["projector"]
+    assert projector.read_text() == "projector_type: MGRS\n"
+
+
+def test_a_given_lanelet2_map_needs_map_dir() -> None:
+    with pytest.raises(ValueError, match="map_dir"):
+        DriverClientConfig(lanelet2_path="/maps/lanelet2_map.osm")
 
 
 def test_another_lanelet2_file_gets_another_set(

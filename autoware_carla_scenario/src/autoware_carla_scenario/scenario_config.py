@@ -386,8 +386,8 @@ class DriverConfig:
 
     #: A local Lanelet2 (``.osm``) file written into the map set as it is,
     #: instead of the one roadgen converts from the world's OpenDRIVE.  ``null``
-    #: converts it with roadgen.  It carries no roadgen trace, so stop lines
-    #: resolved against it name no lanelets.
+    #: converts it with roadgen.  Needs ``map_dir``.  It carries no roadgen
+    #: trace, so stop lines resolved against it name no lanelets.
     lanelet2_path: str | None = None
 
     #: Trajectory-following gains.

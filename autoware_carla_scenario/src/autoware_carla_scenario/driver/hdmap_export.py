@@ -15,7 +15,8 @@ element became. Chained, they are how a light named by OpenDRIVE finds its
 stop line in, say, a Lanelet2 map.
 
 A Lanelet2 map can be given instead of converted (``driver.lanelet2_path``):
-the file is copied into the set as it is, with no trace, so a policy still gets
+the file (and the ``map_projector_info.yaml`` beside it, if any) is copied into
+the set as it is, with no trace, so a policy still gets
 each light's stop point but not the lanelet it lies on. A set whose every format
 is given that way is written without roadgen, and holds no IR or read trace.
 
@@ -49,6 +50,8 @@ IR_FILE = "map.ir.json"
 #: because the read trace names it and records its digest.
 READ_FILE = "map.roadgen.xodr"
 READ_TRACE_FILE = "map.roadgen.xodr.read.trace.json"
+#: The projection a given Lanelet2 map is read with, copied when it sits beside it.
+PROJECTOR_FILE = "map_projector_info.yaml"
 
 #: Where each format is written, relative to the set's directory.
 MAP_FORMATS: Dict[str, str] = {
@@ -62,18 +65,18 @@ MAP_FORMATS: Dict[str, str] = {
 def map_id_for(
     map_name: str, opendrive: str, provided: Optional[Mapping[str, bytes]] = None
 ) -> str:
-    """``<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>``.
+    """``<map name>-<first 12 hex digits of a SHA-256 of the map's content>``.
 
-    The digest makes the id name the map's content, so a driver holding an
-    older copy of a map with the same name cannot mistake it for this one.
-    ``provided`` -- format name to file content, for formats given rather than
-    converted -- is digested too, so a different Lanelet2 file gets its own id.
+    The content is the OpenDRIVE, and with ``provided`` -- format name to the
+    SHA-256 of a file given rather than converted -- those digests too; without
+    it the id digests the OpenDRIVE alone. Either way the id names the map's
+    content, so a driver holding an older copy of a map with the same name (or
+    one given another Lanelet2 file) cannot mistake it for this one.
     """
     name = re.sub(r"[^A-Za-z0-9_.-]+", "_", map_name.rsplit("/", 1)[-1]) or "map"
     digest = hashlib.sha256(opendrive.encode())
-    for format_name, content in sorted((provided or {}).items()):
-        digest.update(b"\0" + format_name.encode() + b"\0")
-        digest.update(hashlib.sha256(content).digest())
+    for format_name, file_digest in sorted((provided or {}).items()):
+        digest.update(b"\0" + format_name.encode() + b"\0" + file_digest)
     return f"{name}-{digest.hexdigest()[:12]}"
 
 
@@ -88,25 +91,26 @@ def export_map(
 
     With ``lanelet2_path``, that file is the set's Lanelet2 map, copied as it
     is rather than converted by roadgen (and ``lanelet2`` is written even if
-    ``formats`` leaves it out). A complete set already holding every format is
-    reused as it is. A set is built in a scratch directory beside its
-    destination and moved into place whole, so a reader never sees one half
-    written.
+    ``formats`` leaves it out), together with the ``map_projector_info.yaml``
+    beside it, if any. A complete set already holding every format is reused
+    as it is. A set is built in a scratch directory beside its destination and
+    moved into place whole, so a reader never sees one half written.
     """
-    provided_paths: Dict[str, Path] = {}
+    provided: Dict[str, Path] = {}
     if lanelet2_path is not None:
-        provided_paths["lanelet2"] = Path(lanelet2_path).expanduser()
-    formats = tuple(dict.fromkeys((*formats, *provided_paths)))
+        provided["lanelet2"] = Path(lanelet2_path).expanduser()
+    formats = tuple(dict.fromkeys((*formats, *provided)))
     unknown = sorted(set(formats) - set(MAP_FORMATS))
     if unknown:
         raise ValueError(
             f"unknown map format(s) {unknown}; known: {sorted(MAP_FORMATS)}"
         )
-    for name, path in provided_paths.items():
+    for name, path in provided.items():
         if not path.is_file():
             raise FileNotFoundError(f"the {name} map {path} is not a file")
-    provided = {name: path.read_bytes() for name, path in provided_paths.items()}
-    map_id = map_id_for(map_name, opendrive, provided)
+    map_id = map_id_for(
+        map_name, opendrive, {name: _file_digest(p) for name, p in provided.items()}
+    )
     root = Path(map_dir)
     target = root / map_id
     if _has_formats(target, formats):
@@ -120,7 +124,6 @@ def export_map(
     with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
         out = Path(scratch)
         (out / SOURCE_FILE).write_text(opendrive, encoding="utf-8")
-        written: Dict[str, Dict[str, Optional[str]]] = {}
         manifest: Dict[str, Any] = {
             "map_id": map_id,
             "map_name": map_name,
@@ -129,6 +132,7 @@ def export_map(
             "ir": None,
             "read_trace": None,
         }
+        written: Dict[str, Dict[str, Any]] = {}
         if roadgen is not None:
             sanitized = out / READ_FILE
             sanitized.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
@@ -141,17 +145,10 @@ def export_map(
             manifest["roadgen_version"] = getattr(roadgen, "__version__", "")
             manifest["ir"] = IR_FILE
             manifest["read_trace"] = READ_TRACE_FILE
-        for name in formats:
-            if name in provided:
-                (out / MAP_FORMATS[name]).write_bytes(provided[name])
-                written[name] = {
-                    "path": MAP_FORMATS[name],
-                    "trace": None,
-                    "provided": str(provided_paths[name].resolve()),
-                }
-            else:
-                written[name] = _export(world_map, name, out)
-        manifest["formats"] = written
+            written = {name: _export(world_map, name, out) for name in converted}
+        for name, path in provided.items():
+            written[name] = _copy_provided(path, out / MAP_FORMATS[name])
+        manifest["formats"] = {name: written[name] for name in formats}
         (out / MANIFEST_FILE).write_text(
             json.dumps(manifest, indent=1), encoding="utf-8"
         )
@@ -164,6 +161,29 @@ def export_map(
         out.mkdir()
     logger.info("wrote map %s (%s) to %s", map_id, ", ".join(formats), target)
     return map_id
+
+
+def _file_digest(path: Path) -> bytes:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.digest()
+
+
+def _copy_provided(source: Path, destination: Path) -> Dict[str, Any]:
+    """Copy a given map file, and the projector beside it; its manifest entry."""
+    shutil.copyfile(source, destination)
+    entry: Dict[str, Any] = {
+        "path": destination.name,
+        "trace": None,
+        "provided": True,
+    }
+    projector = source.parent / PROJECTOR_FILE
+    if projector.is_file():
+        shutil.copyfile(projector, destination.parent / PROJECTOR_FILE)
+        entry["projector"] = PROJECTOR_FILE
+    return entry
 
 
 def _import_roadgen(converted: Iterable[str]) -> Any:
