@@ -1,4 +1,8 @@
-"""Guards on the vendored alpasim protobuf definitions and their generated modules."""
+"""The generated ``AutowareBridge`` protobuf modules match their proto.
+
+The alpasim ``egodriver`` contract is checked by carla-driver-interface, which
+vendors and generates it.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from autoware_carla_egodriver.protocol import egodriver_pb2, egodriver_pb2_grpc
-
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 _COMPILE_SCRIPT = _PACKAGE_ROOT / "scripts" / "compile_protos.py"
-#: The vendored egodriver contract lives with the package implementing both its ends.
-_EGODRIVER_PROTO = _PACKAGE_ROOT.parent / "autoware_carla_egodriver" / "proto"
 
 
 def _load_compiler():
@@ -27,62 +27,8 @@ def _load_compiler():
     return module
 
 
-# ---------------------------------------------------------------------------
-# Wire identity
-# ---------------------------------------------------------------------------
-
-
-def test_service_keeps_its_upstream_name() -> None:
-    """The full service name is the contract; renaming it breaks every peer."""
-    service = egodriver_pb2.DESCRIPTOR.services_by_name["EgodriverService"]
-    assert service.full_name == "egodriver.EgodriverService"
-
-
-def test_descriptor_keeps_its_upstream_path() -> None:
-    """Descriptor names must match alpasim's so registries agree."""
-    assert egodriver_pb2.DESCRIPTOR.name == "alpasim_grpc/v0/egodriver.proto"
-
-
-def test_every_contract_rpc_is_generated() -> None:
-    expected = {
-        "start_session",
-        "close_session",
-        "submit_image_observation",
-        "submit_egomotion_observation",
-        "submit_route",
-        "submit_recording_ground_truth",
-        "drive",
-        "get_version",
-    }
-    service = egodriver_pb2.DESCRIPTOR.services_by_name["EgodriverService"]
-    assert {method.name for method in service.methods} == expected
-
-
-def test_stub_and_servicer_are_available() -> None:
-    assert hasattr(egodriver_pb2_grpc, "EgodriverServiceStub")
-    assert hasattr(egodriver_pb2_grpc, "EgodriverServiceServicer")
-    assert hasattr(egodriver_pb2_grpc, "add_EgodriverServiceServicer_to_server")
-
-
-# ---------------------------------------------------------------------------
-# Provenance and freshness
-# ---------------------------------------------------------------------------
-
-
-def test_vendored_protos_are_present() -> None:
-    proto_dir = _EGODRIVER_PROTO / "alpasim_grpc" / "v0"
-    names = {path.name for path in proto_dir.glob("*.proto")}
-    assert names == {"common.proto", "sensorsim.proto", "egodriver.proto"}
-
-
-def test_vendored_protos_keep_their_licence_header() -> None:
-    proto_dir = _EGODRIVER_PROTO / "alpasim_grpc" / "v0"
-    for path in proto_dir.glob("*.proto"):
-        assert "SPDX-License-Identifier: Apache-2.0" in path.read_text()
-
-
 def test_generated_modules_are_up_to_date() -> None:
-    """Regenerating from the vendored protos must not change the committed output."""
+    """Regenerating from the protos must not change the committed output."""
     pytest.importorskip(
         "grpc_tools", reason="grpcio-tools is only installed with the dev dependencies"
     )

@@ -4,9 +4,9 @@
 authored in this repository; its Python modules are generated into
 `src/autoware_carla_scenario/autoware_bridge/_proto/`.
 
-The alpasim `egodriver` contract (vendored from NVlabs/alpasim and
-hakuturu583/carla_driver_interface) lives with the package that implements both of its
-ends: see `autoware_carla_egodriver/proto/README.md` at the workspace root.
+The alpasim `egodriver` contract (vendored from NVlabs/alpasim) lives with the package
+that implements both of its ends,
+[carla-driver-interface](https://github.com/hakuturu583/carla_driver_interface).
 
 Regenerate every group with:
 

@@ -30,7 +30,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..utils.traffic_light import traffic_light_state_name
-from autoware_carla_egodriver.protocol import carla_driver_pb2, common_pb2
+from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
 
 from .base import DriverClientConfig
 from .geometry import Pose

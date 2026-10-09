@@ -2,11 +2,11 @@
 
 This is the *runtime* half of the conversation: the scenario framework renders
 observations from CARLA and asks a driver policy -- running as a separate gRPC server,
-for example ``autoware-carla-egodriver serve`` -- what to do next.
+for example ``carla-driver-interface serve`` -- what to do next.
 
-The generated stubs come from the alpasim protos vendored in ``autoware-carla-egodriver``,
+The generated stubs come from the alpasim protos vendored in ``carla-driver-interface``,
 so the messages are wire compatible with an upstream alpasim driver as well; see
-``autoware_carla_egodriver/proto/README.md``.
+``carla_driver_interface/proto/README.md``.
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ import numpy as np
 from google.protobuf.message import DecodeError
 from numpy.typing import NDArray
 
-from autoware_carla_egodriver.policies import load_policy
-from autoware_carla_egodriver.server import build_server
-from autoware_carla_egodriver.protocol import (
+from carla_driver_interface.policies import load_policy
+from carla_driver_interface.server import build_server
+from carla_driver_interface.protocol import (
     EGODRIVER_SERVICE_FULL_NAME,
     MAX_MESSAGE_BYTES,
     carla_driver_pb2,

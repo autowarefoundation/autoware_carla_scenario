@@ -5,7 +5,7 @@ wire; this is the CARLA counterpart. :class:`CarlaDriverEntity` takes the
 world's OpenDRIVE (``carla.Map.to_opendrive()``), has roadgen convert it into
 whatever format the policy reads, and writes the result under
 ``<map_dir>/<map_id>/`` (``driver.map_dir``). Each policy step then carries only
-what changes -- the traffic lights -- which ``autoware_carla_egodriver.hdmap``
+what changes -- the traffic lights -- which ``carla_driver_interface.hdmap``
 resolves against these files.
 
 Every set also holds the OpenDRIVE itself, roadgen's IR and two kinds of

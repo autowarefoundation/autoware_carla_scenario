@@ -2,10 +2,10 @@
 
 The scenario framework plays the *runtime* role of the alpasim ``egodriver`` contract:
 it owns the CARLA world, renders observations, and asks a policy what to do.  The policy
-runs as a separate gRPC server, typically built on ``autoware-carla-egodriver`` (the
+runs as a separate gRPC server, typically built on ``carla-driver-interface`` (the
 policy-side package in this workspace)::
 
-    autoware-carla-egodriver serve --policy route_follower --port 50051
+    carla-driver-interface serve --policy route_follower --port 50051
 
 Usage from a scenario::
 

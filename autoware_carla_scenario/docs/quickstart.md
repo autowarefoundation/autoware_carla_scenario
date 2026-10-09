@@ -27,7 +27,7 @@ autoware-carla-scenario = { git = "https://github.com/autowarefoundation/autowar
 uv sync
 ```
 
-This also installs `autoware-carla-egodriver`, the policy side of the gRPC contract,
+This also installs `carla-driver-interface`, the policy side of the gRPC contract,
 and the CARLA client, typesafe_carla. Its wheel carries a prebuilt CPython package.
 Where that package does not match the installed toolchain, the first run that
 imports the client builds it once instead (15-50 min, ~14 GB of memory, needs `cc`)
@@ -92,8 +92,8 @@ returns a trajectory in the rig frame (x forward, y left):
 
 ```python
 # src/my_policy_tests/__init__.py
-from autoware_carla_egodriver.driver import BaseDriver, DriveContext, DriveResult
-from autoware_carla_egodriver.geometry import Pose, Trajectory
+from carla_driver_interface.driver import BaseDriver, DriveContext, DriveResult
+from carla_driver_interface.geometry import Pose, Trajectory
 
 
 class MyPolicy(BaseDriver):
@@ -134,7 +134,7 @@ model in another environment. Leave `driver.policy` unset and point
 
 ```bash
 # Terminal 1 -- the policy
-uv run autoware-carla-egodriver serve --policy my_policy_tests:MyPolicy --port 50051
+uv run carla-driver-interface serve --policy my_policy_tests:MyPolicy --port 50051
 
 # Terminal 2 -- the scenario
 uv run scenario scenario=cut_in/left map=town10hd_opt \

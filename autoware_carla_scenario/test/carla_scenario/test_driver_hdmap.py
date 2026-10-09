@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from autoware_carla_egodriver.hdmap import MapFiles
-from autoware_carla_egodriver.protocol import (
+from carla_driver_interface.hdmap import MapFiles
+from carla_driver_interface.protocol import (
     StopPoint,
     TrafficLight,
     TrafficLightState,
