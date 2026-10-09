@@ -123,6 +123,7 @@ class DriverConfig:
     lidars: List[DriverLidarSpec] = List[DriverLidarSpec]()
     map_dir: Optional[str] = None
     map_formats: List[str] = ["lanelet2"]
+    lanelet2_path: Optional[str] = None
     control: DriverControlSpec = DriverControlSpec()
 
 

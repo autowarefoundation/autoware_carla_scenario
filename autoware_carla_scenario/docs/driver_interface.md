@@ -277,6 +277,25 @@ class MyPolicy(BaseDriver):
             stop.state, stop.lane_ids, stop.position_local
 ```
 
+To hand the policy a Lanelet2 map of your own instead of roadgen's conversion, name it
+with `driver.lanelet2_path`:
+
+```yaml
+driver:
+  map_dir: /shared/maps
+  lanelet2_path: /path/to/lanelet2_map.osm
+```
+
+The file is copied into the set as `lanelet2_map.osm`, as it is (with the
+`map_projector_info.yaml` beside it, if any), and its content is part
+of `map_id`, so another file gets another set. roadgen is not needed unless
+`driver.map_formats` names other formats too. The file carries no roadgen trace, so
+`ctx.stop_lines()` still gives each light's state, stop point and OpenDRIVE lane, but
+`lane_ids`, `rule_ids` and `light_ids` are empty (the manifest marks the format
+`"provided": true`, its trace empty): match the
+stop point to your map's lanelets yourself. Nothing checks that the file and the world's
+OpenDRIVE describe the same roads in the same frame.
+
 ### Diagnostics coming back
 
 `DriveResponse.debug_info.unstructured_debug_info` is decoded as

@@ -376,6 +376,7 @@ class CarlaDriverEntity(EgoVehicle):
             str(self._map.name),
             self._config.map_dir,
             self._config.map_formats,
+            lanelet2_path=self._config.lanelet2_path,
         )
 
     def _lidar_sweeps(self) -> List[LidarSweep]:

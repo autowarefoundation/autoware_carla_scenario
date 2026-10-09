@@ -9,6 +9,7 @@ CARLA reports, to the Lanelet2 lanelet and regulatory element a policy reads.
 from __future__ import annotations
 
 import json
+import sys
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from types import SimpleNamespace
@@ -175,6 +176,98 @@ def test_a_light_resolves_to_its_lanelet_and_regulatory_element(
 
 
 # ---------------------------------------------------------------------------
+# A Lanelet2 map given instead of converted
+# ---------------------------------------------------------------------------
+
+_LOCAL_OSM = (
+    "<?xml version='1.0'?>\n<osm version='0.6'><node id='1' lat='0' lon='0'/></osm>\n"
+)
+
+
+@pytest.fixture
+def local_osm(tmp_path: Path) -> Path:
+    path = tmp_path / "local" / "lanelet2_map.osm"
+    path.parent.mkdir()
+    path.write_text(_LOCAL_OSM, encoding="utf-8")
+    return path
+
+
+def test_a_given_lanelet2_map_is_copied_without_roadgen(
+    opendrive: str,
+    local_osm: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "roadgen", None)  # importing it now fails
+    maps = tmp_path / "maps"
+    map_id = export_map(opendrive, "Town", maps, formats=(), lanelet2_path=local_osm)
+
+    assert map_id != map_id_for("Town", opendrive), "the file is not in the id"
+    manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
+    entry = manifest["formats"]["lanelet2"]
+    assert entry["provided"] is True and "projector" not in entry
+    assert manifest["roadgen_version"] == ""
+    assert (maps / map_id / entry["path"]).read_text() == _LOCAL_OSM
+
+    # The policy still gets the stop point and OpenDRIVE lane, but no lanelet.
+    # An unchanged reader opens the set: its IR and traces are there, empty.
+    map_files = MapFiles.open(maps, map_id)
+    [stop] = map_files.stop_lines([_light_on_road_0(opendrive)])
+    assert stop.position_local.tolist() == [99.0, -1.75, 0.0]
+    assert (stop.road_id, stop.lane_id) == (0, -1)
+    assert stop.lane_ids == stop.rule_ids == stop.light_ids == ()
+
+
+def test_a_given_lanelet2_map_sits_beside_converted_formats(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    map_id = export_map(
+        opendrive, "Town", tmp_path, formats=("opendrive",), lanelet2_path=local_osm
+    )
+    manifest = json.loads((tmp_path / map_id / MANIFEST_FILE).read_text())
+    assert set(manifest["formats"]) == {"opendrive", "lanelet2"}
+    assert manifest["formats"]["opendrive"]["trace"]
+    assert manifest["roadgen_version"]
+    [stop] = MapFiles.open(tmp_path, map_id, "opendrive").stop_lines(
+        [_light_on_road_0(opendrive)]
+    )
+    assert stop.lane_ids, "the converted format still resolves lanes"
+
+
+def test_the_projector_beside_a_given_map_is_copied(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    (local_osm.parent / "map_projector_info.yaml").write_text("projector_type: MGRS\n")
+    maps = tmp_path / "maps"
+    map_id = export_map(opendrive, "Town", maps, lanelet2_path=local_osm)
+    manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
+    projector = maps / map_id / manifest["formats"]["lanelet2"]["projector"]
+    assert projector.read_text() == "projector_type: MGRS\n"
+
+
+def test_a_given_lanelet2_map_needs_map_dir() -> None:
+    with pytest.raises(ValueError, match="map_dir"):
+        DriverClientConfig(lanelet2_path="/maps/lanelet2_map.osm")
+
+
+def test_another_lanelet2_file_gets_another_set(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    maps = tmp_path / "maps"
+    first = export_map(opendrive, "Town", maps, lanelet2_path=local_osm)
+    local_osm.write_text(_LOCAL_OSM.replace("lat='0'", "lat='1'"), encoding="utf-8")
+    second = export_map(opendrive, "Town", maps, lanelet2_path=local_osm)
+    assert first != second
+    assert {p.name for p in maps.iterdir()} == {first, second}
+
+
+def test_a_missing_lanelet2_file_is_refused(opendrive: str, tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="not a file"):
+        export_map(opendrive, "Town", tmp_path, lanelet2_path=tmp_path / "no.osm")
+    assert not any(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------------------
 # What the runtime sends
 # ---------------------------------------------------------------------------
 
@@ -226,3 +319,20 @@ def test_the_entity_writes_the_worlds_map(opendrive: str, tmp_path: Path) -> Non
     map_id = entity._write_map()  # noqa: SLF001
     assert map_id == map_id_for("Carla/Maps/Town", opendrive)
     assert (tmp_path / map_id / MANIFEST_FILE).is_file()
+
+
+def test_the_entity_writes_a_given_lanelet2_map(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
+
+    config = DriverClientConfig.from_mapping(
+        {"map_dir": str(tmp_path / "maps"), "lanelet2_path": str(local_osm)}
+    )
+    entity = CarlaDriverEntity(config, client=MagicMock())
+    entity._map = SimpleNamespace(  # noqa: SLF001
+        name="Carla/Maps/Town", to_opendrive=lambda: opendrive
+    )
+    map_id = entity._write_map()  # noqa: SLF001
+    written = tmp_path / "maps" / map_id / "lanelet2_map.osm"
+    assert written.read_text() == _LOCAL_OSM
