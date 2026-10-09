@@ -10,6 +10,8 @@ when ``CARLA_EXECUTABLE`` is not set::
 
 The archive (~16 GB, ~30 GB unpacked) is unpacked while it downloads, so it is
 never kept on disk; the new tree replaces the old one only once it is complete.
+A connection that drops mid-download is picked up where it stopped with a range
+request, so a flaky link costs a retry rather than the whole transfer.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
 """
 
@@ -22,8 +24,9 @@ import os
 import shutil
 import sys
 import tarfile
+import time
 from pathlib import Path, PurePosixPath
-from typing import IO, Optional, cast
+from typing import IO, Callable, Optional, cast
 
 HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
 """Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
@@ -42,6 +45,15 @@ _STAMP = ".download.json"
 
 _UNPACKED_PER_PACKED = 2.0
 """The nightly unpacks to about twice its archive."""
+
+_TIMEOUT = 60.0
+"""Seconds a read may stall before the connection counts as dropped."""
+
+_RETRIES = 8
+"""Reconnections in a row that may fail to deliver a byte before giving up."""
+
+_RETRY_DELAY = 2.0
+"""Seconds before the first reconnection; each failed one doubles it, up to 60."""
 
 
 def install_dir() -> Path:
@@ -88,7 +100,7 @@ def install(
         url, headers={} if force else _conditions(target, url)
     )
     try:
-        response = urllib.request.urlopen(request)  # noqa: S310 -- a URL the user chose
+        response = urllib.request.urlopen(request, timeout=_TIMEOUT)  # noqa: S310 -- a URL the user chose
     except urllib.error.HTTPError as exc:
         if exc.code != 304:  # 304 Not Modified: the server says the install is current
             raise
@@ -112,9 +124,10 @@ def install(
             _check_room(target.parent, size)
 
         print(f"Downloading {url}\n         to {target}")
+        stream = _ResumingStream(response, url, source, size, tqdm.write)
         try:
             with tqdm.wrapattr(
-                response,
+                stream,
                 "read",
                 total=size,
                 unit="B",
@@ -126,13 +139,123 @@ def install(
                 raise RuntimeError(
                     f"{url} has no {LAUNCHER}: not a CARLA Linux package"
                 )
-        except BaseException:  # Ctrl-C and a dropped connection too: no 30 GB left over
+        except BaseException:  # Ctrl-C and a dead connection too: no 30 GB left over
             shutil.rmtree(staging, ignore_errors=True)
             raise
+        finally:
+            stream.close()
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
     shutil.rmtree(target, ignore_errors=True)
     staging.rename(target)
     return target / LAUNCHER
+
+
+class _ResumingStream:
+    """The body of *response*, reconnecting with a range request when it drops.
+
+    ``tarfile`` in ``r|gz`` mode only reads forward, so when a read fails or the
+    body ends short of its Content-Length, the rest is asked for with
+    ``Range: bytes=<read so far>-`` and the stream carries on as if nothing
+    happened. ``If-Range`` makes a download replaced in the meantime come back
+    whole (200) instead of spliced onto the old one, which ends the install.
+    """
+
+    def __init__(
+        self,
+        response: IO[bytes],
+        url: str,
+        source: dict[str, Optional[str]],
+        size: Optional[int],
+        log: Callable[[str], None],
+    ) -> None:
+        self._response = response
+        self._url = url
+        self._size = size
+        self._log = log
+        self._offset = 0
+        etag = source["etag"]
+        # If-Range takes a strong ETag or a date; a weak ETag never matches.
+        self._validator = (
+            etag if etag and not etag.startswith("W/") else source["last_modified"]
+        )
+        self._resumable = (
+            url.lower().startswith(("http://", "https://"))
+            and size is not None
+            and self._validator is not None
+        )
+
+    def read(self, amount: int = -1) -> bytes:
+        failures = 0
+        while True:
+            try:
+                data = self._response.read(amount)
+            except (OSError, http.client.HTTPException) as exc:
+                if not self._resumable:
+                    raise
+                error: Optional[BaseException] = exc
+            else:
+                if data or self._size is None or self._offset >= self._size:
+                    self._offset += len(data)
+                    return data
+                if not self._resumable:
+                    return data  # tarfile reports the archive as truncated
+                error = None
+            failures += 1
+            self._reconnect(failures, error)
+
+    def _reconnect(self, failures: int, error: Optional[BaseException]) -> None:
+        import urllib.request  # noqa: PLC0415
+
+        while True:
+            if failures > _RETRIES:
+                raise RuntimeError(
+                    f"connection lost at {self._offset} of {self._size} bytes; "
+                    f"gave up after {_RETRIES} reconnections"
+                ) from error
+            reason = f" ({error})" if error is not None else ""
+            self._log(
+                f"Connection lost at {self._offset} of {self._size} bytes{reason}; "
+                f"resuming (attempt {failures}/{_RETRIES})"
+            )
+            time.sleep(min(_RETRY_DELAY * 2 ** (failures - 1), 60.0))
+            self.close()
+            request = urllib.request.Request(
+                self._url,
+                headers={
+                    "Range": f"bytes={self._offset}-",
+                    "If-Range": str(self._validator),
+                },
+            )
+            try:
+                response = urllib.request.urlopen(request, timeout=_TIMEOUT)  # noqa: S310
+            except (OSError, http.client.HTTPException) as exc:
+                error = exc
+                failures += 1
+                continue
+            first = _range_start(response.headers.get("Content-Range"))
+            if response.status != 206 or first != self._offset:
+                response.close()
+                raise RuntimeError(
+                    f"{self._url} changed during the download or cannot resume "
+                    f"(HTTP {response.status}); run scenario-setup again"
+                ) from error
+            self._response = response
+            return
+
+    def close(self) -> None:
+        try:
+            self._response.close()
+        except (OSError, http.client.HTTPException):
+            pass
+
+
+def _range_start(content_range: Optional[str]) -> Optional[int]:
+    """The first byte of a ``Content-Range: bytes <first>-<last>/<size>`` answer."""
+    if not content_range:
+        return None
+    unit, _, span = content_range.strip().partition(" ")
+    first, _, _ = span.partition("-")
+    return int(first) if unit == "bytes" and first.isdigit() else None
 
 
 def _stamp(target: Path) -> dict[str, Optional[str]]:

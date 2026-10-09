@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import io
 import json
-from email.message import Message
+import os
 import tarfile
+import threading
+from collections.abc import Iterator
+from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -119,7 +124,7 @@ def test_an_unchanged_download_is_not_fetched(
     stamp = json.loads((install_dir() / ".download.json").read_text())
     asked: list[urllib.request.Request] = []
 
-    def not_modified(request: urllib.request.Request) -> None:
+    def not_modified(request: urllib.request.Request, **_: object) -> None:
         asked.append(request)
         raise urllib.error.HTTPError(url, 304, "Not Modified", Message(), None)
 
@@ -150,4 +155,106 @@ def test_an_interrupted_download_leaves_nothing_behind(
     monkeypatch.setattr(carla_install, "_unpack", interrupted)
     with pytest.raises(KeyboardInterrupt):
         install(_carla(tmp_path / "carla.tar.gz"))
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+class _Origin:
+    """A local server for one archive that answers range requests like CARLA's.
+
+    ``cut`` lists, per request, after how many bytes of the body the connection
+    drops (``None``: it does not); ``etag`` can change mid-download.
+    """
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self.etag = '"nightly-1"'
+        self.cut: list[Optional[int]] = []
+        self.ranges: list[Optional[str]] = []
+        origin = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: object) -> None:
+                pass
+
+            def do_GET(self) -> None:  # noqa: N802
+                wanted = self.headers.get("Range")
+                origin.ranges.append(wanted)
+                start = 0
+                if wanted and self.headers.get("If-Range") in (None, origin.etag):
+                    start = int(wanted.removeprefix("bytes=").rstrip("-"))
+                part = origin.body[start:]
+                self.send_response(206 if start else 200)
+                if start:
+                    last = len(origin.body) - 1
+                    self.send_header(
+                        "Content-Range", f"bytes {start}-{last}/{len(origin.body)}"
+                    )
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("ETag", origin.etag)
+                self.send_header("Content-Length", str(len(part)))
+                self.end_headers()
+                cut = origin.cut.pop(0) if origin.cut else None
+                self.wfile.write(part if cut is None else part[:cut])
+                self.wfile.flush()
+                self.close_connection = True
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/carla.tar.gz"
+
+
+@pytest.fixture
+def origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Origin]:
+    for proxy in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"):
+        monkeypatch.delenv(proxy, raising=False)
+    monkeypatch.setattr(carla_install, "_RETRY_DELAY", 0.0)
+    # Incompressible, so the archive is big enough to cut in the middle.
+    noise = os.urandom(256 * 1024)
+    archive = tmp_path / "served.tar.gz"
+    _package(
+        archive,
+        {f"{_TOP}/{LAUNCHER}": b"#!/bin/sh\n", f"{_TOP}/noise": noise},
+    )
+    served = _Origin(archive.read_bytes())
+    thread = threading.Thread(target=served.server.serve_forever, daemon=True)
+    thread.start()
+    yield served
+    served.server.shutdown()
+    served.server.server_close()
+
+
+def test_a_dropped_download_resumes_where_it_stopped(
+    home: Path, origin: _Origin
+) -> None:
+    half = len(origin.body) // 2
+    origin.cut = [half, 1000]
+    install(origin.url)
+    assert installed_executable() is not None
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert origin.ranges == [None, f"bytes={half}-", f"bytes={half + 1000}-"]
+
+
+def test_a_download_replaced_midway_is_not_spliced(home: Path, origin: _Origin) -> None:
+    origin.cut = [len(origin.body) // 2]
+    real_read = carla_install._ResumingStream.read
+
+    def read(stream: carla_install._ResumingStream, amount: int = -1) -> bytes:
+        origin.etag = '"nightly-2"'  # a new nightly is published meanwhile
+        return real_read(stream, amount)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(carla_install._ResumingStream, "read", read)
+        with pytest.raises(RuntimeError, match="changed during the download"):
+            install(origin.url)
+    assert installed_executable() is None
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_a_dead_link_gives_up(
+    home: Path, origin: _Origin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(carla_install, "_RETRIES", 3)
+    origin.cut = [100, *[0] * 10]
+    with pytest.raises(RuntimeError, match="gave up after 3"):
+        install(origin.url)
+    assert len(origin.ranges) == 4
     assert not install_dir().with_name("carla.partial").exists()
