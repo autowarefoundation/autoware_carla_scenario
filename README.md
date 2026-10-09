@@ -98,13 +98,16 @@ the GitHub Release with the documentation attached, and deploys the docs to
 GitHub Pages. It then builds the wheel and sdist, installs the wheel on every
 supported Python (3.10 to 3.14), and publishes both to
 [PyPI](https://pypi.org/project/autoware-carla-scenario/) as
-`autoware-carla-scenario`. A merge without a label releases nothing.
+`autoware-carla-scenario`, together with its sibling
+[`autoware-carla-egodriver`](https://pypi.org/project/autoware-carla-egodriver/).
+The two share one version, and the framework depends on egodriver at exactly
+that version. A merge without a label releases nothing.
 
 PyPI uploads use Trusted Publishing, so no API token is stored. Before the
-first release, add a (pending) trusted publisher on PyPI with owner
-`autowarefoundation`, repository `autoware_carla_scenario`, workflow
-`release.yml` and environment `pypi`, and create the `pypi` environment in
-this repository's settings.
+first release, add a (pending) trusted publisher on PyPI for each of the two
+projects, with owner `autowarefoundation`, repository
+`autoware_carla_scenario`, workflow `release.yml` and environment `pypi`, and
+create the `pypi` environment in this repository's settings.
 
 If a labelled merge bumped the version but a later step failed, run the
 workflow by hand (Actions → Release → Run workflow) with that version, e.g.
