@@ -43,78 +43,112 @@ class CarlaCameraSensorConfig(CameraSensorConfig):
     sensor_type: str = "sensor.camera.rgb"
     """CARLA blueprint name for the camera sensor."""
 
+    # -- Blueprint attributes ---------------------------------------------------
+    # Each one defaults to ``None``: the attribute is left at the blueprint's own
+    # default, which is the one tuned for the server's renderer. The defaults
+    # differ between CARLA releases -- 0.10 (UE5) exposes for ``iso=300000``,
+    # ``fstop=9.8`` and an auto-exposure range of 0..20, where 0.9.x (UE4) used
+    # ``iso=100``, ``fstop=1.4`` and 7..9 -- so pinning one release's values
+    # renders the other's images wrong (0.9.x values make 0.10 frames black).
+    # Set a value only to override the server.
+
     # -- Post-processing effects ----------------------------------------------
-    bloom_intensity: float = 0.675
+    bloom_intensity: Optional[float] = None
     """Intensity of the bloom post-processing effect (0.0 to 1.0)."""
 
-    fstop: float = 1.4
+    fstop: Optional[float] = None
     """Simulated f-stop number controlling depth of field."""
 
-    iso: float = 100.0
+    iso: Optional[float] = None
     """Simulated film ISO sensitivity."""
 
-    gamma: float = 2.2
+    gamma: Optional[float] = None
     """Gamma correction value applied to the output image."""
 
-    lens_flare_intensity: float = 0.1
+    lens_flare_intensity: Optional[float] = None
     """Intensity of the lens flare effect (0.0 to 1.0)."""
 
-    motion_blur_intensity: float = 0.45
+    motion_blur_intensity: Optional[float] = None
     """Intensity of motion blur (0.0 to 1.0)."""
 
-    motion_blur_max_distortion: float = 0.35
+    motion_blur_max_distortion: Optional[float] = None
     """Maximum distortion percentage from motion blur."""
 
-    motion_blur_min_object_screen_size: float = 0.1
+    motion_blur_min_object_screen_size: Optional[float] = None
     """Minimum screen-space fraction for an object to trigger motion blur."""
 
     # -- Exposure control -----------------------------------------------------
-    exposure_mode: str = "histogram"
+    exposure_mode: Optional[str] = None
     """Exposure mode: ``"histogram"`` (auto) or ``"manual"``."""
 
-    exposure_compensation: float = 0.0
+    exposure_compensation: Optional[float] = None
     """Logarithmic exposure compensation (EV)."""
 
-    exposure_min_bright: float = 7.0
+    exposure_min_bright: Optional[float] = None
     """Minimum brightness for auto-exposure (histogram mode)."""
 
-    exposure_max_bright: float = 9.0
+    exposure_max_bright: Optional[float] = None
     """Maximum brightness for auto-exposure (histogram mode)."""
 
-    exposure_speed_up: float = 3.0
+    exposure_speed_up: Optional[float] = None
     """Speed of adaptation when scene brightens."""
 
-    exposure_speed_down: float = 1.0
+    exposure_speed_down: Optional[float] = None
     """Speed of adaptation when scene darkens."""
 
     # -- Chromatic aberration -------------------------------------------------
-    chromatic_aberration_intensity: float = 0.0
+    chromatic_aberration_intensity: Optional[float] = None
     """Intensity of chromatic aberration fringing (0.0 = disabled)."""
 
-    chromatic_aberration_offset: float = 0.0
+    chromatic_aberration_offset: Optional[float] = None
     """Offset applied to chromatic aberration channels."""
 
     # -- Lens distortion ------------------------------------------------------
-    lens_circle_falloff: float = 5.0
+    lens_circle_falloff: Optional[float] = None
     """Vignette falloff factor (higher = sharper falloff)."""
 
-    lens_circle_multiplier: float = 0.0
+    lens_circle_multiplier: Optional[float] = None
     """Vignette radius multiplier (0.0 = disabled)."""
 
-    lens_k: float = -1.0
-    """Radial distortion coefficient k (negative = barrel distortion).
+    lens_k: Optional[float] = None
+    """Radial distortion coefficient k (negative = barrel distortion)."""
 
-    Set to ``-1.0`` to use CARLA's default (no user override).
-    """
-
-    lens_kcube: float = 0.0
+    lens_kcube: Optional[float] = None
     """Cubic radial distortion coefficient."""
 
-    lens_x_size: float = 0.08
+    lens_x_size: Optional[float] = None
     """Horizontal size of the lens distortion grid."""
 
-    lens_y_size: float = 0.08
+    lens_y_size: Optional[float] = None
     """Vertical size of the lens distortion grid."""
+
+
+#: The :class:`CarlaCameraSensorConfig` fields that are ``sensor.camera.rgb``
+#: attributes of the same name, set on the blueprint when not ``None``.
+BLUEPRINT_ATTRIBUTES: tuple[str, ...] = (
+    "bloom_intensity",
+    "fstop",
+    "iso",
+    "gamma",
+    "lens_flare_intensity",
+    "motion_blur_intensity",
+    "motion_blur_max_distortion",
+    "motion_blur_min_object_screen_size",
+    "exposure_mode",
+    "exposure_compensation",
+    "exposure_min_bright",
+    "exposure_max_bright",
+    "exposure_speed_up",
+    "exposure_speed_down",
+    "chromatic_aberration_intensity",
+    "chromatic_aberration_offset",
+    "lens_circle_falloff",
+    "lens_circle_multiplier",
+    "lens_k",
+    "lens_kcube",
+    "lens_x_size",
+    "lens_y_size",
+)
 
 
 class CarlaCameraSensor(CameraSensorBase):
@@ -164,47 +198,11 @@ class CarlaCameraSensor(CameraSensorBase):
         camera_bp.set_attribute("fov", str(cfg.fov))
         camera_bp.set_attribute("sensor_tick", str(1.0 / cfg.fps))
 
-        # -- Post-processing
-        camera_bp.set_attribute("bloom_intensity", str(cfg.bloom_intensity))
-        camera_bp.set_attribute("fstop", str(cfg.fstop))
-        camera_bp.set_attribute("iso", str(cfg.iso))
-        camera_bp.set_attribute("gamma", str(cfg.gamma))
-        camera_bp.set_attribute("lens_flare_intensity", str(cfg.lens_flare_intensity))
-        camera_bp.set_attribute("motion_blur_intensity", str(cfg.motion_blur_intensity))
-        camera_bp.set_attribute(
-            "motion_blur_max_distortion", str(cfg.motion_blur_max_distortion)
-        )
-        camera_bp.set_attribute(
-            "motion_blur_min_object_screen_size",
-            str(cfg.motion_blur_min_object_screen_size),
-        )
-
-        # -- Exposure
-        camera_bp.set_attribute("exposure_mode", cfg.exposure_mode)
-        camera_bp.set_attribute("exposure_compensation", str(cfg.exposure_compensation))
-        camera_bp.set_attribute("exposure_min_bright", str(cfg.exposure_min_bright))
-        camera_bp.set_attribute("exposure_max_bright", str(cfg.exposure_max_bright))
-        camera_bp.set_attribute("exposure_speed_up", str(cfg.exposure_speed_up))
-        camera_bp.set_attribute("exposure_speed_down", str(cfg.exposure_speed_down))
-
-        # -- Chromatic aberration
-        camera_bp.set_attribute(
-            "chromatic_aberration_intensity", str(cfg.chromatic_aberration_intensity)
-        )
-        camera_bp.set_attribute(
-            "chromatic_aberration_offset", str(cfg.chromatic_aberration_offset)
-        )
-
-        # -- Lens distortion / vignette
-        camera_bp.set_attribute("lens_circle_falloff", str(cfg.lens_circle_falloff))
-        camera_bp.set_attribute(
-            "lens_circle_multiplier", str(cfg.lens_circle_multiplier)
-        )
-        if cfg.lens_k >= 0.0:
-            camera_bp.set_attribute("lens_k", str(cfg.lens_k))
-        camera_bp.set_attribute("lens_kcube", str(cfg.lens_kcube))
-        camera_bp.set_attribute("lens_x_size", str(cfg.lens_x_size))
-        camera_bp.set_attribute("lens_y_size", str(cfg.lens_y_size))
+        # -- Post-processing, exposure, lens: only what the config overrides
+        for name in BLUEPRINT_ATTRIBUTES:
+            value = getattr(cfg, name)
+            if value is not None:
+                camera_bp.set_attribute(name, str(value))
 
         # -- Transform (base_link -> camera)
         transform = _carla.Transform(

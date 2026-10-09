@@ -71,3 +71,53 @@ def test_get_image_produces_a_bgr_array() -> None:
     assert image is not None
     assert image.dtype == np.uint8
     assert image.shape[2] == 3  # alpha stripped
+
+
+# ---------------------------------------------------------------------------
+# Blueprint attributes
+# ---------------------------------------------------------------------------
+
+
+def _attach(config: CarlaCameraSensorConfig) -> dict[str, str]:
+    """Attach *config* to a fake world; the attributes set on its blueprint."""
+    blueprint = SimpleNamespace(attributes={})
+    blueprint.set_attribute = blueprint.attributes.__setitem__
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
+        spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
+            listen=lambda cb: None
+        ),
+    )
+    CarlaCameraSensor(config).attach(
+        world, SimpleNamespace(type_id="vehicle.lincoln.mkz")
+    )
+    return blueprint.attributes
+
+
+def test_attach_leaves_exposure_and_optics_to_the_server() -> None:
+    """Unset attributes keep the blueprint's defaults: CARLA 0.9.x values (iso 100,
+    f/1.4, EV 7..9) pinned on a 0.10 camera render it black."""
+    attributes = _attach(
+        CarlaCameraSensorConfig(image_width=1920, image_height=1280, fov=50.0, fps=10.0)
+    )
+    assert attributes == {
+        "image_size_x": "1920",
+        "image_size_y": "1280",
+        "fov": "50.0",
+        "sensor_tick": "0.1",
+    }
+
+
+def test_attach_sets_the_attributes_a_config_overrides() -> None:
+    attributes = _attach(
+        CarlaCameraSensorConfig(iso=100.0, exposure_mode="manual", lens_k=0.5)
+    )
+    assert attributes["iso"] == "100.0"
+    assert attributes["exposure_mode"] == "manual"
+    assert attributes["lens_k"] == "0.5"
+    assert "fstop" not in attributes
+
+
+def test_every_blueprint_attribute_is_a_config_field() -> None:
+    fields = set(CarlaCameraSensorConfig.__dataclass_fields__)
+    assert set(carla_camera.BLUEPRINT_ATTRIBUTES) <= fields
