@@ -118,6 +118,15 @@ class DriverClientConfig:
     address: str = "localhost:50051"
     """``host:port`` of the driver's gRPC server."""
 
+    policy: Optional[str] = None
+    """A policy to serve at :attr:`address` from this process, or ``None`` for none.
+
+    A name the reference policies are registered under (``route_follower``) or
+    ``package.module:Class``. Set, the scenario runs its own policy -- one command
+    starts everything; unset, the policy is a separate process already serving at
+    :attr:`address` (``autoware-carla-egodriver serve``, an alpasim driver, ...).
+    """
+
     timeout_s: float = 60.0
     """Per-RPC deadline in seconds."""
 

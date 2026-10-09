@@ -122,3 +122,20 @@ def test_rendered_lanes_sit_where_the_geometry_says() -> None:
     assert len(left) and len(right)
     assert abs((200 - left.mean()) - (right.mean() - 200)) < 2.0
     assert (image[0] == (110, 160, 220)).all()  # sky at the top
+
+
+def test_policies_load_by_name_or_import_path() -> None:
+    from autoware_carla_egodriver.policies import (
+        ConstantSpeedPolicy,
+        RouteFollowerPolicy,
+        load_policy,
+    )
+
+    assert isinstance(load_policy("route_follower"), RouteFollowerPolicy)
+    loaded = load_policy(
+        "autoware_carla_egodriver.policies.constant_speed:ConstantSpeedPolicy"
+    )
+    assert isinstance(loaded, ConstantSpeedPolicy)
+    for bad in ("no_such_policy", "no.such.module:Policy", "math:pi"):
+        with pytest.raises(ValueError):
+            load_policy(bad)

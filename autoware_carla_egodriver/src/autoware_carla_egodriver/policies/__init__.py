@@ -6,7 +6,8 @@ without a model checkpoint or a GPU.
 
 from __future__ import annotations
 
-from typing import Dict, Type
+import importlib
+from typing import Any, Dict, Type
 
 from autoware_carla_egodriver.driver import BaseDriver
 from autoware_carla_egodriver.policies.constant_speed import ConstantSpeedPolicy
@@ -18,4 +19,41 @@ POLICY_REGISTRY: Dict[str, Type[BaseDriver]] = {
     RouteFollowerPolicy.name: RouteFollowerPolicy,
 }
 
-__all__ = ["POLICY_REGISTRY", "ConstantSpeedPolicy", "RouteFollowerPolicy"]
+
+def load_policy(spec: str, **kwargs: Any) -> BaseDriver:
+    """Build the policy *spec* names, with *kwargs*.
+
+    *spec* is a name in :data:`POLICY_REGISTRY` (``route_follower``) or
+    ``package.module:attribute`` -- a :class:`BaseDriver` subclass, or any callable
+    returning one -- so a policy of your own is named the way a reference one is.
+
+    Raises:
+        ValueError: *spec* names nothing that builds a :class:`BaseDriver`.
+    """
+    if spec in POLICY_REGISTRY:
+        factory: Any = POLICY_REGISTRY[spec]
+    elif ":" in spec:
+        module, _, attribute = spec.partition(":")
+        try:
+            factory = getattr(importlib.import_module(module), attribute)
+        except (ImportError, AttributeError) as exc:
+            raise ValueError(f"cannot load policy {spec!r}: {exc}") from exc
+    else:
+        raise ValueError(
+            f"unknown policy {spec!r}: expected one of {sorted(POLICY_REGISTRY)} "
+            "or 'package.module:Class'"
+        )
+    policy = factory(**kwargs) if callable(factory) else factory
+    if not isinstance(policy, BaseDriver):
+        raise ValueError(
+            f"policy {spec!r} built a {type(policy).__name__}, not a BaseDriver"
+        )
+    return policy
+
+
+__all__ = [
+    "POLICY_REGISTRY",
+    "ConstantSpeedPolicy",
+    "RouteFollowerPolicy",
+    "load_policy",
+]

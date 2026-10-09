@@ -1,10 +1,14 @@
 # @package _global_
 #
-# Settings for an external driver policy, used when `ego.entity: carla_driver`.
-# The policy is expected to serve `egodriver.EgodriverService`, e.g.
-#   autoware-carla-egodriver serve --policy route_follower --port 50051
+# Settings for a driver policy, used when `ego.entity: carla_driver`.
+# The policy serves `egodriver.EgodriverService` at `address`.
 driver:
   address: localhost:50051
+  # A policy the scenario serves itself, in its own process: `route_follower`,
+  # `constant_speed`, or `package.module:Class` for your own BaseDriver. null dials
+  # a policy that is already serving at `address` as a process of its own, e.g.
+  #   autoware-carla-egodriver serve --policy route_follower --port 50051
+  policy: null
   timeout_s: 60.0
   # Must be a positive integer multiple of the 0.05 s simulation step.
   policy_timestep_s: 0.1

@@ -302,13 +302,19 @@ class DriverControlSpec:
 class DriverConfig:
     """Connection settings for an external driver policy.
 
-    Only used when ``ego.entity`` is ``"carla_driver"``.  The policy is expected to
-    serve ``egodriver.EgodriverService`` at :attr:`address` -- for example
+    Only used when ``ego.entity`` is ``"carla_driver"``.  The policy serves
+    ``egodriver.EgodriverService`` at :attr:`address`: from this process when
+    :attr:`policy` names it, or as a process of its own -- for example
     ``autoware-carla-egodriver serve --policy route_follower --port 50051``.
     """
 
     #: ``host:port`` of the policy's gRPC server.
     address: str = "localhost:50051"
+
+    #: A policy to serve at :attr:`address` from the scenario's own process --
+    #: ``route_follower``, or ``package.module:Class`` -- or ``None`` to dial a
+    #: policy that is already serving there.
+    policy: str | None = None
 
     #: Per-RPC deadline in seconds.
     timeout_s: float = 60.0

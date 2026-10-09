@@ -7,7 +7,7 @@ import logging
 import sys
 from typing import List, Optional
 
-from .policies import POLICY_REGISTRY
+from .policies import POLICY_REGISTRY, load_policy
 from .server import run_server
 from .testing import FakeCamera, FakeLoop
 
@@ -23,7 +23,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     serve = commands.add_parser("serve", help="serve a reference policy over gRPC")
     serve.add_argument(
-        "--policy", choices=sorted(POLICY_REGISTRY), default="route_follower"
+        "--policy",
+        default="route_follower",
+        help=f"one of {sorted(POLICY_REGISTRY)}, or package.module:Class",
     )
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=50051)
@@ -47,11 +49,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     if args.command == "serve":
-        policy_cls = POLICY_REGISTRY[args.policy]
         kwargs = (
             {} if args.cruise_speed is None else {"cruise_speed_mps": args.cruise_speed}
         )
-        run_server(policy_cls(**kwargs), port=args.port, host=args.host)
+        try:
+            policy = load_policy(args.policy, **kwargs)
+        except ValueError as exc:
+            parser.error(str(exc))
+        run_server(policy, port=args.port, host=args.host)
         return 0
 
     camera = FakeCamera(
