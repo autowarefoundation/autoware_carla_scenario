@@ -198,11 +198,22 @@ class CarlaCameraSensor(CameraSensorBase):
         camera_bp.set_attribute("fov", str(cfg.fov))
         camera_bp.set_attribute("sensor_tick", str(1.0 / cfg.fps))
 
-        # -- Post-processing, exposure, lens: only what the config overrides
+        # -- Post-processing, exposure, lens: only what the config overrides, and
+        # only what this server's camera has (CARLA versions add and drop them)
         for name in BLUEPRINT_ATTRIBUTES:
             value = getattr(cfg, name)
-            if value is not None:
-                camera_bp.set_attribute(name, str(value))
+            if value is None:
+                continue
+            if not camera_bp.has_attribute(name):
+                logger.warning(
+                    "%s has no attribute %r on this CARLA server; %s=%s is ignored",
+                    cfg.sensor_type,
+                    name,
+                    name,
+                    value,
+                )
+                continue
+            camera_bp.set_attribute(name, str(value))
 
         # -- Transform (base_link -> camera)
         transform = _carla.Transform(
