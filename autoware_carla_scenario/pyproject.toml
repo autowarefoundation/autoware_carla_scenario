@@ -125,6 +125,8 @@ scenario-expand = "autoware_carla_scenario.examples.expand:main"
 # Compile scenarios with Codon (the static check the runner makes before a run).
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"
+# Download a CARLA server (the nightly build by default) for the runner to launch.
+scenario-setup = "autoware_carla_scenario.carla_install:main"
 detect-no-3d-model = "autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main"
 viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not

@@ -27,7 +27,7 @@ and sensor types described below.
 | `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME` and carries both ends of the run: the spawn and the ego's `goal_pose`. `None` means "not named yet" — a scenario may derive the goal in `setup()`, and one that ends setup with none is refused. |
 | `ScenarioRunner` | `scenario_runner` | Executes a single `BaseScenario` against a CARLA world (sync mode tick loop, recording, cleanup). |
 | `ScenarioQueue` | `scenario_queue` | Context manager that owns a `CarlaServerManager` and runs registered scenarios sequentially with cooldown / retry. |
-| `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`. |
+| `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`, else launches the CARLA `scenario-setup` installed. |
 | `CarlaScenarioFixture` | `pytest_fixtures` | Helper that registers a scenario into a queue at import time and exposes a session-scoped pytest fixture for its `ScenarioResult`. |
 | `EGO_ROLE_NAME` | `constants` | Reserved CARLA `role_name` used for the ego actor. |
 | `EntityRole` | `entity_role` | Validated `role_name` wrapper for CARLA actors. Factories: `EntityRole.ego()`, `EntityRole.npc(n)`. |

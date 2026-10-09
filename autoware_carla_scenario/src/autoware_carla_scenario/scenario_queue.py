@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
@@ -107,7 +106,7 @@ class ScenarioQueue:
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default per-scenario timeout.
             output_dir: Directory for MP4 recordings.
-            server_extra_args: Extra CLI arguments for CarlaUE5.sh (only used
+            server_extra_args: Extra CLI arguments for CarlaUnreal.sh (only used
                 when the queue creates its own server).
             cooldown_seconds: Wait time (seconds) between consecutive scenario
                 runs.  Gives the CARLA server time to finish cleanup before the
@@ -353,8 +352,8 @@ class ScenarioQueue:
     ) -> Callable[[], Generator["ScenarioQueue", None, None]]:
         """Return a session-scoped pytest fixture that manages this queue.
 
-        The generated fixture automatically skips when
-        ``CARLA_EXECUTABLE`` is not set, so callers do not need to
+        The generated fixture automatically skips when there is no CARLA to
+        launch (``CARLA_EXECUTABLE`` unset and nothing installed), so callers do not need to
         add a manual ``pytest.skip`` guard.
 
         Args:
@@ -392,10 +391,10 @@ class ScenarioQueue:
 
         @pytest.fixture(scope="session", name=fixture_name)
         def _queue_fixture() -> Generator["ScenarioQueue", None, None]:
-            if not os.environ.get(CarlaServerManager.ENV_VAR):
+            if CarlaServerManager.executable() is None:
                 pytest.skip(
-                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set. "
-                    "Skipping CARLA integration tests."
+                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set "
+                    "and no CARLA is installed. Skipping CARLA integration tests."
                 )
             try:
                 with queue:
