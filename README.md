@@ -33,7 +33,7 @@ To test a driving policy in a project of your own -- no ROS 2, no Autoware, one
 command once CARLA is downloaded:
 
 ```bash
-uv add "autoware-carla-scenario @ git+https://github.com/autowarefoundation/autoware_carla_scenario@v3.5.0#subdirectory=autoware_carla_scenario"
+uv add autoware-carla-scenario
 uv run scenario-setup     # downloads CARLA's nightly build into ~/.autoware_carla_scenario/bin
 uv run scenario scenario=cut_in/left map=town10hd_opt \
   ego.spawn_lanelet_id=324 scenario.npc_lanelet_id=446 \

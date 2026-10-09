@@ -9,25 +9,25 @@ that runs CARLA UE5, and about 30 GB of free disk for the simulator.
 
 ## 1. Add the framework to your project
 
-The framework is a Python library. Depend on it from your project's
-`pyproject.toml`, pinned to a git revision:
+The framework is a Python library on
+[PyPI](https://pypi.org/project/autoware-carla-scenario/). Depend on it from your
+project's `pyproject.toml`:
 
 ```toml
 [project]
 name = "my-policy-tests"
 version = "0.1.0"
 requires-python = ">=3.10,<3.15"
-dependencies = ["autoware-carla-scenario"]
-
-[tool.uv.sources]
-autoware-carla-scenario = { git = "https://github.com/autowarefoundation/autoware_carla_scenario", subdirectory = "autoware_carla_scenario", rev = "v3.5.0" }
+dependencies = ["autoware-carla-scenario>=4"]
 ```
 
 ```bash
 uv sync
 ```
 
-This also installs `carla-driver-interface`, the policy side of the gRPC contract,
+This also installs [`carla-driver-interface`](https://github.com/hakuturu583/carla_driver_interface)
+1.x, the policy side of the gRPC contract (versioned on its own; a policy depending on
+any 1.x shares the environment),
 and the CARLA client, typesafe_carla. Its wheel carries a prebuilt CPython package.
 Where that package does not match the installed toolchain, the first run that
 imports the client builds it once instead (15-50 min, ~14 GB of memory, needs `cc`)
