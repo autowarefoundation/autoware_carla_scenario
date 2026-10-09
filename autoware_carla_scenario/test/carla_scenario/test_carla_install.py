@@ -12,6 +12,7 @@ from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+import urllib.error
 
 import pytest
 
@@ -170,6 +171,8 @@ class _Origin:
         self.etag = '"nightly-1"'
         self.cut: list[Optional[int]] = []
         self.ranges: list[Optional[str]] = []
+        self.honours_if_range = True
+        self.gone = False  # resumes answer 404
         origin = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -179,8 +182,12 @@ class _Origin:
             def do_GET(self) -> None:  # noqa: N802
                 wanted = self.headers.get("Range")
                 origin.ranges.append(wanted)
+                if wanted and origin.gone:
+                    self.send_error(404)
+                    return
                 start = 0
-                if wanted and self.headers.get("If-Range") in (None, origin.etag):
+                matches = self.headers.get("If-Range") in (None, origin.etag)
+                if wanted and (matches or not origin.honours_if_range):
                     start = int(wanted.removeprefix("bytes=").rstrip("-"))
                 part = origin.body[start:]
                 self.send_response(206 if start else 200)
@@ -257,4 +264,18 @@ def test_a_dead_link_gives_up(
     with pytest.raises(RuntimeError, match="gave up after 3"):
         install(origin.url)
     assert len(origin.ranges) == 4
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_a_server_ignoring_if_range_is_not_spliced(home: Path, origin: _Origin) -> None:
+    origin.honours_if_range = False
+    test_a_download_replaced_midway_is_not_spliced(home, origin)
+
+
+def test_a_permanent_http_error_is_not_retried(home: Path, origin: _Origin) -> None:
+    origin.cut = [100]
+    origin.gone = True
+    with pytest.raises(urllib.error.HTTPError, match="404"):
+        install(origin.url)
+    assert len(origin.ranges) == 2
     assert not install_dir().with_name("carla.partial").exists()

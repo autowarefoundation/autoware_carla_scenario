@@ -25,6 +25,7 @@ import shutil
 import sys
 import tarfile
 import time
+from email.message import Message
 from pathlib import Path, PurePosixPath
 from typing import IO, Callable, Optional, cast
 
@@ -173,6 +174,7 @@ class _ResumingStream:
         self._size = size
         self._log = log
         self._offset = 0
+        self._source = source
         etag = source["etag"]
         # If-Range takes a strong ETag or a date; a weak ETag never matches.
         self._validator = (
@@ -184,11 +186,15 @@ class _ResumingStream:
             and self._validator is not None
         )
 
-    def read(self, amount: int = -1) -> bytes:
+    def read(self, amount: Optional[int] = None) -> bytes:
         failures = 0
         while True:
             try:
-                data = self._response.read(amount)
+                # read(-1) fails on 3.10/3.11's HTTPResponse; read() reads it all.
+                if amount is None:
+                    data = self._response.read()
+                else:
+                    data = self._response.read(amount)
             except (OSError, http.client.HTTPException) as exc:
                 if not self._resumable:
                     raise
@@ -204,6 +210,7 @@ class _ResumingStream:
             self._reconnect(failures, error)
 
     def _reconnect(self, failures: int, error: Optional[BaseException]) -> None:
+        import urllib.error  # noqa: PLC0415
         import urllib.request  # noqa: PLC0415
 
         while True:
@@ -228,12 +235,24 @@ class _ResumingStream:
             )
             try:
                 response = urllib.request.urlopen(request, timeout=_TIMEOUT)  # noqa: S310
+            except urllib.error.HTTPError as exc:
+                exc.close()
+                if exc.code < 500 and exc.code not in (408, 429):
+                    raise  # 403, 404, 416...: retrying will not change the answer
+                error = exc
+                failures += 1
+                continue
             except (OSError, http.client.HTTPException) as exc:
                 error = exc
                 failures += 1
                 continue
-            first = _range_start(response.headers.get("Content-Range"))
-            if response.status != 206 or first != self._offset:
+            first, total = _content_range(response.headers.get("Content-Range"))
+            if (
+                response.status != 206
+                or first != self._offset
+                or total != self._size
+                or not self._same_download(response.headers)
+            ):
                 response.close()
                 raise RuntimeError(
                     f"{self._url} changed during the download or cannot resume "
@@ -242,6 +261,14 @@ class _ResumingStream:
             self._response = response
             return
 
+    def _same_download(self, headers: Message) -> bool:
+        """Whether a 206 is of the download begun, for servers ignoring If-Range."""
+        return all(
+            headers.get(header) in (None, self._source[key])
+            for header, key in (("ETag", "etag"), ("Last-Modified", "last_modified"))
+            if self._source[key]
+        )
+
     def close(self) -> None:
         try:
             self._response.close()
@@ -249,13 +276,16 @@ class _ResumingStream:
             pass
 
 
-def _range_start(content_range: Optional[str]) -> Optional[int]:
-    """The first byte of a ``Content-Range: bytes <first>-<last>/<size>`` answer."""
-    if not content_range:
-        return None
-    unit, _, span = content_range.strip().partition(" ")
-    first, _, _ = span.partition("-")
-    return int(first) if unit == "bytes" and first.isdigit() else None
+def _content_range(
+    content_range: Optional[str],
+) -> tuple[Optional[int], Optional[int]]:
+    """First byte and size of a ``Content-Range: bytes <first>-<last>/<size>``."""
+    unit, _, span = (content_range or "").strip().partition(" ")
+    first, _, rest = span.partition("-")
+    _, _, total = rest.partition("/")
+    if unit != "bytes" or not first.isdigit() or not total.isdigit():
+        return None, None
+    return int(first), int(total)
 
 
 def _stamp(target: Path) -> dict[str, Optional[str]]:
