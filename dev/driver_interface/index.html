@@ -1917,6 +1917,21 @@ line strings:</p>
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>        <span class="k">for</span> <span class="n">stop</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">stop_lines</span><span class="p">():</span>
 <a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>            <span class="n">stop</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">lane_ids</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">position_local</span>
 </code></pre></div>
+<p>To hand the policy a Lanelet2 map of your own instead of roadgen's conversion, name it
+with <code>driver.lanelet2_path</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">map_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/shared/maps</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/lanelet2_map.osm</span>
+</code></pre></div>
+<p>The file is copied into the set as <code>lanelet2_map.osm</code>, as it is (with the
+<code>map_projector_info.yaml</code> beside it, if any), and its content is part
+of <code>map_id</code>, so another file gets another set. roadgen is not needed unless
+<code>driver.map_formats</code> names other formats too. The file carries no roadgen trace, so
+<code>ctx.stop_lines()</code> still gives each light's state, stop point and OpenDRIVE lane, but
+<code>lane_ids</code>, <code>rule_ids</code> and <code>light_ids</code> are empty (the manifest marks the format
+<code>"provided": true</code>, its trace empty): match the
+stop point to your map's lanelets yourself. Nothing checks that the file and the world's
+OpenDRIVE describe the same roads in the same frame.</p>
 <h3 id="diagnostics-coming-back">Diagnostics coming back<a class="headerlink" href="#diagnostics-coming-back" title="Permanent link">&para;</a></h3>
 <p><code>DriveResponse.debug_info.unstructured_debug_info</code> is decoded as
 <code>carla_driver.v0.CarlaDriveDebugInfo</code> when it parses as one, surfacing the policy's name,
@@ -1955,18 +1970,18 @@ pass condition.</p>
 <p>A policy subclasses <code>BaseDriver</code> and returns a plan in the rig frame (x forward, y left,
 origin on the ground below the rear axle); the servicer handles sessions, frame
 retention, ego history and the rig/local conversion:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.driver</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDriver</span><span class="p">,</span> <span class="n">DriveContext</span><span class="p">,</span> <span class="n">DriveResult</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_server</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_policy"</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">DriveContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveResult</span><span class="p">:</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>        <span class="o">...</span>
-<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
-<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>
-<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">run_server</span><span class="p">(</span><span class="n">MyPolicy</span><span class="p">(),</span> <span class="n">port</span><span class="o">=</span><span class="mi">50051</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.driver</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDriver</span><span class="p">,</span> <span class="n">DriveContext</span><span class="p">,</span> <span class="n">DriveResult</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_server</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_policy"</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">DriveContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveResult</span><span class="p">:</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>        <span class="o">...</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="n">run_server</span><span class="p">(</span><span class="n">MyPolicy</span><span class="p">(),</span> <span class="n">port</span><span class="o">=</span><span class="mi">50051</span><span class="p">)</span>
 </code></pre></div>
 <p>Without CARLA, <code>carla_driver_interface.testing.FakeLoop</code> drives a policy server over
 real gRPC on a straight road, rendering each declared pinhole camera, which is what a
@@ -2003,7 +2018,7 @@ Apache-2.0) and compiled locally:</p>
 <p>Field numbers, package names, and import paths are preserved exactly, which is what
 keeps the messages wire compatible.</p>
 <p>Regenerate the committed modules after updating the vendored protos:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
 </code></pre></div>
 <p><code>test_proto_generated.py</code> fails if the committed output drifts from the <code>.proto</code> files.
 See <code>carla_driver_interface/proto/README.md</code> for the full provenance.</p>
@@ -2045,7 +2060,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 04:14:10 UTC"><span class="timeago" datetime="2026-10-09T04:14:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 04:14:10 UTC">2026-10-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 05:59:13 UTC"><span class="timeago" datetime="2026-10-09T05:59:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 05:59:13 UTC">2026-10-09</span>
   </span>
 
     
