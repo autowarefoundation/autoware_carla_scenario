@@ -263,6 +263,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../installation/" class="md-tabs__link">
         
   
@@ -586,6 +605,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../installation/" class="md-nav__link">
         
   
@@ -707,10 +753,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
             
   
   
@@ -728,8 +774,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2376,7 +2422,7 @@ than assumed to be zero.</p>
 <li><strong>Cooldown</strong>: Configurable wait time (<code>cooldown_seconds</code>) between consecutive scenarios to allow CARLA server cleanup.</li>
 <li><strong>Retry</strong>: Failed scenarios are retried up to <code>cooldown_max_retries</code> times before raising an error.</li>
 <li><strong>Server ownership</strong>: Accepts an external <code>CarlaServerManager</code> or creates and owns one internally.</li>
-<li><strong>pytest integration</strong>: <code>as_fixture()</code> generates a session-scoped pytest fixture with automatic skip when <code>CARLA_EXECUTABLE</code> is not set.</li>
+<li><strong>pytest integration</strong>: <code>as_fixture()</code> generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.</li>
 </ul>
 <h3 id="video-recording-pipeline">Video Recording Pipeline<a class="headerlink" href="#video-recording-pipeline" title="Permanent link">&para;</a></h3>
 <p>Video recording uses a two-pass approach:</p>
@@ -3239,10 +3285,17 @@ through <code>BaseScenario.derive_goal_from_route()</code>.</p>
 <tbody>
 <tr>
 <td><strong><code>CARLA_EXECUTABLE</code></strong></td>
-<td>Yes (if launching server)</td>
-<td>—</td>
+<td>No</td>
+<td>the launcher <code>scenario-setup</code> installed</td>
 <td><code>CarlaServerManager</code></td>
-<td>Absolute path to the CARLA UE5 executable (<code>CarlaUE5.sh</code>). Required to launch a new CARLA server. When a server is already running and <code>reuse_if_running=True</code>, this variable is not needed. Also used as a gate for pytest: tests are skipped when this variable is unset.</td>
+<td>Absolute path to the CARLA UE5 launcher (<code>CarlaUnreal.sh</code>). Unset, the one <code>scenario-setup</code> installed under <code>~/.autoware_carla_scenario/bin/carla</code> is launched. When a server is already running and <code>reuse_if_running=True</code>, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all.</td>
+</tr>
+<tr>
+<td><strong><code>AUTOWARE_CARLA_SCENARIO_HOME</code></strong></td>
+<td>No</td>
+<td><code>~/.autoware_carla_scenario</code></td>
+<td><code>carla_install</code></td>
+<td>Where <code>scenario-setup</code> installs CARLA (<code>bin/carla</code>).</td>
 </tr>
 <tr>
 <td><strong><code>NISHISHINJUKU_MAP_PATH</code></strong></td>
@@ -3375,7 +3428,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 1, 2026 06:41:34 UTC"><span class="timeago" datetime="2026-10-01T06:41:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 1, 2026 06:41:34 UTC">2026-10-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 00:53:54 UTC"><span class="timeago" datetime="2026-10-09T00:53:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 00:53:54 UTC">2026-10-09</span>
   </span>
 
     

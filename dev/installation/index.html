@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/dev/installation/">
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../quickstart/">
       
       
         <link rel="next" href="../tutorial/">
@@ -251,6 +251,25 @@
     
   
   Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
 
       </a>
     </li>
@@ -567,6 +586,33 @@
     
   
     Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
   
 
     
@@ -948,10 +994,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
             
   
   
@@ -969,8 +1015,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1658,9 +1704,10 @@
 </ul>
 <h3 id="carla-simulator">CARLA Simulator<a class="headerlink" href="#carla-simulator" title="Permanent link">&para;</a></h3>
 <p>The framework targets CARLA UE5 (<code>0.10.0</code> and <code>ue5-dev</code>). CARLA 0.9.x (UE4)
-is not supported. Follow the
-<a href="https://carla.readthedocs.io/">CARLA installation guide</a> to set up the
-simulator binary itself.</p>
+is not supported. <code>uv run scenario-setup</code> downloads CARLA's nightly Linux
+build into <code>~/.autoware_carla_scenario/bin/carla</code>, and the runner launches it
+from there (see the <a href="../quickstart/">Quick Start</a>). A CARLA installed any other
+way is used through <code>CARLA_EXECUTABLE</code>.</p>
 <h3 id="carla-client">CARLA client<a class="headerlink" href="#carla-client" title="Permanent link">&para;</a></h3>
 <p>The Python client is
 <a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>, a plain
@@ -1742,8 +1789,13 @@ package, or by loading a <code>.env</code> file (the package depends on
 <tbody>
 <tr>
 <td><code>CARLA_EXECUTABLE</code></td>
-<td>when <code>ScenarioQueue</code> launches its own server</td>
-<td>Path to <code>CarlaUE5.sh</code>. Pytest tests skip when this is unset.</td>
+<td>optional</td>
+<td>Path to <code>CarlaUnreal.sh</code>, for a CARLA that <code>scenario-setup</code> did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither.</td>
+</tr>
+<tr>
+<td><code>AUTOWARE_CARLA_SCENARIO_HOME</code></td>
+<td>optional</td>
+<td>Moves <code>~/.autoware_carla_scenario</code>, where <code>scenario-setup</code> installs CARLA (<code>bin/carla</code>).</td>
 </tr>
 <tr>
 <td><code>NISHISHINJUKU_MAP_PATH</code></td>
@@ -1773,8 +1825,8 @@ the full list.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import autoware_carla_scenario; print('Installation successful!')"</span>
 </code></pre></div>
 <p>This works without CARLA — running an actual scenario additionally
-requires the built CARLA client, a live CARLA server and a valid
-<code>CARLA_EXECUTABLE</code>.</p>
+requires a CARLA server: a live one, or one to launch (<code>scenario-setup</code>, or
+<code>CARLA_EXECUTABLE</code>).</p>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <p>The package's runtime dependencies (declared in <code>pyproject.toml</code>):</p>
 <ul>
@@ -1837,7 +1889,7 @@ requires the built CARLA client, a live CARLA server and a valid
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 8, 2026 04:14:22 UTC"><span class="timeago" datetime="2026-10-08T04:14:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 8, 2026 04:14:22 UTC">2026-10-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 00:53:54 UTC"><span class="timeago" datetime="2026-10-09T00:53:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 00:53:54 UTC">2026-10-09</span>
   </span>
 
     
