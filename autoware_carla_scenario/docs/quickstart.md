@@ -44,7 +44,10 @@ This downloads CARLA's nightly Linux build (about 16 GB, with a progress bar) an
 unpacks it, while it downloads, into `~/.autoware_carla_scenario/bin/carla`. That is
 where the scenario runner looks for CARLA when `CARLA_EXECUTABLE` is not set. Run
 it again at any time: an install that is still the current nightly is kept, a
-newer one replaces it.
+newer one replaces it. If the connection drops partway, the download picks up
+where it stopped (with an HTTP range request) instead of starting over; it gives
+up after several reconnections in a row that deliver nothing, and stops (the next
+run fetches it whole) if the nightly was replaced in the meantime.
 
 | Option | Meaning |
 | --- | --- |
