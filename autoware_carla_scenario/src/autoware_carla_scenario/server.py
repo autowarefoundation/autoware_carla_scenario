@@ -14,14 +14,17 @@ import typesafe_carla.carla as carla
 
 from dotenv import load_dotenv
 
+from .carla_install import installed_executable
+
 load_dotenv(override=False)
 
 
 class CarlaServerManager:
     """Start and stop a CARLA UE5 server process.
 
-    The path to the ``CarlaUE5.sh`` executable is read from the
-    ``CARLA_EXECUTABLE`` environment variable.
+    The path to the server's launcher (``CarlaUnreal.sh``) is read from the
+    ``CARLA_EXECUTABLE`` environment variable, or, when that is not set, is the
+    one ``scenario-setup`` installed (``~/.autoware_carla_scenario/bin/carla``).
 
     If *reuse_if_running* is ``True`` (the default) and a CARLA server is
     already reachable on *host*:*port* at the time :meth:`start` is called,
@@ -60,7 +63,7 @@ class CarlaServerManager:
             timeout: Seconds to wait for the server to become reachable
                 after launching it.  Defaults to 120 s (UE5 can be slow
                 on first boot).
-            extra_args: Additional CLI arguments passed to ``CarlaUE5.sh``.
+            extra_args: Additional CLI arguments passed to ``CarlaUnreal.sh``.
             reuse_if_running: When ``True`` (default), :meth:`start` skips
                 launching a new process if a CARLA server is already
                 reachable on *host*:*port*.  :meth:`stop` is also a no-op
@@ -84,31 +87,37 @@ class CarlaServerManager:
         Behaviour:
         1. If *reuse_if_running* is ``True`` and the server is already
            reachable, record that we are reusing it and return immediately.
-        2. Otherwise, read ``CARLA_EXECUTABLE``, launch the process, and
-           poll until the server accepts connections.
+        2. Otherwise, find the launcher (:meth:`executable`), launch the
+           process, and poll until the server accepts connections.
 
         Raises:
-            RuntimeError: If ``CARLA_EXECUTABLE`` is not set (when a new
-                process must be launched), the executable does not exist, or
-                the server does not become reachable within *timeout* seconds.
+            RuntimeError: If there is no launcher (when a new process must be
+                launched), the executable does not exist, or the server does
+                not become reachable within *timeout* seconds.
         """
         if self.reuse_if_running and self._ping():
             self._reused = True
             return
 
-        executable = os.environ.get(self.ENV_VAR)
-        if not executable:
+        exe_path = self.executable()
+        if exe_path is None:
             raise RuntimeError(
-                f"Environment variable '{self.ENV_VAR}' is not set. "
-                "Set it to the path of CarlaUE5.sh before starting the server."
+                f"Environment variable '{self.ENV_VAR}' is not set and no CARLA is "
+                "installed. Run `scenario-setup` to download one, or set "
+                f"{self.ENV_VAR} to the path of CarlaUnreal.sh."
             )
-
-        exe_path = Path(executable)
         if not exe_path.exists():
             raise RuntimeError(f"CARLA executable not found: {exe_path}")
 
         cmd = [str(exe_path)] + self.extra_args
-        # start_new_session=True puts CarlaUE5.sh and all its children
+        # The server listens where the client will look for it, unless told otherwise.
+        if not any(arg.startswith("-carla-rpc-port=") for arg in self.extra_args):
+            cmd.append(f"-carla-rpc-port={self.port}")
+        # Without a display UE crashes opening its window; it renders off-screen then.
+        headless = not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        if headless and "-RenderOffScreen" not in self.extra_args:
+            cmd.append("-RenderOffScreen")
+        # start_new_session=True puts CarlaUnreal.sh and all its children
         # (the actual UE5 binary) into a new process group so that
         # stop() can kill the entire group with os.killpg().
         self._process = subprocess.Popen(
@@ -123,18 +132,24 @@ class CarlaServerManager:
         atexit.register(self.stop)
         self._wait_until_ready()
 
+    @classmethod
+    def executable(cls) -> Optional[Path]:
+        """The launcher :meth:`start` runs: ``CARLA_EXECUTABLE``, else the installed one."""
+        configured = os.environ.get(cls.ENV_VAR)
+        return Path(configured) if configured else installed_executable()
+
     def stop(self) -> None:
         """Terminate the CARLA server process group.
 
         If the server was *reused* (not launched by this manager), this method
         is a no-op so the externally-managed process is left running.
 
-        CarlaUE5.sh launches the real UE5 binary as a child process.
+        CarlaUnreal.sh launches the real UE5 binary as a child process.
         Sending SIGTERM only to the shell would leave the UE5 binary running
         as an orphan.  Instead, we send SIGTERM/SIGKILL to the *entire
         process group* created by ``start_new_session=True`` in :meth:`start`.
 
-        After the direct child (CarlaUE5.sh) exits, the UE5 binary and its
+        After the direct child (CarlaUnreal.sh) exits, the UE5 binary and its
         worker processes may still be shutting down.  We therefore poll the
         process group with signal 0 and send SIGKILL if it has not fully
         disappeared within the grace period.
@@ -151,7 +166,7 @@ class CarlaServerManager:
                 self._process.wait()
 
             # Wait for all processes in the group (UE5 binary, worker threads,
-            # etc.) to finish.  CarlaUE5.sh may exit before the UE5 binary
+            # etc.) to finish.  CarlaUnreal.sh may exit before the UE5 binary
             # completes its cleanup, so we poll the group explicitly.
             if not self._wait_for_pgid_exit(pgid, timeout=5.0):
                 try:
@@ -219,6 +234,11 @@ class CarlaServerManager:
         while time.monotonic() < deadline:
             if self._ping():
                 return
+            if self._process is not None and self._process.poll() is not None:
+                raise RuntimeError(
+                    f"CARLA server exited with code {self._process.returncode} "
+                    "before it became reachable"
+                )
             time.sleep(1.0)
         raise RuntimeError(
             f"CARLA server did not become reachable within {self.timeout}s "

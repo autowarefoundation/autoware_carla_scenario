@@ -24,7 +24,6 @@ class CarlaScenarioFixture:
     Typical usage::
 
         # tests/my_tests/conftest.py
-        import os
         import pytest
         import typesafe_carla.carla as carla
         from autoware_carla_scenario import (
@@ -51,8 +50,8 @@ class CarlaScenarioFixture:
         # 3. Session fixture that starts CARLA and runs every scenario once
         @pytest.fixture(scope="session")
         def carla_queue():
-            if not os.environ.get(CarlaServerManager.ENV_VAR):
-                pytest.skip("CARLA_EXECUTABLE not set")
+            if CarlaServerManager.executable() is None:
+                pytest.skip("no CARLA: CARLA_EXECUTABLE unset, scenario-setup not run")
             with _queue:
                 _queue.run_all()
                 yield _queue

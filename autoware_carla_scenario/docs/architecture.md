@@ -294,7 +294,7 @@ Key features:
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
 - **Retry**: Failed scenarios are retried up to `cooldown_max_retries` times before raising an error.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
-- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when `CARLA_EXECUTABLE` is not set.
+- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.
 
 ### Video Recording Pipeline
 
@@ -1108,7 +1108,8 @@ graph LR
 
 | Variable | Required | Default | Used by | Description |
 |----------|----------|---------|---------|-------------|
-| **`CARLA_EXECUTABLE`** | Yes (if launching server) | — | `CarlaServerManager` | Absolute path to the CARLA UE5 executable (`CarlaUE5.sh`). Required to launch a new CARLA server. When a server is already running and `reuse_if_running=True`, this variable is not needed. Also used as a gate for pytest: tests are skipped when this variable is unset. |
+| **`CARLA_EXECUTABLE`** | No | the launcher `scenario-setup` installed | `CarlaServerManager` | Absolute path to the CARLA UE5 launcher (`CarlaUnreal.sh`). Unset, the one `scenario-setup` installed under `~/.autoware_carla_scenario/bin/carla` is launched. When a server is already running and `reuse_if_running=True`, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all. |
+| **`AUTOWARE_CARLA_SCENARIO_HOME`** | No | `~/.autoware_carla_scenario` | `carla_install` | Where `scenario-setup` installs CARLA (`bin/carla`). |
 | **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |
 | **`NISHISHINJUKU_LANELET2_PATH`** | No | `data/nishishinjuku.osm` | Map config YAML (`${oc.env:...}`) | Path to the Lanelet2 `.osm` file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation. |

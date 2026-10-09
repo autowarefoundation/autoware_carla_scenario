@@ -21,9 +21,10 @@ This guide will help you install the `autoware-carla-scenario` package.
 ### CARLA Simulator
 
 The framework targets CARLA UE5 (`0.10.0` and `ue5-dev`). CARLA 0.9.x (UE4)
-is not supported. Follow the
-[CARLA installation guide](https://carla.readthedocs.io/) to set up the
-simulator binary itself.
+is not supported. `uv run scenario-setup` downloads CARLA's nightly Linux
+build into `~/.autoware_carla_scenario/bin/carla`, and the runner launches it
+from there (see the [Quick Start](quickstart.md)). A CARLA installed any other
+way is used through `CARLA_EXECUTABLE`.
 
 ### CARLA client
 
@@ -114,7 +115,8 @@ package, or by loading a `.env` file (the package depends on
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CARLA_EXECUTABLE` | when `ScenarioQueue` launches its own server | Path to `CarlaUE5.sh`. Pytest tests skip when this is unset. |
+| `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither. |
+| `AUTOWARE_CARLA_SCENARIO_HOME` | optional | Moves `~/.autoware_carla_scenario`, where `scenario-setup` installs CARLA (`bin/carla`). |
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
 | `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
 | `NISHISHINJUKU_LANELET2_PATH` | optional | Override the default Lanelet2 `.osm` path. |
@@ -130,8 +132,8 @@ python -c "import autoware_carla_scenario; print('Installation successful!')"
 ```
 
 This works without CARLA — running an actual scenario additionally
-requires the built CARLA client, a live CARLA server and a valid
-`CARLA_EXECUTABLE`.
+requires a CARLA server: a live one, or one to launch (`scenario-setup`, or
+`CARLA_EXECUTABLE`).
 
 ## Dependencies
 

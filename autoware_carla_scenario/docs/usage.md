@@ -612,7 +612,8 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 
 | Variable | Used By | Description |
 |----------|---------|-------------|
-| `CARLA_EXECUTABLE` | scenario runner | Path to CARLA binary executable |
+| `CARLA_EXECUTABLE` | scenario runner | Path to CARLA's launcher (`CarlaUnreal.sh`); defaults to the one `scenario-setup` installed |
+| `AUTOWARE_CARLA_SCENARIO_HOME` | `scenario-setup`, scenario runner | Moves `~/.autoware_carla_scenario` (CARLA lives in `bin/carla`) |
 | `NISHISHINJUKU_XODR_PATH` | map config | Override default OpenDRIVE file path for nishishinjuku |
 | `NISHISHINJUKU_LANELET2_PATH` | map config | Override default Lanelet2 file path for nishishinjuku |
 | `VIEWER_BASE_PATH` | viewer | Base path for scenario results |

@@ -29,6 +29,23 @@ Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 
 ## Quick start
 
+To test a driving policy in a project of your own -- no ROS 2, no Autoware, one
+command once CARLA is downloaded:
+
+```bash
+uv add "autoware-carla-scenario @ git+https://github.com/autowarefoundation/autoware_carla_scenario@v3.5.0#subdirectory=autoware_carla_scenario"
+uv run scenario-setup     # downloads CARLA's nightly build into ~/.autoware_carla_scenario/bin
+uv run scenario scenario=cut_in/left map=town10hd_opt \
+  ego.spawn_lanelet_id=324 scenario.npc_lanelet_id=446 \
+  ego.entity=carla_driver driver.policy=route_follower
+```
+
+The last command launches CARLA, serves the policy in its own process and runs the
+scenario. [`docs/quickstart.md`](autoware_carla_scenario/docs/quickstart.md) walks
+through it, your own policy included.
+
+### Working on this repository
+
 Python 3.10 to 3.14. Every dependency installs from a wheel or from git — no apt
 packages, no C++ toolchain, no container. `git` has to be on `PATH`, because
 uv clones the converter.

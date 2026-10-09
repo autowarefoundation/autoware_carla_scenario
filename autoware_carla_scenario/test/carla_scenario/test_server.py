@@ -2,19 +2,41 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Optional
+
 import pytest
 
 from autoware_carla_scenario import CarlaServerManager
+from autoware_carla_scenario.carla_install import HOME_ENV, LAUNCHER, install_dir
 
 
-def test_start_raises_without_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CarlaServerManager.start() raises RuntimeError when env var is missing.
+def test_the_installed_carla_is_the_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without CARLA_EXECUTABLE, the launcher scenario-setup installed is used."""
+    monkeypatch.delenv(CarlaServerManager.ENV_VAR, raising=False)
+    monkeypatch.setenv(HOME_ENV, str(tmp_path))
+    assert CarlaServerManager.executable() is None
+    launcher = install_dir() / LAUNCHER
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\n")
+    assert CarlaServerManager.executable() == launcher
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, "/opt/carla/CarlaUnreal.sh")
+    assert CarlaServerManager.executable() == Path("/opt/carla/CarlaUnreal.sh")
+
+
+def test_start_raises_without_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CarlaServerManager.start() raises RuntimeError when there is no launcher.
 
     reuse_if_running=False forces start() to attempt launching a new process
     (rather than reusing an already-running server), so the missing-env-var
     guard is always reached regardless of whether CARLA is running locally.
     """
     monkeypatch.delenv(CarlaServerManager.ENV_VAR, raising=False)
+    monkeypatch.setenv(HOME_ENV, str(tmp_path))  # nothing installed there
     manager = CarlaServerManager(reuse_if_running=False)
     with pytest.raises(RuntimeError, match=CarlaServerManager.ENV_VAR):
         manager.start()
@@ -58,3 +80,44 @@ class TestCarlaServerIntegration:
         else:
             assert server._process is not None
             assert server._process.poll() is None
+
+
+def _launched(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    port: int,
+    extra_args: Optional[list[str]] = None,
+) -> list[str]:
+    """The arguments start() launches CARLA with, the launcher exiting at once."""
+    argv = tmp_path / "argv"
+    launcher = tmp_path / "CarlaUnreal.sh"
+    launcher.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {argv}\nexit 3\n")
+    launcher.chmod(0o755)
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(launcher))
+    manager = CarlaServerManager(
+        port=port, extra_args=extra_args, reuse_if_running=False
+    )
+    with pytest.raises(RuntimeError, match="exited with code 3"):
+        manager.start()
+    manager.stop()
+    return argv.read_text().split()
+
+
+def test_a_launched_server_listens_on_the_configured_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert _launched(monkeypatch, tmp_path, free_port) == [
+        f"-carla-rpc-port={free_port}"
+    ]
+    assert _launched(monkeypatch, tmp_path, free_port, ["-carla-rpc-port=3000"]) == [
+        "-carla-rpc-port=3000"
+    ]
+
+
+def test_without_a_display_the_server_renders_off_screen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert "-RenderOffScreen" in _launched(monkeypatch, tmp_path, free_port)
