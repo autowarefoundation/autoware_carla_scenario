@@ -444,16 +444,48 @@ jobs:
           "${RUNNER_TEMP}/fresh/bin/scenario-setup" --help > /dev/null
           "${RUNNER_TEMP}/fresh/bin/autoware-carla-egodriver" --help > /dev/null
 
-  # Trusted Publishing: no API token is stored in this repository. Configure it
-  # once on PyPI for each of the two projects, autoware-carla-scenario and
-  # autoware-carla-egodriver -- Publishing -> add a (pending) publisher with
-  # owner `autowarefoundation`, repository `autoware_carla_scenario`, workflow
-  # `release.yml`, environment `pypi` -- and create the `pypi` environment in
-  # this repository's settings. Until then this job fails and the
-  # distributions remain available as the `pypi-dist` artifact.
-  pypi-publish:
-    name: publish to PyPI
+  # Trusted Publishing: no API token is stored in this repository. PyPI issues
+  # each upload token for the one project whose publisher matches the job's
+  # claims, an active publisher before a pending one -- so the two projects are
+  # published by two jobs that differ in their environment, and each needs its
+  # own publisher on PyPI (Publishing -> add a (pending) publisher), with owner
+  # `autowarefoundation`, repository `autoware_carla_scenario` and workflow
+  # `release.yml`:
+  #
+  #   autoware-carla-egodriver   environment `pypi-egodriver`
+  #   autoware-carla-scenario    environment `pypi`
+  #
+  # Until then these jobs fail and the distributions remain available as the
+  # `pypi-dist` artifact. egodriver goes first: the framework requires it.
+  pypi-publish-egodriver:
+    name: publish autoware-carla-egodriver to PyPI
     needs: [release, pypi-build, pypi-install]
+    if: needs.release.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-egodriver
+      url: https://pypi.org/p/autoware-carla-egodriver
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+      - name: Keep only autoware-carla-egodriver
+        run: find dist -type f ! -name 'autoware_carla_egodriver-*' -delete
+
+      # PyPI never replaces a file, so skipping what is already there makes a
+      # manual re-run of a release (workflow_dispatch) upload only what an
+      # earlier attempt did not.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  pypi-publish:
+    name: publish autoware-carla-scenario to PyPI
+    needs: [release, pypi-build, pypi-install, pypi-publish-egodriver]
     if: needs.release.outputs.release == 'true'
     runs-on: ubuntu-latest
     environment:
@@ -467,9 +499,9 @@ jobs:
           name: pypi-dist
           path: dist
 
-      # PyPI never replaces a file, so skipping what is already there makes a
-      # manual re-run of a release (workflow_dispatch) upload only what an
-      # earlier attempt did not.
+      - name: Keep only autoware-carla-scenario
+        run: find dist -type f ! -name 'autoware_carla_scenario-*' -delete
+
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true

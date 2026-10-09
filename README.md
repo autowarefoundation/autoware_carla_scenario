@@ -106,8 +106,11 @@ that version. A merge without a label releases nothing.
 PyPI uploads use Trusted Publishing, so no API token is stored. Before the
 first release, add a (pending) trusted publisher on PyPI for each of the two
 projects, with owner `autowarefoundation`, repository
-`autoware_carla_scenario`, workflow `release.yml` and environment `pypi`, and
-create the `pypi` environment in this repository's settings.
+`autoware_carla_scenario` and workflow `release.yml`: environment
+`pypi-egodriver` for `autoware-carla-egodriver`, `pypi` for
+`autoware-carla-scenario`. PyPI scopes an upload token to the one project
+whose publisher a job matches, so each project is published by its own job,
+in its own environment.
 
 If a labelled merge bumped the version but a later step failed, run the
 workflow by hand (Actions → Release → Run workflow) with that version, e.g.
