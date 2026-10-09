@@ -4,12 +4,13 @@ The ego vehicle in a scenario is normally driven by CARLA's TrafficManager. This
 describes the alternative: handing the ego to an **external driving policy** that plans
 over gRPC, so a scenario becomes a test of that policy rather than of TrafficManager.
 
-The wire contract is alpasim's `egodriver.EgodriverService`. Its policy side lives in
-this workspace as **`autoware-carla-egodriver`**, a light package (grpcio, protobuf,
-numpy, Pillow; Python 3.10+) a policy depends on without pulling in the scenario
-framework. It replaces the driver half of
-[`carla_driver_interface`](https://github.com/hakuturu583/carla_driver_interface), with
-the same names, so policies written against that package port by changing imports.
+The wire contract is alpasim's `egodriver.EgodriverService`. Its policy side is
+[**`carla-driver-interface`**](https://github.com/hakuturu583/carla_driver_interface)
+(1.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
+depends on without pulling in the scenario framework. It is versioned on its own: the
+framework accepts any `carla-driver-interface>=1.0,<2`, so a policy and a scenario
+package can share an environment whenever their majors agree, and a policy run as a
+separate process only has to speak the same wire contract.
 
 ## Architecture
 
@@ -31,7 +32,7 @@ flowchart LR
     end
 
     subgraph policy["Policy process"]
-        P["egodriver.EgodriverService<br/>e.g. autoware-carla-egodriver serve"]
+        P["egodriver.EgodriverService<br/>e.g. carla-driver-interface serve"]
     end
 
     CDE -->|"observations + drive()"| P
@@ -66,7 +67,7 @@ server, and the scenario is the client:
 
 ```bash
 # In the policy's own environment
-uv run autoware-carla-egodriver serve --policy route_follower --port 50051
+uv run carla-driver-interface serve --policy route_follower --port 50051
 ```
 
 Then run any scenario with the `carla_driver` ego entity:
@@ -160,7 +161,7 @@ A preset extends `driver/default` (`defaults: [default, _self_]`) and may set `e
 since the `driver` group is composed after `ego`.
 
 `logical_id` is the name the policy looks a camera up by, so it must match what the
-policy expects. `autoware-carla-egodriver`'s reference policies use
+policy expects. `carla-driver-interface`'s reference policies use
 `camera_front_wide_120fov`.
 
 ## Using it from Python
@@ -290,7 +291,8 @@ The file is copied into the set as `lanelet2_map.osm`, as it is (with the
 of `map_id`, so another file gets another set. roadgen is not needed unless
 `driver.map_formats` names other formats too. The file carries no roadgen trace, so
 `ctx.stop_lines()` still gives each light's state, stop point and OpenDRIVE lane, but
-`lane_ids`, `rule_ids` and `light_ids` are empty (`ctx.map.provided` is true): match the
+`lane_ids`, `rule_ids` and `light_ids` are empty (the manifest marks the format
+`"provided": true`, its trace empty): match the
 stop point to your map's lanelets yourself. Nothing checks that the file and the world's
 OpenDRIVE describe the same roads in the same frame.
 
@@ -340,8 +342,8 @@ origin on the ground below the rear axle); the servicer handles sessions, frame
 retention, ego history and the rig/local conversion:
 
 ```python
-from autoware_carla_egodriver.driver import BaseDriver, DriveContext, DriveResult
-from autoware_carla_egodriver.server import run_server
+from carla_driver_interface.driver import BaseDriver, DriveContext, DriveResult
+from carla_driver_interface.server import run_server
 
 
 class MyPolicy(BaseDriver):
@@ -354,15 +356,15 @@ class MyPolicy(BaseDriver):
 run_server(MyPolicy(), port=50051)
 ```
 
-Without CARLA, `autoware_carla_egodriver.testing.FakeLoop` drives a policy server over
+Without CARLA, `carla_driver_interface.testing.FakeLoop` drives a policy server over
 real gRPC on a straight road, rendering each declared pinhole camera, which is what a
-policy's CI runs (`autoware-carla-egodriver demo --driver localhost:50051` from the
+policy's CI runs (`carla-driver-interface demo --driver localhost:50051` from the
 command line). The scenario framework is then the CARLA-backed runtime for the same
 server.
 
 ## Protobuf definitions
 
-The protobuf definitions are **vendored**, not installed, in `autoware_carla_egodriver`.
+The protobuf definitions are **vendored**, not installed, in `carla_driver_interface`.
 alpasim's published `alpasim-grpc` requires Python ≥ 3.11, while this workspace supports
 3.10 onwards -- Autoware's own environment is 3.10 -- so depending on it would drop 3.10
 support. Instead the `.proto` files are copied verbatim from two upstreams (both
@@ -383,7 +385,7 @@ uv run python autoware_carla_scenario/scripts/compile_protos.py
 ```
 
 `test_proto_generated.py` fails if the committed output drifts from the `.proto` files.
-See `autoware_carla_egodriver/proto/README.md` for the full provenance.
+See `carla_driver_interface/proto/README.md` for the full provenance.
 
 ## Limitations
 

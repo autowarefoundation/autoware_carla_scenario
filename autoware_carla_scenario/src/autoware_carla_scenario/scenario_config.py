@@ -305,7 +305,7 @@ class DriverConfig:
     Only used when ``ego.entity`` is ``"carla_driver"``.  The policy serves
     ``egodriver.EgodriverService`` at :attr:`address`: from this process when
     :attr:`policy` names it, or as a process of its own -- for example
-    ``autoware-carla-egodriver serve --policy route_follower --port 50051``.
+    ``carla-driver-interface serve --policy route_follower --port 50051``.
     """
 
     #: ``host:port`` of the policy's gRPC server.

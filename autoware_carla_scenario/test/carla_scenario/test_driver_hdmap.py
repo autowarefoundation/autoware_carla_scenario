@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from autoware_carla_egodriver.hdmap import MapFiles
-from autoware_carla_egodriver.protocol import (
+from carla_driver_interface.hdmap import MapFiles
+from carla_driver_interface.protocol import (
     StopPoint,
     TrafficLight,
     TrafficLightState,
@@ -204,15 +204,14 @@ def test_a_given_lanelet2_map_is_copied_without_roadgen(
 
     assert map_id != map_id_for("Town", opendrive), "the file is not in the id"
     manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
-    assert manifest["ir"] is None and manifest["read_trace"] is None
     entry = manifest["formats"]["lanelet2"]
-    assert entry["trace"] is None and entry["provided"] is True
-    assert "projector" not in entry
+    assert entry["provided"] is True and "projector" not in entry
+    assert manifest["roadgen_version"] == ""
     assert (maps / map_id / entry["path"]).read_text() == _LOCAL_OSM
 
     # The policy still gets the stop point and OpenDRIVE lane, but no lanelet.
+    # An unchanged reader opens the set: its IR and traces are there, empty.
     map_files = MapFiles.open(maps, map_id)
-    assert map_files.provided
     [stop] = map_files.stop_lines([_light_on_road_0(opendrive)])
     assert stop.position_local.tolist() == [99.0, -1.75, 0.0]
     assert (stop.road_id, stop.lane_id) == (0, -1)
@@ -228,7 +227,7 @@ def test_a_given_lanelet2_map_sits_beside_converted_formats(
     manifest = json.loads((tmp_path / map_id / MANIFEST_FILE).read_text())
     assert set(manifest["formats"]) == {"opendrive", "lanelet2"}
     assert manifest["formats"]["opendrive"]["trace"]
-    assert manifest["ir"] and manifest["read_trace"]
+    assert manifest["roadgen_version"]
     [stop] = MapFiles.open(tmp_path, map_id, "opendrive").stop_lines(
         [_light_on_road_0(opendrive)]
     )

@@ -20,7 +20,6 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "autoware-carla-egodriver",
     "autoware-carla-scenario",
 ]
 
@@ -152,36 +151,11 @@ wheels = [
 ]
 
 [[package]]
-name = "autoware-carla-egodriver"
-version = "3.5.1"
-source = { editable = "autoware_carla_egodriver" }
-dependencies = [
-    { name = "grpcio" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pillow" },
-    { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "grpcio", specifier = ">=1.60" },
-    { name = "numpy", specifier = ">=1.21" },
-    { name = "pillow", specifier = ">=10.0" },
-    { name = "protobuf", specifier = ">=4.25.0,<8" },
-    { name = "scipy", specifier = ">=1.8" },
-]
-
-[[package]]
 name = "autoware-carla-scenario"
-version = "3.5.1"
+version = "4.0.0"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
-    { name = "autoware-carla-egodriver" },
+    { name = "carla-driver-interface" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "grpcio" },
@@ -222,7 +196,7 @@ sumo = [
 
 [package.metadata]
 requires-dist = [
-    { name = "autoware-carla-egodriver", editable = "autoware_carla_egodriver" },
+    { name = "carla-driver-interface", specifier = ">=1.0,<2" },
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "ffmpeg-python", specifier = ">=0.2.0" },
@@ -413,6 +387,26 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/c7/a253288e66ee340f2f6320eda7022daa723f2918438d586a59e9c998aa27/brotlicffi-1.2.0.2-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:dbb81489562dd5363bf86d9a8edb0ec8c97049b0819ba4936fc023e8847248bc", size = 406825, upload-time = "2026-08-21T17:29:13.992Z" },
     { url = "https://files.pythonhosted.org/packages/6e/6c/ea8e3d34e1d64c5e5a920bb0c89bf9e92badf973937a60922820395e622d/brotlicffi-1.2.0.2-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fc7647657e4f3d73eab591910dbecb57d1ecaea7aa3dd04e6d704a2756fe0c59", size = 402903, upload-time = "2026-08-21T17:29:15.524Z" },
     { url = "https://files.pythonhosted.org/packages/4e/17/17c22d48819001ca08cadab63b09b00e0c56a7579478aa7c2623f4280de6/brotlicffi-1.2.0.2-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:5eb5563173afb92c9111b180349ff17d7c83c79febabadca5de983b552565c3c", size = 378395, upload-time = "2026-08-21T17:29:16.857Z" },
+]
+
+[[package]]
+name = "carla-driver-interface"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pillow" },
+    { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/fa/bd109689fae687e47b3ae2e895d350892ab1213573140eabbacc5ceda66e/carla_driver_interface-1.0.0.tar.gz", hash = "sha256:68d7f659cb52c60cddf843a8c7f94d6f821c2fc580473a6fddc35305ccff18c1", size = 49825, upload-time = "2026-10-09T05:14:24.861Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/7c/5c174478fe364b3ecc6544b080e997fc91289837a9b6d35d8312aca688c7/carla_driver_interface-1.0.0-py3-none-any.whl", hash = "sha256:e0dc4c8cde6fd2f8b0c83c026bd4ffe2b9e2193198cd782ac52d28fdcba45489", size = 63422, upload-time = "2026-10-09T05:14:23.547Z" },
 ]
 
 [[package]]

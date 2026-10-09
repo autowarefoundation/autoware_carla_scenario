@@ -2,7 +2,7 @@
 
 The scenario framework plays the *runtime* role of the alpasim contract: it owns the
 world, renders the observations, and asks a driver policy what to do next.  The policy
-runs elsewhere -- typically as a gRPC server built on ``autoware-carla-egodriver``, the
+runs elsewhere -- typically as a gRPC server built on ``carla-driver-interface``, the
 policy-side package in this workspace -- and this module defines the seam between the
 two.
 
@@ -46,7 +46,7 @@ class DriverCameraConfig:
 
     Pairs the alpasim *logical id* a policy addresses the camera by with the CARLA
     camera parameters used to render it.  Defaults match alpasim's front-wide camera,
-    which ``autoware-carla-egodriver``'s reference policies look for.
+    which ``carla-driver-interface``'s reference policies look for.
 
     Extrinsics are relative to the vehicle's ``base_link``, in CARLA's convention
     (x forward, y right, z up, degrees).
@@ -124,7 +124,7 @@ class DriverClientConfig:
     A name the reference policies are registered under (``route_follower``) or
     ``package.module:Class``. Set, the run serves it itself, once, on a free local
     port -- one command starts everything; unset, the policy is a separate process
-    already serving at :attr:`address` (``autoware-carla-egodriver serve``, an
+    already serving at :attr:`address` (``carla-driver-interface serve``, an
     alpasim driver, ...).
     """
 
@@ -221,14 +221,14 @@ class DriverClientConfig:
 
     A policy reads it from its own copy of the directory, by the ``map_id`` every
     ``CarlaRendererData`` carries, and resolves ``CarlaRendererData.traffic_lights``
-    against it (``autoware_carla_egodriver.hdmap``).  ``None`` writes no map and sends
+    against it (``carla_driver_interface.hdmap``).  ``None`` writes no map and sends
     no lights.  Needs roadgen (the ``map`` extra) and :attr:`send_renderer_data`.
     """
 
     map_formats: Tuple[str, ...] = ("lanelet2",)
-    """The formats to write, by roadgen exporter name.  The OpenDRIVE source is
-    always written as well, and with any format roadgen converts, roadgen's IR and
-    read trace too; a policy resolves lights through them."""
+    """The formats to write, by roadgen exporter name.  The OpenDRIVE source,
+    roadgen's IR and its read trace are always written as well (empty when no
+    format is converted); a policy resolves lights through them."""
 
     lanelet2_path: Optional[str] = None
     """A local Lanelet2 (``.osm``) file written into the map set as its Lanelet2 map,

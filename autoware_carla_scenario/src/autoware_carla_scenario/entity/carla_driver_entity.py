@@ -3,7 +3,7 @@
 Where :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` hands the vehicle to
 CARLA's TrafficManager and :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEntity`
 leaves it standing still, this entity closes the loop against a driver policy served with
-``autoware-carla-egodriver`` or any other implementation of ``egodriver.EgodriverService``.
+``carla-driver-interface`` or any other implementation of ``egodriver.EgodriverService``.
 
 Each simulation tick the entity applies control; every
 :attr:`~autoware_carla_scenario.driver.base.DriverClientConfig.policy_timestep_s` it also
@@ -35,7 +35,7 @@ from ..driver.observation import (
     route_waypoints_in_rig,
     sensor_pose_in_rig,
 )
-from autoware_carla_egodriver.protocol import LidarSweep, pack_lidar_sweep
+from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ._policy_warmup import PolicyWarmup
 from .ego import EgoVehicle
 

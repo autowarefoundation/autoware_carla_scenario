@@ -7,7 +7,7 @@ driver:
   # A policy the run serves itself, in its own process, instead of dialling
   # `address`: `route_follower`, `constant_speed`, or `package.module:Class` for your
   # own BaseDriver. null dials a policy serving at `address` in a process of its own:
-  #   autoware-carla-egodriver serve --policy route_follower --port 50051
+  #   carla-driver-interface serve --policy route_follower --port 50051
   policy: null
   timeout_s: 60.0
   # Must be a positive integer multiple of the 0.05 s simulation step.

@@ -5,7 +5,7 @@ wire; this is the CARLA counterpart. :class:`CarlaDriverEntity` takes the
 world's OpenDRIVE (``carla.Map.to_opendrive()``), has roadgen convert it into
 whatever format the policy reads, and writes the result under
 ``<map_dir>/<map_id>/`` (``driver.map_dir``). Each policy step then carries only
-what changes -- the traffic lights -- which ``autoware_carla_egodriver.hdmap``
+what changes -- the traffic lights -- which ``carla_driver_interface.hdmap``
 resolves against these files.
 
 Every set also holds the OpenDRIVE itself, roadgen's IR and two kinds of
@@ -16,9 +16,10 @@ stop line in, say, a Lanelet2 map.
 
 A Lanelet2 map can be given instead of converted (``driver.lanelet2_path``):
 the file (and the ``map_projector_info.yaml`` beside it, if any) is copied into
-the set as it is, with no trace, so a policy still gets
+the set as it is, with an empty trace, so a policy still gets
 each light's stop point but not the lanelet it lies on. A set whose every format
-is given that way is written without roadgen, and holds no IR or read trace.
+is given that way is written without roadgen, its IR and read trace empty too:
+every set has the same shape, so any reader of these files opens it.
 
 Needs roadgen (the ``map`` extra, ``autoware-carla-scenario[map]``), imported
 only when a map is converted: a policy reading the files does not need it.
@@ -129,8 +130,8 @@ def export_map(
             "map_name": map_name,
             "roadgen_version": "",
             "source": SOURCE_FILE,
-            "ir": None,
-            "read_trace": None,
+            "ir": IR_FILE,
+            "read_trace": READ_TRACE_FILE,
         }
         written: Dict[str, Dict[str, Any]] = {}
         if roadgen is not None:
@@ -143,9 +144,10 @@ def export_map(
             world_map.export_ir(str(out / IR_FILE))
             world_map.write_read_trace(str(out / READ_TRACE_FILE))
             manifest["roadgen_version"] = getattr(roadgen, "__version__", "")
-            manifest["ir"] = IR_FILE
-            manifest["read_trace"] = READ_TRACE_FILE
             written = {name: _export(world_map, name, out) for name in converted}
+        else:
+            _write_json(out / IR_FILE, {})
+            _write_json(out / READ_TRACE_FILE, _EMPTY_TRACE)
         for name, path in provided.items():
             written[name] = _copy_provided(path, out / MAP_FORMATS[name])
         manifest["formats"] = {name: written[name] for name in formats}
@@ -163,6 +165,13 @@ def export_map(
     return map_id
 
 
+_EMPTY_TRACE: Dict[str, Any] = {"links": []}
+
+
+def _write_json(path: Path, value: Any) -> None:
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
 def _file_digest(path: Path) -> bytes:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -172,11 +181,16 @@ def _file_digest(path: Path) -> bytes:
 
 
 def _copy_provided(source: Path, destination: Path) -> Dict[str, Any]:
-    """Copy a given map file, and the projector beside it; its manifest entry."""
+    """Copy a given map file, and the projector beside it; its manifest entry.
+
+    The trace is empty: nothing relates a given file to the OpenDRIVE.
+    """
     shutil.copyfile(source, destination)
+    trace = f"{destination.name}.trace.json"
+    _write_json(destination.parent / trace, _EMPTY_TRACE)
     entry: Dict[str, Any] = {
         "path": destination.name,
-        "trace": None,
+        "trace": trace,
         "provided": True,
     }
     projector = source.parent / PROJECTOR_FILE

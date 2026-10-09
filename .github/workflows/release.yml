@@ -136,13 +136,8 @@ jobs:
           new_version="${major}.${minor}.${patch}"
           echo "New version: $new_version"
 
-          # Both distributions are released together, at one version: the
-          # framework's own and its sibling autoware-carla-egodriver's, which it
-          # depends on at exactly that version.
-          sed -i "s/^version = \".*\"/version = \"$new_version\"/" \
-            autoware_carla_scenario/pyproject.toml autoware_carla_egodriver/pyproject.toml
-          sed -i "s/\"autoware-carla-egodriver==[^\"]*\"/\"autoware-carla-egodriver==$new_version\"/" \
-            autoware_carla_scenario/pyproject.toml
+          # Update autoware_carla_scenario/pyproject.toml
+          sed -i "s/^version = \".*\"/version = \"$new_version\"/" autoware_carla_scenario/pyproject.toml
 
           # Keep uv.lock in sync with the bumped version. The editable package
           # entry in uv.lock records the version, so bumping pyproject.toml
@@ -161,7 +156,7 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          git add autoware_carla_scenario/pyproject.toml autoware_carla_egodriver/pyproject.toml uv.lock
+          git add autoware_carla_scenario/pyproject.toml uv.lock
           git commit -m "chore: bump version to ${{ steps.bump-version.outputs.new_version }}"
           git push origin master
 
@@ -371,23 +366,16 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - name: Check the package versions match the release
+      - name: Check the package version matches the release
         env:
           VERSION: ${{ needs.release.outputs.new_version }}
         run: |
-          for manifest in autoware_carla_scenario/pyproject.toml autoware_carla_egodriver/pyproject.toml; do
-            pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' "${manifest}")
-            echo "release=${VERSION} ${manifest}=${pkg}"
-            test "${pkg}" = "${VERSION}"
-          done
-          grep -q "\"autoware-carla-egodriver==${VERSION}\"" autoware_carla_scenario/pyproject.toml
+          pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
+          echo "release=${VERSION} pyproject=${pkg}"
+          test "${pkg}" = "${VERSION}"
 
-      # autoware-carla-scenario depends on autoware-carla-egodriver, so both
-      # are built and published: the framework alone cannot be installed.
-      - name: Build the wheels and sdists
-        run: |
-          uv build --package autoware-carla-egodriver --out-dir dist
-          uv build --package autoware-carla-scenario --out-dir dist
+      - name: Build the wheel and sdist
+        run: uv build --package autoware-carla-scenario --out-dir dist
 
       # PyPI rejects an upload whose metadata it cannot render or that names a
       # file the archive does not carry, and it does so after the OIDC exchange
@@ -420,14 +408,12 @@ jobs:
           name: pypi-dist
           path: dist
 
-      # From PyPI's dependencies, with the `sumo` extra, the way a user installs
-      # it -- not from this repository's lock. autoware-carla-egodriver comes
-      # from dist/, as it reaches PyPI in the same upload.
+      # From PyPI's dependencies alone, with the `sumo` extra, the way a user
+      # installs it -- not from this repository's lock.
       - name: Install the wheel into a clean environment
         run: |
           uv venv --python "${{ matrix.python-version }}" "${RUNNER_TEMP}/fresh"
-          uv pip install --python "${RUNNER_TEMP}/fresh" --find-links dist \
-            "$(ls dist/autoware_carla_scenario-*.whl)[sumo]"
+          uv pip install --python "${RUNNER_TEMP}/fresh" "$(ls dist/*.whl)[sumo]"
 
       - name: Import it and run its console scripts
         run: |
@@ -442,12 +428,10 @@ jobs:
           PY
           "${RUNNER_TEMP}/fresh/bin/scenario-new" --help > /dev/null
           "${RUNNER_TEMP}/fresh/bin/scenario-setup" --help > /dev/null
-          "${RUNNER_TEMP}/fresh/bin/autoware-carla-egodriver" --help > /dev/null
 
   # Trusted Publishing: no API token is stored in this repository. Configure it
-  # once on PyPI for each of the two projects, autoware-carla-scenario and
-  # autoware-carla-egodriver -- Publishing -> add a (pending) publisher with
-  # owner `autowarefoundation`, repository `autoware_carla_scenario`, workflow
+  # once on PyPI -- Publishing -> add a (pending) publisher with owner
+  # `autowarefoundation`, repository `autoware_carla_scenario`, workflow
   # `release.yml`, environment `pypi` -- and create the `pypi` environment in
   # this repository's settings. Until then this job fails and the
   # distributions remain available as the `pypi-dist` artifact.

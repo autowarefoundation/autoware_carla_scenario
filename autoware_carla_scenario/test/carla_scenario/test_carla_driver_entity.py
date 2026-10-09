@@ -22,7 +22,7 @@ from autoware_carla_scenario.driver.base import (
     DriverClientConfig,
     EgoObservation,
 )
-from autoware_carla_egodriver.protocol import carla_driver_pb2
+from carla_driver_interface.protocol import carla_driver_pb2
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
 
