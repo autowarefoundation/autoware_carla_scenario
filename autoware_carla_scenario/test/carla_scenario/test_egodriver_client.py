@@ -167,7 +167,10 @@ def test_start_session_sends_the_camera_rig(policy: _StubPolicy) -> None:
 
 def test_start_session_advertises_the_camera_extrinsics(policy: _StubPolicy) -> None:
     """The advertised ``rig_to_camera`` must carry the configured mount, not the
-    protobuf default (identity at the origin)."""
+    protobuf default (identity at the origin).
+
+    The stub declares no contract revision, as a carla-driver-interface 1.x policy
+    does not, so the client declares the camera body, as revision 1 reads it."""
     from autoware_carla_scenario.driver.observation import camera_extrinsics_to_rig
 
     camera = DriverCameraConfig(
@@ -371,3 +374,90 @@ def test_unreachable_policy_fails_at_start_session() -> None:
     with pytest.raises(grpc.RpcError):
         client.start_session("session-1", "scene")
     client.close_session()
+
+
+def test_a_policy_on_contract_revision_2_gets_the_optical_frame() -> None:
+    """A carla-driver-interface 2.x policy declares revision 2; the client then
+    declares its cameras' optical frames and says so with ``start_session``."""
+    from carla_driver_interface.contract import (
+        CONTRACT_REVISION,
+        METADATA_KEY,
+        contract_metadata,
+    )
+    from carla_driver_interface.geometry import body_to_optical
+
+    from autoware_carla_scenario.driver.observation import camera_extrinsics_to_rig
+
+    class _Revision2(_StubPolicy):
+        def get_version(self, request, context):  # noqa: ANN001, D102
+            context.send_initial_metadata(contract_metadata())
+            return super().get_version(request, context)
+
+        def start_session(self, request, context):  # noqa: ANN001, D102
+            self.declared = dict(context.invocation_metadata()).get(METADATA_KEY)
+            return super().start_session(request, context)
+
+    policy = _Revision2()
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    egodriver_pb2_grpc.add_EgodriverServiceServicer_to_server(policy, server)
+    port = server.add_insecure_port("localhost:0")
+    server.start()
+    camera = DriverCameraConfig(
+        logical_id="camera_front", position_x=1.5, position_z=1.6, yaw=15.0, pitch=-5.0
+    )
+    config = DriverClientConfig(
+        address=f"localhost:{port}", timeout_s=10.0, cameras=(camera,)
+    )
+    client = EgoDriverGrpcClient(
+        config, channel=grpc.insecure_channel(config.address, options=channel_options())
+    )
+    try:
+        client.start_session("session-1", "scene")
+    finally:
+        client.close_session()
+        server.stop(grace=None)
+
+    assert policy.declared == str(CONTRACT_REVISION)
+    advertised = Pose.from_proto(
+        policy.sessions[0].rollout_spec.vehicle.available_cameras[0].rig_to_camera
+    )
+    expected = body_to_optical(camera_extrinsics_to_rig(1.5, 0.0, 1.6, 0.0, -5.0, 15.0))
+    assert np.allclose(advertised.position, expected.position, atol=1e-5)
+    assert (advertised.rotation * expected.rotation.inv()).magnitude() < 1e-6
+
+
+def test_a_carla_driver_interface_policy_sees_the_configured_mount() -> None:
+    """End to end against the real servicer: the policy is handed the configured
+    mount as its optical frame, the convention it reads in every runtime."""
+    from carla_driver_interface.driver import BaseDriver, DriveResult
+    from carla_driver_interface.geometry import body_to_optical
+    from carla_driver_interface.server import serving
+
+    from autoware_carla_scenario.driver.observation import camera_extrinsics_to_rig
+
+    class _Records(BaseDriver):
+        name = "records"
+
+        def on_session_start(self, session) -> None:  # noqa: ANN001
+            self.seen = Pose.from_proto(session.cameras["camera_front"].rig_to_camera)
+
+        def drive(self, ctx) -> DriveResult:  # noqa: ANN001
+            return DriveResult(trajectory_in_rig=Trajectory.empty())
+
+    policy = _Records()
+    camera = DriverCameraConfig(
+        logical_id="camera_front", position_x=1.5, position_z=1.6, yaw=15.0, pitch=-5.0
+    )
+    with serving(policy, port=0, host="127.0.0.1") as port:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}", timeout_s=10.0, cameras=(camera,)
+        )
+        client = EgoDriverGrpcClient(config)
+        try:
+            client.start_session("session-1", "scene")
+        finally:
+            client.close_session()
+
+    expected = body_to_optical(camera_extrinsics_to_rig(1.5, 0.0, 1.6, 0.0, -5.0, 15.0))
+    assert np.allclose(policy.seen.position, expected.position, atol=1e-5)
+    assert (policy.seen.rotation * expected.rotation.inv()).magnitude() < 1e-6

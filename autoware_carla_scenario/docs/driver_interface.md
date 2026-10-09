@@ -6,11 +6,23 @@ over gRPC, so a scenario becomes a test of that policy rather than of TrafficMan
 
 The wire contract is alpasim's `egodriver.EgodriverService`. Its policy side is
 [**`carla-driver-interface`**](https://github.com/hakuturu583/carla_driver_interface)
-(1.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
+(2.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
 depends on without pulling in the scenario framework. It is versioned on its own: the
-framework accepts any `carla-driver-interface>=1.0,<2`, so a policy and a scenario
-package can share an environment whenever their majors agree, and a policy run as a
-separate process only has to speak the same wire contract.
+framework accepts any `carla-driver-interface>=2.0,<3`, so a policy and a scenario
+package can share an environment whenever their majors agree.
+
+A policy run as a separate process may be on another major. Each side declares the
+**contract revision** it speaks (carla-driver-interface's major) in gRPC metadata, and
+the framework declares its cameras in the policy's revision:
+
+| Policy on | `rig_to_camera` the framework declares |
+| --- | --- |
+| carla-driver-interface 2.x (revision 2) | the camera's optical frame in the rig (x right, y down, z along the optical axis), as alpasim declares it |
+| carla-driver-interface 1.x (declares no revision) | the camera body in the rig (x along the optical axis, y left, z up), as 1.x reads it |
+
+A 2.x policy is handed the optical frame either way, also by autoware_carla_scenario 4.x,
+whose cameras its server translates. A revision the framework does not know fails
+`start_session` with `ContractError`, before the scenario starts.
 
 ## Architecture
 

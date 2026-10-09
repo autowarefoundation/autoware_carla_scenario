@@ -99,9 +99,13 @@ def camera_extrinsics_to_rig(
 ) -> Pose:
     """Return a camera's ``base_link -> camera`` extrinsics as a rig-frame pose.
 
+    The pose is the camera **body**'s (x along the optical axis, y left, z up), the
+    frame a CARLA sensor is mounted in. ``rig_to_camera`` on the wire is the optical
+    frame's (``carla_driver_interface.geometry.body_to_optical`` of this pose).
+
     Camera extrinsics are configured in CARLA's convention (x forward, y right, z
-    up, degrees), whereas the pose the contract advertises as ``rig_to_camera`` is
-    right-handed (x forward, y left, z up).  Crossing that boundary is the same
+    up, degrees), whereas the rig frame is right-handed (x forward, y left, z
+    up).  Crossing that boundary is the same
     ``y`` reflection this module applies elsewhere: the translation's ``y`` flips,
     and CARLA's ``yaw * pitch * roll`` rotation, rebuilt in the right-handed frame,
     is the same rotation with the yaw and pitch angles negated and the roll kept.
