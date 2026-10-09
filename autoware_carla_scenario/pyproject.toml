@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "3.5.0"
+version = "3.5.1"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -66,7 +66,7 @@ dependencies = [
     # Speaks the alpasim `egodriver` gRPC contract to an external driver policy.
     # The contract (vendored protos, geometry, the policy-side server) is the
     # sibling workspace member autoware-carla-egodriver.
-    "autoware-carla-egodriver==3.5.0",
+    "autoware-carla-egodriver==3.5.1",
     "grpcio>=1.60",
     # The vendored modules are protobuf 4.25 gencode, which every runtime from
     # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
