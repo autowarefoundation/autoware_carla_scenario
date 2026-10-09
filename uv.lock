@@ -178,7 +178,7 @@ requires-dist = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "3.4.0"
+version = "3.4.1"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "autoware-carla-egodriver" },
