@@ -50,6 +50,9 @@ driver:
   # the `map` extra); every traffic light is then sent with where to stop for it.
   map_dir: null
   map_formats: [lanelet2]
+  # A local Lanelet2 .osm to write as the set's Lanelet2 map instead of the one
+  # roadgen converts (needs map_dir); null converts it with roadgen.
+  lanelet2_path: null
   control:
     lookahead_gain_s: 0.6
     min_lookahead_m: 4.0
