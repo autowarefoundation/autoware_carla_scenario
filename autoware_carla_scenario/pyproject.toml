@@ -105,10 +105,6 @@ map = [
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
 
-[tool.uv.sources]
-# Until carla-driver-interface 1.0.0 is on PyPI.
-carla-driver-interface = { git = "https://github.com/hakuturu583/carla_driver_interface", branch = "feat/egodriver-successor" }
-
 [tool.uv.build-backend]
 # `hydra_plugins` is a PEP 420 namespace package shared with Hydra itself, so
 # each plugin has to be named individually and `namespace` has to be set --
