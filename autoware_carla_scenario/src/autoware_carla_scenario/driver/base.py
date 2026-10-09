@@ -229,6 +229,16 @@ class DriverClientConfig:
     """The formats to write, by roadgen exporter name.  The OpenDRIVE source and
     roadgen's IR are always written as well; a policy resolves lights through them."""
 
+    lanelet2_path: Optional[str] = None
+    """A local Lanelet2 (``.osm``) file written into the map set as its Lanelet2 map,
+    as it is, instead of the one roadgen converts from the world's OpenDRIVE.
+
+    Implies ``lanelet2`` in :attr:`map_formats`.  The file carries no roadgen
+    trace, so the stop lines a policy resolves against it hold each light's stop
+    point and OpenDRIVE lane but no lanelet ids.  roadgen is needed only for the
+    other formats :attr:`map_formats` names, if any.
+    """
+
     def __post_init__(self) -> None:
         ids = [lidar.logical_id for lidar in self.lidars]
         if len(set(ids)) != len(ids):

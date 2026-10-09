@@ -10,6 +10,10 @@ map: the read trace, from each OpenDRIVE lane (``lane:<road>/<section>/<lane>``)
 and signal (``signal:<id>``) to the IR element it became, and the format's
 trace, from each IR element to the elements of the format it became. The IR
 itself says which rules name a light.
+
+A format the runtime was given rather than converted (``driver.lanelet2_path``)
+has no trace, so its stop lines carry the stop point and the OpenDRIVE lane but
+no element ids of the format.
 """
 
 from __future__ import annotations
@@ -96,16 +100,19 @@ class MapFiles:
         #: The OpenDRIVE the set was converted from.
         self.opendrive_path = self.directory / manifest["source"]
 
-        ir = json.loads((self.directory / manifest["ir"]).read_text(encoding="utf-8"))
-        trace = json.loads(
-            (self.directory / written[format]["trace"]).read_text(encoding="utf-8")
-        )
-        read = json.loads(
-            (self.directory / manifest["read_trace"]).read_text(encoding="utf-8")
-        )
-        self._from_opendrive = _read_trace(read)
-        self._rules_by_object = _ir_rules_by_object(ir)
-        self._refs = _trace_refs(trace)
+        #: Whether the format was given to the runtime as a file rather than
+        #: converted; such a format has no trace, and its stop lines no ids.
+        self.provided = bool(written[format].get("provided"))
+
+        trace_file = written[format].get("trace")
+        if trace_file is None:
+            self._from_opendrive: dict[str, list[str]] = {}
+            self._rules_by_object: dict[str, list[str]] = {}
+            self._refs: dict[str, list[tuple[str, str | None]]] = {}
+        else:
+            self._from_opendrive = _read_trace(self._json(manifest["read_trace"]))
+            self._rules_by_object = _ir_rules_by_object(self._json(manifest["ir"]))
+            self._refs = _trace_refs(self._json(trace_file))
         self._lane_role = _LANE_ROLES.get(format)
 
     @classmethod
@@ -115,8 +122,14 @@ class MapFiles:
         """The set ``map_id`` under ``map_dir``."""
         return cls(Path(map_dir) / map_id, format)
 
+    def _json(self, name: str) -> dict:
+        return json.loads((self.directory / name).read_text(encoding="utf-8"))
+
     def stop_lines(self, lights: Iterable[TrafficLight]) -> list[StopLine]:
-        """Each light's stop points as stop lines in this format, in arrival order."""
+        """Each light's stop points as stop lines in this format, in arrival order.
+
+        For a :attr:`provided` format the ``*_ids`` are empty.
+        """
         stop_lines = []
         for light in lights:
             objects = self._from_opendrive.get(f"signal:{light.opendrive_id}", ())

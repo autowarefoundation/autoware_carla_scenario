@@ -384,6 +384,12 @@ class DriverConfig:
     #: The formats to write, by roadgen exporter name.
     map_formats: list[str] = field(default_factory=lambda: ["lanelet2"])
 
+    #: A local Lanelet2 (``.osm``) file written into the map set as it is,
+    #: instead of the one roadgen converts from the world's OpenDRIVE.  ``null``
+    #: converts it with roadgen.  It carries no roadgen trace, so stop lines
+    #: resolved against it name no lanelets.
+    lanelet2_path: str | None = None
+
     #: Trajectory-following gains.
     control: DriverControlSpec = field(default_factory=DriverControlSpec)
 
