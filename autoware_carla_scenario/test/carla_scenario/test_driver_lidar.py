@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from autoware_carla_egodriver.protocol import carla_driver_pb2, pack_lidar_sweep
+from carla_driver_interface.protocol import carla_driver_pb2, pack_lidar_sweep
 from autoware_carla_scenario.driver.base import DriverClientConfig, DriverLidarConfig
 from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.driver.observation import (

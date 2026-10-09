@@ -437,7 +437,7 @@ the `carla_driver` entity:
 
 ```bash
 # 1. Start the policy (in its own environment)
-uv run autoware-carla-egodriver serve --policy route_follower --port 50051
+uv run carla-driver-interface serve --policy route_follower --port 50051
 
 # 2. Run any scenario against it
 uv run scenario ego.entity=carla_driver driver.address=localhost:50051
