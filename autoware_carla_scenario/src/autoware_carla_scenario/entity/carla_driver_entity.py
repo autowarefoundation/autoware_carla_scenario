@@ -35,15 +35,11 @@ from ..driver.observation import (
     route_waypoints_in_rig,
     sensor_pose_in_rig,
 )
-from autoware_carla_egodriver.policies import load_policy
 from autoware_carla_egodriver.protocol import LidarSweep, pack_lidar_sweep
-from autoware_carla_egodriver.server import build_server
 from ._policy_warmup import PolicyWarmup
 from .ego import EgoVehicle
 
 if TYPE_CHECKING:
-    import grpc
-
     import typesafe_carla.carla as carla
 
     from ..sensor.carla_camera import CarlaCameraSensor
@@ -115,8 +111,6 @@ class CarlaDriverEntity(EgoVehicle):
         #: What the policy is told the ego accelerates at: Autoware's estimate,
         #: not CARLA's per-step one.
         self._acceleration = AccelerationEstimate()
-        #: The policy this scenario serves itself (``driver.policy``), while it runs.
-        self._policy_server: Optional["grpc.Server"] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -246,8 +240,6 @@ class CarlaDriverEntity(EgoVehicle):
                 "the policy gets neither sweeps nor traffic lights"
             )
 
-        if self._config.policy is not None:
-            self._serve_policy(self._config.policy)
         session_uuid = str(uuid.uuid4())
         self._client.start_session(session_uuid, str(self._map.name))
         self._session_open = True
@@ -315,9 +307,6 @@ class CarlaDriverEntity(EgoVehicle):
             except Exception:  # noqa: BLE001 - teardown must not raise
                 logger.warning("Failed to close the driver session", exc_info=True)
             self._session_open = False
-        if self._policy_server is not None:
-            self._policy_server.stop(grace=1.0).wait()
-            self._policy_server = None
 
         for logical_id, camera in self._cameras:
             try:
@@ -345,15 +334,6 @@ class CarlaDriverEntity(EgoVehicle):
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
-
-    def _serve_policy(self, spec: str) -> None:
-        """Serve a fresh *spec* policy at the configured address, for this scenario."""
-        host, _, port = self._config.address.rpartition(":")
-        self._policy_server, _ = build_server(
-            load_policy(spec), port=int(port), host=host
-        )
-        self._policy_server.start()
-        logger.info("Serving policy %r at %s", spec, self._config.address)
 
     def _attach_cameras(self, world: "carla.World", actor: "carla.Actor") -> None:
         """Spawn and attach every configured camera to the ego actor."""

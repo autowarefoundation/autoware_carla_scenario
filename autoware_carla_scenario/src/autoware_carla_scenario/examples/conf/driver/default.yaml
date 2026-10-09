@@ -4,9 +4,9 @@
 # The policy serves `egodriver.EgodriverService` at `address`.
 driver:
   address: localhost:50051
-  # A policy the scenario serves itself, in its own process: `route_follower`,
-  # `constant_speed`, or `package.module:Class` for your own BaseDriver. null dials
-  # a policy that is already serving at `address` as a process of its own, e.g.
+  # A policy the run serves itself, in its own process, instead of dialling
+  # `address`: `route_follower`, `constant_speed`, or `package.module:Class` for your
+  # own BaseDriver. null dials a policy serving at `address` in a process of its own:
   #   autoware-carla-egodriver serve --policy route_follower --port 50051
   policy: null
   timeout_s: 60.0

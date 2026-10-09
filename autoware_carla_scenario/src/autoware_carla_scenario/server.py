@@ -114,9 +114,9 @@ class CarlaServerManager:
         if not any(arg.startswith("-carla-rpc-port=") for arg in self.extra_args):
             cmd.append(f"-carla-rpc-port={self.port}")
         # Without a display UE crashes opening its window; it renders off-screen then.
-        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-            if "-RenderOffScreen" not in self.extra_args:
-                cmd.append("-RenderOffScreen")
+        headless = not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        if headless and "-RenderOffScreen" not in self.extra_args:
+            cmd.append("-RenderOffScreen")
         # start_new_session=True puts CarlaUnreal.sh and all its children
         # (the actual UE5 binary) into a new process group so that
         # stop() can kill the entire group with os.killpg().

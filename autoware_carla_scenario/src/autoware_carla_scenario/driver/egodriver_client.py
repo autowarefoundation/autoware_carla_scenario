@@ -11,6 +11,8 @@ so the messages are wire compatible with an upstream alpasim driver as well; see
 
 from __future__ import annotations
 
+import atexit
+import functools
 import logging
 from typing import Optional, Sequence
 
@@ -19,6 +21,8 @@ import numpy as np
 from google.protobuf.message import DecodeError
 from numpy.typing import NDArray
 
+from autoware_carla_egodriver.policies import load_policy
+from autoware_carla_egodriver.server import build_server
 from autoware_carla_egodriver.protocol import (
     EGODRIVER_SERVICE_FULL_NAME,
     MAX_MESSAGE_BYTES,
@@ -81,9 +85,12 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         if self._stub is not None:
             return self._stub
         if self._channel is None:
-            self._channel = grpc.insecure_channel(
-                self._config.address, options=channel_options()
+            target = (
+                self._config.address
+                if self._config.policy is None
+                else f"localhost:{_serve_in_process(self._config.policy)}"
             )
+            self._channel = grpc.insecure_channel(target, options=channel_options())
         self._stub = egodriver_pb2_grpc.EgodriverServiceStub(self._channel)
         return self._stub
 
@@ -328,3 +335,17 @@ def _vec3(values: NDArray[np.float64]) -> common_pb2.Vec3:
     """Return *values* as a protobuf ``Vec3``."""
     array = np.asarray(values, dtype=np.float64).reshape(-1)
     return common_pb2.Vec3(x=array[0], y=array[1], z=array[2])
+
+
+@functools.lru_cache(maxsize=None)
+def _serve_in_process(spec: str) -> int:
+    """Serve the *spec* policy from this process and return its port.
+
+    Once per run: every scenario's session goes to the same policy, which the
+    protocol resets between sessions, so a model is loaded once, not per scenario.
+    """
+    server, port = build_server(load_policy(spec), port=0, host="localhost")
+    server.start()
+    atexit.register(server.stop, None)
+    logger.info("Serving policy %r in this process on port %d", spec, port)
+    return port

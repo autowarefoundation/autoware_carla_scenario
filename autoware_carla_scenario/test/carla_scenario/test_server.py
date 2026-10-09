@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
 from autoware_carla_scenario import CarlaServerManager
-from autoware_carla_scenario.carla_install import HOME_ENV, LAUNCHER
+from autoware_carla_scenario.carla_install import HOME_ENV, LAUNCHER, install_dir
 
 
 def test_the_installed_carla_is_the_fallback(
@@ -17,7 +18,7 @@ def test_the_installed_carla_is_the_fallback(
     monkeypatch.delenv(CarlaServerManager.ENV_VAR, raising=False)
     monkeypatch.setenv(HOME_ENV, str(tmp_path))
     assert CarlaServerManager.executable() is None
-    launcher = tmp_path / "bin" / "carla" / LAUNCHER
+    launcher = install_dir() / LAUNCHER
     launcher.parent.mkdir(parents=True)
     launcher.write_text("#!/bin/sh\n")
     assert CarlaServerManager.executable() == launcher
@@ -81,54 +82,42 @@ class TestCarlaServerIntegration:
             assert server._process.poll() is None
 
 
-def _free_port() -> int:
-    import socket
-
-    with socket.socket() as probe:
-        probe.bind(("localhost", 0))
-        return int(probe.getsockname()[1])
-
-
 def _launched(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **manager_args: object
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    port: int,
+    extra_args: Optional[list[str]] = None,
 ) -> list[str]:
-    """The command start() launches, the process standing in a 'true' that exits."""
-    import subprocess
-
+    """The arguments start() launches CARLA with, the launcher exiting at once."""
+    argv = tmp_path / "argv"
     launcher = tmp_path / "CarlaUnreal.sh"
-    launcher.write_text("#!/bin/sh\nexit 3\n")
+    launcher.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {argv}\nexit 3\n")
     launcher.chmod(0o755)
     monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(launcher))
-    seen: list[list[str]] = []
-    popen = subprocess.Popen
-
-    def record(cmd: list[str], **kwargs: object) -> subprocess.Popen[bytes]:
-        seen.append(cmd)
-        return popen(cmd, **kwargs)  # type: ignore[call-overload,no-any-return]
-
-    monkeypatch.setattr("autoware_carla_scenario.server.subprocess.Popen", record)
-    manager_args.setdefault("port", _free_port())  # no live server answers there
-    manager = CarlaServerManager(reuse_if_running=False, **manager_args)  # type: ignore[arg-type]
+    manager = CarlaServerManager(
+        port=port, extra_args=extra_args, reuse_if_running=False
+    )
     with pytest.raises(RuntimeError, match="exited with code 3"):
         manager.start()
     manager.stop()
-    return seen[0][1:]
+    return argv.read_text().split()
 
 
 def test_a_launched_server_listens_on_the_configured_port(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
 ) -> None:
     monkeypatch.setenv("DISPLAY", ":0")
-    port = _free_port()
-    assert _launched(monkeypatch, tmp_path, port=port) == [f"-carla-rpc-port={port}"]
-    assert _launched(
-        monkeypatch, tmp_path, port=port, extra_args=["-carla-rpc-port=3000"]
-    ) == ["-carla-rpc-port=3000"]
+    assert _launched(monkeypatch, tmp_path, free_port) == [
+        f"-carla-rpc-port={free_port}"
+    ]
+    assert _launched(monkeypatch, tmp_path, free_port, ["-carla-rpc-port=3000"]) == [
+        "-carla-rpc-port=3000"
+    ]
 
 
 def test_without_a_display_the_server_renders_off_screen(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
 ) -> None:
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    assert "-RenderOffScreen" in _launched(monkeypatch, tmp_path)
+    assert "-RenderOffScreen" in _launched(monkeypatch, tmp_path, free_port)

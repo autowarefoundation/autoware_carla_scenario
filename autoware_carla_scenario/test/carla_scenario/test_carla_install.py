@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+from email.message import Message
 import tarfile
 from pathlib import Path
 
@@ -48,10 +50,10 @@ def test_it_installs_under_the_framework_home(home: Path, tmp_path: Path) -> Non
     assert install_dir() == home / "bin" / "carla"
     assert installed_executable() is None
     launcher = install(_carla(tmp_path / "carla.tar.gz"))
-    assert launcher == home / "bin" / "carla" / LAUNCHER
+    assert launcher == install_dir() / LAUNCHER
     assert installed_executable() == launcher
     assert launcher.stat().st_mode & 0o111, "the launcher stays executable"
-    assert (home / "bin" / "carla" / "VERSION").read_bytes() == b"nightly"
+    assert (install_dir() / "VERSION").read_bytes() == b"nightly"
 
 
 def test_a_current_install_is_kept(home: Path, tmp_path: Path) -> None:
@@ -103,3 +105,24 @@ def test_the_cli_reports_failures(home: Path, tmp_path: Path) -> None:
     assert carla_install.main(["--url", (tmp_path / "missing.tar.gz").as_uri()]) == 1
     assert carla_install.main(["--url", _carla(tmp_path / "carla.tar.gz")]) == 0
     assert installed_executable() is not None
+
+
+def test_an_unchanged_download_is_not_fetched(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stamp makes the request conditional; a 304 leaves the install alone."""
+    import urllib.error
+    import urllib.request
+
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    stamp = json.loads((install_dir() / ".download.json").read_text())
+    asked: list[urllib.request.Request] = []
+
+    def not_modified(request: urllib.request.Request) -> None:
+        asked.append(request)
+        raise urllib.error.HTTPError(url, 304, "Not Modified", Message(), None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", not_modified)
+    assert install(url) == install_dir() / LAUNCHER
+    assert asked[0].get_header("If-modified-since") == stamp["last_modified"]

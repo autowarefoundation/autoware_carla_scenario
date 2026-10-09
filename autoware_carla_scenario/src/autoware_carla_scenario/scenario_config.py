@@ -311,9 +311,9 @@ class DriverConfig:
     #: ``host:port`` of the policy's gRPC server.
     address: str = "localhost:50051"
 
-    #: A policy to serve at :attr:`address` from the scenario's own process --
-    #: ``route_follower``, or ``package.module:Class`` -- or ``None`` to dial a
-    #: policy that is already serving there.
+    #: A policy the run serves itself, in its own process, instead of dialling
+    #: :attr:`address` -- ``route_follower``, or ``package.module:Class`` -- or
+    #: ``None`` to dial a policy already serving there.
     policy: str | None = None
 
     #: Per-RPC deadline in seconds.

@@ -21,11 +21,8 @@ import os
 import shutil
 import sys
 import tarfile
-import urllib.request
 from pathlib import Path, PurePosixPath
 from typing import IO, Optional, cast
-
-from tqdm import tqdm
 
 HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
 """Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
@@ -71,8 +68,24 @@ def install(
         RuntimeError: There is not room for the package, or it has no launcher.
             A previous install is left as it was.
     """
+    # The runner imports this module for install_dir() alone; these it does not need.
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    from tqdm import tqdm  # noqa: PLC0415
+
     target = target or install_dir()
-    with urllib.request.urlopen(url) as response:  # noqa: S310 -- a URL the user chose
+    request = urllib.request.Request(
+        url, headers={} if force else _conditions(target, url)
+    )
+    try:
+        response = urllib.request.urlopen(request)  # noqa: S310 -- a URL the user chose
+    except urllib.error.HTTPError as exc:
+        if exc.code != 304:  # 304 Not Modified: the server says the install is current
+            raise
+        print(f"CARLA at {target} is up to date.")
+        return target / LAUNCHER
+    with response:
         source = {
             "url": url,
             "etag": response.headers.get("ETag"),
@@ -104,13 +117,34 @@ def install(
     return target / LAUNCHER
 
 
-def _current(target: Path, source: dict[str, Optional[str]]) -> bool:
-    """Whether *target* holds a complete install of the same download as *source*."""
+def _stamp(target: Path) -> dict[str, Optional[str]]:
+    """What *target* was downloaded from, or nothing for an incomplete install."""
+    if not (target / LAUNCHER).is_file():
+        return {}
     try:
         stamp = json.loads((target / _STAMP).read_text())
     except (OSError, ValueError):
-        return False
-    if not (target / LAUNCHER).is_file() or stamp.get("url") != source["url"]:
+        return {}
+    return stamp if isinstance(stamp, dict) else {}
+
+
+def _conditions(target: Path, url: str) -> dict[str, str]:
+    """Headers that make the server answer 304 for the download *target* holds."""
+    stamp = _stamp(target)
+    if stamp.get("url") != url:
+        return {}
+    headers = {}
+    if stamp.get("etag"):
+        headers["If-None-Match"] = str(stamp["etag"])
+    if stamp.get("last_modified"):
+        headers["If-Modified-Since"] = str(stamp["last_modified"])
+    return headers
+
+
+def _current(target: Path, source: dict[str, Optional[str]]) -> bool:
+    """Whether *target* holds a complete install of the same download as *source*."""
+    stamp = _stamp(target)
+    if stamp.get("url") != source["url"]:
         return False
     if source["etag"]:
         return bool(stamp.get("etag") == source["etag"])
@@ -139,7 +173,8 @@ def _unpack(stream: IO[bytes], destination: Path) -> None:
         return tarfile.data_filter(member.replace(name=str(inner), deep=False), path)
 
     destination.mkdir(parents=True)
-    with tarfile.open(fileobj=stream, mode="r|gz") as archive:
+    # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
+    with tarfile.open(fileobj=stream, mode="r|gz", bufsize=1 << 20) as archive:
         archive.extractall(destination, filter=strip_top)
 
 

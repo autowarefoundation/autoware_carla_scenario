@@ -43,7 +43,10 @@ def load_policy(spec: str, **kwargs: Any) -> BaseDriver:
             f"unknown policy {spec!r}: expected one of {sorted(POLICY_REGISTRY)} "
             "or 'package.module:Class'"
         )
-    policy = factory(**kwargs) if callable(factory) else factory
+    try:
+        policy = factory(**kwargs)
+    except TypeError as exc:
+        raise ValueError(f"cannot build policy {spec!r}: {exc}") from exc
     if not isinstance(policy, BaseDriver):
         raise ValueError(
             f"policy {spec!r} built a {type(policy).__name__}, not a BaseDriver"

@@ -8,7 +8,6 @@ server.
 from __future__ import annotations
 
 import math
-import socket
 from types import SimpleNamespace
 from typing import List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock
@@ -682,17 +681,10 @@ def test_the_run_up_keeps_the_spawn_pose_s_offset_from_its_lane() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("localhost", 0))
-        return int(probe.getsockname()[1])
-
-
-def test_a_named_policy_is_served_for_the_scenario() -> None:
-    """driver.policy starts the policy in this process; nothing else has to run."""
-    address = f"localhost:{_free_port()}"
+def test_a_named_policy_is_served_by_the_run() -> None:
+    """driver.policy serves the policy in this process; nothing else has to run."""
     config = DriverClientConfig(
-        address=address,
+        address="nowhere.invalid:1",  # not dialled: the run serves its own policy
         policy="constant_speed",
         cameras=(),
         rear_axle_offset_m=-1.4,
@@ -700,14 +692,11 @@ def test_a_named_policy_is_served_for_the_scenario() -> None:
         policy_timestep_s=0.05,
         timeout_s=10.0,
     )
-    entity = CarlaDriverEntity(config)
-    entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
-    world = _world_with_route()
-
-    entity.on_scenario_start(world)
-    entity.on_tick(world, 0.0)
-    assert len(entity._plan) > 0  # noqa: SLF001 - the served policy planned
-    entity.on_scenario_end(world)
-
-    with socket.socket() as probe:  # the port is free again
-        probe.bind(("localhost", int(address.rsplit(":", 1)[1])))
+    for _ in range(2):  # a second scenario reuses the policy the first started
+        entity = CarlaDriverEntity(config)
+        entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+        world = _world_with_route()
+        entity.on_scenario_start(world)
+        entity.on_tick(world, 0.0)
+        assert len(entity._plan) > 0  # noqa: SLF001 - the served policy planned
+        entity.on_scenario_end(world)

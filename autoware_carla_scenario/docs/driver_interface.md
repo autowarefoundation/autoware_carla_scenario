@@ -55,9 +55,10 @@ everything. Name the policy in `driver.policy` (a reference policy, or
 uv run scenario ego.entity=carla_driver driver.policy=route_follower
 ```
 
-The policy is built fresh for each scenario and served at `driver.address` while
-the scenario runs. Over the wire nothing changes: the scenario still dials it over
-gRPC, exactly as it dials a policy in another process.
+The policy is built once per run and served on a free local port; `driver.address`
+is not used. Every scenario of a batch opens its own session on it, so a model is
+loaded once. Over the wire nothing changes: the scenario still dials it over gRPC,
+exactly as it dials a policy in another process.
 
 To run the policy as a process of its own (another environment, a GPU host, an
 alpasim driver), leave `driver.policy` unset and start the policy first. It is a
@@ -85,7 +86,7 @@ The `driver` config group (`conf/driver/default.yaml`) holds the settings:
 ```yaml
 driver:
   address: localhost:50051
-  policy: null               # e.g. route_follower: served by the scenario itself
+  policy: null               # e.g. route_follower: served by the run itself
   timeout_s: 60.0
   policy_timestep_s: 0.1     # must be a multiple of the 0.05 s simulation step
   image_quality: 90
