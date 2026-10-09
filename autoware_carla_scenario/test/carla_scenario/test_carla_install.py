@@ -126,3 +126,28 @@ def test_an_unchanged_download_is_not_fetched(
     monkeypatch.setattr(urllib.request, "urlopen", not_modified)
     assert install(url) == install_dir() / LAUNCHER
     assert asked[0].get_header("If-modified-since") == stamp["last_modified"]
+
+
+def test_a_directory_it_did_not_install_is_left_alone(
+    home: Path, tmp_path: Path
+) -> None:
+    mine = tmp_path / "simulators"
+    mine.mkdir()
+    (mine / "notes.txt").write_text("keep me")
+    with pytest.raises(RuntimeError, match="not empty"):
+        install(_carla(tmp_path / "carla.tar.gz"), mine)
+    assert (mine / "notes.txt").read_text() == "keep me"
+
+
+def test_an_interrupted_download_leaves_nothing_behind(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupted(stream: object, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        (destination / "half").write_bytes(b"x")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(carla_install, "_unpack", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        install(_carla(tmp_path / "carla.tar.gz"))
+    assert not install_dir().with_name("carla.partial").exists()

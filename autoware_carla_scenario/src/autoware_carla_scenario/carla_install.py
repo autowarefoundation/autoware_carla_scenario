@@ -16,6 +16,7 @@ never kept on disk; the new tree replaces the old one only once it is complete.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import shutil
@@ -65,16 +66,24 @@ def install(
     is dropped, so the launcher is always ``<target>/Linux/CarlaUnreal.sh``.
 
     Raises:
-        RuntimeError: There is not room for the package, or it has no launcher.
-            A previous install is left as it was.
+        RuntimeError: There is not room for the package, it has no launcher, or
+            *target* holds something other than a CARLA this function installed.
+            A previous install is left as it was, and so is anything else.
     """
+    if not hasattr(tarfile, "data_filter"):  # added in 3.10.12 / 3.11.4
+        raise RuntimeError("scenario-setup needs Python 3.10.12, 3.11.4 or later")
     # The runner imports this module for install_dir() alone; these it does not need.
     import urllib.error  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
     from tqdm import tqdm  # noqa: PLC0415
 
-    target = target or install_dir()
+    target = (target or install_dir()).expanduser().resolve()
+    if target.exists() and not (target / _STAMP).is_file() and any(target.iterdir()):
+        raise RuntimeError(
+            f"{target} is not empty and not a CARLA scenario-setup installed; "
+            "pick an empty or new directory"
+        )
     request = urllib.request.Request(
         url, headers={} if force else _conditions(target, url)
     )
@@ -97,20 +106,29 @@ def install(
             return target / LAUNCHER
         size = int(source["size"]) if source["size"] else None
         target.parent.mkdir(parents=True, exist_ok=True)
+        staging = target.with_name(target.name + ".partial")
+        shutil.rmtree(staging, ignore_errors=True)  # an interrupted run's
         if size is not None:
             _check_room(target.parent, size)
 
-        staging = target.with_name(target.name + ".partial")
-        shutil.rmtree(staging, ignore_errors=True)
         print(f"Downloading {url}\n         to {target}")
-        with tqdm.wrapattr(
-            response, "read", total=size, unit="B", unit_scale=True, unit_divisor=1024
-        ) as counted:
-            _unpack(cast(IO[bytes], counted), staging)
-
-    if not (staging / LAUNCHER).is_file():
-        shutil.rmtree(staging, ignore_errors=True)
-        raise RuntimeError(f"{url} has no {LAUNCHER}: not a CARLA Linux package")
+        try:
+            with tqdm.wrapattr(
+                response,
+                "read",
+                total=size,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as counted:
+                _unpack(cast(IO[bytes], counted), staging)
+            if not (staging / LAUNCHER).is_file():
+                raise RuntimeError(
+                    f"{url} has no {LAUNCHER}: not a CARLA Linux package"
+                )
+        except BaseException:  # Ctrl-C and a dropped connection too: no 30 GB left over
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
     shutil.rmtree(target, ignore_errors=True)
     staging.rename(target)
@@ -200,7 +218,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     try:
         launcher = install(args.url, args.dir, args.force)
-    except (OSError, RuntimeError, tarfile.TarError) as exc:
+    except (OSError, RuntimeError, tarfile.TarError, http.client.HTTPException) as exc:
         print(f"scenario-setup: {exc}", file=sys.stderr)
         return 1
     print(f"CARLA launcher: {launcher}")

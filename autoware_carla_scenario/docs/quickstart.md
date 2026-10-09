@@ -28,7 +28,11 @@ uv sync
 ```
 
 This also installs `autoware-carla-egodriver`, the policy side of the gRPC contract,
-and the CARLA client (prebuilt; nothing is compiled).
+and the CARLA client, typesafe_carla. Its wheel carries a prebuilt CPython package.
+Where that package does not match the installed toolchain, the first run that
+imports the client builds it once instead (15-50 min, ~14 GB of memory, needs `cc`)
+into `~/.cache/typesafe_carla`. `uv run typesafe-codon pycarla` does that ahead of
+time, and says "nothing to build" when the prebuilt package applies.
 
 ## 2. Download CARLA
 
@@ -46,7 +50,7 @@ newer one replaces it.
 | --- | --- |
 | `--force` | Download again even if the install is current |
 | `--url URL` | Install another CARLA Linux package (`.tar.gz`), e.g. a release |
-| `--dir DIR` | Unpack somewhere else; then point `CARLA_EXECUTABLE` at the launcher it prints |
+| `--dir DIR` | Unpack into `DIR` (new or empty) instead; then point `CARLA_EXECUTABLE` at the launcher it prints |
 
 `AUTOWARE_CARLA_SCENARIO_HOME` moves `~/.autoware_carla_scenario` as a whole.
 
@@ -74,13 +78,11 @@ scenario serves itself.
 
 The example scenarios name lanelets of the NishishinjukuMap by default, so on
 Town10HD_Opt a run gives its own. The two above are one of the cases the
-scenario's sweep matches. `scenario-expand` lists every case without running
-anything, and a multirun runs them all:
+scenario's sweep matches. `scenario-expand` lists every case, each as the
+overrides to add to the command above, without running anything:
 
 ```bash
 uv run scenario-expand scenario=cut_in/left map=town10hd_opt
-uv run scenario --multirun scenario=cut_in/left map=town10hd_opt hydra/sweeper=lanelet_constraint \
-  ego.entity=carla_driver driver.policy=route_follower
 ```
 
 ## 4. Test your own policy
