@@ -18,7 +18,7 @@ project's `pyproject.toml`:
 name = "my-policy-tests"
 version = "0.1.0"
 requires-python = ">=3.10,<3.15"
-dependencies = ["autoware-carla-scenario>=4"]
+dependencies = ["autoware-carla-scenario>=5"]
 ```
 
 ```bash

@@ -426,6 +426,38 @@ def test_a_policy_on_contract_revision_2_gets_the_optical_frame() -> None:
     assert (advertised.rotation * expected.rotation.inv()).magnitude() < 1e-6
 
 
+def test_a_policy_on_an_unknown_contract_revision_is_refused() -> None:
+    """A policy newer than this framework's carla-driver-interface fails the session
+    at ``start_session`` instead of being handed cameras in the wrong frame."""
+    from carla_driver_interface.contract import (
+        CONTRACT_REVISION,
+        ContractError,
+        contract_metadata,
+    )
+
+    class _Newer(_StubPolicy):
+        def get_version(self, request, context):  # noqa: ANN001, D102
+            context.send_initial_metadata(contract_metadata(CONTRACT_REVISION + 1))
+            return super().get_version(request, context)
+
+    policy = _Newer()
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    egodriver_pb2_grpc.add_EgodriverServiceServicer_to_server(policy, server)
+    port = server.add_insecure_port("localhost:0")
+    server.start()
+    config = DriverClientConfig(address=f"localhost:{port}", timeout_s=10.0)
+    client = EgoDriverGrpcClient(
+        config, channel=grpc.insecure_channel(config.address, options=channel_options())
+    )
+    try:
+        with pytest.raises(ContractError, match="upgrade carla-driver-interface"):
+            client.start_session("session-1", "scene")
+    finally:
+        server.stop(grace=None)
+
+    assert policy.sessions == []
+
+
 def test_a_carla_driver_interface_policy_sees_the_configured_mount() -> None:
     """End to end against the real servicer: the policy is handed the configured
     mount as its optical frame, the convention it reads in every runtime."""
