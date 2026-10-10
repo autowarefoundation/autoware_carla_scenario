@@ -256,7 +256,7 @@ class CoverageReport:
     odds: dict[str, OddExposure] = field(default_factory=dict)
 
     def groups(self) -> list[str]:
-        order = {"odd": 0, "scenario": 1}
+        order = {"odd": 0, "situation": 1, "scenario": 2}
         return sorted(
             {e.group for e in self.entries}, key=lambda g: (order.get(g, 9), g)
         )

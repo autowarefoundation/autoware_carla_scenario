@@ -236,6 +236,15 @@ and adds no distance; without an ego, no distance is measured. A one-shot item
 (`START`, `END`, a condition) has no duration: each hit is an entry, and its
 seconds and meters stay 0.
 
+### Situation coverage
+
+ODD modules covered as situations (`docs/odd.md`, Situations) report in a
+group of their own between ODD and scenario coverage. Each is an item
+`odd.situation.<module>` with one bucket, `holds`, sampled every tick from
+the module's verdict, and graded with its `target`, `cover_by` and
+`min_stay`. Ticks where the verdict rested on missing values are listed as
+`unknown`, outside the bucket.
+
 ## The report
 
 ```bash

@@ -83,10 +83,15 @@ class CoverGroup(enum.Enum):
     """
 
     ODD = "odd"
+    #: ODD modules covered as situations: combinations the runs should drive.
+    SITUATION = "situation"
     SCENARIO = "scenario"
 
 
 Event = Union[SamplingEvent, "BaseCondition"]
+
+#: The one bucket of a situation's cover item: the ODD module held.
+HOLDS = "holds"
 
 
 def duplicates(names: Iterable[str]) -> list[str]:

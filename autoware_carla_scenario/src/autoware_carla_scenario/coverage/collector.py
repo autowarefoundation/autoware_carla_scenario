@@ -31,6 +31,7 @@ from .items import (
     ABOVE_RANGE,
     BELOW_RANGE,
     COVER_MEASURES,
+    HOLDS,
     CoverItem,
     CrossItem,
     Event,
@@ -41,7 +42,7 @@ from .items import (
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from ..odd.model import OddDefinition
+    from ..odd.model import OddDefinition, OddVerdict
 
 __all__ = ["COVERAGE_SCHEMA", "CoverageCollector", "CROSS_SEPARATOR"]
 
@@ -65,6 +66,19 @@ MAX_EGO_SPEED_MPS = 100.0
 MAX_OUT_INTERVALS = 100
 
 
+def _situation_value(holds: Any) -> Optional[str]:
+    """A situation's sample: it held, it rested on missing values, or nothing."""
+    if holds is True:
+        return HOLDS
+    if holds is None:
+        return UNKNOWN_SITUATION  # counted apart, and the stay is over
+    return None  # failed, or inactive
+
+
+#: A situation whose verdict rested on missing values.
+UNKNOWN_SITUATION = "unknown"
+
+
 class _OddMonitor:
     """Whether each tick was inside the ODD, and which modules ruled it out.
 
@@ -84,7 +98,8 @@ class _OddMonitor:
         #: Whether the excursion going on is the last interval listed.
         self._recording = False
 
-    def record(self, values: dict[str, Any], start: float, end: float) -> None:
+    def record(self, values: dict[str, Any], start: float, end: float) -> "OddVerdict":
+        """Judge one tick; the verdict, for the situations."""
         verdict = self.odd.evaluate(values)
         if not verdict.inside:
             key = "outside"
@@ -105,6 +120,7 @@ class _OddMonitor:
             self._recording = True
         if not outside:
             self._recording = False
+        return verdict
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -278,13 +294,23 @@ class CoverageCollector:
         self._odd = _OddMonitor(odd) if odd is not None else None
         # ODD item -> the attribute whose sampled value fills it.
         self._odd_items: dict[str, str] = {}
+        # Situation item -> the module whose verdict fills it.
+        self._situation_items: dict[str, str] = {}
         outside: dict[str, list[str]] = {}
         if odd is not None:
             for attribute in odd.attributes:
                 if attribute.item is not None:
                     self._odd_items[attribute.item.name] = attribute.name
                     outside[attribute.item.name] = odd.outside_buckets(attribute)
-            items = [*odd.cover_items(), *items]
+            situations = odd.situations()
+            self._situation_items = {
+                m.item.name: m.name for m in situations if m.item is not None
+            }
+            items = [
+                *odd.cover_items(),
+                *(m.item for m in situations if m.item is not None),
+                *items,
+            ]
         names = [i.name for i in items] + [c.name for c in crosses or ()]
         if duplicates(names):
             raise ValueError(
@@ -326,7 +352,9 @@ class CoverageCollector:
         if self._odd is not None:
             attributes = self._odd.odd.sample(world)
             values = {item: attributes[a] for item, a in self._odd_items.items()}
-            self._odd.record(attributes, self._last_elapsed, elapsed)
+            verdict = self._odd.record(attributes, self._last_elapsed, elapsed)
+            for item, module in self._situation_items.items():
+                values[item] = _situation_value(verdict.modules.get(module))
         step = self._step(world, elapsed)
         self._sample_event(world, SamplingEvent.TICK, values, step)
         for key, entry in self._conditions.items():

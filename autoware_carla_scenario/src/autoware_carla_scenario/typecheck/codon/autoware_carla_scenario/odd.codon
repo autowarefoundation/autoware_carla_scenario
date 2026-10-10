@@ -128,8 +128,11 @@ class OddModule:
 
     def __init__(self, name: str, *_kw, include_and = None, include_or = None,
                  exclude_and = None, exclude_or = None, labels = None,
-                 active: bool = True, text: str = ""):
+                 active: bool = True, text: str = "", situation: bool = False,
+                 target = 1.0, cover_by: str = "hits", min_stay = None):
         _keyword_only(_kw, "OddModule(): every argument but name")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
         if not (isinstance(include_and, None) or isinstance(include_and, Optional[NoneType])):
             if not (isinstance(include_or, None) or isinstance(include_or, Optional[NoneType])):
                 compile_error("OddModule(): one include section, include_and or include_or")

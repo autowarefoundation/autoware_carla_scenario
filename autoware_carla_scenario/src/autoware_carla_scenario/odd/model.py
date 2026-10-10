@@ -48,6 +48,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Union
 
 from ..coverage.items import (
     CoverGroup,
+    HOLDS,
     CoverItem,
     SamplingEvent,
     _check_criteria,
@@ -527,6 +528,11 @@ class OddAttribute:
 # ---------------------------------------------------------------------------
 
 
+def _never_called(world: Any) -> Any:
+    """A situation's expression: the collector fills it from the ODD's verdict."""
+    return None
+
+
 class OddModule:
     """A named rule: it holds when its include section holds and its exclude does not.
 
@@ -541,6 +547,15 @@ class OddModule:
         active: An inactive module is ignored: conditions referring to it drop
             out of their sections.
         text: A description for the report (OpenODD's ``TITLE``).
+        situation: Cover the module as a situation: record how long, how far
+            and how often it held (``odd.situation.<name>``).  A situation
+            is not a root candidate by default: it is a combination the runs
+            should drive, not a bound of the ODD.
+        target: With *situation*: what covering it takes, in *cover_by*.
+        cover_by: With *situation*: ``"hits"`` (ticks, the default),
+            ``"seconds"``, ``"meters"`` or ``"entries"``.
+        min_stay: With *situation*: stays shorter than this many seconds do
+            not count.
 
     As in OpenODD, a module has at most one include section and at most one
     exclude section.
@@ -557,6 +572,10 @@ class OddModule:
         labels: Optional[Sequence[str]] = None,
         active: bool = True,
         text: str = "",
+        situation: bool = False,
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
     ) -> None:
         if not name:
             raise ValueError("OddModule: name must not be empty")
@@ -587,6 +606,39 @@ class OddModule:
         self.labels = list(labels or ())
         self.active = active
         self.text = text
+        #: The module's cover item when it is covered as a situation.
+        self.item: Optional[CoverItem] = None
+        if situation:
+            self.as_situation(target=target, cover_by=cover_by, min_stay=min_stay)
+        elif (target, cover_by, min_stay) != (1, "hits", None):
+            raise ValueError(
+                f"OddModule({name}): target, cover_by and min_stay need situation=True"
+            )
+
+    @property
+    def situation(self) -> bool:
+        """Whether the module is covered as a situation."""
+        return self.item is not None
+
+    def as_situation(
+        self,
+        *,
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
+    ) -> None:
+        """Cover the module as a situation, with these criteria."""
+        self.item = CoverItem(
+            name=f"odd.situation.{self.name}",
+            expression=_never_called,
+            values=[HOLDS],
+            event=SamplingEvent.TICK,
+            text=self.text,
+            target=target,
+            group=CoverGroup.SITUATION,
+            cover_by=cover_by,
+            min_stay=min_stay,
+        )
 
     def _conditions(self) -> list[OddCondition]:
         return [c for s in (self.include, self.exclude) if s for c in s.children]
@@ -613,6 +665,12 @@ class OddModule:
                 out[key] = [c.describe() for c in section.children]
         if self.labels:
             out["labels"] = list(self.labels)
+        if self.item is not None:
+            out["situation"] = {
+                "target": self.item.target,
+                "cover_by": self.item.cover_by,
+                "min_stay": self.item.min_stay,
+            }
         return out
 
 
@@ -722,7 +780,12 @@ class OddDefinition:
             self.roots = [r for r in roots if r not in referenced] or list(roots)
         else:
             # A graph without cycles always has a module nothing refers to.
-            self.roots = [m.name for m in self.modules if m.name not in referenced]
+            # Situations are what to drive, not bounds of the ODD.
+            self.roots = [
+                m.name
+                for m in self.modules
+                if m.name not in referenced and not m.situation
+            ]
         self._plain = [a for a in self.attributes if not _derived(a.probe)]
         self._derived = [a for a in self.attributes if _derived(a.probe)]
         self._outside = self._outside_buckets()
@@ -841,6 +904,10 @@ class OddDefinition:
     def cover_items(self) -> list[CoverItem]:
         """The cover items of the attributes that have buckets."""
         return [a.item for a in self.attributes if a.item is not None]
+
+    def situations(self) -> list[OddModule]:
+        """The modules covered as situations."""
+        return [m for m in self.modules if m.item is not None]
 
     def unmeasured(self) -> list[str]:
         """Attributes with no buckets: monitored, but not covered."""
