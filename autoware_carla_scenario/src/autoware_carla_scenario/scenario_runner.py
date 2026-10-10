@@ -438,6 +438,44 @@ class ScenarioRunner:
         for actor in world.get_actors().filter("vehicle.*"):
             release_vehicle(actor)
 
+    def _warn_if_route_leaves_odd(
+        self, scenario_name: str, scenario: "BaseScenario"
+    ) -> None:
+        """Warn when the ego's planned route leaves the ODD (docs/odd.md).
+
+        The route is planned on the loaded Lanelet2 map from the spawn pose,
+        through the waypoints, to the goal that ``setup()`` has settled.  A
+        warning, never a failure: the run is what measures the ODD, and
+        anything that keeps the route from being planned (no goal, no map, no
+        path) is only logged at debug level.  An ODD with no modules rules
+        nothing out, so it is not even planned.
+        """
+        try:
+            if not self.odd.modules or scenario.goal_pose is None:
+                return
+            from .odd.route import plan_route_coverage  # noqa: PLC0415
+
+            coverage = plan_route_coverage(self.odd, scenario)
+        except Exception as error:  # noqa: BLE001 - must never fail the run
+            logger.debug(
+                "[%s] Planned route not checked against the ODD: %s",
+                scenario_name,
+                error,
+            )
+            return
+        outside = coverage.outside()
+        if outside:
+            logger.warning(
+                "[%s] The planned route leaves ODD %s: %.1f m of %.1f m on "
+                "lanelets %s (modules: %s)",
+                scenario_name,
+                coverage.odd,
+                coverage.outside_m,
+                coverage.length_m,
+                ", ".join(str(ll.lanelet_id) for ll in outside),
+                ", ".join(sorted({m for ll in outside for m in ll.failing_modules})),
+            )
+
     def _wait_for_ego(
         self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
     ) -> None:
@@ -751,6 +789,7 @@ class ScenarioRunner:
             # setup returns -- and here rather than inside `_setup_ego_spawn`,
             # which a scenario that snaps its own spawn never calls.
             scenario.require_goal()
+            self._warn_if_route_leaves_odd(scenario_name, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             ego_actor = ego.spawn(world, scenario.ego_config)
             logger.info(

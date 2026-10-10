@@ -61,6 +61,7 @@ __all__ = [
     "OddDefinition",
     "OddModule",
     "OddVerdict",
+    "UNDECIDED",
     "all_of",
     "any_of",
     "module_holds",
@@ -121,8 +122,27 @@ def _not(value: Optional[bool]) -> Optional[bool]:
 # Abstract values: what deciding the buckets outside the ODD evaluates
 # ---------------------------------------------------------------------------
 
+
+class _Open:
+    """The type of :data:`UNDECIDED`."""
+
+    def __repr__(self) -> str:
+        return "UNDECIDED"
+
+    def __reduce__(self) -> str:
+        return "UNDECIDED"  # pickled and copied as the one instance
+
+
 #: An attribute whose value is open: present, but could be anything.
-_OPEN = object()
+_OPEN = _Open()
+
+#: What a map-only probe (a probe's ``on_lanelet``, see
+#: :mod:`~autoware_carla_scenario.odd.route`) returns for a value the map
+#: cannot decide, because only the run knows it: CARLA's speed limit on a
+#: lanelet with no ``speed_limit`` tag, say.  It is not missing (``None``):
+#: the run will read a value, which could be anything.  Conditions on it are
+#: unknown.
+UNDECIDED: Any = _OPEN
 
 
 @dataclass(frozen=True)

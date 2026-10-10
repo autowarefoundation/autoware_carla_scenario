@@ -5,7 +5,9 @@ scenario: ``scenario-odd check``) or in ASAM OpenODD 1.0 YAML with a binding
 file naming its probes (:func:`load_odd_binding`, :func:`load_openodd`),
 which builds the same objects.  The runner samples the ODD's attributes on
 every tick: their buckets are the ODD coverage, and the ODD's modules decide
-which ticks were outside it.  See ``docs/odd.md``.
+which ticks were outside it.  Before a run, :func:`plan_route_coverage` checks
+the ego's planned route against it on the Lanelet2 map alone.  See
+``docs/odd.md``.
 """
 
 from . import probes
@@ -17,6 +19,7 @@ from .model import (
     OddDefinition,
     OddModule,
     OddVerdict,
+    UNDECIDED,
     all_of,
     any_of,
     module_holds,
@@ -41,6 +44,16 @@ from .probes import (
     speed_limit_kph,
     traffic_density,
 )
+from .route import (
+    PlannedRoute,
+    RouteCoverage,
+    RouteCoverageSummary,
+    RouteError,
+    RouteLanelet,
+    combine_route_coverage,
+    plan_route,
+    plan_route_coverage,
+)
 from .registry import (
     DEFAULT_ODD,
     ENTRY_POINT_GROUP,
@@ -63,6 +76,15 @@ __all__ = [
     "OddDefinition",
     "OddModule",
     "OddVerdict",
+    "PlannedRoute",
+    "RouteCoverage",
+    "RouteCoverageSummary",
+    "RouteError",
+    "RouteLanelet",
+    "UNDECIDED",
+    "combine_route_coverage",
+    "plan_route",
+    "plan_route_coverage",
     "all_of",
     "any_of",
     "default_odd",
