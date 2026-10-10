@@ -171,6 +171,27 @@ Because ODD items are sampled every tick, their hits count ticks. The report
 also counts, per bucket, how many **runs** hit it. A bucket held for many
 ticks in a single run is still only one situation.
 
+### Exposure: seconds, meters, entries
+
+Ticks are a poor measure of how much of a situation a run saw: a stopped ego
+keeps adding them. So every item sampled on `TICK` (every ODD item, and any
+scenario item or cross with `event=SamplingEvent.TICK`) also records, per
+bucket:
+
+| Measure | Meaning |
+|---|---|
+| `seconds` | simulated time spent in the bucket |
+| `meters` | distance the ego drove while the item was in the bucket |
+| `entries` | how many times the item entered the bucket; a run of consecutive ticks in it counts once |
+
+A tick stands for the step since the previous tick: its duration, and the
+ego's displacement over it. A tick with no sample (a missing value, an
+ignored one) ends the stay, so the next sample in the same bucket is a new
+entry. A step faster than 100 m/s is a respawn or a teleport, not driving,
+and adds no distance; without an ego, no distance is measured. A one-shot item
+(`START`, `END`, a condition) has no duration: each hit is an entry, and its
+seconds and meters stay 0.
+
 ## The report
 
 ```bash
@@ -187,7 +208,9 @@ outside it. It
 then lists the modules that ruled ticks out, and the runs that left the ODD,
 with when. After that comes a summary table per group: item, event, grade,
 covered buckets (of those inside the ODD) and holes. Below it, each item gets its buckets with hits and
-runs. Runs merge per item: two coverage files describe the same item when the
+runs, and an item sampled every tick its seconds, meters and entries too.
+Exposure sums over runs; a coverage file written before it was recorded makes
+the item's sums unknown (`?` in Markdown, `null` in JSON) rather than short. Runs merge per item: two coverage files describe the same item when the
 name, event and buckets agree. An item whose definition changed between runs
 is reported once per definition (`name#2`, ...), because adding up hits of
 different buckets would mean nothing.
@@ -212,6 +235,9 @@ different buckets would mean nothing.
       "samples": 1,
       "ignored": 0,
       "hits": {"[0, 5)": 0, "[5, 15)": 1, "[15, 40]": 0},
+      "seconds": {"[0, 5)": 0.0, "[5, 15)": 0.0, "[15, 40]": 0.0},
+      "meters": {"[0, 5)": 0.0, "[5, 15)": 0.0, "[15, 40]": 0.0},
+      "entries": {"[0, 5)": 0, "[5, 15)": 1, "[15, 40]": 0},
       "out_of_range": {}
     }
   ],
@@ -225,7 +251,10 @@ different buckets would mean nothing.
       "target": 1,
       "buckets": ["[0, 10) / [0, 5)", "..."],
       "outside_odd": [],
-      "hits": {"[0, 10) / [0, 5)": 0, "...": 0}
+      "hits": {"[0, 10) / [0, 5)": 0, "...": 0},
+      "seconds": {"...": 0.0},
+      "meters": {"...": 0.0},
+      "entries": {"...": 0}
     }
   ],
   "odd": {

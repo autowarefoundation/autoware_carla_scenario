@@ -12,8 +12,10 @@ With an ODD, every tick also samples the ODD's attributes, once each
 (:meth:`OddDefinition.sample`).  Those values fill the ODD's cover items and
 decide whether the tick was inside the ODD.
 
-The coverage file (``{Scenario}_coverage.json``) holds hit counts per bucket
-for one run; ``scenario-coverage`` merges any number of them into a report.
+The coverage file (``{Scenario}_coverage.json``) holds, per bucket of one
+run, its hits and, for items sampled every tick, its exposure: the seconds
+spent in it, the metres the ego drove in it, and how many times it was
+entered.  ``scenario-coverage`` merges any number of them into a report.
 """
 
 from __future__ import annotations
@@ -49,6 +51,10 @@ COVERAGE_SCHEMA = "autoware_carla_scenario.coverage/1"
 
 #: Joins the bucket labels of a cross-coverage cell.
 CROSS_SEPARATOR = " / "
+
+#: Faster than this between two ticks, the ego was moved, not driven (a
+#: respawn, a teleport): the step adds no distance.
+MAX_EGO_SPEED_MPS = 100.0
 
 #: Out-of-ODD intervals kept per run; a run that leaves the ODD more often is
 #: still counted in full, only the intervals past this are not listed.
@@ -108,12 +114,65 @@ class _OddMonitor:
         }
 
 
+class _Exposure:
+    """Per bucket: hits, and for samples taken every tick, time, distance, entries.
+
+    A sample on a tick stands for the step since the previous tick: its
+    seconds and the metres the ego drove.  A stay is a run of consecutive
+    ticks in one bucket; entering it again after a tick elsewhere, or after a
+    tick with no sample, is a new entry.  A one-shot sample is an entry of no
+    duration.
+    """
+
+    def __init__(self, labels: list[str]) -> None:
+        self.hits: dict[str, int] = {label: 0 for label in labels}
+        self.seconds: dict[str, float] = {label: 0.0 for label in labels}
+        self.meters: dict[str, float] = {label: 0.0 for label in labels}
+        self.entries: dict[str, int] = {label: 0 for label in labels}
+        #: The bucket of the stay going on, if any.
+        self._stay: Optional[str] = None
+
+    def add(self, label: str, step: Optional["_Step"]) -> None:
+        self.hits[label] += 1
+        if step is None:
+            self.entries[label] += 1
+            return
+        if label != self._stay:
+            self.entries[label] += 1
+        self._stay = label
+        self.seconds[label] += step.seconds
+        self.meters[label] += step.meters
+
+    def gap(self) -> None:
+        """A tick without a sample in any bucket: the stay is over."""
+        self._stay = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hits": dict(self.hits),
+            "seconds": {k: round(v, 3) for k, v in self.seconds.items()},
+            "meters": {k: round(v, 3) for k, v in self.meters.items()},
+            "entries": dict(self.entries),
+        }
+
+
+class _Step:
+    """The step one tick stands for: its duration, and the ego's distance."""
+
+    __slots__ = ("seconds", "meters")
+
+    def __init__(self, seconds: float, meters: float) -> None:
+        self.seconds = seconds
+        self.meters = meters
+
+
 class _ItemHits:
     def __init__(self, item: CoverItem, outside: list[str]) -> None:
         self.item = item
         #: Buckets outside the run's ODD: reported, but not coverage targets.
         self.outside = outside
-        self.hits: dict[str, int] = {label: 0 for label in item.labels}
+        self.exposure = _Exposure(item.labels)
+        self.hits = self.exposure.hits
         self.out_of_range: dict[str, int] = {}
         self.ignored = 0
         self.samples = 0
@@ -125,7 +184,7 @@ class _ItemHits:
             "outside_odd": list(self.outside),
             "samples": self.samples,
             "ignored": self.ignored,
-            "hits": dict(self.hits),
+            **self.exposure.to_dict(),
             "out_of_range": dict(self.out_of_range),
         }
 
@@ -134,7 +193,8 @@ class _CrossHits:
     def __init__(self, cross: CrossItem, outside: dict[str, list[str]]) -> None:
         self.cross = cross
         cells = list(itertools.product(*(i.labels for i in cross.items)))
-        self.hits: dict[str, int] = {CROSS_SEPARATOR.join(c): 0 for c in cells}
+        self.exposure = _Exposure([CROSS_SEPARATOR.join(c) for c in cells])
+        self.hits = self.exposure.hits
         self.outside = [
             CROSS_SEPARATOR.join(cell)
             for cell in cells
@@ -149,7 +209,7 @@ class _CrossHits:
             **self.cross.describe(),
             "buckets": list(self.hits),
             "outside_odd": list(self.outside),
-            "hits": dict(self.hits),
+            **self.exposure.to_dict(),
         }
 
 
@@ -201,10 +261,12 @@ class CoverageCollector:
         }
         self._failed_conditions: set[int] = set()
         self._last_elapsed = 0.0
+        self._last_position: Optional[tuple[float, float, float]] = None
 
     def start(self, world: "carla.World", elapsed: float) -> None:
         """Sample the items on :attr:`SamplingEvent.START`."""
         self._last_elapsed = elapsed
+        self._last_position = self._ego_position(world)
         self._sample_event(world, SamplingEvent.START)
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
@@ -214,8 +276,8 @@ class CoverageCollector:
             attributes = self._odd.odd.sample(world)
             values = {item: attributes[a] for item, a in self._odd_items.items()}
             self._odd.record(attributes, self._last_elapsed, elapsed)
-        self._last_elapsed = elapsed
-        self._sample_event(world, SamplingEvent.TICK, values)
+        step = self._step(world, elapsed)
+        self._sample_event(world, SamplingEvent.TICK, values, step)
         for key, entry in self._conditions.items():
             condition, was_satisfied = entry
             try:
@@ -260,13 +322,39 @@ class CoverageCollector:
 
     # ------------------------------------------------------------------
 
+    def _step(self, world: "carla.World", elapsed: float) -> _Step:
+        """The step since the previous tick; remembers this tick's time and place."""
+        seconds = max(0.0, elapsed - self._last_elapsed)
+        position = self._ego_position(world)
+        meters = 0.0
+        if position is not None and self._last_position is not None:
+            meters = math.dist(position, self._last_position)
+            if meters > MAX_EGO_SPEED_MPS * max(seconds, 0.05):
+                meters = 0.0
+        self._last_elapsed = elapsed
+        self._last_position = position
+        return _Step(seconds, meters)
+
+    @staticmethod
+    def _ego_position(world: "carla.World") -> Optional[tuple[float, float, float]]:
+        from ..odd.probes import ego_position  # noqa: PLC0415 - odd imports coverage
+
+        try:
+            return ego_position(world)
+        except Exception:
+            return None
+
     def _sample_event(
         self,
         world: "carla.World",
         event: Event,
         values: Optional[dict[str, Any]] = None,
+        step: Optional[_Step] = None,
     ) -> None:
-        """Sample the items on *event*; *values* holds those sampled already."""
+        """Sample the items on *event*; *values* holds those sampled already.
+
+        *step* is the step a tick stands for; ``None`` for a one-shot event.
+        """
         entries = self._items_on.get(id(event), ())
         if not entries:
             return
@@ -277,13 +365,19 @@ class CoverageCollector:
                 value = values[name]
             else:
                 value = self._evaluate(entry, world)
-            buckets[name] = self._count(entry, value)
+            label = self._count(entry, value)
+            buckets[name] = label
+            if label is None:
+                entry.exposure.gap()
+            else:
+                entry.exposure.add(label, step)
         for cross in self._crosses_on.get(id(event), ()):
             cell = [buckets.get(i.name) for i in cross.cross.items]
-            if all(label is not None for label in cell):
-                key = CROSS_SEPARATOR.join(cell)  # type: ignore[arg-type]
-                if key in cross.hits:
-                    cross.hits[key] += 1
+            key = CROSS_SEPARATOR.join(cell) if None not in cell else None  # type: ignore[arg-type]
+            if key is not None and key in cross.hits:
+                cross.exposure.add(key, step)
+            else:
+                cross.exposure.gap()
 
     def _evaluate(self, entry: _ItemHits, world: "carla.World") -> Any:
         try:
@@ -307,7 +401,6 @@ class CoverageCollector:
             return None
         entry.samples += 1
         if label in entry.hits:
-            entry.hits[label] += 1
             return label
         if label in (BELOW_RANGE, ABOVE_RANGE) or not item.numeric:
             entry.out_of_range[label] = entry.out_of_range.get(label, 0) + 1
