@@ -10,7 +10,11 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Sequence
 
-from ..trajectory.authoring import parse_relative_vertices, parse_vertices
+from ..trajectory.authoring import (
+    parse_relative_vertices,
+    parse_route_vertices,
+    parse_vertices,
+)
 from ..authoring.registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -68,6 +72,8 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
         return [list(row) for row in parse_vertices(text)]
     if spec.kind == "relative_lane_trajectory":
         return [list(row) for row in parse_relative_vertices(text)]
+    if spec.kind == "route_trajectory":
+        return parse_route_vertices(text)
     return text
 
 

@@ -41,6 +41,7 @@ __all__ = [
     "build_entity_lane_of_condition",
     "build_entity_lane_position_condition",
     "build_entity_road_position_condition",
+    "build_route_progress_condition",
     "build_speed_condition",
     "build_standstill_condition",
     "build_temporary_stop_condition",
@@ -344,6 +345,25 @@ def build_entity_road_position_condition(
         entity_name=str(params["entity"]),
         position=position,
         rules=rules,
+        label=compiled.label,
+    )
+
+
+def build_route_progress_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`RouteProgressCondition`."""
+    from ..conditions import RouteProgressCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    return RouteProgressCondition(
+        entity_name=(str(params["entity"]) if params["entity"] is not None else None),
+        value=params["value"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        anchor=(str(params["anchor"]) if params["anchor"] is not None else None),
         label=compiled.label,
     )
 
@@ -875,6 +895,7 @@ def build_follow_trajectory_action(
         lateral_offset_m=params["lateral_offset_m"],
         relative_vertices=params["relative_vertices"],
         reference_entity=params["reference_entity"],
+        route_vertices=params["route_vertices"],
         advance=instantiate_advance_conditions(compiled, ctx),
     )
     time_reference = authored_timing(
@@ -894,6 +915,7 @@ def build_follow_trajectory_action(
         once=compiled.node.once,
         hidden_outside_trajectory=params["hidden_outside_trajectory"],
         speed=params["speed_ms"],
+        appear_on_start=params["appear_on_start"],
     )
 
 

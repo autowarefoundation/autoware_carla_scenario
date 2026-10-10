@@ -68,6 +68,7 @@ from .forms import parse_params
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from ..authoring.models import RouteSearch
     from ..maps import MapEntry
 
 logger = logging.getLogger(__name__)
@@ -281,6 +282,8 @@ class EditorService:
             document.timeout_seconds = _as_float(
                 form["timeout_seconds"], "Timeout", document.timeout_seconds
             )
+        if "route_yaml" in form:
+            document.route = parse_route_yaml(str(form["route_yaml"]))
         before = document.map.model_copy()
         for attribute in (
             "group",
@@ -1437,6 +1440,39 @@ def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:
     while f"{stem}{index}" in taken:
         index += 1
     return f"{stem}{index}"
+
+
+def route_yaml(document: ScenarioDocument) -> str:
+    """The document's route search as the YAML the inspector edits ("" for none)."""
+    if document.route is None:
+        return ""
+    from ..authoring.persistence import dump_yaml  # noqa: PLC0415
+
+    return dump_yaml(document.route.to_sweep_dict())
+
+
+def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
+    """The route search the inspector's YAML states; ``None`` for an empty box.
+
+    Raises:
+        EditorError: If the text is not YAML, or not a route search.
+    """
+    import yaml  # noqa: PLC0415
+
+    from ..authoring.models import RouteSearch  # noqa: PLC0415
+
+    if not text.strip():
+        return None
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise EditorError(f"Route search: not YAML ({exc})") from exc
+    if not isinstance(raw, dict):
+        raise EditorError("Route search: expected a mapping with 'segments'.")
+    try:
+        return RouteSearch.model_validate(raw)
+    except Exception as exc:  # pydantic validation
+        raise EditorError(f"Route search: {exc}") from exc
 
 
 def condition_actions(node: ConditionNode) -> list[str]:

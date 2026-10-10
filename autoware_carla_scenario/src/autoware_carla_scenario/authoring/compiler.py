@@ -38,7 +38,11 @@ from .registry import (
     get_action_spec,
     get_condition_spec,
 )
-from ..trajectory.authoring import parse_relative_vertices, parse_vertices
+from ..trajectory.authoring import (
+    parse_relative_vertices,
+    parse_route_vertices,
+    parse_vertices,
+)
 from .validator import Issue, validate_document
 
 __all__ = [
@@ -100,6 +104,8 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
         return [list(row) for row in parse_vertices(value)]
     if spec.kind == "relative_lane_trajectory":
         return [list(row) for row in parse_relative_vertices(value)]
+    if spec.kind == "route_trajectory":
+        return parse_route_vertices(value)
     return value
 
 

@@ -91,6 +91,7 @@ All conditions inherit from `BaseCondition` and return a
 | `EntityDistanceCondition`, `TimeToCollisionCondition` | Relative conditions between two entities: separation, and time to collision along the line joining them. |
 | `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
 | `TrafficSignalCondition` | Traffic-light state check. |
+| `RouteProgressCondition` | An entity's (default: the ego's) distance along the scenario's route, from an anchor (`junction:0:entry`, ...), compared with a rule; robust to lane changes. See [Logical Scenarios from Routes](logical_scenarios.md). |
 | `ComparisonRule`, `ScalarComparisonRule`, `compare` | Numeric comparison primitives. `compare(actual, rule, value, tolerance)` is the underlying helper. |
 | `find_actor_by_role_name`, `find_actor_in_list` | Helpers for locating CARLA actors by role. `find_actor_in_list` is reachable via `autoware_carla_scenario.conditions`. |
 
@@ -114,7 +115,7 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
-| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
+| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; `appear_on_start=True` brings a hidden entity in on its first vertex, moving at `speed`, when a run starts. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
 
 ## Trajectories (`autoware_carla_scenario.trajectory`)
 
@@ -126,6 +127,7 @@ See [Trajectories and Recorded-Scene Replay](trajectory.md).
 | `TrajectoryTimeCondition` | A vertex's time: depart when the trajectory's clock reaches it. |
 | `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
 | `RelativeLanePose` | A pose relative to an entity in lane coordinates (`ds`, `offset`, `d_lane`, `yaw`, `entity_ref`; OpenSCENARIO `RelativeLanePosition`), placed when the action starts. |
+| `RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`, `RouteCrosswalkPose`, `RouteRoadsidePose` | Poses placed against the scenario's route (a [logical scenario](logical_scenarios.md)) when the action starts: along the route and across lanes, on the opposite road, on a lanelet entering a route junction from the left / right / opposite, on a junction's crosswalk, at the roadside. |
 | `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
 | `TrajectoryFollowingMode` | `POSITION` (kinematic replay) or `FOLLOW` (a controller tracks it). |
 
@@ -221,6 +223,25 @@ directly from Python:
 | `Binding` (Protocol), `StopLineOffsetBinding`, `parse_binding` | Per-match parameter derivation (e.g. compute `ego.spawn_s` from a stop-line offset). |
 | `load_lanelet2_map` | Lightweight Lanelet2 loader used outside of CARLA. |
 
+A scenario whose `sweep` holds a `route` search instead of `constraints` is
+expanded over the routes of the map that match it (`expand_route`, one case per
+match); see [Logical Scenarios from Routes](logical_scenarios.md).
+
+## Logical scenarios (`autoware_carla_scenario.route`)
+
+See [Logical Scenarios from Routes](logical_scenarios.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `parse_route_search` -> `RouteSearchSpec` | Read a route search (`LaneSegmentSpec` / `JunctionSegmentSpec` segments, `Range` bounds, ego placement, `max_matches`, `seed`). No map needed. |
+| `RouteMatch`, `RouteSegmentMatch` | A concrete route: lanelet ids, start / end s, each segment's route-s span and lanelets; `anchor_s(anchor)`, `to_config()` / `from_config()` (the `scenario.route.*` keys). |
+| `parse_anchor` | `start`, `end`, `segment:K:start|end`, `junction:K:entry|exit`. |
+| `route.search.find_route_matches` | Every route of a Lanelet2 map matching a search, sorted (or shuffled by `seed`). |
+| `route.frame.RouteFrame`, `ego_placement` | A match on its map: `locate(s)`, `point(s)`, `project(x, y)`; where the ego spawns and its goal is. |
+| `route.positions.resolve_route_pose` | Place a route pose against a frame and the ego's route s. |
+| `set_scenario_route`, `scenario_route`, `scenario_route_frame`, `clear_scenario_route` | The route the running scenario is about. |
+| `route.geometry.MapFeatures` | The per-lanelet questions a search asks (lanes beside, opposite lane, junction members and approaches, crosswalks), cached. |
+
 The plugin is registered with Hydra under
 `hydra/sweeper=lanelet_constraint`; see
 `src/hydra_plugins/autoware_scenario_sweeper/`.
@@ -246,7 +267,8 @@ compiled and exported anywhere.
 
 | Symbol | Description |
 |--------|-------------|
-| `ScenarioDocument` | The Scenario IR: entities, actions, assertions, and a `ui` block that is presentation only. |
+| `ScenarioDocument` | The Scenario IR: entities, actions, assertions, an optional `route` search (a [logical scenario](logical_scenarios.md)), and a `ui` block that is presentation only. |
+| `RouteSearch`, `LaneSegment`, `JunctionSegment`, `LengthRange`, `CountRange` | The route search as the IR states it; `RouteSearch.to_sweep_dict()` is what the route search reads. |
 | `Entity`, `SpawnSpec`, `SValue`, `BindingRef`, `GoalSpec`, `EgoDriver` | Actors, how they spawn (fixed lanelet, or a constraint search with an optionally derived offset), and — for the ego alone — which stack drives it and where it is sent. |
 | `LaneletChoice`, `LaneletSlot`, `ScenarioDocument.lanelet_slots` | Fixed or searched, and one view over every place a document names a lanelet — a spawn, a goal, an action's or a condition's `lanelet` parameter — so the picker, the validator and the Hydra config read one answer. |
 | `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
@@ -266,7 +288,7 @@ compiled and exported anywhere.
 | Symbol | Description |
 |--------|-------------|
 | `DeclarativeScenario` | A `BaseScenario` whose content comes from a `ScenarioDocument`. Registers the same pre/post-tick actions and pass/fail conditions a hand-written scenario would. Imports CARLA. |
-| `DeclarativeScenarioConfig` | Hydra config group: `document_path`, `timeout_seconds`, and `spawn_overrides` (the addressable per-entity spawn keys a sweep drives). |
+| `DeclarativeScenarioConfig` | Hydra config group: `document_path`, `timeout_seconds`, `spawn_overrides` (the addressable per-entity spawn keys a sweep drives), `param_overrides`, and `route` (a logical scenario's route match, as `scenario-expand` writes it). |
 
 ## Scenario editor (`autoware_carla_scenario.editor`)
 

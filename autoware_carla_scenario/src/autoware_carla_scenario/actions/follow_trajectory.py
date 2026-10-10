@@ -173,12 +173,21 @@ class FollowTrajectoryAction(BaseAction):
             run has started.  Not part of OpenSCENARIO; needs ``POSITION`` mode
             and a time reference.  On a gated trajectory: until the first
             vertex is departed on its time, and after the run ends.
+        appear_on_start: Bring the entity into the world when a run starts:
+            put it on the first vertex (on the point *initial_distance_offset*
+            names), facing along the path, physics on, moving at *speed*
+            (``None``: standing) -- then follow the trajectory as usual, in
+            either mode, a vehicle or a pedestrian.  What an entity spawned out
+            of the world (``spawn.hidden``) needs to enter a recording when
+            its action is triggered, e.g. once the ego has progressed to where
+            it was first seen.  Not part of OpenSCENARIO; not combined with
+            *hidden_outside_trajectory*.
 
     Raises:
         ValueError: If a timing is given for an untimed trajectory, the
-            initial distance offset or the speed is negative, or
+            initial distance offset or the speed is negative,
             *hidden_outside_trajectory* is asked for without ``POSITION`` mode
-            and a time reference.
+            and a time reference, or together with *appear_on_start*.
     """
 
     #: The command is a pose (or a control) for this tick only: the action
@@ -201,7 +210,13 @@ class FollowTrajectoryAction(BaseAction):
         control_config: Optional["ControlConfig"] = None,
         hidden_outside_trajectory: bool = False,
         speed: Optional[float] = None,
+        appear_on_start: bool = False,
     ) -> None:
+        if appear_on_start and hidden_outside_trajectory:
+            raise ValueError(
+                "appear_on_start and hidden_outside_trajectory both decide when "
+                "the entity enters the world; choose one"
+            )
         if hidden_outside_trajectory and (
             time_reference is None
             or following_mode is not TrajectoryFollowingMode.POSITION
@@ -233,6 +248,7 @@ class FollowTrajectoryAction(BaseAction):
         self._initial_distance_offset = float(initial_distance_offset)
         self._control_config = control_config
         self._hidden_outside = hidden_outside_trajectory
+        self._appear_on_start = appear_on_start
         self._given_speed = None if speed is None else float(speed)
         # Departure conditions other than times: the timeline engine.
         self._gated = trajectory.is_gated
@@ -416,6 +432,8 @@ class FollowTrajectoryAction(BaseAction):
                 self._resolved.time_at_distance(self._initial_distance_offset)
                 - self._resolved.start_time
             )
+        if self._appear_on_start:
+            self._appear(actor)
         velocity = actor.get_velocity()
         self._speed = (
             math.hypot(velocity.x, velocity.y)
@@ -456,6 +474,41 @@ class FollowTrajectoryAction(BaseAction):
                 self._control_config,
                 ChaosPowertrain.from_physics_control(actor.get_physics_control()),
             )
+
+    def _appear(self, actor: Any) -> None:
+        """Put *actor* where the run starts, facing along the path, at speed."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        resolved = self._resolved
+        assert resolved is not None
+        speed = 0.0 if self._given_speed is None else self._given_speed
+        sample = resolved.at_distance(self._initial_distance_offset)
+        walker = _is_walker(actor)
+        actor.set_simulate_physics(True)
+        self._hidden = False
+        lift = float(actor.bounding_box.extent.z) if walker else 0.0
+        actor.set_transform(
+            carla.Transform(
+                carla.Location(x=sample.x, y=sample.y, z=sample.z + lift),
+                carla.Rotation(yaw=sample.yaw),
+            )
+        )
+        heading = math.radians(sample.yaw)
+        direction = carla.Vector3D(math.cos(heading), math.sin(heading), 0.0)
+        if walker:
+            actor.apply_control(
+                carla.WalkerControl(direction=direction, speed=_walker_speed(speed))
+            )
+        else:
+            actor.set_target_velocity(
+                carla.Vector3D(speed * direction.x, speed * direction.y, 0.0)
+            )
+        logger.info(
+            "FollowTrajectoryAction: '%s' appears at the start of %r at %.1f m/s",
+            self._entity_name,
+            self._trajectory.name,
+            speed,
+        )
 
     def _absent(self) -> bool:
         """Whether the trajectory's clock is outside its vertices' times."""

@@ -93,6 +93,7 @@ nav:
   - External Driver Interface: driver_interface.md
   - Traffic Backends: traffic_backends.md
   - Trajectories and Recorded-Scene Replay: trajectory.md
+  - Logical Scenarios from Routes: logical_scenarios.md
   - Coverage: coverage.md
   - ODD: odd.md
   - Static Check: typecheck.md
