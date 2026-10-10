@@ -526,9 +526,9 @@ to the config key that sets it:
 | Field | Meaning |
 |---|---|
 | `key` | The config key the value is written to |
-| `values` | Per bucket label, the value (or `[low, high]` to draw from) to write. Required for every categorical bucket that is to be drawn; a numeric attribute may give it to replace a bucket's interval |
-| `scale`, `offset` | A numeric value drawn in the attribute's unit is written as `value * scale + offset` |
-| `integer` | Write the value rounded to an integer |
+| `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from; a bucket without one is not drawn. Numeric: a range in the attribute's unit to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
+| `scale`, `offset` | A numeric value drawn in the attribute's unit is written as `value * scale + offset` (`scale` not zero) |
+| `integer` | Write an integer. A rounded numeric value that falls in another bucket is drawn again |
 
 `{attribute: key}` is short for `{attribute: {key: key}}`.
 
@@ -557,19 +557,28 @@ map's attributes are what `constraints` pick lanelets for.
    *outside* -- so modules that rule out a combination (no heavy rain at
    night, say) are honoured, not just single buckets.
 3. A value is drawn inside each bucket (a numeric bucket's interval, or the
-   knob's range for a categorical one) and checked against the ODD again, as
-   a value: a condition finer than a bucket (`between(0, 45)` across a
-   `[30, 60)` bucket) holds for what is drawn.
+   knob's range) and checked against the ODD again, as a value, with the
+   attributes an OpenODD ODD derives from others worked out: a condition finer
+   than a bucket (`between(0, 45)` across a `[30, 60)` bucket) holds for what
+   is drawn. What is written is the value exactly as drawn, and a numeric one
+   is read back to check it is still in its bucket.
 
 `strategy: uniform` draws every admitted bucket alike. `strategy: coverage`
 reads `coverage_from` and draws each attribute from its **least covered**
 buckets first, counting the cases already drawn in the batch as covered, so
 a batch works through the holes before it repeats one; it falls back to any
 bucket (the less covered the likelier) only when the ODD admits no
-combination of the least covered. **Situations** that are still holes are
-aimed at first, one case each: such a case only takes combinations under
-which the situation can hold. A situation no knob can bring about -- one that
-needs a speed or a road no knob sets -- is given up on, with a warning.
+combination of the least covered. **Situations** that are still holes (or
+that no earlier run measured) are aimed at first, one case each. A situation
+the knobs alone decide -- every attribute it tests has a knob -- holds in its
+case. One that also tests what no knob sets -- a speed, a road -- gets a case
+under which it *can* hold; whether it does is up to the drive. A situation
+the ODD and the knobs leave no case for is given up on, with a warning.
+
+`coverage_from` paths are relative to the directory the sweep is started
+from. Coverage is read when the sweep is expanded: to resume a sweep
+(`sweep.resume_from`) into the same cases, read the same coverage -- point
+`coverage_from` at the earlier runs, not at the sweep's own output.
 
 From Python:
 

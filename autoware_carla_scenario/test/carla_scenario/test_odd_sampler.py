@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -448,3 +449,195 @@ def test_the_environment_config_sets_the_weather_before_the_run() -> None:
     add_environment(OmegaConf.create({"environment": {"fog_density": None}}), scenario)  # type: ignore[arg-type]
     add_environment(OmegaConf.create({}), scenario)  # type: ignore[arg-type]
     assert registered == []
+
+
+# ---------------------------------------------------------------------------
+# Edges a draw must not cross
+# ---------------------------------------------------------------------------
+
+
+def test_an_unbounded_bucket_needs_a_range_from_its_knob() -> None:
+    """OpenODD threshold buckets reach -inf and inf: nothing to draw from there."""
+    attr = OddAttribute("x.v", lambda world: None, buckets=[-math.inf, 50, math.inf])
+    odd = OddDefinition("x", [attr])
+
+    # Without a range, only the bounded side can be drawn -- and none is.
+    with pytest.raises(ValueError, match="no bucket"):
+        OddSampler(odd, {"x.v": OddKnob("x.v")})
+    with pytest.raises(ValueError, match="no bucket"):
+        OddSampler(
+            OddDefinition(
+                "y", [attr], [OddModule("m", include_and=[attr.at_least(50)])]
+            ),
+            {"x.v": OddKnob("x.v")},
+        )
+    ranged = OddSampler(
+        odd,
+        {"x.v": OddKnob("x.v", values={"[-inf, 50)": [0, 50], "[50, inf]": [50, 80]})},
+    )
+
+    for case in ranged.sample(40):
+        value = _value(case.overrides, "x.v")
+        assert math.isfinite(value) and 0 <= value <= 80
+
+
+def test_categorical_values_are_tested_as_values_not_labels() -> None:
+    lanes = OddAttribute("scenery.lanes", lambda world: None, values=[1, 2, 3])
+    odd = OddDefinition(
+        "two", [lanes], [OddModule("two", include_and=[lanes.equals(2)])]
+    )
+    sampler = OddSampler(
+        odd,
+        {"scenery.lanes": OddKnob("scenario.lanes", values={"1": 1, "2": 2, "3": 3})},
+    )
+
+    cases = sampler.sample(5)
+
+    assert {c.buckets["scenery.lanes"] for c in cases} == {"2"}
+    assert all(c.values["scenery.lanes"] == 2 for c in cases)
+    assert all(c.overrides == ["scenario.lanes=2"] for c in cases)
+
+
+class _Visibility:
+    """An attribute derived from others, as an OpenODD categorical is."""
+
+    def __call__(self, world: object) -> None:
+        return None
+
+    @staticmethod
+    def from_values(values: dict) -> object:
+        rain_value, fog_value = (
+            values.get("environment.rain"),
+            values.get("environment.fog"),
+        )
+        if not isinstance(rain_value, str) or not isinstance(fog_value, str):
+            return None
+        bad = {"moderate", "heavy"}
+        return "poor" if rain_value in bad and fog_value in bad else "good"
+
+
+def test_attributes_derived_from_drawn_ones_are_worked_out() -> None:
+    from autoware_carla_scenario.odd import fog
+
+    visibility = OddAttribute(
+        "environment.visibility", _Visibility(), values=["good", "poor"]
+    )
+    odd = OddDefinition(
+        "clear",
+        [
+            OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS),
+            OddAttribute("environment.fog", fog, values=INTENSITY_LEVELS),
+            visibility,
+        ],
+        [OddModule("clear", exclude_or=[visibility.is_in(["poor"])])],
+    )
+
+    for case in OddSampler(odd, seed=0).sample(60):
+        poor = {"moderate", "heavy"}
+        assert not (
+            case.buckets["environment.rain"] in poor
+            and case.buckets["environment.fog"] in poor
+        )
+
+
+def test_rounding_does_not_carry_a_value_into_another_bucket() -> None:
+    attr = OddAttribute("x.v", lambda world: None, buckets=[0, 0.4, 0.6, 1])
+    sampler = OddSampler(
+        OddDefinition("x", [attr]), {"x.v": OddKnob("x.v", integer=True)}, seed=0
+    )
+
+    for case in sampler.sample(30):
+        (override,) = case.overrides
+        written = int(override.split("=")[1])
+        assert attr.item is not None
+        assert attr.item.bucket_of(written) == case.buckets["x.v"]
+    assert all(c.buckets["x.v"] != "[0.4, 0.6)" for c in sampler.sample(30))
+
+
+def test_what_is_written_reads_back_exactly() -> None:
+    """Rendered in full: 29.9999 must not come back as 30, a level up."""
+    for case in OddSampler(default_odd(), seed=21).sample(300):
+        precipitation = _value(case.overrides, "environment.precipitation")
+        assert intensity_level(precipitation) == case.buckets["environment.rain"]
+
+
+# ---------------------------------------------------------------------------
+# Situations and coverage entries
+# ---------------------------------------------------------------------------
+
+
+def _storm_odd(*, speed_too: bool = False) -> OddDefinition:
+    base = _weather_odd()
+    rain_attr, light = base.attributes
+    attributes = list(base.attributes)
+    conditions = [
+        rain_attr.is_in(["heavy", "moderate"]),
+        light.is_in(["night", "twilight"]),
+    ]
+    if speed_too:
+        speed = _speed()
+        attributes.append(speed)
+        conditions.append(speed.between(10, 20))
+    return OddDefinition(
+        "weather",
+        attributes,
+        [OddModule("storm_at_night", include_and=conditions, situation=True)],
+    )
+
+
+def test_a_situation_no_run_measured_is_aimed_at() -> None:
+    sampler = OddSampler(_storm_odd(), seed=0, strategy="coverage")
+
+    (case,) = sampler.sample(1)
+
+    assert sampler.situation_holes == ["storm_at_night"]
+    assert case.situation == "storm_at_night"
+    assert case.buckets["environment.rain"] in ("heavy", "moderate")
+    assert case.buckets["environment.illumination"] in ("night", "twilight")
+
+
+def test_a_covered_situation_is_not_aimed_at() -> None:
+    coverage = SimpleNamespace(
+        entries=[_entry("odd.situation.storm_at_night", ["holds"], {"holds": 3})]
+    )
+    sampler = OddSampler(_storm_odd(), seed=0, strategy="coverage", coverage=coverage)
+
+    assert sampler.situation_holes == []
+
+
+def test_a_situation_on_what_no_knob_sets_gets_a_case_it_can_hold_in() -> None:
+    sampler = OddSampler(_storm_odd(speed_too=True), seed=0, strategy="coverage")
+
+    (case,) = sampler.sample(1)
+
+    assert case.situation == "storm_at_night"
+    assert "dynamic.lead_speed" not in case.buckets
+    assert case.buckets["environment.rain"] in ("heavy", "moderate")
+
+
+def test_coverage_of_another_definition_of_an_item_is_not_read() -> None:
+    stale = _entry("odd.environment.rain", ["dry", "wet"], {"dry": 9, "wet": 9})
+    variant = _entry(
+        "odd.environment.rain#2",
+        list(INTENSITY_LEVELS),
+        {"none": 5, "light": 5, "moderate": 5},
+    )
+    sampler = OddSampler(
+        _weather_odd(),
+        seed=0,
+        strategy="coverage",
+        coverage=SimpleNamespace(entries=[stale, variant]),
+    )
+
+    assert sampler.sample(1)[0].buckets["environment.rain"] == "heavy"
+
+
+def test_boolean_bucket_keys_from_yaml() -> None:
+    knobs = knobs_from_mapping({"x": {"key": "k", "values": {True: 1, False: 0}}})
+
+    assert set(knobs["x"].values) == {"true", "false"}
+
+
+def test_a_zero_scale_is_refused() -> None:
+    with pytest.raises(ValueError, match="scale"):
+        OddKnob("k", scale=0)

@@ -42,12 +42,13 @@ from __future__ import annotations
 import logging
 import math
 import random
+import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from ..coverage.items import CoverItem
+from ..coverage.items import CoverItem, value_label
 from .model import _OPEN, OddAttribute, OddDefinition, _Bucket
 from .probes import fog, illumination, rain
 
@@ -83,16 +84,19 @@ class OddKnob:
     Attributes:
         key: The config key the value is written to, e.g.
             ``environment.precipitation``.
-        values: For a categorical attribute, the value (or ``[low, high]``
-            range to draw from) to write for each bucket label.  A numeric
-            attribute may give one too, by bucket label, to replace the
-            bucket's interval.  A categorical bucket without one cannot be
-            drawn.
-        scale: A numeric value drawn in the attribute's unit is written as
+        values: Per bucket label.  For a categorical attribute, the value to
+            write, or ``[low, high)`` to draw it from; a categorical bucket
+            without one cannot be drawn.  For a numeric attribute, a range in
+            the attribute's unit to draw from instead of the bucket's
+            interval -- which an unbounded bucket (``-inf``/``inf`` edges)
+            needs to be drawn at all.
+        scale: A numeric attribute's value, drawn in its unit, is written as
             ``value * scale + offset`` -- e.g. 1/3.6 for an attribute in km/h
-            and a key in m/s.  Values from *values* are written as given.
+            and a key in m/s.  Must not be zero.
         offset: See *scale*.
-        integer: Write the value rounded to an integer.
+        integer: Write an integer: a numeric value rounded (a case whose
+            rounded value falls in another bucket is drawn again), a
+            categorical range drawn as an integer.
     """
 
     key: str
@@ -104,6 +108,8 @@ class OddKnob:
     def __post_init__(self) -> None:
         if not self.key:
             raise ValueError("OddKnob: key must not be empty")
+        if self.scale == 0:
+            raise ValueError(f"OddKnob({self.key}): scale must not be zero")
         for label, value in self.values.items():
             if _is_range(value):
                 low, high = _range(value)
@@ -147,8 +153,8 @@ class OddSample:
         overrides: The Hydra overrides that set it, ``key=value`` each.
         buckets: Attribute name -> the bucket label drawn for it.
         values: Attribute name -> the value drawn, in the attribute's terms
-            (a label for a categorical attribute, a number in its unit for a
-            numeric one).
+            (one of its values for a categorical attribute, a number in its
+            unit for a numeric one).
         situation: The situation the case was aimed at, if any.
     """
 
@@ -160,12 +166,21 @@ class OddSample:
 
 
 def _render(value: Any) -> str:
-    """A value the way a Hydra override reads it back."""
+    """A value the way a Hydra override reads it back -- exactly.
+
+    A float is written in full: rounded, a value drawn just below a level's
+    upper edge would be read back as the next level.
+    """
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, float):
-        return repr(round(value, 3))
+        return repr(value)
     return str(value)
+
+
+#: The suffix a coverage report gives an item defined differently in
+#: different runs (``odd.environment.rain#2``).
+_VARIANT = re.compile(r"#\d+$")
 
 
 def knobs_from_mapping(raw: Mapping[str, Any]) -> dict[str, OddKnob]:
@@ -187,7 +202,7 @@ def knobs_from_mapping(raw: Mapping[str, Any]) -> dict[str, OddKnob]:
             raise ValueError(f"knob {name}: key is required")
         knobs[str(name)] = OddKnob(
             key=str(spec["key"]),
-            values={str(k): v for k, v in (spec.get("values") or {}).items()},
+            values={value_label(k): v for k, v in (spec.get("values") or {}).items()},
             scale=float(spec.get("scale", 1.0)),
             offset=float(spec.get("offset", 0.0)),
             integer=bool(spec.get("integer", False)),
@@ -282,9 +297,19 @@ class OddSampler:
                 "for the attributes a run sets"
             )
 
+        drawn = {axis.attribute.name for axis in self._axes}
+        #: Situation -> whether the knobs alone decide it: every attribute it
+        #: tests is drawn, and it refers to no other module.
+        self._decided: dict[str, bool] = {}
+        for module in odd.situations():
+            conditions = module._conditions()
+            tested = {a.name for c in conditions for a in c._attributes()}
+            refers = any(c._references() for c in conditions)
+            self._decided[module.name] = not refers and tested <= drawn
+
         self._amount: dict[tuple[str, str], float] = {}
         self._situation_holes: list[str] = []
-        if strategy == "coverage" and coverage is not None:
+        if strategy == "coverage":
             self._read_coverage(coverage)
         #: Cases drawn per (attribute, bucket) so far in this batch.
         self._planned: dict[tuple[str, str], int] = {}
@@ -293,24 +318,47 @@ class OddSampler:
 
     @staticmethod
     def _drawable(item: CoverItem, knob: OddKnob, label: str) -> bool:
-        return item.numeric or label in knob.values
+        if not item.numeric:
+            return label in knob.values
+        if label in knob.values:
+            return True
+        index = item.labels.index(label)
+        # An unbounded bucket has no interval to draw from.
+        return math.isfinite(item.edges[index]) and math.isfinite(item.edges[index + 1])
 
     def _read_coverage(self, coverage: Any) -> None:
-        """Remember how covered each bucket is, and which situations are holes."""
-        situations = {m.name for m in self.odd.situations()}
-        for entry in coverage.entries:
-            name = entry.name
-            if name.startswith("odd.situation."):
-                module = name.removeprefix("odd.situation.")
-                if module in situations and entry.holes:
-                    self._situation_holes.append(module)
+        """Remember how covered each bucket is, and which situations are holes.
+
+        An entry counts when its name (less a ``#n`` variant suffix) and its
+        buckets are the ones this ODD defines.  Every situation whose entry is
+        missing or has a hole is a hole.
+        """
+        items = {f"odd.{a.name}": a for a in self.odd.attributes if a.item is not None}
+        situations = {f"odd.situation.{m.name}": m for m in self.odd.situations()}
+        covered_situations: set[str] = set()
+        entries = [] if coverage is None else coverage.entries
+        for entry in entries:
+            name = _VARIANT.sub("", entry.name)
+            module = situations.get(name)
+            if module is not None:
+                assert module.item is not None  # noqa: S101 - a situation has one
+                if list(entry.buckets) == module.item.labels and not entry.holes:
+                    covered_situations.add(module.name)
                 continue
-            if not name.startswith("odd."):
+            attribute = items.get(name)
+            if attribute is None or attribute.item is None:
                 continue
-            attribute = name.removeprefix("odd.")
+            if list(entry.buckets) != attribute.item.labels:
+                continue
             target = entry.target if entry.target > 0 else 1.0
             for bucket in entry.buckets:
-                self._amount[(attribute, bucket)] = entry.amount(bucket) / target
+                key = (attribute.name, bucket)
+                self._amount[key] = (
+                    self._amount.get(key, 0.0) + entry.amount(bucket) / target
+                )
+        self._situation_holes = [
+            m.name for m in self.odd.situations() if m.name not in covered_situations
+        ]
 
     @property
     def attributes(self) -> list[str]:
@@ -342,39 +390,79 @@ class OddSampler:
         weights = [1.0 / (1.0 + loads[label]) for label in axis.labels]
         return self._rng.choices(axis.labels, weights=weights)[0]
 
-    def _open_values(self) -> dict[str, Any]:
-        return {a.name: _OPEN for a in self.odd.attributes}
+    def _verdict(self, values: dict[str, Any]) -> Any:
+        """The ODD's verdict, with the attributes derived from others worked out."""
+        for attribute in self.odd._derived:
+            if attribute.name in values and values[attribute.name] is not _OPEN:
+                continue
+            derived = attribute.probe.from_values(values)  # type: ignore[attr-defined]
+            values[attribute.name] = _OPEN if derived is None else derived
+        return self.odd.evaluate(values)
 
-    def _admits(self, values: Mapping[str, Any], situation: Optional[str]) -> bool:
-        verdict = self.odd.evaluate(values)
+    def _admits(
+        self, values: dict[str, Any], situation: Optional[str], *, strict: bool
+    ) -> bool:
+        """Whether the ODD admits *values*, and *situation* can hold under them.
+
+        *strict*: a situation the knobs alone decide must hold, not just not fail.
+        """
+        verdict = self._verdict(values)
         if not verdict.inside:
             return False
-        return situation is None or verdict.modules.get(situation) is not False
+        if situation is None:
+            return True
+        holds = verdict.modules.get(situation)
+        if strict and self._decided.get(situation, False):
+            return holds is True
+        return holds is not False
 
-    def _draw_value(self, axis: _Axis, label: str) -> tuple[Any, Any]:
-        """(value in the attribute's terms, value written to the knob's key)."""
-        knob = axis.knob
-        given = knob.values.get(label)
-        if given is not None:
-            written: Any = (
-                self._rng.uniform(*_range(given)) if _is_range(given) else given
-            )
-            if knob.integer and isinstance(written, float):
-                written = int(round(written))
-            if axis.item.numeric:
-                return float(written), written
-            return label, written
-        # A numeric bucket's interval: [low, high), the last one closed.
-        index = axis.item.labels.index(label)
-        low, high = axis.item.edges[index], axis.item.edges[index + 1]
+    def _uniform(
+        self, low: float, high: float, *, closed: bool, integer: bool
+    ) -> Optional[float]:
+        """A value in ``[low, high)`` (``[low, high]`` if *closed*); ``None`` if none."""
+        if low == high:
+            return low
+        if integer:
+            first = math.ceil(low)
+            last = math.floor(high) if closed else math.ceil(high) - 1
+            return None if first > last else self._rng.randint(first, last)
         value = self._rng.uniform(low, high)
-        if index < len(axis.item.labels) - 1 and value >= high:
+        if not closed and value >= high:
             value = math.nextafter(high, low)
-        written = value * knob.scale + knob.offset
+        return value
+
+    def _draw_value(self, axis: _Axis, label: str) -> Optional[tuple[Any, Any]]:
+        """(value in the attribute's terms, value written), or ``None`` to draw again."""
+        knob, item = axis.knob, axis.item
+        index = item.labels.index(label)
+        given = knob.values.get(label)
+        if not item.numeric:
+            assert isinstance(item.values, list)  # noqa: S101 - categorical
+            value = item.values[index]
+            if not _is_range(given):
+                return value, given
+            chosen = self._uniform(*_range(given), closed=False, integer=knob.integer)
+            return None if chosen is None else (value, chosen)
+
+        if given is not None:
+            if _is_range(given):
+                low, high = _range(given)
+            else:
+                low = high = float(given)  # type: ignore[arg-type]
+            closed = True
+        else:
+            low, high = item.edges[index], item.edges[index + 1]
+            closed = index == len(item.labels) - 1
+        drawn = self._uniform(low, high, closed=closed, integer=False)
+        if drawn is None or not math.isfinite(drawn):
+            return None
+        written: Any = float(drawn) * knob.scale + knob.offset
         if knob.integer:
             written = int(round(written))
-            # Rounding must not carry the value into the next bucket.
-            value = (written - knob.offset) / knob.scale if knob.scale else value
+        # What a run will read back, which must still be in the bucket drawn.
+        value = (float(_render(written)) - knob.offset) / knob.scale
+        if not math.isfinite(value) or item.bucket_of(value) != label:
+            return None
         return value, written
 
     def draw(self, index: int = 0, situation: Optional[str] = None) -> OddSample:
@@ -390,29 +478,31 @@ class OddSampler:
                 axis.attribute.name: self._pick(axis, least=least)
                 for axis in self._axes
             }
-            open_values = self._open_values()
-            as_buckets = {
-                **open_values,
-                **{
-                    axis.attribute.name: _Bucket(
-                        axis.item, axis.item.labels.index(buckets[axis.attribute.name])
-                    )
-                    for axis in self._axes
-                },
-            }
-            if not self._admits(as_buckets, situation):
+            as_buckets: dict[str, Any] = {a.name: _OPEN for a in self.odd.attributes}
+            for axis in self._axes:
+                label = buckets[axis.attribute.name]
+                as_buckets[axis.attribute.name] = _Bucket(
+                    axis.item, axis.item.labels.index(label)
+                )
+            if not self._admits(as_buckets, situation, strict=False):
                 continue
             values: dict[str, Any] = {}
             overrides: list[str] = []
             for axis in self._axes:
-                value, written = self._draw_value(axis, buckets[axis.attribute.name])
-                values[axis.attribute.name] = value
-                overrides.append(f"{axis.knob.key}={_render(written)}")
-            if not self._admits({**open_values, **values}, situation):
-                continue
-            for name, label in buckets.items():
-                self._planned[(name, label)] = self._planned.get((name, label), 0) + 1
-            return OddSample(index, overrides, buckets, values, situation)
+                drawn = self._draw_value(axis, buckets[axis.attribute.name])
+                if drawn is None:
+                    break
+                values[axis.attribute.name] = drawn[0]
+                overrides.append(f"{axis.knob.key}={_render(drawn[1])}")
+            else:
+                as_values: dict[str, Any] = {a.name: _OPEN for a in self.odd.attributes}
+                as_values.update(values)
+                if not self._admits(as_values, situation, strict=True):
+                    continue
+                for name, label in buckets.items():
+                    key = (name, label)
+                    self._planned[key] = self._planned.get(key, 0) + 1
+                return OddSample(index, overrides, buckets, values, situation)
         aim = f" aimed at situation {situation}" if situation else ""
         raise ValueError(
             f"OddSampler: found no case{aim} inside ODD {self.odd.name} in "
@@ -423,8 +513,11 @@ class OddSampler:
         """Draw *count* cases.
 
         With the ``coverage`` strategy, the first cases are aimed at the
-        situations still uncovered, one each; a situation no knob can bring
-        about is given up on (and logged), and the case is drawn without it.
+        situations still uncovered, one each.  A situation the knobs alone
+        decide must hold in its case; one that also tests what no knob sets
+        (a speed, a road) gets a case under which it can hold.  One the ODD
+        and the knobs leave no case for is given up on (and logged), and the
+        case is drawn without it.
         """
         if count < 0:
             raise ValueError("OddSampler: count must not be negative")
@@ -438,7 +531,7 @@ class OddSampler:
                     break
                 except ValueError:
                     logger.warning(
-                        "OddSampler: no knob brings about situation %s; not aiming at it",
+                        "OddSampler: no case brings about situation %s; not aiming at it",
                         situation,
                     )
             else:
