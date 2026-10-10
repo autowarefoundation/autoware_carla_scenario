@@ -1303,6 +1303,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#situation-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Situation coverage
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1615,6 +1626,17 @@
     <span class="md-ellipsis">
       
         Exposure: seconds, meters, entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#situation-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Situation coverage
       
     </span>
   </a>
@@ -2045,6 +2067,13 @@ entry. A step faster than 100 m/s is a respawn or a teleport, not driving,
 and adds no distance; without an ego, no distance is measured. A one-shot item
 (<code>START</code>, <code>END</code>, a condition) has no duration: each hit is an entry, and its
 seconds and meters stay 0.</p>
+<h3 id="situation-coverage">Situation coverage<a class="headerlink" href="#situation-coverage" title="Permanent link">&para;</a></h3>
+<p>ODD modules covered as situations (<code>docs/odd.md</code>, Situations) report in a
+group of their own between ODD and scenario coverage. Each is an item
+<code>odd.situation.&lt;module&gt;</code> with one bucket, <code>holds</code>, sampled every tick from
+the module's verdict, and graded with its <code>target</code>, <code>cover_by</code> and
+<code>min_stay</code>. Ticks where the verdict rested on missing values are listed as
+<code>unknown</code>, outside the bucket.</p>
 <h2 id="the-report">The report<a class="headerlink" href="#the-report" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Every *_coverage.json under outputs/ and multirun/</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>multirun/
@@ -2145,7 +2174,7 @@ different buckets would mean nothing.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 10:34:00 UTC"><span class="timeago" datetime="2026-10-10T10:34:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 10:34:00 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 11:23:20 UTC"><span class="timeago" datetime="2026-10-10T11:23:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 11:23:20 UTC">2026-10-10</span>
   </span>
 
     

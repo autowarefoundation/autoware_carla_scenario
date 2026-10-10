@@ -2032,8 +2032,8 @@ directly.</p>
 <td>A measured taxonomy concept. Conditions: <code>is_in</code>, <code>equals</code>, <code>between</code>, <code>at_least</code>, <code>at_most</code>, <code>greater_than</code>, <code>less_than</code>, <code>is_unknown</code>.</td>
 </tr>
 <tr>
-<td><code>OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text)</code></td>
-<td>A named rule.</td>
+<td><code>OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text, situation, target, cover_by, min_stay)</code></td>
+<td>A named rule; with <code>situation=True</code>, also covered as a situation. <code>OddDefinition.situations()</code> lists those.</td>
 </tr>
 <tr>
 <td><code>OddDefinition(name, attributes, modules, *, roots, text)</code></td>
@@ -2052,7 +2052,7 @@ directly.</p>
 <td>Name an ODD; turn a name, <code>.yaml</code> path or <code>module:function</code> into one. Packages register through the <code>autoware_carla_scenario.odds</code> entry point group (a function calling <code>register_odd</code>).</td>
 </tr>
 <tr>
-<td><code>load_odd_file(path)</code>, <code>load_odd_binding(path)</code>, <code>load_openodd(*sources, bindings, name, text)</code></td>
+<td><code>load_odd_file(path)</code>, <code>load_odd_binding(path)</code>, <code>load_openodd(*sources, bindings, name, text, situations)</code></td>
 <td>Read ASAM OpenODD 1.0 YAML (<code>IMPORT</code>, <code>TAXONOMY</code>, <code>MODULES</code>, <code>ODD</code>), with a binding file naming the probes.</td>
 </tr>
 <tr>
@@ -2766,7 +2766,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 10:47:54 UTC"><span class="timeago" datetime="2026-10-10T10:47:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 10:47:54 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 11:23:20 UTC"><span class="timeago" datetime="2026-10-10T11:23:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 11:23:20 UTC">2026-10-10</span>
   </span>
 
     
