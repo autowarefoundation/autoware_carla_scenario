@@ -146,16 +146,24 @@ three top-level categories:
 | Item | Buckets | Read from |
 |---|---|---|
 | `odd.scenery.junction` | false, true | The ego's CARLA waypoint |
-| `odd.scenery.location` | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
-| `odd.scenery.road_type` | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
-| `odd.scenery.speed_limit` | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
-| `odd.scenery.lane_count` | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions |
+| `odd.scenery.location` ² | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
+| `odd.scenery.road_type` ² | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
+| `odd.scenery.speed_limit` ² | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
+| `odd.scenery.lane_count` ² | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions |
 | `odd.environment.illumination` | day, low_sun, twilight, night | Sun altitude: day from 15°, low sun from 0°, civil twilight to -6° |
 | `odd.environment.rain` | none, light, moderate, heavy | CARLA precipitation (0-100): 1, 30, 70 |
 | `odd.environment.fog` | none, light, moderate, heavy | CARLA fog density (0-100): 1, 30, 70 |
-| `odd.dynamic.ego_speed` | 0-120 km/h every 10 | Ego velocity |
+| `odd.dynamic.ego_speed` ³ | 0-120 km/h every 10 | Ego velocity |
 | `odd.dynamic.traffic_density` | none, low (1-2), medium (3-5), high (6+) | Other vehicles within 50 m |
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
+
+² Covered by a stay of 2 s or more (`cover_by="entries", min_stay=2`).
+Clipping a section while merging or changing lanes does not cover it.
+
+³ Covered by a stay of 3 s or more (`cover_by="entries", min_stay=3`). An ego
+accelerating from a stop to 60 km/h passes through every bucket below 60
+without driving at any of those speeds. Holding a bucket for 3 s means
+driving at roughly that speed, not passing through it.
 
 A reading the simulator does not support returns nothing. The item then has
 no samples, the report says so, and the run is not affected. Examples are the

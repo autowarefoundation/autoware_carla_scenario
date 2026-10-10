@@ -50,12 +50,25 @@ _REGISTRY: dict[str, OddBuilder] = {}
 _PLUGINS_LOADED = False
 
 
+#: Seconds the ego must hold a speed bucket for the default ODD to count it.
+SPEED_MIN_STAY = 3.0
+#: Seconds on a kind of road for the default ODD to count it.
+ROAD_MIN_STAY = 2.0
+
+
 def default_odd() -> OddDefinition:
     """Every attribute the framework measures, after ISO 34503, and no modules.
 
     Scenery (junction, speed limit, lane count, and the Lanelet2 ``location``
     and ``subtype`` tags), environmental conditions (illumination, rain, fog)
     and dynamic elements (ego speed, traffic density, pedestrians nearby).
+
+    A bucket a run only passes through is not covered.  Ego speed counts a
+    bucket once the ego held it for :data:`SPEED_MIN_STAY` seconds: an ego
+    accelerating from a stop to 60 km/h passes through every bucket below,
+    but has driven at none of those speeds.  The road attributes count a stay
+    of :data:`ROAD_MIN_STAY` seconds, so clipping a section while changing
+    lanes or merging does not cover it.
     """
     return OddDefinition(
         DEFAULT_ODD,
@@ -71,12 +84,16 @@ def default_odd() -> OddDefinition:
                 "scenery.location",
                 probes.lanelet_location,
                 values=["urban", "nonurban", "private"],
+                cover_by="entries",
+                min_stay=ROAD_MIN_STAY,
                 text="Lanelet2 location tag of the ego's lanelet",
             ),
             OddAttribute(
                 "scenery.road_type",
                 probes.lanelet_subtype,
                 values=["road", "highway", "road_shoulder", "play_street", "parking"],
+                cover_by="entries",
+                min_stay=ROAD_MIN_STAY,
                 text="Lanelet2 subtype tag of the ego's lanelet",
             ),
             OddAttribute(
@@ -84,12 +101,16 @@ def default_odd() -> OddDefinition:
                 probes.speed_limit_kph,
                 unit="km/h",
                 buckets=[0, 30, 40, 50, 60, 80, 100, 130],
+                cover_by="entries",
+                min_stay=ROAD_MIN_STAY,
                 text="Speed limit for the ego's lane (Lanelet2, else CARLA)",
             ),
             OddAttribute(
                 "scenery.lane_count",
                 probes.lane_count,
                 values=[1, 2, 3, 4],
+                cover_by="entries",
+                min_stay=ROAD_MIN_STAY,
                 text="Driving lanes in the ego's direction (outside junctions)",
             ),
             # Environmental conditions
@@ -118,6 +139,8 @@ def default_odd() -> OddDefinition:
                 unit="km/h",
                 range=(0.0, 120.0),
                 every=10.0,
+                cover_by="entries",
+                min_stay=SPEED_MIN_STAY,
                 text="Ego speed",
             ),
             OddAttribute(

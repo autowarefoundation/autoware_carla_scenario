@@ -13,7 +13,11 @@ import pytest
 
 import autoware_carla_scenario.odd as odd_pkg
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
-from autoware_carla_scenario.coverage import CoverageCollector, merge_coverage
+from autoware_carla_scenario.coverage import (
+    COVERAGE_SCHEMA,
+    CoverageCollector,
+    merge_coverage,
+)
 from autoware_carla_scenario.odd import (
     OddAttribute,
     OddDefinition,
@@ -1162,3 +1166,37 @@ TAXONOMY:
         (tmp_path / "c.yml").write_text("IMPORT: [common.yml]\n")
         (tmp_path / "a.yml").write_text("IMPORT: [b.yml, c.yml]\n")
         assert [m.name for m in load_openodd(tmp_path / "a.yml").modules] == ["m"]
+
+
+class TestDefaultCriteria:
+    def test_accelerating_through_speeds_does_not_cover_them(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # From a stop to 45 km/h at 2 m/s^2 (about 6 s), then 45 km/h for 5 s.
+        state = {"kph": 0.0, "x": 0.0}
+        monkeypatch.setattr(probes, "ego_speed_kph", lambda world: state["kph"])
+        monkeypatch.setattr(probes, "ego_position", lambda w: (state["x"], 0.0, 0.0))
+        collector = CoverageCollector([], odd=default_odd())
+        world = _OddWorld([], None, None)
+        collector.start(world, 0.0)
+        t, dt = 0.0, 0.1
+        while t < 11.0:
+            t += dt
+            state["kph"] = min(45.0, 2.0 * 3.6 * t)
+            state["x"] += state["kph"] / 3.6 * dt
+            world.frame += 1
+            collector.tick(world, t)
+        collector.end(world, t)
+        doc = {
+            "schema": COVERAGE_SCHEMA,
+            "scenario": "s",
+            "items": collector.to_dict("s")["items"],
+        }
+        speed = next(
+            e
+            for e in merge_coverage([doc]).entries
+            if e.name == "odd.dynamic.ego_speed"
+        )
+        reached = [b for b, n in speed.hits.items() if n]
+        assert reached == ["[0, 10)", "[10, 20)", "[20, 30)", "[30, 40)", "[40, 50)"]
+        assert speed.covered == ["[40, 50)"]
