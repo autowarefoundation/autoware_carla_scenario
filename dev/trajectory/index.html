@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/dev/typecheck/">
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/dev/trajectory/">
       
       
-        <link rel="prev" href="../odd/">
+        <link rel="prev" href="../traffic_backends/">
       
       
-        <link rel="next" href="../docker/">
+        <link rel="next" href="../coverage/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Static Check - Autoware CARLA Scenario</title>
+        <title>Trajectories and Recorded-Scene Replay - Autoware CARLA Scenario</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#static-check-codon" class="md-skip">
+        <a href="#trajectories-and-recorded-scene-replay" class="md-skip">
           Skip to content
         </a>
       
@@ -131,7 +131,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Static Check
+              Trajectories and Recorded-Scene Replay
             
           </span>
         </div>
@@ -433,9 +433,11 @@
   
   
   
+    
   
-    <li class="md-tabs__item">
-      <a href="../trajectory/" class="md-tabs__link">
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
         
   
   
@@ -490,11 +492,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
         
   
   
@@ -1130,10 +1130,37 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../trajectory/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1149,6 +1176,87 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The action
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The action">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#following-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Following modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-drives-and-when-it-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who drives, and when it ends
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-the-scenario-editor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In the Scenario Editor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replaying-a-recorded-scene" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replaying a recorded scene
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1211,37 +1319,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Static Check
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
         
   
   
@@ -1257,104 +1338,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#running-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running it
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Running it">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#when-it-runs-the-typecheck-key" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When it runs: the typecheck key
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Installing Codon and typesafe_carla
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-is-checked" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What is checked
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="What is checked">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The model
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#writing-a-scenario-that-type-checks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Writing a scenario that type-checks
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1494,22 +1477,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#running-it" class="md-nav__link">
+  <a href="#the-action" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Running it
+        The action
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Running it">
+    <nav class="md-nav" aria-label="The action">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#when-it-runs-the-typecheck-key" class="md-nav__link">
+  <a href="#following-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When it runs: the typecheck key
+        Following modes
       
     </span>
   </a>
@@ -1517,10 +1500,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
+  <a href="#who-drives-and-when-it-ends" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Installing Codon and typesafe_carla
+        Who drives, and when it ends
       
     </span>
   </a>
@@ -1533,38 +1516,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-is-checked" class="md-nav__link">
+  <a href="#in-the-scenario-editor" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is checked
+        In the Scenario Editor
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="What is checked">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The model
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#writing-a-scenario-that-type-checks" class="md-nav__link">
+  <a href="#replaying-a-recorded-scene" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Writing a scenario that type-checks
+        Replaying a recorded scene
       
     </span>
   </a>
@@ -1591,158 +1557,165 @@
   
 
 
-<h1 id="static-check-codon">Static Check (Codon)<a class="headerlink" href="#static-check-codon" title="Permanent link">&para;</a></h1>
-<p>Before a scenario runs, the runner compiles it with
-<a href="https://github.com/exaloop/codon">Codon</a>, a statically typed compiler for
-Python syntax, and refuses it when it does not compile. A misspelled method, a
-<code>str</code> where a <code>float</code> belongs, a condition missing its <code>label</code>, a turn direction
-passed where a lane-change direction is expected, or a YAML value of the wrong
-type is reported with the file and line it is on, before CARLA is started:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>$ uv run scenario scenario=intersection_passing/straight scenario.timeout_seconds=fast
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenario: static check failed:
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  scenario.timeout_seconds: error: 'str' does not match expected type 'float'
+<h1 id="trajectories-and-recorded-scene-replay">Trajectories and Recorded-Scene Replay<a class="headerlink" href="#trajectories-and-recorded-scene-replay" title="Permanent link">&para;</a></h1>
+<p><code>FollowTrajectoryAction</code> moves a vehicle or a pedestrian along a given
+trajectory. It is OpenSCENARIO's <code>FollowTrajectoryAction</code>, and it is what lets a
+recorded drive be <strong>written down as a scenario</strong>: a recording is transcribed
+into one trajectory per road user, and each one is replayed around the ego.
+Reading a dataset is left to tools outside the framework (see
+<a href="#replaying-a-recorded-scene">Replaying a recorded scene</a>), so the framework
+carries no dataset format.</p>
+<h2 id="the-action">The action<a class="headerlink" href="#the-action" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">Lanelet2Pose</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">MapPose</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">ReferenceContext</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">Trajectory</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">TrajectoryFollowingMode</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">path</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="s2">"npc1_path"</span><span class="p">,</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="p">[</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">30.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">4.0</span><span class="p">),</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mf">81234.5</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mf">50123.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">7.0</span><span class="p">),</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="p">],</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="p">)</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>        <span class="s2">"npc1"</span><span class="p">,</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="n">path</span><span class="p">,</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(</span><span class="n">ReferenceContext</span><span class="o">.</span><span class="n">RELATIVE</span><span class="p">),</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="n">following_mode</span><span class="o">=</span><span class="n">TrajectoryFollowingMode</span><span class="o">.</span><span class="n">POSITION</span><span class="p">,</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_follows_path"</span><span class="p">,</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    <span class="p">)</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="p">)</span>
 </code></pre></div>
-<p>The scenario still runs as Python, exactly as before: the check compiles the
-same source, never runs what it compiled, and changes nothing at run time.
-The CARLA API a scenario calls is
-<a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>, the statically
-typed CARLA client this framework runs on. A scenario imports it as
-<code>import typesafe_carla.carla as carla</code>: at run time that is typesafe_carla's
-CPython package, and for the check it is typesafe_carla's Codon library, so
-the same names are checked that run.</p>
-<h2 id="running-it">Running it<a class="headerlink" href="#running-it" title="Permanent link">&para;</a></h2>
-<p>The runner checks every scenario registered with <code>register_scenario()</code> when
-it builds it, so a run, a batch (<code>scenario='lane_change/*'</code>) and every job of a
-sweep are checked before anything starts. To check without running anything:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w">                                   </span><span class="c1"># every scenario config</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'lane_change/*'</span><span class="w"> </span>scenario.timeout_seconds<span class="o">=</span><span class="m">20</span>
-</code></pre></div>
-<p><code>scenario-check</code> composes each config exactly as the runner does, so the same
-overrides apply. It exits with 0 when every scenario passed, 1 when one
-failed, and 2 when there is no Codon compiler. A scenario package can make
-the same check in its own tests, with no simulator:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_scenario</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_my_scenario_compiles</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">typecheck_scenario</span><span class="p">(</span><span class="n">MyScenario</span><span class="p">,</span> <span class="n">MyScenarioConfig</span><span class="p">,</span> <span class="p">{</span><span class="s2">"timeout_seconds"</span><span class="p">:</span> <span class="mf">10.0</span><span class="p">})</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
-</code></pre></div>
-<h3 id="when-it-runs-the-typecheck-key">When it runs: the <code>typecheck</code> key<a class="headerlink" href="#when-it-runs-the-typecheck-key" title="Permanent link">&para;</a></h3>
+<p>It has the same four parts as in OpenSCENARIO:</p>
 <table>
 <thead>
 <tr>
-<th>Value</th>
-<th>Effect</th>
+<th>OpenSCENARIO</th>
+<th>Here</th>
+<th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>auto</code> (default)</td>
-<td>Check when a Codon compiler is installed; warn and run unchecked when none is.</td>
+<td><code>Trajectory</code> (<code>name</code>, <code>closed</code>, <code>shape</code>)</td>
+<td><code>Trajectory(name, vertices, closed=False)</code></td>
+<td>Only the <code>Polyline</code> shape. A recording is a sequence of samples; a clothoid or NURBS fitted to one would add an approximation between the data and the vehicle.</td>
 </tr>
 <tr>
-<td><code>required</code></td>
-<td>Refuse to run without a Codon compiler.</td>
+<td><code>Vertex</code> (<code>time</code>, <code>Position</code>)</td>
+<td><code>TrajectoryVertex(position, time=None)</code></td>
+<td>Either every vertex has a time or none has.</td>
 </tr>
 <tr>
-<td><code>off</code></td>
-<td>Do not check.</td>
+<td><code>TimeReference</code></td>
+<td><code>time_reference=None</code> or <code>TrajectoryTiming(domain, scale, offset)</code></td>
+<td><code>None</code> is <code>&lt;None/&gt;</code>: the vertex times are ignored and the entity keeps the speed it had when the action started. With a timing, a vertex at time <code>τ</code> is reached at <code>τ * scale + offset</code> seconds after the scenario (<code>ABSOLUTE</code>) or the action (<code>RELATIVE</code>) started.</td>
+</tr>
+<tr>
+<td><code>TrajectoryFollowingMode</code></td>
+<td><code>following_mode=POSITION</code> or <code>FOLLOW</code></td>
+<td>See below.</td>
+</tr>
+<tr>
+<td><code>initialDistanceOffset</code></td>
+<td><code>initial_distance_offset</code></td>
+<td>Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point.</td>
 </tr>
 </tbody>
 </table>
-<p>Set it like any other key (<code>uv run scenario ... typecheck=required</code>) or with
-<code>AUTOWARE_CARLA_SCENARIO_TYPECHECK</code>, which takes precedence. A scenario
-registered with <code>register_scenario_builder()</code> (a custom builder, such as the
-packages the Scenario Editor exports) is not checked: only its builder knows
-how it is constructed.</p>
-<h3 id="installing-codon-and-typesafe_carla">Installing Codon and typesafe_carla<a class="headerlink" href="#installing-codon-and-typesafe_carla" title="Permanent link">&para;</a></h3>
-<p>The check needs typesafe_carla (the <code>typesafe-carla</code> package, from PyPI) and
-the Codon compiler it pins (<code>typesafe-carla-toolchain</code>, 0.19, which
-typesafe-carla depends on). Both ship for Linux x86_64 only, and both are
-run-time dependencies of the framework anyway: typesafe_carla is its CARLA
-client (see <a href="../installation/">installation</a>).</p>
-<p>The checker finds Codon the way typesafe_carla's <code>typesafe-codon</code> launcher
-does (it calls typesafe_carla's own lookup), so one setup serves both:
-<code>$TYPESAFE_CODON</code> (a <code>codon</code> executable), the <code>typesafe-carla-toolchain</code>
-package, <code>$CODON_DIR/bin/codon</code>, <code>~/.codon/bin/codon</code>, then <code>codon</code> on <code>PATH</code>.
-It runs it with the launcher's environment (<code>CODON_DIR</code>, and <code>LD_LIBRARY_PATH</code>
-for the bundled runtime).
-The check is written for Codon 0.19: a Codon of another release series counts
-as no Codon at all, so <code>auto</code> warns and <code>required</code> refuses. So does a missing
-typesafe-carla.</p>
-<h2 id="what-is-checked">What is checked<a class="headerlink" href="#what-is-checked" title="Permanent link">&para;</a></h2>
-<p>The checker copies the scenario's own modules (the module defining the
-scenario class, its config class, and every module of the same package they
-import) into a scratch directory, next to a typed model of the framework, and
-compiles a small program that does what the runner does:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">config</span> <span class="o">=</span> <span class="n">MyScenarioConfig</span><span class="p">()</span>          <span class="c1"># then one line per YAML value:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">config</span><span class="o">.</span><span class="n">timeout_seconds</span> <span class="o">=</span> <span class="mf">10.0</span>        <span class="c1">#   scenario.timeout_seconds</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">scenario</span> <span class="o">=</span> <span class="n">MyScenario</span><span class="p">(</span><span class="n">ego</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="o">=...</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=...</span><span class="p">)</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">scenario</span><span class="o">.</span><span class="n">setup</span><span class="p">()</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">done</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">scenario</span><span class="o">.</span><span class="n">is_done</span><span class="p">()</span>
-</code></pre></div>
-<p>Codon checks a function only when something calls it, so what is checked is
-everything <code>setup()</code> and <code>is_done()</code> reach: the calls into the framework, the
-scenario's own helpers, and, through <code>register_pass_condition()</code> and the
-other <code>register_*</code> methods, the <code>check()</code> of a custom condition and the
-<code>execute()</code> of a custom action.</p>
-<p>An ODD written in Python (<a href="../odd/">ODD</a>) is checked the same way: the program
-calls its builder (<code>odd: OddDefinition = urban_odd()</code>). Every attribute's
-probe is then called with a world, and every condition must come from an
-attribute. The runner checks the ODD named by the <code>odd</code> key under the same
-<code>typecheck</code> mode, and <code>scenario-odd check</code> does it without running anything.</p>
-<h3 id="the-model">The model<a class="headerlink" href="#the-model" title="Permanent link">&para;</a></h3>
-<p><code>autoware_carla_scenario/typecheck/codon/</code> holds Codon declarations of
-everything a scenario imports from <code>autoware_carla_scenario</code>: the conditions,
-actions, poses and coordinate functions, entities, <code>BaseScenario</code>, the shared
-config dataclasses, with their static types. The CARLA API is not modelled:
-the checker puts typesafe_carla's Codon library next to the model, the way
-<code>typesafe-codon</code> puts it on <code>CODON_PATH</code>, and <code>import typesafe_carla.carla as
-carla</code> (the import the runtime uses) resolves to it, so a scenario is checked
-against the whole typed CARLA API.
-typesafe_carla's Python-API compatibility shortcuts (such as calling a
-<code>Vehicle</code> method on a plain <code>Actor</code>) compile, as they do outside strict mode.
-Nothing in the model runs; <code>test_typecheck_model.py</code> keeps every declaration
-in step with the Python definition of the same name (parameter names, order,
-defaults, keyword-only parameters, methods, enum members).</p>
-<p>A scenario that imports a module with no model (numpy, or a framework module
-outside the public API) is refused with a message naming the module.</p>
-<h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
-<p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
-places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
-<code>Optional[X]</code>, drops <code>@dataclass</code> and resolves <code>field(...)</code> defaults, accepts
-keyword-only parameters, and gives a list of different conditions the type
-<code>list[BaseCondition]</code>). What a scenario has to do itself:</p>
+<p>A vertex's position may be written in any frame the framework addresses:</p>
 <ul>
-<li><strong>Declare the attributes it assigns on <code>self</code></strong>, at class level, with their
-  type:</li>
+<li><code>Lanelet2Pose</code>, <code>OpenDrivePose</code> and <code>CarlaWorldPose</code> -- as everywhere else;</li>
+<li><code>MapPose(x, y, yaw=None, z=None)</code> -- an absolute pose in <strong>Autoware's <code>map</code>
+  frame</strong> (the Lanelet2 file's projected frame), which is the frame a recording
+  states its poses in. A missing <code>yaw</code> is taken from the direction of the path;
+  a missing <code>z</code> puts the entity on the road surface under it.</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">_config</span><span class="p">:</span> <span class="n">MyScenarioConfig</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="o">=</span><span class="n">spawn_pose</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="n">ground_projection</span><span class="p">)</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">MyScenarioConfig</span><span class="p">()</span>
-</code></pre></div>
-<p>A bare annotation is ignored by Python, so this changes nothing when the
-  scenario runs; Codon needs it to type an attribute of a subclass. The check
-  names each undeclared attribute and suggests its type.
-- <strong>Use only the public API</strong> from <code>autoware_carla_scenario</code> and its listed
-  subpackages, and the <code>BaseScenario</code> attributes meant for subclasses
-  (<code>ego_config</code>, <code>ego_entity</code>, <code>world</code>, <code>_ground_projection</code>, ...).
-- <strong>Pass numbers of the declared type.</strong> An <code>int</code> is accepted for a <code>float</code>,
-  but not inside a container: a <code>list[float]</code> parameter wants <code>[1.0, 2.0]</code>.
-  YAML values are converted for you.
-- <strong>Convert nested mappings in the config.</strong> The runner passes a YAML mapping
-  to the config class as a <code>dict</code>, so a field annotated with a dataclass
-  (<code>goal: Goal</code>) holds one at run time unless the config's <code>__post_init__</code>
-  turns it into a <code>Goal</code>, as the built-in configs do for their NPC lists.
-  The check builds the config the same way and refuses an unconverted
-  mapping at its <code>scenario.&lt;key&gt;</code>.</p>
-<p>Annotations Codon cannot express (<code>Union</code> of two types, <code>Any</code>, <code>Callable</code>,
-<code>Sequence</code>, <code>type[...]</code>) are dropped from parameters, which become generic:
-Codon then checks each call with the arguments it is given.</p>
+<p>Positions are converted to CARLA world coordinates when the action first runs,
+through the loaded map.</p>
+<h3 id="following-modes">Following modes<a class="headerlink" href="#following-modes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>POSITION</code></strong> places the entity on the trajectory every tick, with the
+  velocity the trajectory implies (so speed conditions and the recorder see the
+  recorded speed). It is a kinematic replay: it reproduces a recording exactly,
+  whatever the vehicle could actually do.</li>
+<li><strong><code>FOLLOW</code></strong> drives the vehicle there with the pure-pursuit and speed
+  controller of the <a href="../driver_interface/">external driver interface</a>
+  (<code>TrajectoryFollower</code>, on the vehicle's own powertrain model). The motion is
+  the vehicle's own, so it can lag or cut a corner. A pedestrian is walked
+  towards the path.</li>
+</ul>
+<h3 id="who-drives-and-when-it-ends">Who drives, and when it ends<a class="headerlink" href="#who-drives-and-when-it-ends" title="Permanent link">&para;</a></h3>
+<p>For the length of the run the action is the entity's only driver. A vehicle is
+taken back from the <a href="../traffic_backends/">traffic backend</a> first
+(<code>TrafficBackend.release</code>); an ego driven by an external stack (Autoware, a
+driver policy) is refused, because two authorities on one vehicle is not a
+scenario anyone wrote.</p>
+<p>The action stays <code>runningState</code> until the entity reaches the end of the
+trajectory: the last vertex's time with a timing, the end of the path without
+one (never, for a closed trajectory), within <code>ARRIVAL_TOLERANCE_M</code> (1 m) of it
+in <code>FOLLOW</code> mode. Then a vehicle is braked to a stop and a walker stood still
+where the trajectory ended. Pass <code>until=</code> to end it on a condition of your own.</p>
+<p><code>hidden_outside_trajectory=True</code> (an extension, <code>POSITION</code> mode with a timing
+only) keeps the entity out of the world -- parked under the map with its physics
+off -- before its first vertex's time and after its last. That is what a road
+user that enters a recording late or leaves it early needs, since an entity
+cannot be spawned once a run has started.</p>
+<h2 id="in-the-scenario-editor">In the Scenario Editor<a class="headerlink" href="#in-the-scenario-editor" title="Permanent link">&para;</a></h2>
+<p><strong>Follow Trajectory</strong> (category <em>Vehicle / Motion</em>) is a card like any other,
+for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
+two sources:</p>
+<ul>
+<li><strong>Vertices (map frame)</strong> -- written in the card, one vertex per line:
+  <code>x, y[, yaw][, time]</code> (metres, radians, seconds; <code>81234.5, 50123.0, , 1.5</code>
+  leaves the yaw to the path). The line above the text says how many vertices,
+  how long and how many seconds it adds up to. This is what a recording
+  transcribes to, so a replayed road user's card can be edited like any other.</li>
+<li><strong>Along lanelets</strong> -- the lanelets picked on the map, followed along their
+  centrelines at a lateral offset and timed at a constant speed.</li>
+</ul>
+<p>The other fields are the action's: the time reference (from the action start,
+from the scenario start, or none), its scale and offset, the following mode,
+how far along to start, and whether the entity is out of the world outside the
+trajectory's time. The validator checks what the fields only mean together: a
+time reference needs vertex times (or a speed, for lanelets), and keeping the
+entity out of the world needs the Position mode and a time reference.</p>
+<p>An entity's <strong>Spawn out of the world</strong> option (non-ego entities) spawns it under
+the map with its physics off, for a card that brings it in at its first vertex:
+a road user a recording picks up late, placed where it first appears, could
+otherwise collide at spawn with whatever stood there when the run began.</p>
+<h2 id="replaying-a-recorded-scene">Replaying a recorded scene<a class="headerlink" href="#replaying-a-recorded-scene" title="Permanent link">&para;</a></h2>
+<p>A transcribed recording becomes an ordinary scenario document -- the one the
+editor edits and the declarative runtime runs -- with nothing beyond the parts
+above:</p>
+<ul>
+<li>the ego spawns where the recording's ego started and is sent where it went;</li>
+<li>every road user is an entity spawned on the lanelet it was first seen on,
+  with one Follow Trajectory card: map-frame vertices timed on the scenario
+  clock (<code>time_domain: absolute</code>, <code>time_offset</code> moving the recording's first
+  frame to <code>t = 0</code>), in Position mode and hidden outside its trajectory;</li>
+<li>a road user first seen after the start spawns <strong>out of the world</strong>
+  (<code>spawn.hidden</code>) and appears at its first vertex.</li>
+</ul>
+<p>Open it in the editor to add the conditions the test is about.</p>
+<p>T4 scenes are transcribed this way by <code>scenario-import-t4</code> of the separate
+<code>scene_to_scenario_transpiler</code> package, which depends on the framework, never
+the other way round.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Map-frame vertices are Autoware's <code>map</code> frame, so a document replaying a
+recording has to run on <strong>the map the scene was recorded on</strong>, loaded with
+the same projector.</p>
+</div>
 
 
 
@@ -1765,7 +1738,7 @@ Codon then checks each call with the arguments it is given.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:08:08 UTC"><span class="timeago" datetime="2026-10-10T09:08:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:08:08 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:58:35 UTC"><span class="timeago" datetime="2026-10-10T09:58:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:58:35 UTC">2026-10-10</span>
   </span>
 
     
@@ -1775,7 +1748,7 @@ Codon then checks each call with the arguments it is given.</p>
     <span class="md-icon" title="Created">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 3, 2026 06:41:45 UTC"><span class="timeago" datetime="2026-10-03T06:41:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 3, 2026 06:41:45 UTC">2026-10-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:58:35 UTC"><span class="timeago" datetime="2026-10-10T09:58:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:58:35 UTC">2026-10-10</span>
   </span>
 
     
