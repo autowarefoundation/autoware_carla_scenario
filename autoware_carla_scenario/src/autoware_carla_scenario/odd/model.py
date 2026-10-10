@@ -394,6 +394,11 @@ class OddAttribute:
         buckets: Explicit bucket edges.
         values: One bucket per value.
         text: A description for the report.
+        target: What a bucket needs to count as covered, in *cover_by*.
+        cover_by: What *target* counts: ``"hits"`` (ticks, the default),
+            ``"seconds"``, ``"meters"`` the ego drove, or ``"entries"``.
+        min_stay: Stays in a bucket shorter than this many seconds do not
+            count towards *target*.
 
     Give at most one of *values*, *buckets* and *range*.  An attribute with
     none of them is monitored (conditions may test it) but not covered.
@@ -410,6 +415,9 @@ class OddAttribute:
         buckets: Optional[Sequence[float]] = None,
         values: Optional[Iterable[Any]] = None,
         text: str = "",
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
     ) -> None:
         if not name:
             raise ValueError("OddAttribute: name must not be empty")
@@ -418,6 +426,9 @@ class OddAttribute:
         self.unit = unit
         self.text = text
         self.item: Optional[CoverItem] = None
+        self.target = target
+        self.cover_by = cover_by
+        self.min_stay = min_stay
         self._set_buckets(range=range, every=every, buckets=buckets, values=values)
 
     def _set_buckets(self, **buckets: Any) -> None:
@@ -433,6 +444,9 @@ class OddAttribute:
             event=SamplingEvent.TICK,
             text=self.text,
             group=CoverGroup.ODD,
+            target=self.target,
+            cover_by=self.cover_by,
+            min_stay=self.min_stay,
             **buckets,
         )
 

@@ -6,7 +6,7 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only, _expect_int_sequence, _expect_optional_float
+from ._tc import _keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
@@ -144,9 +144,12 @@ class BaseScenario:
 
     def register_cover(self, name: str, expression, *_kw, unit: str = "", range = None,
                        every = None, buckets = None, values = None, ignore = None,
-                       event = SamplingEvent("end"), text: str = "", target: int = 1) -> None:
+                       event = SamplingEvent("end"), text: str = "", target = 1.0,
+                       cover_by: str = "hits", min_stay = None) -> None:
         _keyword_only(_kw, "BaseScenario.register_cover(): every argument but name and expression")
         _expect_cover_expression(expression)
+        _expect_float(target)
+        _expect_optional_float(min_stay)
         _expect_optional_range(range)
         _expect_optional_float(every)
         _expect_optional_edges(buckets)
@@ -154,8 +157,11 @@ class BaseScenario:
         raise NotImplementedError()
 
     def register_cross(self, name: str, items, *_kw, text: str = "",
-                       target: int = 1) -> None:
-        _keyword_only(_kw, "BaseScenario.register_cross(): text and target")
+                       target = 1.0, cover_by: str = "hits",
+                       min_stay = None) -> None:
+        _keyword_only(_kw, "BaseScenario.register_cross(): text, target, cover_by and min_stay")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
         for item in items:
             n: str = item
         raise NotImplementedError()

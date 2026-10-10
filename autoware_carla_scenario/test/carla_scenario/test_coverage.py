@@ -478,3 +478,129 @@ class TestExposure:
         bucket = old.to_dict()["groups"]["scenario"]["entries"][0]["buckets"][0]
         assert bucket["meters"] is None
         assert "| a | 4 | 2 | ? | ? | ? |" in old.to_markdown()
+
+
+class TestCriteria:
+    """#26: cover_by and min_stay."""
+
+    @pytest.fixture
+    def drive(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        from autoware_carla_scenario.odd import probes
+
+        def run(steps: list[tuple[Any, float, float]], **kw: Any) -> dict[str, Any]:
+            item = _item(values=["a", "b"], event=SamplingEvent.TICK, **kw)
+            collector = CoverageCollector([item])
+            world = SimpleNamespace(value=None, x=0.0)
+            monkeypatch.setattr(probes, "ego_position", lambda w: (w.x, 0.0, 0.0))
+            collector.start(world, 0.0)
+            for value, x, elapsed in steps:
+                world.value, world.x = value, x
+                collector.tick(world, elapsed)
+            collector.end(world, steps[-1][2])
+            return {
+                "schema": COVERAGE_SCHEMA,
+                "scenario": "s",
+                "items": collector.to_dict("s")["items"],
+            }
+
+        return run
+
+    def test_a_bucket_can_be_covered_by_distance(self, drive: Any) -> None:
+        doc = drive(
+            [("a", 30.0, 1.0), ("a", 60.0, 2.0), ("b", 70.0, 3.0)],
+            cover_by="meters",
+            target=50,
+        )
+        entry = merge_coverage([doc]).entries[0]
+        assert entry.covered == ["a"]
+        assert entry.holes == ["b"]
+        assert "| b (hole: 10/50 m) |" in merge_coverage([doc]).to_markdown()
+
+    def test_a_short_stay_does_not_count(self, drive: Any) -> None:
+        # "b" is clipped for 0.5 s between two long stays in "a".
+        doc = drive(
+            [("a", 10.0, 1.0), ("a", 20.0, 2.0), ("b", 25.0, 2.5)]
+            + [("a", 35.0, 3.5), ("a", 45.0, 4.5)],
+            cover_by="entries",
+            min_stay=1.0,
+        )
+        raw = doc["items"][0]
+        assert raw["entries"] == {"a": 2, "b": 1}
+        assert raw["counted"]["entries"] == {"a": 2, "b": 0}
+        assert raw["counted"]["meters"] == {"a": 40.0, "b": 0}
+        entry = merge_coverage([doc]).entries[0]
+        assert entry.holes == ["b"]
+        assert "counting stays of 1 s or more" in merge_coverage([doc]).to_markdown()
+
+    def test_the_last_stay_counts_when_long_enough(self, drive: Any) -> None:
+        doc = drive([("b", 0.0, 1.0), ("b", 0.0, 3.0)], cover_by="seconds", target=3)
+        assert merge_coverage([doc]).entries[0].covered == ["b"]
+        doc = drive(
+            [("b", 0.0, 1.0), ("b", 0.0, 3.0)],
+            cover_by="seconds",
+            target=3,
+            min_stay=2.0,
+        )
+        assert doc["items"][0]["counted"]["seconds"]["b"] == 3.0
+
+    def test_runs_sum_the_counted_amounts(self, drive: Any) -> None:
+        doc = drive([("a", 30.0, 1.0)], cover_by="meters", target=50, min_stay=0.5)
+        report = merge_coverage([doc, doc])
+        assert report.entries[0].amount("a") == 60.0
+        assert report.entries[0].covered == ["a"]
+
+    @pytest.mark.parametrize(
+        ("kw", "message"),
+        [
+            ({"cover_by": "laps"}, "cover_by must be one of"),
+            ({"target": 0}, "target must be at least 1"),
+            ({"cover_by": "seconds", "target": 0}, "target must be positive"),
+            ({"min_stay": -1, "event": SamplingEvent.TICK}, "must not be negative"),
+            ({"cover_by": "meters"}, "need an item sampled on SamplingEvent.TICK"),
+            ({"min_stay": 1.0}, "need an item sampled on SamplingEvent.TICK"),
+        ],
+    )
+    def test_criteria_that_cannot_be_met_are_refused(
+        self, kw: dict[str, Any], message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            _item(values=["a"], **kw)
+
+    def test_entries_need_no_tick(self) -> None:
+        assert _item(values=["a"], cover_by="entries", target=2).cover_by == "entries"
+
+    def test_criteria_change_the_merge_key(self, drive: Any) -> None:
+        by_hits = drive([("a", 1.0, 1.0)])
+        by_meters = drive([("a", 1.0, 1.0)], cover_by="meters")
+        names = [e.name for e in merge_coverage([by_hits, by_meters]).entries]
+        assert names == ["x", "x#2"]
+
+    def test_an_odd_attribute_and_a_binding_take_criteria(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.odd import OddAttribute, OpenOddError, load_openodd
+
+        attribute = OddAttribute(
+            "a", lambda w: 1, values=[1], cover_by="meters", target=5, min_stay=1
+        )
+        assert attribute.item is not None
+        assert (attribute.item.cover_by, attribute.item.target) == ("meters", 5)
+        taxonomy = "TAXONOMY:\n    wind_speed: float velocity\n"
+        odd = load_openodd(
+            taxonomy,
+            bindings={
+                "wind_speed": {
+                    "probe": "ego_speed_kph",
+                    "unit": "km/h",
+                    "buckets": [0, 10, 20],
+                    "cover_by": "meters",
+                    "target": 100,
+                    "min_stay": 2,
+                }
+            },
+        )
+        item = odd.attributes[0].item
+        assert item is not None
+        assert (item.cover_by, item.target, item.min_stay) == ("meters", 100.0, 2.0)
+        with pytest.raises(OpenOddError, match=r"unknown keys \['targets'\]"):
+            load_openodd(
+                taxonomy, bindings={"wind_speed": {"probe": "rain", "targets": 3}}
+            )

@@ -100,7 +100,9 @@ class CutInScenario(BaseScenario):
 | `ignore` | `ignore:` | Called with each value; a sample it returns true for is left out. |
 | `event` | `event:` | When to sample (below). Default `SamplingEvent.END`, as in the DSL. |
 | `text` | `text:` | A description for the report. |
-| `target` | `target:` | Hits a bucket needs to be covered. |
+| `target` | `target:` | What a bucket needs to be covered, in `cover_by` (hits by default). |
+| `cover_by` | - | What `target` counts: `"hits"`, or `"seconds"`, `"meters"`, `"entries"` (below). |
+| `min_stay` | - | Stays in a bucket shorter than this many seconds do not count (below). |
 
 Give exactly one of `range` (with `every`), `buckets` and `values`. Each
 numeric bucket holds its lower edge, and the last bucket its upper edge too.
@@ -170,6 +172,37 @@ mm/h of rain. The rain and fog buckets are therefore named levels.
 Because ODD items are sampled every tick, their hits count ticks. The report
 also counts, per bucket, how many **runs** hit it. A bucket held for many
 ticks in a single run is still only one situation.
+
+### Coverage criteria: `cover_by` and `min_stay`
+
+By default a bucket is covered after `target` hits, one by default: a single
+tick is enough. That lets an ego that clips a three-lane section for one frame
+while merging cover `lane_count=3`. Two parameters say what covering means
+instead:
+
+- `cover_by` picks the measure `target` counts: `"hits"` (the default),
+  `"seconds"` spent in the bucket, `"meters"` the ego drove in it, or
+  `"entries"` into it (see exposure, below).
+- `min_stay` (seconds) leaves out stays shorter than it: their hits, seconds,
+  metres and the entry itself do not count towards `target`.
+
+```python
+self.register_cover(
+    "gap", ego_gap, buckets=[0, 5, 10, 30], event=SamplingEvent.TICK,
+    cover_by="meters", target=50, min_stay=1.0,   # 50 m per bucket, stays of 1 s or more
+)
+```
+
+`"seconds"`, `"meters"` and `min_stay` need an item sampled on
+`SamplingEvent.TICK`: a one-shot sample has no duration or distance.
+`"entries"` works on any event. ODD attributes take the same three
+parameters (`OddAttribute(..., cover_by="meters", target=200, min_stay=2)`,
+or the same keys in a binding file). Crosses take them too.
+
+The coverage file keeps the raw measures and, with `min_stay`, the counted
+ones under `counted`. The report grades on the counted measure and shows a
+hole's progress (`(hole: 120/200 m)`). Items whose criteria differ between
+runs are reported apart, like items whose buckets differ.
 
 ### Exposure: seconds, meters, entries
 

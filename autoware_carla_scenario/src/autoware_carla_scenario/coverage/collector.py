@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from .items import (
     ABOVE_RANGE,
     BELOW_RANGE,
+    COVER_MEASURES,
     CoverItem,
     CrossItem,
     Event,
@@ -51,6 +52,9 @@ COVERAGE_SCHEMA = "autoware_carla_scenario.coverage/1"
 
 #: Joins the bucket labels of a cross-coverage cell.
 CROSS_SEPARATOR = " / "
+
+#: The measures a bucket keeps, in the order a stay is recorded.
+_MEASURES = COVER_MEASURES
 
 #: Faster than this between two ticks, the ego was moved, not driven (a
 #: respawn, a teleport): the step adds no distance.
@@ -124,13 +128,20 @@ class _Exposure:
     duration.
     """
 
-    def __init__(self, labels: list[str]) -> None:
+    def __init__(self, labels: list[str], min_stay: Optional[float] = None) -> None:
         self.hits: dict[str, int] = {label: 0 for label in labels}
         self.seconds: dict[str, float] = {label: 0.0 for label in labels}
         self.meters: dict[str, float] = {label: 0.0 for label in labels}
         self.entries: dict[str, int] = {label: 0 for label in labels}
         #: The bucket of the stay going on, if any.
         self._stay: Optional[str] = None
+        #: With a minimum stay, the measures of the stays that lasted long
+        #: enough, and the stay going on: [bucket, hits, seconds, meters].
+        self.min_stay = min_stay
+        self._counted: dict[str, dict[str, float]] = {
+            m: {label: 0 for label in labels} for m in _MEASURES
+        }
+        self._pending: Optional[list[Any]] = None
 
     def add(self, label: str, step: Optional["_Step"]) -> None:
         self.hits[label] += 1
@@ -139,21 +150,56 @@ class _Exposure:
             return
         if label != self._stay:
             self.entries[label] += 1
+            self._settle()
+            self._pending = [label, 0, 0.0, 0.0]
         self._stay = label
         self.seconds[label] += step.seconds
         self.meters[label] += step.meters
+        if self._pending is not None:
+            self._pending[1] += 1
+            self._pending[2] += step.seconds
+            self._pending[3] += step.meters
 
     def gap(self) -> None:
         """A tick without a sample in any bucket: the stay is over."""
+        self._settle()
         self._stay = None
 
+    def _settle(self) -> None:
+        """Count the stay that just ended, if it lasted long enough."""
+        pending, self._pending = self._pending, None
+        if pending is not None and self._long_enough(pending):
+            self._count(self._counted, pending)
+
+    def _long_enough(self, pending: list[Any]) -> bool:
+        return self.min_stay is not None and pending[2] >= self.min_stay - 1e-9
+
+    @staticmethod
+    def _count(into: dict[str, dict[str, float]], pending: list[Any]) -> None:
+        label = pending[0]
+        for measure, amount in zip(_MEASURES, (pending[1], pending[2], pending[3], 1)):
+            into[measure][label] += amount
+
+    def counted(self) -> dict[str, dict[str, float]]:
+        """The measures of the stays at least ``min_stay`` long, the last included."""
+        out = {m: dict(v) for m, v in self._counted.items()}
+        if self._pending is not None and self._long_enough(self._pending):
+            self._count(out, self._pending)
+        return out
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "hits": dict(self.hits),
             "seconds": {k: round(v, 3) for k, v in self.seconds.items()},
             "meters": {k: round(v, 3) for k, v in self.meters.items()},
             "entries": dict(self.entries),
         }
+        if self.min_stay is not None:
+            out["counted"] = {
+                m: {k: round(v, 3) if isinstance(v, float) else v for k, v in d.items()}
+                for m, d in self.counted().items()
+            }
+        return out
 
 
 class _Step:
@@ -171,7 +217,7 @@ class _ItemHits:
         self.item = item
         #: Buckets outside the run's ODD: reported, but not coverage targets.
         self.outside = outside
-        self.exposure = _Exposure(item.labels)
+        self.exposure = _Exposure(item.labels, item.min_stay)
         self.hits = self.exposure.hits
         self.out_of_range: dict[str, int] = {}
         self.ignored = 0
@@ -193,7 +239,9 @@ class _CrossHits:
     def __init__(self, cross: CrossItem, outside: dict[str, list[str]]) -> None:
         self.cross = cross
         cells = list(itertools.product(*(i.labels for i in cross.items)))
-        self.exposure = _Exposure([CROSS_SEPARATOR.join(c) for c in cells])
+        self.exposure = _Exposure(
+            [CROSS_SEPARATOR.join(c) for c in cells], cross.min_stay
+        )
         self.hits = self.exposure.hits
         self.outside = [
             CROSS_SEPARATOR.join(cell)
