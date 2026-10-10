@@ -9,6 +9,12 @@ overrides that run that one concrete scenario::
 
     [["ego.spawn_lanelet_id=242", "ego.spawn_s=18.6"], ...]
 
+A *logical* scenario names its ego's route as a pattern of road instead
+(``sweep.route``, :mod:`autoware_carla_scenario.route`): it expands to one
+scenario per route of the map that matches, each with the ego's spawn and goal
+and the match itself (``scenario.route.*``) as overrides
+(:func:`expand_route`).
+
 A config without a sweep is already concrete and expands to itself (one empty
 override list). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
 these in one process; ``scenario-expand`` hands them to a caller that runs them
@@ -58,6 +64,13 @@ def expand_sweep(
     Raises:
         ValueError: If ``sweep`` has no constraints.
     """
+    if sweep.get("route"):
+        if sweep.get("constraints"):
+            raise ValueError(
+                "sweep has both a route search and constraints; a scenario is "
+                "expanded by one of them"
+            )
+        return expand_route(sweep["route"], lanelet_map, arguments)
     constraints_cfg = sweep.get("constraints") or {}
     # Constraints are keyed by the target parameter (e.g. ego.spawn_lanelet_id);
     # each value is a list of constraint dicts.
@@ -102,13 +115,72 @@ def expand_sweep(
     return cases
 
 
+def expand_route(
+    route: Mapping[str, Any], lanelet_map: Any, arguments: Sequence[str] = ()
+) -> list[list[str]]:
+    """The override list of every route of ``lanelet_map`` a route search matches.
+
+    Per match, in the order :func:`~autoware_carla_scenario.route.search.find_route_matches`
+    returns them: the ego's spawn (``ego.spawn_lanelet_id`` / ``ego.spawn_s``,
+    ``ego_spawn_s`` along the route), its goal (``ego.goal_lanelet_id`` /
+    ``ego.goal_s``, the route's end less ``ego_goal_margin``) when
+    ``ego_goal`` is set, and the match as the ``scenario.route.*`` keys.  A
+    match the ego cannot be placed on is skipped (and logged).
+
+    Raises:
+        ValueError: If ``route`` is not a well-formed route search.
+    """
+    from ..route.frame import RouteFrame, ego_placement  # noqa: PLC0415
+    from ..route.model import parse_route_search  # noqa: PLC0415
+    from ..route.search import find_route_matches  # noqa: PLC0415
+
+    spec = parse_route_search(route)
+    routing_graph = create_routing_graph(lanelet_map)
+    matches = find_route_matches(spec, lanelet_map, routing_graph)
+    if not matches:
+        logger.warning("No route of the map matches the route search.")
+        return []
+    cases: list[list[str]] = []
+    for match in matches:
+        frame = RouteFrame(match, lanelet_map, routing_graph)
+        try:
+            (spawn_id, spawn_s), goal = ego_placement(
+                frame, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
+            )
+        except ValueError:
+            logger.warning(
+                "Route match %d (%s) cannot place the ego; skipping it.",
+                match.index,
+                list(match.lanelet_ids),
+                exc_info=True,
+            )
+            continue
+        overrides = [
+            f"ego.spawn_lanelet_id={spawn_id}",
+            f"ego.spawn_s={round(spawn_s, 4)}",
+        ]
+        if goal is not None:
+            overrides += [
+                f"ego.goal_lanelet_id={goal[0]}",
+                f"ego.goal_s={round(goal[1], 4)}",
+            ]
+        overrides += [
+            f"scenario.route.{key}={_override_value(value)}"
+            for key, value in match.to_config().items()
+        ]
+        cases.append([*overrides, *arguments])
+    return cases
+
+
 def expand_config(cfg: DictConfig, arguments: Sequence[str] = ()) -> list[list[str]]:
     """The concrete scenarios of a composed scenario config (see module docstring)."""
     sweep_cfg = OmegaConf.select(cfg, "sweep")
     sweep = (
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
     )
-    if not isinstance(sweep, dict) or not sweep.get("constraints"):
+    if not isinstance(sweep, dict) or not (
+        sweep.get("constraints") or sweep.get("route")
+    ):
         return [list(arguments)]  # already concrete
 
     from ..maps import resolve_map_paths  # noqa: PLC0415 -- clones a map on demand
@@ -118,4 +190,4 @@ def expand_config(cfg: DictConfig, arguments: Sequence[str] = ()) -> list[list[s
     return expand_sweep(sweep, lanelet_map, arguments)
 
 
-__all__ = ["expand_config", "expand_sweep"]
+__all__ = ["expand_config", "expand_route", "expand_sweep"]

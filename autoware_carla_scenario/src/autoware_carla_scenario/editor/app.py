@@ -26,11 +26,13 @@ from ..authoring.models import SIGNAL_STATE_NAMES
 from ..authoring.persistence import DraftStore, default_draft_dir
 from ..trajectory.authoring import (
     format_relative_vertices,
+    format_route_vertices,
     format_vertices,
     relative_trajectory_summary,
+    route_trajectory_summary,
     trajectory_summary,
 )
-from .service import EditorError, EditorService, condition_actions
+from .service import EditorError, EditorService, condition_actions, route_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,8 @@ def create_app(
         # Which actions a condition waits on -- the canvas draws its causal
         # links from these, not from where the cards happen to sit.
         condition_actions=condition_actions,
+        # A logical scenario's route search, as the YAML its inspector edits.
+        route_yaml=route_yaml,
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,
@@ -188,6 +192,8 @@ def create_app(
         trajectory_summary=trajectory_summary,
         format_relative_vertices=format_relative_vertices,
         relative_trajectory_summary=relative_trajectory_summary,
+        format_route_vertices=format_route_vertices,
+        route_trajectory_summary=route_trajectory_summary,
     )
 
     application.state.templates = templates

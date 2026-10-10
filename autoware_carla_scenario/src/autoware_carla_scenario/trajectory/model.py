@@ -45,8 +45,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MapPose",
+    "ROUTE_POSITIONS",
     "ReferenceContext",
     "RelativeLanePose",
+    "RouteCrossingPose",
+    "RouteCrosswalkPose",
+    "RouteLanePose",
+    "RouteOppositePose",
+    "RouteRoadsidePose",
     "ResolvedTrajectory",
     "Trajectory",
     "TrajectoryFollowingMode",
@@ -143,9 +149,245 @@ class RelativeLanePose:
                 raise ValueError(f"RelativeLanePose.{name} must be finite")
 
 
+def _finite(owner: str, **values: Any) -> None:
+    for name, value in values.items():
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{owner}.{name} must be finite")
+
+
+def _one_of(owner: str, name: str, value: Any, allowed: Sequence[str]) -> None:
+    if value not in allowed:
+        raise ValueError(
+            f"{owner}.{name} must be one of {list(allowed)}, got {value!r}"
+        )
+
+
+def _whole(owner: str, name: str, value: Any) -> int:
+    if isinstance(value, bool) or int(value) != value:
+        raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
+    return int(value)
+
+
+def _check_anchor(owner: str, anchor: Optional[str]) -> None:
+    if anchor is None:
+        return
+    from ..route.model import parse_anchor  # noqa: PLC0415 -- pure, no map
+
+    try:
+        parse_anchor(anchor)
+    except ValueError as exc:
+        raise ValueError(f"{owner}.anchor: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class RouteLanePose:
+    """A pose on the ego's route, in lane coordinates (route frame).
+
+    The route counterpart of :class:`RelativeLanePose`, for a *logical*
+    scenario (``docs/logical_scenarios.md``): ``ds`` is measured along the
+    ego's route -- the lanelets of the scenario's route match, across lanelet
+    ends and through its junctions -- rather than along whichever lane an
+    entity happens to be on.  From route s ``base + ds``, go ``d_lane`` lanes
+    of the same direction across and stand ``offset`` metres from that lane's
+    centreline.
+
+    ``base`` is the route s of *anchor* (``junction:0:entry``, see
+    :func:`~autoware_carla_scenario.route.model.parse_anchor`) or, with no
+    anchor, of the ego when the action starts: the ego's position projected
+    onto the route.  Before the route's start or past its end the walk goes on
+    along the lane (the straightest way, as :class:`RelativeLanePose` does).
+
+    Args:
+        ds: Metres along the route from the base; negative goes back.
+        offset: Metres from the target lane's centreline, positive left.
+        d_lane: Lanes across: ``+1`` one to the left, ``-1`` one to the right.
+        yaw: Heading in radians relative to the lane's direction; ``None``
+            faces along the trajectory.
+        anchor: The named point ``ds`` counts from; ``None`` is the ego.
+    """
+
+    ds: float = 0.0
+    offset: float = 0.0
+    d_lane: int = 0
+    yaw: Optional[float] = None
+    anchor: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _finite("RouteLanePose", ds=self.ds, offset=self.offset)
+        object.__setattr__(
+            self, "d_lane", _whole("RouteLanePose", "d_lane", self.d_lane)
+        )
+        _check_anchor("RouteLanePose", self.anchor)
+
+
+@dataclass(frozen=True)
+class RouteOppositePose:
+    """A pose on the opposite-direction road abreast of a point of the route.
+
+    From route s ``base + ds`` (``base`` as for :class:`RouteLanePose`), cross
+    to the lanes that run the other way beside the route -- on whichever side
+    they are, so the same document works for left- and right-hand traffic --
+    and take the ``lane``-th of them counted from the centre line (``1`` is the
+    one next to it).  The pose faces that lane's own direction of travel.
+
+    Args:
+        ds: Metres along the route from the base.
+        lane: Which opposite lane, from the centre line outwards, from 1.
+        offset: Metres from that lane's centreline, positive to its left.
+        yaw: Heading relative to that lane's direction; ``None`` faces along
+            the trajectory.
+        anchor: The named point ``ds`` counts from; ``None`` is the ego.
+    """
+
+    ds: float = 0.0
+    lane: int = 1
+    offset: float = 0.0
+    yaw: Optional[float] = None
+    anchor: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _finite("RouteOppositePose", ds=self.ds, offset=self.offset)
+        lane = _whole("RouteOppositePose", "lane", self.lane)
+        if lane < 1:
+            raise ValueError("RouteOppositePose.lane counts from 1")
+        object.__setattr__(self, "lane", lane)
+        _check_anchor("RouteOppositePose", self.anchor)
+
+
+@dataclass(frozen=True)
+class RouteCrossingPose:
+    """A pose on a lanelet that enters one of the route's junctions from the side.
+
+    Junction ``junction`` of the route (its junction segments counted from 0)
+    is entered by other lanelets as well; the *approach* says which, seen from
+    the ego coming in: from its ``left``, its ``right`` or ``opposite`` it.
+    ``turn`` narrows them to those that turn that way.  The pose is
+    ``distance`` metres along that lanelet's path from where it enters the
+    junction: negative is before it, on the approach road; positive is inside
+    the junction and beyond.
+
+    Args:
+        junction: Which junction of the route, from 0.
+        approach: ``left``, ``right`` or ``opposite``.
+        distance: Metres along the crossing path from its junction entry.
+        turn: ``left``, ``right``, ``straight`` or ``None`` (any).
+        offset: Metres from that path's centreline, positive to its left.
+        yaw: Heading relative to that path's direction; ``None`` faces along
+            the trajectory.
+    """
+
+    junction: int = 0
+    approach: str = "left"
+    distance: float = 0.0
+    turn: Optional[str] = None
+    offset: float = 0.0
+    yaw: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        from ..route.model import APPROACHES  # noqa: PLC0415
+
+        _finite("RouteCrossingPose", distance=self.distance, offset=self.offset)
+        junction = _whole("RouteCrossingPose", "junction", self.junction)
+        if junction < 0:
+            raise ValueError("RouteCrossingPose.junction counts from 0")
+        object.__setattr__(self, "junction", junction)
+        _one_of("RouteCrossingPose", "approach", self.approach, APPROACHES)
+        if self.turn is not None:
+            _one_of(
+                "RouteCrossingPose", "turn", self.turn, ("left", "right", "straight")
+            )
+
+
+@dataclass(frozen=True)
+class RouteCrosswalkPose:
+    """A pose on (or just off) a crosswalk at one of the route's junctions.
+
+    The crosswalk that crosses the ego's path on the way into (``leg="entry"``)
+    or out of (``"exit"``) junction ``junction``.  ``side`` picks its end on
+    the ego's left or right; ``along`` is metres along the crosswalk from that
+    end towards the other -- negative stands that far back from it, on the
+    pavement.  The pose faces across, towards the other end.
+
+    Args:
+        junction: Which junction of the route, from 0.
+        leg: ``entry`` or ``exit``.
+        side: ``left`` or ``right`` of the ego's path.
+        along: Metres along the crosswalk from that end; negative is behind it.
+        yaw: Heading relative to facing across; ``None`` faces along the
+            trajectory.
+    """
+
+    junction: int = 0
+    leg: str = "entry"
+    side: str = "right"
+    along: float = 0.0
+    yaw: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        from ..route.model import CROSSWALK_LEGS, SIDES  # noqa: PLC0415
+
+        _finite("RouteCrosswalkPose", along=self.along)
+        junction = _whole("RouteCrosswalkPose", "junction", self.junction)
+        if junction < 0:
+            raise ValueError("RouteCrosswalkPose.junction counts from 0")
+        object.__setattr__(self, "junction", junction)
+        _one_of("RouteCrosswalkPose", "leg", self.leg, CROSSWALK_LEGS)
+        _one_of("RouteCrosswalkPose", "side", self.side, SIDES)
+
+
+@dataclass(frozen=True)
+class RouteRoadsidePose:
+    """A pose at the edge of the road abreast of a point of the route.
+
+    From route s ``base + ds`` (``base`` as for :class:`RouteLanePose`), go out
+    to the road's edge on ``side`` -- past every lane on that side, the
+    opposite road's included -- and stand ``kerb_distance`` metres beyond it
+    (negative: on the road, that far in).  Facing along the route.
+
+    Args:
+        ds: Metres along the route from the base.
+        side: ``left`` or ``right`` of the route's direction.
+        kerb_distance: Metres beyond the road's edge.
+        yaw: Heading relative to the route's direction; ``None`` faces along
+            the trajectory.
+        anchor: The named point ``ds`` counts from; ``None`` is the ego.
+    """
+
+    ds: float = 0.0
+    side: str = "left"
+    kerb_distance: float = 0.5
+    yaw: Optional[float] = None
+    anchor: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        from ..route.model import SIDES  # noqa: PLC0415
+
+        _finite("RouteRoadsidePose", ds=self.ds, kerb_distance=self.kerb_distance)
+        _one_of("RouteRoadsidePose", "side", self.side, SIDES)
+        _check_anchor("RouteRoadsidePose", self.anchor)
+
+
+#: The positions placed against the scenario's route when the action starts.
+ROUTE_POSITIONS: Tuple[type, ...] = (
+    RouteLanePose,
+    RouteOppositePose,
+    RouteCrossingPose,
+    RouteCrosswalkPose,
+    RouteRoadsidePose,
+)
+
 #: Any position a vertex may be written in.
 TrajectoryPosition = Union[
-    "CarlaWorldPose", "Lanelet2Pose", "OpenDrivePose", MapPose, RelativeLanePose
+    "CarlaWorldPose",
+    "Lanelet2Pose",
+    "OpenDrivePose",
+    MapPose,
+    RelativeLanePose,
+    RouteLanePose,
+    RouteOppositePose,
+    RouteCrossingPose,
+    RouteCrosswalkPose,
+    RouteRoadsidePose,
 ]
 
 
@@ -352,13 +594,15 @@ class Trajectory:
 
     @property
     def is_relative(self) -> bool:
-        """Whether any vertex is a :class:`RelativeLanePose`.
+        """Whether any vertex is a :class:`RelativeLanePose` or a route pose.
 
         Such a trajectory is placed anew each time the action starts, since
-        where it lies depends on where the reference entity then is.
+        where it lies depends on where the reference entity -- or, for a route
+        pose (:data:`ROUTE_POSITIONS`), the ego on its route -- then is.
         """
         return any(
-            isinstance(vertex.position, RelativeLanePose) for vertex in self.vertices
+            isinstance(vertex.position, (RelativeLanePose, *ROUTE_POSITIONS))
+            for vertex in self.vertices
         )
 
     @property

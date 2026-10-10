@@ -19,7 +19,8 @@ from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTru
                          EntityLaneOfCondition, EntityLanePositionCondition,
                          EntityPositionDistanceCondition,
                          NotCondition, OrCondition, PersistentCondition, RelativeDistanceType,
-                         RelativeSpeedCondition, ScalarComparisonRule, ScenarioResult,
+                         RelativeSpeedCondition, RouteProgressCondition,
+                         ScalarComparisonRule, ScenarioResult,
                          SpeedCondition, SpeedCoordinateSystem, SpeedDirection,
                          StandstillCondition, StickyCondition, TemporaryStopCondition,
                          TimeHeadwayCondition, TimeToCollisionCondition, TimeoutCondition,
@@ -46,5 +47,7 @@ from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import LaneChangeDirection, TurnDirection
-from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, Trajectory,
-                         TrajectoryFollowingMode, TrajectoryTiming, TrajectoryVertex)
+from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, RouteCrossingPose,
+                         RouteCrosswalkPose, RouteLanePose, RouteOppositePose,
+                         RouteRoadsidePose, Trajectory, TrajectoryFollowingMode,
+                         TrajectoryTiming, TrajectoryVertex)

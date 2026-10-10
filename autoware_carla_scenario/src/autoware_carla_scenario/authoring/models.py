@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Literal, Optional, cast, get_args
+from typing import Annotated, Any, Literal, Optional, Union, cast, get_args
 
 from pydantic import (
     AliasChoices,
@@ -45,15 +45,21 @@ __all__ = [
     "BindingRef",
     "ConditionNode",
     "ConstraintNode",
+    "CountRange",
     "EgoDriver",
     "Entity",
     "DEFAULT_MODELS",
     "EntityKind",
     "GoalSpec",
+    "JunctionSegment",
+    "LaneSegment",
     "LaneletChoice",
     "LaneletMode",
     "LaneletSlot",
     "MapRef",
+    "LengthRange",
+    "RouteSearch",
+    "RouteSegment",
     "ScenarioDocument",
     "SIGNAL_STATE_NAMES",
     "SignalControllerRef",
@@ -938,6 +944,182 @@ class LaneletSlot:
 
 
 # ---------------------------------------------------------------------------
+# Route search (a logical scenario)
+# ---------------------------------------------------------------------------
+
+#: A yes / no / don't-care property of a route segment.
+Tristate = Literal["any", "yes", "no"]
+
+
+def _tristate_from_yaml(value: Any) -> Any:
+    """YAML 1.1 reads a bare ``yes`` / ``no`` as a boolean; take it back."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return value
+
+
+class LengthRange(_Node):
+    """An inclusive range of metres; an unset bound is open."""
+
+    min: Optional[float] = Field(default=None, ge=0.0)
+    max: Optional[float] = Field(default=None, gt=0.0)
+
+
+class CountRange(_Node):
+    """An inclusive range of lane counts; an unset bound is open."""
+
+    min: Optional[int] = Field(default=None, ge=0)
+    max: Optional[int] = Field(default=None, ge=0)
+
+
+class LaneSegment(_Node):
+    """A stretch of road between junctions, by its properties.
+
+    See :class:`autoware_carla_scenario.route.model.LaneSegmentSpec`, which is
+    what this reaches the search as, for what each property means.
+    """
+
+    kind: Literal["lane"] = "lane"
+    length: LengthRange = Field(default_factory=LengthRange)
+    lanes_left: CountRange = Field(default_factory=CountRange)
+    lanes_right: CountRange = Field(default_factory=CountRange)
+    opposite_lane: Tristate = "any"
+    shape: Literal["any", "straight", "curved_left", "curved_right"] = "any"
+    stop_line: Tristate = "any"
+    traffic_light_stop_line: Tristate = "any"
+
+    _yes_no = field_validator(
+        "opposite_lane", "stop_line", "traffic_light_stop_line", mode="before"
+    )(classmethod(lambda cls, v: _tristate_from_yaml(v)))
+
+    def summary(self) -> str:
+        """One line for the editor: what this segment asks for."""
+        parts = [f"lane {_range_text(self.length, 'm')}"]
+        for name, label in (
+            ("lanes_left", "lanes left"),
+            ("lanes_right", "lanes right"),
+        ):
+            text = _range_text(getattr(self, name), "")
+            if text != "any":
+                parts.append(f"{label} {text}")
+        if self.shape != "any":
+            parts.append(self.shape.replace("_", " "))
+        for name, label in (
+            ("opposite_lane", "opposite lane"),
+            ("stop_line", "stop line"),
+            ("traffic_light_stop_line", "signal stop line"),
+        ):
+            value = getattr(self, name)
+            if value != "any":
+                parts.append(f"{label}: {value}")
+        return ", ".join(parts)
+
+
+class JunctionSegment(_Node):
+    """The ego's way through a junction, by its properties.
+
+    See :class:`autoware_carla_scenario.route.model.JunctionSegmentSpec`.
+    """
+
+    kind: Literal["junction"] = "junction"
+    turn: Literal["any", "left", "right", "straight"] = "any"
+    traffic_light: Tristate = "any"
+    crossing_from_left: Tristate = "any"
+    crossing_from_right: Tristate = "any"
+    crossing_from_opposite: Tristate = "any"
+    crosswalk_entry: Tristate = "any"
+    crosswalk_exit: Tristate = "any"
+
+    _yes_no = field_validator(
+        "traffic_light",
+        "crossing_from_left",
+        "crossing_from_right",
+        "crossing_from_opposite",
+        "crosswalk_entry",
+        "crosswalk_exit",
+        mode="before",
+    )(classmethod(lambda cls, v: _tristate_from_yaml(v)))
+
+    def summary(self) -> str:
+        """One line for the editor: what this segment asks for."""
+        parts = [f"junction, turn {self.turn}"]
+        for name, label in (
+            ("traffic_light", "traffic light"),
+            ("crossing_from_left", "crossing from left"),
+            ("crossing_from_right", "crossing from right"),
+            ("crossing_from_opposite", "crossing from opposite"),
+            ("crosswalk_entry", "crosswalk on entry"),
+            ("crosswalk_exit", "crosswalk on exit"),
+        ):
+            value = getattr(self, name)
+            if value != "any":
+                parts.append(f"{label}: {value}")
+        return ", ".join(parts)
+
+
+def _range_text(value: "LengthRange | CountRange", unit: str) -> str:
+    low, high = value.min, value.max
+    suffix = f" {unit}" if unit else ""
+    if low is None and high is None:
+        return "any"
+    if high is None:
+        return f">= {low:g}{suffix}"
+    if low is None:
+        return f"<= {high:g}{suffix}"
+    if low == high:
+        return f"= {low:g}{suffix}"
+    return f"{low:g}-{high:g}{suffix}"
+
+
+#: One segment of a route search, told apart by its ``kind``.
+RouteSegment = Annotated[
+    Union[LaneSegment, JunctionSegment], Field(discriminator="kind")
+]
+
+
+class RouteSearch(_Node):
+    """A logical scenario's route: the ego's drive as a pattern of road.
+
+    Instead of lanelet ids, the ego's route is an ordered list of segments --
+    lanes and junctions with the properties the drive had -- that a route
+    search finds on whatever map the scenario runs on
+    (:mod:`autoware_carla_scenario.route`).  Each match is one concrete
+    scenario: ``scenario-expand`` lists them, and a run that was not expanded
+    takes match :attr:`match_index`.  The ego spawns on the match and is
+    routed along it; route poses and ``route_progress`` conditions are measured
+    on it.  See ``docs/logical_scenarios.md``.
+
+    Attributes:
+        segments: The pattern, in driving order.
+        ego_spawn_s: Where the ego spawns, metres along the route from its
+            start.
+        ego_goal: Whether the ego's goal is the route's end.
+        ego_goal_margin: How far before the route's end the goal is (m).
+        match_index: Which match a run that was not expanded takes.
+        max_matches: How many matches the search returns at most.
+        seed: Shuffle the matches with this seed before ``max_matches`` cuts
+            the list; ``None`` keeps them sorted by lanelet ids.
+    """
+
+    segments: list[RouteSegment] = Field(default_factory=list)
+    ego_spawn_s: float = Field(default=0.0, ge=0.0)
+    ego_goal: bool = True
+    ego_goal_margin: float = Field(default=0.0, ge=0.0)
+    match_index: int = Field(default=0, ge=0)
+    max_matches: int = Field(default=64, ge=1, le=1000)
+    seed: Optional[int] = None
+
+    @property
+    def junction_count(self) -> int:
+        """How many junction segments the pattern has."""
+        return sum(1 for s in self.segments if s.kind == "junction")
+
+    def to_sweep_dict(self) -> dict[str, Any]:
+        """This search as the ``sweep.route`` mapping the route search reads."""
+        return cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+
+
+# ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
 
@@ -954,6 +1136,9 @@ class ScenarioDocument(_Node):
     entities: list[Entity] = Field(default_factory=list)
     actions: list[ActionNode] = Field(default_factory=list)
     assertions: Assertions = Field(default_factory=Assertions)
+    #: A logical scenario's route search; ``None`` for a scenario whose ego
+    #: spawns where :attr:`entities` say.
+    route: Optional[RouteSearch] = None
     ui: UiLayout = Field(default_factory=UiLayout)
 
     @field_validator("id")
@@ -1325,5 +1510,14 @@ class ScenarioDocument(_Node):
     # -- serialisation --------------------------------------------------
 
     def to_yaml_dict(self) -> dict[str, Any]:
-        """Return a plain, YAML-friendly dict (aliases applied, defaults kept)."""
-        return self.model_dump(mode="json", by_alias=True)
+        """Return a plain, YAML-friendly dict (aliases applied, defaults kept).
+
+        A document with no route search says nothing about one, as it did
+        before routes existed; a route search leaves its unset bounds out.
+        """
+        out = self.model_dump(mode="json", by_alias=True)
+        if self.route is None:
+            out.pop("route", None)
+        else:
+            out["route"] = self.route.to_sweep_dict()
+        return out

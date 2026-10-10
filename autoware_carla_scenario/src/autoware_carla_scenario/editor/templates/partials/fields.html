@@ -110,6 +110,12 @@
     <p class="ed-help mono">{{ relative_trajectory_summary(current) }}</p>
     <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
               placeholder="ds[, offset][, d_lane][, yaw]  -- one vertex per line">{{ format_relative_vertices(current or []) }}</textarea>
+  {% elif spec.kind == 'route_trajectory' %}
+    {# Vertices placed against the scenario's route: one per line, the kind
+       first, then the kind's keys. #}
+    <p class="ed-help mono">{{ route_trajectory_summary(current) }}</p>
+    <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
+              placeholder="lane ds=10 d_lane=1  -- one vertex per line">{{ format_route_vertices(current or []) }}</textarea>
   {% elif spec.kind == 'int' %}
     <input type="number" step="1" name="{{ name }}" class="ed-input"
            value="{{ '' if current is none else current }}">

@@ -11,7 +11,12 @@ three ways (:data:`PATH_SOURCES`):
 * ``relative_lane`` -- vertices ``[ds, offset, d_lane, yaw]`` relative to an
   entity's lane (:class:`~.model.RelativeLanePose`), placed against where
   that entity is when the action starts: the shape of a manoeuvre -- pull out,
-  overtake, cut in -- written once and played from wherever it begins.
+  overtake, cut in -- written once and played from wherever it begins;
+* ``route`` -- vertices placed against the scenario's *route* (a logical
+  scenario's route search, ``docs/logical_scenarios.md``): one mapping per
+  vertex with a ``kind`` -- ``lane``, ``opposite``, ``crossing``,
+  ``crosswalk`` or ``roadside`` -- and that kind's keys
+  (:data:`ROUTE_ROW_FIELDS`), edited as text ``kind key=value ...``.
 
 What a written vertex departs on -- a time included -- is not in its row: it
 is the card's waypoint condition on that vertex (``advance_conditions``; a
@@ -32,6 +37,11 @@ from .model import (
     MapPose,
     ReferenceContext,
     RelativeLanePose,
+    RouteCrossingPose,
+    RouteCrosswalkPose,
+    RouteLanePose,
+    RouteOppositePose,
+    RouteRoadsidePose,
     Trajectory,
     TrajectoryTiming,
     TrajectoryVertex,
@@ -42,23 +52,28 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PATH_SOURCES",
+    "ROUTE_ROW_FIELDS",
     "RelativeVertexRow",
     "TIME_DOMAINS",
     "VertexRow",
     "authored_timing",
     "authored_trajectory",
     "format_relative_vertices",
+    "format_route_vertices",
     "format_vertices",
     "parse_relative_vertices",
+    "parse_route_vertices",
     "parse_vertices",
     "relative_trajectory_summary",
     "relative_vertex_problems",
+    "route_pose",
+    "route_trajectory_summary",
     "trajectory_summary",
     "vertex_problems",
 ]
 
 #: Where a document's trajectory comes from.
-PATH_SOURCES: tuple[str, ...] = ("vertices", "lanelets", "relative_lane")
+PATH_SOURCES: tuple[str, ...] = ("vertices", "lanelets", "relative_lane", "route")
 
 #: A document's time reference: ``none`` ignores the vertex times.
 TIME_DOMAINS: tuple[str, ...] = ("none", "relative", "absolute")
@@ -314,6 +329,152 @@ def relative_trajectory_summary(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Route vertices, as text and as data
+# ---------------------------------------------------------------------------
+
+#: Each route vertex kind, its pose class, and its keys in order.
+ROUTE_ROW_FIELDS: dict[str, tuple[type, tuple[str, ...]]] = {
+    "lane": (RouteLanePose, ("ds", "offset", "d_lane", "yaw", "anchor")),
+    "opposite": (RouteOppositePose, ("ds", "lane", "offset", "yaw", "anchor")),
+    "crossing": (
+        RouteCrossingPose,
+        ("junction", "approach", "distance", "turn", "offset", "yaw"),
+    ),
+    "crosswalk": (RouteCrosswalkPose, ("junction", "leg", "side", "along", "yaw")),
+    "roadside": (
+        RouteRoadsidePose,
+        ("ds", "side", "kerb_distance", "yaw", "anchor"),
+    ),
+}
+
+#: Keys holding text, not numbers.
+_TEXT_KEYS = frozenset({"approach", "turn", "leg", "side", "anchor"})
+#: Keys holding a whole number.
+_WHOLE_KEYS = frozenset({"d_lane", "lane", "junction"})
+#: Keys that may be left unstated (``None``).
+_OPTIONAL_KEYS = frozenset({"yaw", "turn", "anchor"})
+#: Keys the editor's text always writes out, default or not: they say *which*.
+_ALWAYS_WRITTEN = frozenset({"junction", "approach", "leg", "side"})
+
+
+def _route_value(index: int, kind: str, key: str, raw: Any) -> Any:
+    blank = raw is None or (
+        isinstance(raw, str) and raw.strip().lower() in ("", "none", "null")
+    )
+    if blank:
+        if key in _OPTIONAL_KEYS:
+            return None
+        raise ValueError(f"vertex {index}: {kind} {key} needs a value")
+    if key in _TEXT_KEYS:
+        return str(raw).strip()
+    number = _number(index, raw, key, True)
+    assert number is not None
+    if key in _WHOLE_KEYS:
+        if not number.is_integer():
+            raise ValueError(f"vertex {index}: {key} is a whole number, got {raw!r}")
+        return int(number)
+    return number
+
+
+def _route_row(index: int, row: Any) -> dict[str, Any]:
+    if isinstance(row, str):
+        tokens = row.replace(",", " ").split()
+        if not tokens:
+            raise ValueError(f"vertex {index}: empty")
+        mapping: dict[str, Any] = {"kind": tokens[0]}
+        for token in tokens[1:]:
+            key, sep, value = token.partition("=")
+            if not sep:
+                raise ValueError(
+                    f"vertex {index}: {token!r} is not key=value (write e.g. "
+                    "'lane ds=10 d_lane=1')"
+                )
+            mapping[key.strip()] = value.strip()
+        row = mapping
+    if not isinstance(row, Mapping):
+        raise ValueError(f"vertex {index}: expected a mapping with a kind, got {row!r}")
+    kind = str(row.get("kind", "")).strip()
+    if kind not in ROUTE_ROW_FIELDS:
+        raise ValueError(
+            f"vertex {index}: kind must be one of {list(ROUTE_ROW_FIELDS)}, got {kind!r}"
+        )
+    cls, keys = ROUTE_ROW_FIELDS[kind]
+    unknown = sorted(set(row) - {"kind", *keys})
+    if unknown:
+        raise ValueError(f"vertex {index}: a {kind} vertex does not take {unknown}")
+    defaults = cls()
+    out: dict[str, Any] = {"kind": kind}
+    for key in keys:
+        raw = row.get(key, getattr(defaults, key))
+        out[key] = _route_value(index, kind, key, raw)
+    try:
+        cls(**{k: v for k, v in out.items() if k != "kind"})
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"vertex {index}: {exc}") from exc
+    return out
+
+
+def parse_route_vertices(value: Any) -> list[dict[str, Any]]:
+    """Read route vertices from a document value or the editor's text.
+
+    A list of mappings (``{kind: lane, ds: 10, d_lane: 1}``) or text with one
+    vertex per line, ``kind key=value ...`` (commas allowed between pairs);
+    blank lines and ``#`` comments are skipped and not counted.  Each row comes
+    back as a mapping with its kind and every one of that kind's keys
+    (:data:`ROUTE_ROW_FIELDS`), unstated keys at their defaults.
+
+    Raises:
+        ValueError: On a row that is not a route vertex, saying which and why.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        lines = [
+            line.strip()
+            for line in value.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        return [_route_row(i, line) for i, line in enumerate(lines, start=1)]
+    return [_route_row(i, row) for i, row in enumerate(list(value), start=1)]
+
+
+def route_pose(row: Mapping[str, Any]) -> Any:
+    """The route pose a parsed route vertex row names."""
+    cls, keys = ROUTE_ROW_FIELDS[str(row["kind"])]
+    return cls(**{key: row[key] for key in keys})
+
+
+def format_route_vertices(rows: Any) -> str:
+    """The editor's text for route *rows*: ``kind key=value ...``, defaults left out."""
+    if isinstance(rows, str):
+        return rows
+    lines = []
+    for row in parse_route_vertices(rows):
+        cls, keys = ROUTE_ROW_FIELDS[row["kind"]]
+        defaults = cls()
+        cells = [row["kind"]]
+        for key in keys:
+            value = row[key]
+            if value == getattr(defaults, key) and key not in _ALWAYS_WRITTEN:
+                continue
+            cells.append(f"{key}={_cell(value) if isinstance(value, float) else value}")
+        lines.append(" ".join(cells))
+    return "\n".join(lines)
+
+
+def route_trajectory_summary(value: Any) -> str:
+    """One line saying what a route trajectory field holds."""
+    try:
+        rows = parse_route_vertices(value)
+    except ValueError as exc:
+        return str(exc)
+    if not rows:
+        return "no vertices"
+    kinds = sorted({row["kind"] for row in rows})
+    return f"{len(rows)} route vertices ({', '.join(kinds)})"
+
+
+# ---------------------------------------------------------------------------
 # What the builder calls
 # ---------------------------------------------------------------------------
 
@@ -328,6 +489,7 @@ def authored_trajectory(
     relative_vertices: Any = None,
     reference_entity: Optional[str] = None,
     advance: Optional[Mapping[int, "BaseCondition"]] = None,
+    route_vertices: Any = None,
 ) -> Trajectory:
     """The trajectory a *Follow Trajectory* card describes.
 
@@ -348,7 +510,9 @@ def authored_trajectory(
             for the entity the action moves.
         advance: The card's waypoint conditions, by vertex index counted from
             0: what each of those vertices departs on, a time included.  Only
-            for the two sources whose vertices are written out.
+            for the sources whose vertices are written out.
+        route_vertices: The ``route`` source's rows (see
+            :func:`parse_route_vertices`).
 
     Raises:
         ValueError: On an unknown source, or a source without what it needs.
@@ -386,6 +550,18 @@ def authored_trajectory(
                     gates.get(index),
                 )
                 for index, (ds, offset, d_lane, yaw) in enumerate(relative_rows)
+            ],
+        )
+    if path_source == "route":
+        route_rows = parse_route_vertices(route_vertices)
+        problems = vertex_problems(route_rows)
+        if problems:
+            raise ValueError(f"{name}: {problems[0]}")
+        return Trajectory(
+            name,
+            [
+                TrajectoryVertex(route_pose(row), gates.get(index))
+                for index, row in enumerate(route_rows)
             ],
         )
     if path_source == "lanelets":

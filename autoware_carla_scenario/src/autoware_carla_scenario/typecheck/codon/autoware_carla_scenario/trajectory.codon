@@ -1,11 +1,12 @@
 # Model of autoware_carla_scenario.trajectory (docs/typecheck.md).
 #
 # A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose,
-# MapPose or RelativeLanePose), which Codon cannot store: TrajectoryVertex checks the position it
+# MapPose, RelativeLanePose or one of the route poses), which Codon cannot store: TrajectoryVertex checks the position it
 # is given with _expect_trajectory_position and keeps only its advance condition,
 # which is all the model needs -- it is compiled, never run.
 
-from ._tc import _expect_float, _expect_optional_float
+from ._tc import (_expect_float, _expect_int, _expect_optional_float,
+                  _expect_optional_str, _expect_str)
 from .conditions import BaseCondition, _expect_condition, _expect_optional_condition
 from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .entity_role import EntityRole, _expect_optional_role
@@ -40,11 +41,103 @@ class RelativeLanePose:
         self.entity_ref = _expect_optional_role(entity_ref)
 
 
+class RouteLanePose:
+    ds: float
+    offset: float
+    d_lane: int
+    yaw: Optional[float]
+    anchor: Optional[str]
+
+    def __init__(self, ds = 0.0, offset = 0.0, d_lane: int = 0, yaw = None,
+                 anchor = None):
+        self.ds = _expect_float(ds)
+        self.offset = _expect_float(offset)
+        self.d_lane = d_lane
+        self.yaw = _expect_optional_float(yaw)
+        self.anchor = _expect_optional_str(anchor)
+
+
+class RouteOppositePose:
+    ds: float
+    lane: int
+    offset: float
+    yaw: Optional[float]
+    anchor: Optional[str]
+
+    def __init__(self, ds = 0.0, lane: int = 1, offset = 0.0, yaw = None,
+                 anchor = None):
+        self.ds = _expect_float(ds)
+        self.lane = lane
+        self.offset = _expect_float(offset)
+        self.yaw = _expect_optional_float(yaw)
+        self.anchor = _expect_optional_str(anchor)
+
+
+class RouteCrossingPose:
+    junction: int
+    approach: str
+    distance: float
+    turn: Optional[str]
+    offset: float
+    yaw: Optional[float]
+
+    def __init__(self, junction: int = 0, approach: str = "left", distance = 0.0,
+                 turn = None, offset = 0.0, yaw = None):
+        self.junction = junction
+        self.approach = approach
+        self.distance = _expect_float(distance)
+        self.turn = _expect_optional_str(turn)
+        self.offset = _expect_float(offset)
+        self.yaw = _expect_optional_float(yaw)
+
+
+class RouteCrosswalkPose:
+    junction: int
+    leg: str
+    side: str
+    along: float
+    yaw: Optional[float]
+
+    def __init__(self, junction: int = 0, leg: str = "entry", side: str = "right",
+                 along = 0.0, yaw = None):
+        self.junction = junction
+        self.leg = leg
+        self.side = side
+        self.along = _expect_float(along)
+        self.yaw = _expect_optional_float(yaw)
+
+
+class RouteRoadsidePose:
+    ds: float
+    side: str
+    kerb_distance: float
+    yaw: Optional[float]
+    anchor: Optional[str]
+
+    def __init__(self, ds = 0.0, side: str = "left", kerb_distance = 0.5, yaw = None,
+                 anchor = None):
+        self.ds = _expect_float(ds)
+        self.side = side
+        self.kerb_distance = _expect_float(kerb_distance)
+        self.yaw = _expect_optional_float(yaw)
+        self.anchor = _expect_optional_str(anchor)
+
+
 def _expect_trajectory_position(position):
     """A TrajectoryPosition argument."""
     if isinstance(position, MapPose):
         pass
     elif isinstance(position, RelativeLanePose):
+        pass
+    elif isinstance(position, RouteLanePose):
+        pass
+    elif isinstance(position, RouteOppositePose):
+        pass
+    elif isinstance(position, RouteCrossingPose):
+        pass
+    elif isinstance(position, RouteCrosswalkPose):
+        pass
+    elif isinstance(position, RouteRoadsidePose):
         pass
     elif isinstance(position, Lanelet2Pose):
         pass
@@ -54,6 +147,8 @@ def _expect_trajectory_position(position):
         pass
     else:
         compile_error("expected a trajectory position: a MapPose, a RelativeLanePose, "
+                      "a route pose (RouteLanePose, RouteOppositePose, "
+                      "RouteCrossingPose, RouteCrosswalkPose, RouteRoadsidePose), "
                       "a Lanelet2Pose, an OpenDrivePose or a CarlaWorldPose")
 
 

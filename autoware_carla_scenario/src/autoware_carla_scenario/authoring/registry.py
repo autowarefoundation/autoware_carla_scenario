@@ -115,6 +115,11 @@ FieldKind = Literal[
     # :func:`autoware_carla_scenario.trajectory.authoring.parse_relative_vertices`).
     # Edited as text like ``trajectory``, with its own columns.
     "relative_lane_trajectory",
+    # Vertices placed against the scenario's route (a logical scenario), one
+    # mapping per vertex with a ``kind`` (see
+    # :func:`autoware_carla_scenario.trajectory.authoring.parse_route_vertices`).
+    # Edited as text, ``kind key=value ...`` per line.
+    "route_trajectory",
 ]
 
 #: Field kinds that hold one whole number, and those that hold a list of them.
@@ -1123,6 +1128,7 @@ register_action_spec(
                             ("lateral_offset_m", "lateral_offset_m"),
                             ("relative_vertices", "relative_vertices"),
                             ("reference_entity", "reference_entity"),
+                            ("route_vertices", "route_vertices"),
                         ),
                         sources=(("advance", "advance_conditions"),),
                     ),
@@ -1152,12 +1158,15 @@ register_action_spec(
                     SelectOption("vertices", "Vertices (map frame)"),
                     SelectOption("lanelets", "Along lanelets"),
                     SelectOption("relative_lane", "Relative to an entity's lane"),
+                    SelectOption("route", "Along the scenario's route (logical)"),
                 ),
                 help=(
                     "Vertices are written out below -- a recording transcribes "
                     "to them; a lanelet path follows the centrelines of the "
                     "lanelets picked on the map; relative vertices are lanes "
-                    "and metres from where an entity is when the action starts."
+                    "and metres from where an entity is when the action starts; "
+                    "route vertices are placed against the route the "
+                    "scenario's route search found, on any map."
                 ),
             ),
             FieldSpec(
@@ -1226,6 +1235,25 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
+                name="route_vertices",
+                label="Route vertices",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "One vertex per line, 'kind key=value ...': "
+                    "lane ds= offset= d_lane= yaw= anchor= | "
+                    "opposite ds= lane= offset= yaw= anchor= | "
+                    "crossing junction= approach=left|right|opposite distance= "
+                    "turn= offset= yaw= | "
+                    "crosswalk junction= leg=entry|exit side=left|right along= "
+                    "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "
+                    "ds counts from the anchor (start, end, segment:K:start|end, "
+                    "junction:K:entry|exit) or, without one, from the ego.  "
+                    "Placed when the action starts."
+                ),
+            ),
+            FieldSpec(
                 name="speed_ms",
                 label="Speed where no time paces",
                 kind="number",
@@ -1290,6 +1318,18 @@ register_action_spec(
                 help=(
                     "For a road user a recording picks up late or loses early. "
                     "Needs the Position mode and a time reference."
+                ),
+            ),
+            FieldSpec(
+                name="appear_on_start",
+                label="Appear at the first vertex when the action starts",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "For an entity spawned out of the world: placed on its "
+                    "first vertex, facing along the path, moving at the speed "
+                    "above, when the card is triggered -- in either mode."
                 ),
             ),
         ),
@@ -1913,6 +1953,54 @@ register_condition_spec(
             ),
         ),
         description="Speed of a single entity.",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="route_progress",
+        title="Route progress",
+        category="Entity",
+        builder="build_route_progress_condition",
+        target="..conditions:RouteProgressCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(
+            metric="Route progress",
+            subject="entity",
+            rule="rule",
+            value="value",
+            unit="m",
+            details=("anchor",),
+        ),
+        fields=(
+            _entity_field("entity", "Subject", required=False),
+            _rule_field("greater_than_or_equal"),
+            FieldSpec(
+                name="value",
+                label="Distance",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Past the anchor along the route; negative is before it.",
+            ),
+            FieldSpec(
+                name="anchor",
+                label="From",
+                kind="text",
+                default="start",
+                required=False,
+                help=(
+                    "start, end, segment:K:start, segment:K:end, "
+                    "junction:K:entry or junction:K:exit (K from 0)."
+                ),
+            ),
+        ),
+        description=(
+            "How far an entity (the ego when none is named) has come along the "
+            "scenario's route, measured on the route whichever lane it is in. "
+            "Needs the scenario's route search.  Usable as a trigger and as a "
+            "waypoint condition."
+        ),
     )
 )
 

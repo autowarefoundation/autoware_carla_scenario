@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple, Union
 from ..coordinate.map_manager import MapManager
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .model import (
+    ROUTE_POSITIONS,
     MapPose,
     RelativeLanePose,
     ResolvedTrajectory,
@@ -78,8 +79,28 @@ def position_resolver(reference: Optional[ReferencePose] = None) -> PositionReso
     placed against the same instant.
     """
     lanes: dict[str, Lanelet2Pose] = {}
+    ego_on_route: list[float] = []
+
+    def ego_route_s() -> float:
+        """The ego's route s, looked up once for the whole trajectory."""
+        if not ego_on_route:
+            if reference is None:
+                raise ValueError(
+                    "a route pose without an anchor is placed against the ego, "
+                    "and no reference pose was given to resolve it with"
+                )
+            from ..conditions.route_progress import (  # noqa: PLC0415
+                route_s_of_carla_point,
+            )
+            from ..constants import EGO_ROLE_NAME  # noqa: PLC0415
+
+            ego = reference(EGO_ROLE_NAME)
+            ego_on_route.append(route_s_of_carla_point(ego.x, ego.y)[0])
+        return ego_on_route[0]
 
     def resolve(position: TrajectoryPosition) -> ResolvedPosition:
+        if isinstance(position, ROUTE_POSITIONS):
+            return _resolve_route_position(position, ego_route_s)
         if not isinstance(position, RelativeLanePose):
             return resolve_position(position)
         if reference is None:
@@ -106,6 +127,24 @@ def position_resolver(reference: Optional[ReferencePose] = None) -> PositionReso
     return resolve
 
 
+def _resolve_route_position(
+    position: Any, ego_route_s: Callable[[], float]
+) -> ResolvedPosition:
+    """``(x, y, z, yaw_deg)`` of a route pose, on the scenario's route."""
+    from ..coordinate.transform import to_carla_world  # noqa: PLC0415
+    from ..route.active import scenario_route_frame  # noqa: PLC0415
+    from ..route.positions import resolve_route_pose  # noqa: PLC0415
+
+    frame = scenario_route_frame()
+    needs_ego = getattr(position, "anchor", "") is None
+    placed = resolve_route_pose(position, frame, ego_route_s() if needs_ego else None)
+    if isinstance(placed, MapPose):
+        manager = MapManager.get_instance()
+        return map_pose_to_carla(placed, manager.mgrs_offset, manager.z_offset)
+    pose = to_carla_world(placed)
+    return pose.x, pose.y, pose.z, None if position.yaw is None else pose.yaw
+
+
 def resolve_position(
     position: TrajectoryPosition,
     reference: Optional[ReferencePose] = None,
@@ -124,7 +163,7 @@ def resolve_position(
         ValueError: For a relative pose without a *reference*, or one that
             names a lane the map does not have.
     """
-    if isinstance(position, RelativeLanePose):
+    if isinstance(position, (RelativeLanePose, *ROUTE_POSITIONS)):
         return position_resolver(reference)(position)
     if isinstance(position, CarlaWorldPose):
         return position.x, position.y, position.z, position.yaw
