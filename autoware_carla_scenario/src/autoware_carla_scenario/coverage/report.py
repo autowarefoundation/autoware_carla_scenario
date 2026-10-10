@@ -15,7 +15,9 @@ adding hits from different buckets would be meaningless.
 
 Besides hits, a merged bucket counts the runs that hit it: on an item sampled
 every tick, hits are ticks, and a bucket hit for many ticks in one run is
-still only one situation.
+still only one situation.  Its exposure is summed too: seconds spent in it,
+metres the ego drove in it, and times it was entered.  A coverage file from
+before exposure was recorded leaves those unknown (``None``) for the item.
 """
 
 from __future__ import annotations
@@ -43,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 COVERAGE_FILE_GLOB = "*_coverage.json"
 
+#: How long, how far and how often a bucket was in, besides its hits.
+EXPOSURE_MEASURES = ("seconds", "meters", "entries")
+
 
 @dataclass
 class MergedEntry:
@@ -64,6 +69,33 @@ class MergedEntry:
     ignored: int = 0
     #: Buckets outside the ODD: reported, but not coverage targets.
     outside: list[str] = field(default_factory=list)
+    #: Exposure per bucket, summed over runs; ``None`` once a run did not
+    #: record it.
+    seconds: Optional[dict[str, float]] = field(default_factory=dict)
+    meters: Optional[dict[str, float]] = field(default_factory=dict)
+    entries: Optional[dict[str, int]] = field(default_factory=dict)
+
+    def add_exposure(self, raw: dict[str, Any]) -> None:
+        """Add one run's exposure; a run without it makes the sums unknown."""
+        for measure in EXPOSURE_MEASURES:
+            sums = getattr(self, measure)
+            counts = raw.get(measure)
+            if sums is None:
+                continue
+            if not isinstance(counts, dict):
+                setattr(self, measure, None)
+                continue
+            for bucket, amount in counts.items():
+                sums[bucket] = sums.get(bucket, 0) + amount
+
+    def exposure_of(self, bucket: str) -> dict[str, Any]:
+        """The bucket's exposure, ``None`` where unknown."""
+        out: dict[str, Any] = {}
+        for measure in EXPOSURE_MEASURES:
+            sums = getattr(self, measure)
+            value = None if sums is None else sums.get(bucket, 0)
+            out[measure] = round(value, 3) if isinstance(value, float) else value
+        return out
 
     @property
     def targets(self) -> list[str]:
@@ -99,6 +131,7 @@ class MergedEntry:
                     "bucket": b,
                     "hits": self.hits.get(b, 0),
                     "runs": self.runs.get(b, 0),
+                    **self.exposure_of(b),
                     "covered": self.hits.get(b, 0) >= self.target,
                     "outside_odd": b in self.outside,
                 }
@@ -263,7 +296,14 @@ class CoverageReport:
                 ]
                 if e.text:
                     lines += [e.text, ""]
-                lines += ["| Bucket | Hits | Runs |", "|---|---|---|"]
+                timed = e.event == "tick"
+                if timed:
+                    lines += [
+                        "| Bucket | Hits | Runs | Seconds | Meters | Entries |",
+                        "|---|---|---|---|---|---|",
+                    ]
+                else:
+                    lines += ["| Bucket | Hits | Runs |", "|---|---|---|"]
                 for b in e.buckets:
                     if b in e.outside:
                         mark = " (outside ODD" + (
@@ -271,11 +311,18 @@ class CoverageReport:
                         )
                     else:
                         mark = "" if e.hits.get(b, 0) >= e.target else " (hole)"
-                    lines.append(
-                        f"| {b}{mark} | {e.hits.get(b, 0)} | {e.runs.get(b, 0)} |"
-                    )
+                    row = f"| {b}{mark} | {e.hits.get(b, 0)} | {e.runs.get(b, 0)} |"
+                    if timed:
+                        x = e.exposure_of(b)
+                        row += (
+                            f" {_amount(x['seconds'], '.1f')} |"
+                            f" {_amount(x['meters'], '.0f')} |"
+                            f" {_amount(x['entries'], 'd')} |"
+                        )
+                    lines.append(row)
                 for b, n in sorted(e.out_of_range.items()):
-                    lines.append(f"| {b} (outside the buckets) | {n} | - |")
+                    extra = " - | - | - |" if timed else ""
+                    lines.append(f"| {b} (outside the buckets) | {n} | - |{extra}")
                 if e.samples == 0:
                     lines += ["", "_No samples: the value was never available._"]
         return "\n".join(lines) + "\n"
@@ -345,6 +392,10 @@ class CoverageReport:
                 shown = ", ".join(f"{a:g}-{b:g}" for a, b in intervals[:3])
                 lines.append(f"| {scenario} | {seconds:.1f} s | {shown} |")
         return lines
+
+
+def _amount(value: Any, spec: str) -> str:
+    return "?" if value is None else format(value, spec)
 
 
 def find_coverage_files(paths: Iterable[Path]) -> list[Path]:
@@ -426,6 +477,7 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
                 entry.out_of_range[bucket] = entry.out_of_range.get(bucket, 0) + int(
                     hits
                 )
+            entry.add_exposure(raw)
             entry.samples += int(raw.get("samples", 0))
             entry.ignored += int(raw.get("ignored", 0))
     if report.runs == 0:

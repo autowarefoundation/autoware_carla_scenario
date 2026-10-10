@@ -364,3 +364,139 @@ class TestReviewRegressions:
         scenario = TestScenarioRegistration()._scenario()
         with pytest.raises(ValueError, match="odd."):
             scenario.register_cover("odd.x", lambda w: 1, values=[1])
+
+
+class TestExposure:
+    """#25: seconds, meters and entries per bucket, besides hits."""
+
+    @pytest.fixture
+    def drive(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """Run a tick item over ``(value, x, elapsed)`` steps; the ego is at ``x``."""
+        from autoware_carla_scenario.odd import probes
+
+        def run(
+            steps: list[tuple[Any, Optional[float], float]],
+            **kw: Any,
+        ) -> dict[str, Any]:
+            item = _item(values=["a", "b"], event=SamplingEvent.TICK, **kw)
+            collector = CoverageCollector([item])
+            world = _World()
+            position: list[Optional[float]] = [0.0]
+            monkeypatch.setattr(
+                probes,
+                "ego_position",
+                lambda w: None if position[0] is None else (position[0], 0.0, 0.0),
+            )
+            collector.start(world, 0.0)
+            for value, x, elapsed in steps:
+                world.value = value
+                position[0] = x
+                collector.tick(world, elapsed)
+            collector.end(world, steps[-1][2])
+            return collector.to_dict("s")["items"][0]
+
+        return run
+
+    def test_a_tick_counts_the_step_since_the_previous_one(self, drive: Any) -> None:
+        out = drive([("a", 10.0, 1.0), ("a", 30.0, 2.0), ("b", 35.0, 2.5)])
+        assert out["hits"] == {"a": 2, "b": 1}
+        assert out["seconds"] == {"a": 2.0, "b": 0.5}
+        assert out["meters"] == {"a": 30.0, "b": 5.0}
+        assert out["entries"] == {"a": 1, "b": 1}
+
+    def test_a_stopped_ego_adds_time_but_no_distance(self, drive: Any) -> None:
+        out = drive([("a", 0.0, t) for t in (1.0, 2.0, 3.0)])
+        assert out["seconds"]["a"] == 3.0
+        assert out["meters"]["a"] == 0.0
+
+    def test_leaving_and_coming_back_is_a_new_entry(self, drive: Any) -> None:
+        out = drive(
+            [("a", 1.0, 1.0), ("b", 2.0, 2.0), ("a", 3.0, 3.0), (None, 4.0, 4.0)]
+            + [("a", 5.0, 5.0)]
+        )
+        assert out["entries"] == {"a": 3, "b": 1}
+
+    def test_a_teleport_adds_no_distance(self, drive: Any) -> None:
+        out = drive([("a", 1.0, 1.0), ("a", 5000.0, 1.05)])
+        assert out["meters"]["a"] == 1.0
+
+    def test_no_ego_means_no_distance(self, drive: Any) -> None:
+        out = drive([("a", None, 1.0), ("a", None, 2.0)])
+        assert out["meters"]["a"] == 0.0
+        assert out["seconds"]["a"] == 2.0
+
+    def test_a_nan_position_adds_no_distance(self, drive: Any) -> None:
+        out = drive([("a", 1.0, 1.0), ("a", float("nan"), 2.0), ("a", 3.0, 3.0)])
+        assert out["meters"]["a"] == 1.0
+
+    def test_a_clock_going_back_counts_no_time_twice(self, drive: Any) -> None:
+        out = drive([("a", 0.0, 2.0), ("a", 0.0, 1.5), ("a", 0.0, 3.0)])
+        assert out["seconds"]["a"] == 3.0
+
+    def test_without_tick_items_the_ego_is_not_looked_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.odd import probes
+
+        calls: list[Any] = []
+        monkeypatch.setattr(probes, "ego_position", lambda w: calls.append(w))
+        collector = CoverageCollector([_item(values=["a"])])
+        collector.start(_World(), 0.0)
+        for t in range(1, 5):
+            collector.tick(_World(), float(t))
+        collector.end(_World("a"), 4.0)
+        assert calls == []
+
+    def test_a_one_shot_sample_is_an_entry_of_no_duration(self) -> None:
+        collector = CoverageCollector([_item(values=["a", "b"])])
+        collector.start(_World(), 0.0)
+        collector.tick(_World(), 5.0)
+        collector.end(_World("a"), 5.0)
+        out = collector.to_dict("s")["items"][0]
+        assert out["entries"] == {"a": 1, "b": 0}
+        assert out["seconds"] == {"a": 0.0, "b": 0.0}
+
+    def test_a_cross_cell_has_exposure_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.odd import probes
+
+        monkeypatch.setattr(probes, "ego_position", lambda w: (w.x, 0.0, 0.0))
+        x = _item("x", values=["a", "b"], event=SamplingEvent.TICK)
+        y = _item(
+            "y",
+            values=["c"],
+            event=SamplingEvent.TICK,
+            expression=lambda world: "c",
+        )
+        collector = CoverageCollector([x, y], [CrossItem("xy", [x, y])])
+        world = SimpleNamespace(value="a", x=0.0)
+        collector.start(world, 0.0)
+        world.x = 4.0
+        collector.tick(world, 1.0)
+        cross = collector.to_dict("s")["crosses"][0]
+        assert cross["meters"]["a / c"] == 4.0
+        assert cross["entries"]["a / c"] == 1
+
+    def test_runs_sum_and_an_old_file_makes_the_measure_unknown(self) -> None:
+        def doc(**measures: Any) -> dict[str, Any]:
+            item = {
+                **_item(values=["a"], event=SamplingEvent.TICK).describe(),
+                "hits": {"a": 2},
+                **measures,
+            }
+            return {"schema": COVERAGE_SCHEMA, "scenario": "s", "items": [item]}
+
+        new = {"seconds": {"a": 1.5}, "meters": {"a": 10.0}, "entries": {"a": 1}}
+        report = merge_coverage([doc(**new), doc(**new)])
+        bucket = report.to_dict()["groups"]["scenario"]["entries"][0]["buckets"][0]
+        assert (bucket["seconds"], bucket["meters"], bucket["entries"]) == (
+            3.0,
+            20.0,
+            2,
+        )
+        assert "| a | 4 | 2 | 3.0 | 20 | 2 |" in report.to_markdown()
+        old = merge_coverage([doc(**new), doc()])
+        bucket = old.to_dict()["groups"]["scenario"]["entries"][0]["buckets"][0]
+        assert bucket["meters"] is None
+        assert "| a | 4 | 2 | ? | ? | ? |" in old.to_markdown()
