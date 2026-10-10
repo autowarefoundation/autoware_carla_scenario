@@ -31,6 +31,7 @@ import lanelet2.traffic_rules
 
 from autoware_carla_scenario import (
     CarlaWorldPose,
+    ElapsedTimeCondition,
     FollowTrajectoryAction,
     Lanelet2Pose,
     RelativeLanePose,
@@ -389,6 +390,21 @@ class TestTheAction:
     ) -> None:
         action = FollowTrajectoryAction("npc1", _overtake(), TrajectoryTiming())
         _run(action, npc.actor, 2.5)
+        assert action.finished
+        assert (npc.actor.x, npc.actor.y) == (pytest.approx(25.0), pytest.approx(-3.5))
+
+    def test_a_relative_vertex_can_hold_it(self, npc: _Entity) -> None:
+        """A gate on a relative vertex holds the entity where the vertex was placed."""
+        action = FollowTrajectoryAction(
+            "npc1",
+            _overtake().gated({1: ElapsedTimeCondition(2.0, label="go")}),
+            TrajectoryTiming(),
+        )
+        _run(action, npc.actor, 1.5)
+        # Placed against where npc1 started (5 m along R0): 10 m on, one lane left.
+        assert (npc.actor.x, npc.actor.y) == (pytest.approx(15.0), pytest.approx(-3.5))
+        assert action.held_vertex == 1
+        _run(action, npc.actor, 2.0, start=1.5)
         assert action.finished
         assert (npc.actor.x, npc.actor.y) == (pytest.approx(25.0), pytest.approx(-3.5))
 

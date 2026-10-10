@@ -73,6 +73,17 @@ CTX_PARAMS: dict[str, str] = {
 #: document put there reaches the runtime as the kind of value the editor means.
 TEXT_KINDS: frozenset = frozenset({"text", "select", "entity", "action"})
 
+#: What a :attr:`~.registry.BuiltPart.sources` name stands for: the expression
+#: that builds it from the compiled node and the build context, and the import
+#: that expression needs.  Parts of a node that are not fields -- its waypoint
+#: conditions are condition trees, not parameters -- reach a builder this way.
+COMPILED_SOURCES: dict[str, tuple[str, str]] = {
+    "advance_conditions": (
+        "instantiate_advance_conditions(compiled, ctx)",
+        "from .builders import instantiate_advance_conditions",
+    ),
+}
+
 #: Action constructor parameters the dispatcher passes positionally.
 ACTION_PARAMS: dict[str, str] = {
     "condition": "condition",
@@ -524,6 +535,22 @@ def _render_builds(
                     )
                 consumed.add(field_name)
                 pieces.append((kwarg, f'params["{field_name}"]'))
+            for kwarg, source in part.sources:
+                if source not in COMPILED_SOURCES:
+                    raise GenerationError(
+                        f"{where}: build for {build.kwarg!r} names unknown source "
+                        f"{source!r}; known: {sorted(COMPILED_SOURCES)}"
+                    )
+                if source == "advance_conditions" and not (
+                    isinstance(spec, ActionSpec) and spec.vertex_conditions
+                ):
+                    raise GenerationError(
+                        f"{where}: only an action spec with vertex_conditions "
+                        f"has advance conditions to pass"
+                    )
+                expression, import_line = COMPILED_SOURCES[source]
+                imports.append(import_line)
+                pieces.append((kwarg, expression))
             return tuple(pieces)
 
         if build.over:

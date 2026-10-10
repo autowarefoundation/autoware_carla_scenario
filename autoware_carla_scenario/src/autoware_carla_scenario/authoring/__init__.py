@@ -44,6 +44,7 @@ from .models import (
     SpawnSpec,
     SValue,
     UiLayout,
+    VertexCondition,
 )
 from .package_export import ExportResult, PackageExportError, export_package
 from .persistence import Draft, DraftStore, load_document, save_document
@@ -96,6 +97,7 @@ __all__ = [
     "SpawnSpec",
     "UiLayout",
     "ValidationReport",
+    "VertexCondition",
     "Wheelhouse",
     "WheelhouseError",
     "action_specs",

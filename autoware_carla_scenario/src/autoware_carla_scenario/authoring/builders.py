@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "instantiate_action",
+    "instantiate_advance_conditions",
     "instantiate_condition",
 ]
 
@@ -70,6 +71,21 @@ def instantiate_condition(
     """Recursively build the runtime condition tree for *compiled*."""
     children = [instantiate_condition(c, ctx) for c in compiled.children]
     return _resolve(compiled.spec.builder)(compiled, children, ctx)
+
+
+def instantiate_advance_conditions(
+    compiled: "CompiledAction", ctx: "BuildContext"
+) -> "dict[int, BaseCondition]":
+    """Build an action's waypoint conditions: vertex index (from 0) -> condition.
+
+    Each is built exactly as a trigger is, so any condition the registry
+    knows can gate a vertex.  Called by the generated builder of an action
+    whose spec takes them (``sources`` in its ``builds``).
+    """
+    return {
+        index: instantiate_condition(condition, ctx)
+        for index, condition in compiled.advance_conditions
+    }
 
 
 def instantiate_action(compiled: "CompiledAction", ctx: "BuildContext") -> "BaseAction":

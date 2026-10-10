@@ -7,8 +7,10 @@ module models each one under the same name:
   ``Polyline`` shape is offered: a recorded drive is a sequence of samples, and
   a clothoid or NURBS fitted to one would only add an approximation between the
   data and the vehicle;
-* its :class:`TrajectoryVertex` list -- a position, and optionally the time the
-  entity is to be there;
+* its :class:`TrajectoryVertex` list -- a position, optionally the time the
+  entity is to be there, and optionally the condition under which it may leave
+  for the next vertex (a *waypoint condition*, an extension: see
+  :attr:`TrajectoryVertex.advance`);
 * a time reference -- ``None`` (OpenSCENARIO's ``<None/>``: the vertex times are
   ignored and the entity keeps its own speed) or a :class:`TrajectoryTiming`;
 * a :class:`TrajectoryFollowingMode` -- ``position`` (be exactly on the
@@ -33,9 +35,10 @@ import bisect
 import enum
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
+    from ..conditions.base import BaseCondition
     from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
     from ..entity_role import EntityRole
 
@@ -147,17 +150,51 @@ TrajectoryPosition = Union[
 
 @dataclass(frozen=True)
 class TrajectoryVertex:
-    """One vertex of a polyline: where, and optionally when.
+    """One vertex of a polyline: where, optionally when, and when it may be left.
+
+    **Advancing.**  What moves the entity on from one vertex to the next is a
+    condition.  For a vertex with no :attr:`advance` it is the implicit one the
+    trajectory always had: the clock (a timed trajectory leaves the vertex at
+    its time) or the entity's speed (an untimed one simply goes on).  An
+    ``advance`` condition adds a gate to that: the entity is **held at the
+    vertex until the condition holds**, and only then goes on, at the clock or
+    the speed again.  Any :class:`~autoware_carla_scenario.conditions.BaseCondition`
+    can gate a vertex -- an elapsed time, a distance to another entity, a
+    speed, a traffic signal, an ``AndCondition`` / ``OrCondition`` /
+    ``NotCondition`` of them, or a condition written later -- because the
+    action only asks it the one question every condition answers:
+    ``check(world, elapsed)`` returning something (satisfied) or ``None``.
+    ``elapsed`` is the scenario's elapsed time, as for an action's trigger, so
+    ``ElapsedTimeCondition(30.0, label=...)`` reads "not before the scenario
+    is 30 s old".  See ``docs/trajectory.md`` (*Waypoint conditions*) for the
+    exact semantics in each following mode.
 
     Args:
         position: Where the entity is at this vertex.
         time: When it is there, in seconds on the trajectory's own clock (see
             :class:`TrajectoryTiming` for how that maps onto the scenario's).
             ``None`` for a trajectory that carries no timing.
+        advance: The condition under which the entity may leave this vertex
+            for the next one; ``None`` (default) leaves it to the clock or the
+            speed.  Not allowed on the last vertex of an open trajectory,
+            which has no next vertex to go to.
     """
 
     position: TrajectoryPosition
     time: Optional[float] = None
+    advance: Optional["BaseCondition"] = None
+
+    def __post_init__(self) -> None:
+        # Duck-typed rather than an isinstance check: importing the condition
+        # package here would pull its CARLA-facing modules into the editor
+        # process, which builds trajectories without a simulator.
+        if self.advance is not None and not callable(
+            getattr(self.advance, "check", None)
+        ):
+            raise TypeError(
+                "TrajectoryVertex.advance must be a condition (a BaseCondition), "
+                f"got {type(self.advance).__name__}"
+            )
 
 
 @dataclass(frozen=True)
@@ -171,12 +208,15 @@ class Trajectory:
             decrease.
         closed: Whether the last vertex joins back to the first.  Only
             meaningful without timing -- a timed trajectory ends at its last
-            vertex's time -- and refused with it, as OpenSCENARIO does.
+            vertex's time -- and refused with it, as OpenSCENARIO does.  On a
+            closed trajectory the last vertex may carry an ``advance``
+            condition, since the path goes on from it to the first.
 
     Raises:
         ValueError: On fewer than two vertices, on timing given to some
-            vertices and not others, on decreasing times, or on a closed
-            trajectory that carries times.
+            vertices and not others, on decreasing times, on a closed
+            trajectory that carries times, or on an ``advance`` condition on
+            the last vertex of an open trajectory.
     """
 
     name: str
@@ -207,6 +247,13 @@ class Trajectory:
                 raise ValueError(
                     f"trajectory {name!r}: a closed trajectory cannot carry times"
                 )
+        if not closed and vertices[-1].advance is not None:
+            raise ValueError(
+                f"trajectory {name!r}: the last vertex of an open trajectory "
+                "cannot carry an advance condition -- there is no next vertex "
+                "to advance to; gate the vertex before it, or end the action "
+                "with until="
+            )
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "vertices", vertices)
         object.__setattr__(self, "closed", closed)
@@ -226,6 +273,47 @@ class Trajectory:
         return any(
             isinstance(vertex.position, RelativeLanePose) for vertex in self.vertices
         )
+
+    @property
+    def is_gated(self) -> bool:
+        """Whether any vertex carries an ``advance`` condition.
+
+        A trajectory that is not gated advances by its clock (or speed)
+        alone, exactly as a trajectory always has.
+        """
+        return any(vertex.advance is not None for vertex in self.vertices)
+
+    def gated(self, advance: Mapping[int, "BaseCondition"]) -> "Trajectory":
+        """This trajectory with *advance* conditions put on some of its vertices.
+
+        A convenience for a trajectory built from somewhere else -- a
+        recording, a lanelet route -- whose vertices are not written one by
+        one: ``path.gated({3: ElapsedTimeCondition(20.0, label="go")})`` holds
+        the entity at the fourth vertex until the scenario is 20 s old.
+
+        Args:
+            advance: Vertex index (0-based, negative counting from the end as
+                for a list) to the condition that gates it.  A vertex not named
+                keeps the condition it had.
+
+        Raises:
+            IndexError: On an index the trajectory has no vertex for.
+            ValueError: On a condition for the last vertex of an open
+                trajectory.
+        """
+        vertices = list(self.vertices)
+        count = len(vertices)
+        for index, condition in advance.items():
+            if not -count <= int(index) < count:
+                raise IndexError(
+                    f"trajectory {self.name!r} has no vertex {index} "
+                    f"(it has {count})"
+                )
+            vertex = vertices[int(index)]
+            vertices[int(index)] = TrajectoryVertex(
+                vertex.position, vertex.time, condition
+            )
+        return Trajectory(self.name, vertices, self.closed)
 
 
 class ReferenceContext(enum.Enum):
@@ -365,6 +453,15 @@ class ResolvedTrajectory:
     def length(self) -> float:
         """Path length in metres, the closing segment included."""
         return self._arc[-1]
+
+    def vertex_distance(self, index: int) -> float:
+        """How far along the path (m) vertex *index* is.
+
+        The index is the vertex's in the trajectory as written; on a closed
+        trajectory the first vertex is at ``0`` (and again at :attr:`length`,
+        a lap later).
+        """
+        return self._arc[index]
 
     @property
     def start_time(self) -> float:

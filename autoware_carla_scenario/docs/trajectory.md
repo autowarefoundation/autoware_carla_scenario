@@ -46,7 +46,7 @@ It has the same four parts as in OpenSCENARIO:
 | OpenSCENARIO | Here | Notes |
 |---|---|---|
 | `Trajectory` (`name`, `closed`, `shape`) | `Trajectory(name, vertices, closed=False)` | Only the `Polyline` shape. A recording is a sequence of samples; a clothoid or NURBS fitted to one would add an approximation between the data and the vehicle. |
-| `Vertex` (`time`, `Position`) | `TrajectoryVertex(position, time=None)` | Either every vertex has a time or none has. |
+| `Vertex` (`time`, `Position`) | `TrajectoryVertex(position, time=None, advance=None)` | Either every vertex has a time or none has. `advance` is an extension: see [Waypoint conditions](#waypoint-conditions). |
 | `TimeReference` | `time_reference=None` or `TrajectoryTiming(domain, scale, offset)` | `None` is `<None/>`: the vertex times are ignored and the entity keeps the speed it had when the action started. With a timing, a vertex at time `τ` is reached at `τ * scale + offset` seconds after the scenario (`ABSOLUTE`) or the action (`RELATIVE`) started. |
 | `TrajectoryFollowingMode` | `following_mode=POSITION` or `FOLLOW` | See below. |
 | `initialDistanceOffset` | `initial_distance_offset` | Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point. |
@@ -166,6 +166,105 @@ off -- before its first vertex's time and after its last. That is what a road
 user that enters a recording late or leaves it early needs, since an entity
 cannot be spawned once a run has started.
 
+## Waypoint conditions
+
+What moves an entity on from one vertex to the next is a **condition**. For an
+ordinary vertex it is the implicit one a trajectory always had: the clock (a
+timed trajectory leaves the vertex at its time) or the entity's speed (an
+untimed one simply goes on). `TrajectoryVertex(..., advance=condition)` adds a
+gate to a vertex: the entity is **held at that vertex until the condition
+holds**, and then goes on, on the clock or at its speed again. A trajectory
+without gates (`Trajectory.is_gated` is `False`) moves exactly as it always
+did.
+
+Any `BaseCondition` can gate a vertex -- one the framework has now, one it
+gains later, or your own: an elapsed time, the distance to another entity, a
+speed, a traffic signal, an `ActionStateCondition` on another action, and
+`AndCondition` / `OrCondition` / `StickyCondition` / `PersistentCondition`
+compositions of them. The action asks it only what every condition answers,
+`check(world, elapsed)`, and as for an action's trigger any result other than
+`None` counts as satisfied. `elapsed` is the **scenario's elapsed time**, as
+for triggers, so `ElapsedTimeCondition(30.0, label=...)` reads "not before the
+scenario is 30 s old".
+
+```python
+from autoware_carla_scenario import (
+    EGO_ROLE_NAME,
+    ComparisonRule,
+    ElapsedTimeCondition,
+    EntityDistanceCondition,
+    FollowTrajectoryAction,
+    MapPose,
+    Trajectory,
+    TrajectoryTiming,
+    TrajectoryVertex,
+)
+
+crossing = Trajectory(
+    "walker_crossing",
+    [
+        TrajectoryVertex(MapPose(81200.0, 50100.0), time=0.0),
+        # At the kerb: wait until the ego is within 25 m, then step out.
+        TrajectoryVertex(
+            MapPose(81205.0, 50100.0),
+            time=4.0,
+            advance=EntityDistanceCondition(
+                "walker1", EGO_ROLE_NAME, 25.0, ComparisonRule.LESS_THAN,
+                label="ego_close",
+            ),
+        ),
+        TrajectoryVertex(MapPose(81205.0, 50110.0), time=11.0),
+    ],
+)
+self.register_pre_tick(
+    FollowTrajectoryAction("walker1", crossing, TrajectoryTiming(), label="cross")
+)
+
+# A trajectory built elsewhere (a recording, a lanelet route) is gated by index:
+held = recorded.gated({12: ElapsedTimeCondition(20.0, label="not_before_20s")})
+```
+
+**When a gate is checked.** From the tick the entity **reaches** the vertex --
+not before -- then on every tick while it is held. Once the condition holds the
+gate is passed for the rest of that run; it is not asked again. If it already
+holds when the entity arrives, the entity does not stop at all. A gate on a
+vertex before the point a run starts from (`initial_distance_offset`) is not
+checked. A repeating action (`once=False`) re-arms every gate at the start of
+each run, and a **closed** trajectory checks its gates again on every lap.
+Whatever state the condition object keeps is its own: a `StickyCondition` that
+latched stays latched across laps and runs.
+
+**While held**, by following mode:
+
+| Mode | Timing | While held | After it opens |
+|---|---|---|---|
+| `POSITION` | a `TrajectoryTiming` | The trajectory's **clock is paused** at the vertex's time: the entity stands on the vertex with zero velocity. | The clock runs again from the vertex's time: every later vertex is reached the hold later, and each segment keeps its recorded duration (and `scale`). The end -- and so the action's completion, and `hidden_outside_trajectory`'s disappearance -- comes the hold later too. |
+| `POSITION` | none | The distance stops at the vertex, at zero velocity. | It goes on at the action's speed. |
+| `FOLLOW` (vehicle) | either | A gate not yet passed is a **stop line**: the controller's plan ends on it, slowed so that it comes to rest there braking at 2 m/s². Within `ARRIVAL_TOLERANCE_M` (1 m) along the path the vehicle has reached it, and while held it stands on the brake. | The plan runs on to the next gate or the end. With a timing the clock does not run past a gate not passed, and every stamp after it is shifted by the time held. |
+| `FOLLOW` (walker) | either | Walked onto the gate, slowing as it gets close; within 0.3 m it has reached it and stands still. | Walked on, at the speed or the shifted schedule. |
+
+In `POSITION` mode with a timing, the vertex is reached when the trajectory's
+clock reaches its time, so a pause is exact in every time domain: an
+`ABSOLUTE` replay begun after a gate's time is held **at** that gate (the
+pause is honoured, not skipped), `RELATIVE` and `ABSOLUTE` shift the rest of
+the schedule alike, `initial_distance_offset` starts the clock where it would,
+and `hidden_outside_trajectory` keeps a held entity in the world even when
+the gate's time is the last vertex's. On the tick a gate that held the entity
+opens, the entity is at the vertex, moving off.
+
+In `FOLLOW` mode a vehicle cannot stop within a tick, so it has to plan for a
+gate it may have to wait at: it slows down for every gate not yet passed, and
+one whose condition holds on arrival is driven through at the speed the
+braking left it, not at full speed.
+
+`FollowTrajectoryAction.held_vertex` says which vertex (0-based) the entity is
+being held at, or `None`.
+
+The last vertex of an **open** trajectory cannot carry a gate -- there is no
+next vertex to go to (`Trajectory` raises `ValueError`); to end the action on a
+condition, pass `until=`. On a closed trajectory the last vertex leads back to
+the first, so it can.
+
 ## In the Scenario Editor
 
 **Follow Trajectory** (category *Vehicle / Motion*) is a card like any other,
@@ -187,6 +286,39 @@ three sources:
   `[ds, offset, d_lane, yaw, time]` and the reference as an entity id, which
   the compiler turns into that entity's role name. Deleting the reference
   entity clears the field, so the card is then measured from its own actor.
+
+**Waypoint conditions** are under the card's fields in the inspector: *+
+waypoint condition* takes a vertex number -- counted **from 1**, as the lines
+of the vertex list (map-frame or relative) -- and a condition type, and adds
+an ordinary condition tree there, drawn and edited exactly as a trigger is
+(click it for its fields, add children to an *All* / *Any*). A second
+condition added to the same vertex is combined with the first in an *All*.
+The vertex number of each can be changed in place, and the bin removes it.
+The card on the canvas says how many it has. In the document they are a list
+on the action, each a vertex and a condition node:
+
+```yaml
+actions:
+- id: a_walker
+  type: follow_trajectory
+  actor: walker1
+  params:
+    path_source: vertices
+    vertices: [[81200.0, 50100.0, null, 0.0], [81205.0, 50100.0, null, 4.0],
+               [81205.0, 50110.0, null, 11.0]]
+  advance_conditions:
+  - vertex: 2          # the second line of the vertex list
+    condition:
+      type: entity_distance
+      params: {source: walker1, target: ego, rule: less_than, distance: 25.0}
+```
+
+The compiler builds each condition with the same builders as a trigger, and
+the validator checks them as it checks a trigger, plus where they sit: a
+vertex the card has, not its last one, one condition per vertex, and only for
+vertices written in the card -- a lanelet path's vertices are generated every
+2 m, nothing anyone could count, so it takes none. A condition that names an
+entity or action you delete goes with it, as a trigger does.
 
 The other fields are the action's: the time reference (from the action start,
 from the scenario start, or none), its scale and offset, the following mode,

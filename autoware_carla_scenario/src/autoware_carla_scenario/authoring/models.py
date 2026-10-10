@@ -69,6 +69,7 @@ __all__ = [
     "as_action_phase",
     "UiLayout",
     "UiNode",
+    "VertexCondition",
     "DOCUMENT_FORMAT_VERSION",
     "new_object_id",
 ]
@@ -570,6 +571,28 @@ class Assertions(_Node):
 # ---------------------------------------------------------------------------
 
 
+class VertexCondition(_Node):
+    """A waypoint condition: when an action's entity may leave one vertex.
+
+    Attached to an action whose spec takes them
+    (:attr:`~autoware_carla_scenario.authoring.registry.ActionSpec.vertex_conditions`,
+    the *Follow Trajectory* card): the entity is held at vertex :attr:`vertex`
+    of its trajectory until :attr:`condition` holds -- the runtime's
+    :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  The condition
+    is an ordinary condition tree, written, checked and compiled exactly as a
+    trigger is.
+
+    Attributes:
+        vertex: Which vertex, counted **from 1** in the order the card lists
+            them -- the line number in the editor's vertex text, and the
+            number its messages give ("vertex 3").
+        condition: The condition that releases the entity.
+    """
+
+    vertex: int = Field(ge=1)
+    condition: ConditionNode
+
+
 class ActionNode(_Node):
     """Something an actor does, gated by an optional trigger condition.
 
@@ -597,6 +620,9 @@ class ActionNode(_Node):
     #: Field name -> how that lanelet parameter is chosen; see
     #: :attr:`ConditionNode.searches`.
     searches: dict[str, LaneletChoice] = Field(default_factory=dict)
+    #: Waypoint conditions, in vertex order: see :class:`VertexCondition`.
+    #: Only for an action whose spec takes them; the validator says so.
+    advance_conditions: list[VertexCondition] = Field(default_factory=list)
 
     def search(self, field: str) -> Optional[LaneletChoice]:
         """Return the stored choice for the lanelet parameter *field*."""
@@ -605,6 +631,10 @@ class ActionNode(_Node):
     def ensure_search(self, field: str) -> LaneletChoice:
         """Return the choice for *field*, attaching a pinned one if absent."""
         return _ensure_search(self, field)
+
+    def vertex_condition(self, vertex: int) -> Optional[VertexCondition]:
+        """Return the waypoint condition on *vertex* (counted from 1), if any."""
+        return next((g for g in self.advance_conditions if g.vertex == vertex), None)
 
     @property
     def takes_trigger(self) -> bool:
@@ -958,11 +988,32 @@ class ScenarioDocument(_Node):
         return None
 
     def condition_roots(self) -> list[ConditionNode]:
-        """Return every condition tree root: action triggers and assertions."""
+        """Return every condition tree root.
+
+        Action triggers, the actions' waypoint conditions, then the
+        assertions.
+        """
         roots = [a.trigger for a in self.actions if a.trigger is not None]
+        roots.extend(
+            gate.condition for a in self.actions for gate in a.advance_conditions
+        )
         roots.extend(self.assertions.pass_conditions)
         roots.extend(self.assertions.fail_conditions)
         return roots
+
+    def vertex_condition_of(
+        self, node_id: str
+    ) -> Optional[tuple[ActionNode, VertexCondition]]:
+        """Return the action and the waypoint condition *node_id* belongs to.
+
+        ``None`` for a condition anywhere else -- a trigger, an assertion -- or
+        for an id that names no condition at all.
+        """
+        for action in self.actions:
+            for gate in action.advance_conditions:
+                if gate.condition.find(node_id) is not None:
+                    return action, gate
+        return None
 
     # -- lanelet slots --------------------------------------------------
 

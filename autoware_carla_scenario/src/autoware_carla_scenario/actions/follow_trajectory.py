@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..action_state import ActionState
@@ -58,6 +59,15 @@ _PLAN_BEHIND_M = 2.0
 _STANDSTILL_MPS = 0.05
 #: How far ahead (m) a walker following the path is aimed.
 _WALKER_LOOKAHEAD_M = 1.5
+#: How near (m) a walker has to come to a gated vertex to have reached it.  A
+#: walker stops where it is told to, so it needs less of a band than a car.
+_WALKER_GATE_TOLERANCE_M = 0.3
+#: The slowest (m/s) a walker is sent towards a gated vertex it has not yet
+#: reached, so that it gets there rather than creeping up on it for ever.
+_WALKER_GATE_CREEP_MPS = 0.5
+#: The deceleration (m/s²) a ``FOLLOW`` plan brakes at to stop at a gated
+#: vertex: firm, and well within what a car does on a dry road.
+_GATE_DECELERATION_MPS2 = 2.0
 
 
 class FollowTrajectoryAction(BaseAction):
@@ -86,6 +96,36 @@ class FollowTrajectoryAction(BaseAction):
     because two authorities on one vehicle is not a scenario anyone wrote.
     When the run ends a vehicle is braked to a stop and a walker stood still,
     where the trajectory ended.
+
+    **Waypoint conditions.**  A vertex may carry an ``advance`` condition
+    (:attr:`~autoware_carla_scenario.TrajectoryVertex.advance`): the entity is
+    held at that vertex until the condition holds, and then goes on.  An
+    ungated vertex has the implicit condition the trajectory always had -- the
+    clock with a timing, the speed without one -- so a trajectory with no
+    gates follows exactly as before.  A gate's condition is first checked on
+    the tick the entity reaches the vertex, then on every tick while it is
+    held, with the scenario's elapsed time (as a trigger is); once it holds it
+    stays passed for the rest of the run.  If it already holds on arrival the
+    entity does not stop.  While held:
+
+    * ``POSITION`` with a timing: the trajectory's clock is paused at the
+      vertex's time, so every later vertex is reached that much later and
+      each segment after it keeps its recorded duration; the entity stands
+      at the vertex with zero velocity;
+    * ``POSITION`` without one: the distance stops at the vertex, at zero
+      velocity, and goes on at the action's speed afterwards;
+    * ``FOLLOW``: a gate not yet passed is a stop line -- the controller's plan
+      ends there, braking to a stop -- which the vehicle has reached within
+      :data:`ARRIVAL_TOLERANCE_M` of it along the path (a walker, which is
+      walked onto it, within 0.3 m); held, a vehicle stands on the brake and
+      a walker stands still.  The clock of a timed plan does not run past a
+      gate not passed, and every stamp after it is shifted by the time held.
+
+    A closed trajectory's gates apply on every lap; a repeated run
+    (``once=False``) re-arms every gate.  Gates before the point a run starts
+    from (*initial_distance_offset*) are not checked.  The condition objects
+    are the caller's and are not reset between laps or runs, so a latching
+    wrapper (``StickyCondition``) stays latched.
 
     **End.**  The run is
     :attr:`~autoware_carla_scenario.action_state.ActionState.RUNNING` until the
@@ -189,6 +229,16 @@ class FollowTrajectoryAction(BaseAction):
         self._released = False
         self._hidden = False
         self._begun = False
+        # Waypoint conditions, per run.
+        self._gates: list[_Gate] = []
+        self._gate_next = 0
+        self._gate_lap = 0
+        self._waiting = False
+        self._held = False
+        self._hold = 0.0
+        self._now = 0.0
+        self._progress = 0.0
+        self._last_here = 0.0
 
     # ------------------------------------------------------------------
     # Public state
@@ -203,6 +253,17 @@ class FollowTrajectoryAction(BaseAction):
     def finished(self) -> bool:
         """Whether the current run has reached the end of the trajectory."""
         return self._finished
+
+    @property
+    def held_vertex(self) -> Optional[int]:
+        """The vertex whose ``advance`` condition is holding the entity, if any.
+
+        ``None`` while the entity moves, including before a run and after it.
+        """
+        if not self._held or self._finished:
+            return None
+        gate = self._gate_ahead()
+        return None if gate is None else gate.vertex
 
     # ------------------------------------------------------------------
     # BaseAction interface
@@ -266,7 +327,7 @@ class FollowTrajectoryAction(BaseAction):
             self._show(actor)
             _place(actor, sample, walker)
         elif walker:
-            self._walk(actor)
+            self._walk(world, actor)
         else:
             self._drive(world, actor)
         if self._finished:
@@ -335,6 +396,7 @@ class FollowTrajectoryAction(BaseAction):
                 self._resolved.time_at_distance(self._initial_distance_offset)
                 - self._resolved.start_time
             )
+        self._begin_gates()
         velocity = actor.get_velocity()
         self._speed = math.hypot(velocity.x, velocity.y)
         if self._time_reference is None and self._speed < _STANDSTILL_MPS:
@@ -363,7 +425,11 @@ class FollowTrajectoryAction(BaseAction):
     def _absent(self) -> bool:
         """Whether the trajectory's clock is outside its vertices' times."""
         assert self._resolved is not None
-        now = self._trajectory_time()
+        now = self._now
+        if self._held:
+            # Held at a gate, the entity is on the trajectory however its
+            # vertex's time compares with the last one's.
+            return False
         return now < self._resolved.start_time or now >= self._resolved.end_time
 
     def _hide(self, actor: Any, sample: TrajectorySample) -> None:
@@ -387,22 +453,211 @@ class FollowTrajectoryAction(BaseAction):
             self._hidden = False
 
     def _trajectory_time(self) -> float:
-        """The vertex time the trajectory is at, now."""
+        """The vertex time the trajectory's clock is at now, before any hold."""
         assert self._time_reference is not None and self._resolved is not None
         return (
             self._time_reference.trajectory_time(self._elapsed, self._start_time)
             + self._clock_shift
         )
 
+    # ------------------------------------------------------------------
+    # Waypoint conditions
+    # ------------------------------------------------------------------
+
+    def _begin_gates(self) -> None:
+        """Arm every gate for a new run, past the ones it starts beyond."""
+        resolved = self._resolved
+        assert resolved is not None
+        self._gates = [
+            _Gate(
+                vertex=index,
+                distance=resolved.vertex_distance(index),
+                time=vertex.time,
+                condition=vertex.advance,
+            )
+            for index, vertex in enumerate(self._trajectory.vertices)
+            if vertex.advance is not None
+        ]
+        self._gate_next = 0
+        self._gate_lap = 0
+        self._waiting = False
+        self._held = False
+        self._hold = 0.0
+        self._now = 0.0
+        offset = self._initial_distance_offset
+        self._progress = offset
+        closed = resolved.closed and resolved.length > 1e-6
+        self._last_here = offset % resolved.length if closed else offset
+        if not self._gates:
+            return
+        if self._time_reference is not None:
+            start = resolved.start_time + self._clock_shift
+            while self._gate_next < len(self._gates) and (
+                float(self._gates[self._gate_next].time or 0.0) < start
+            ):
+                self._gate_next += 1
+            return
+        if closed:
+            self._gate_lap = int(offset // resolved.length)
+        for _ in range(len(self._gates)):
+            gate = self._gate_ahead()
+            if gate is None or self._gate_distance(gate) >= offset:
+                break
+            self._pass_gate()
+
+    def _gate_ahead(self) -> Optional["_Gate"]:
+        """The next gate the run has not passed, or ``None``."""
+        if self._gate_next >= len(self._gates):
+            return None
+        return self._gates[self._gate_next]
+
+    def _gate_distance(self, gate: "_Gate") -> float:
+        """How far along (m) *gate* is on the current lap."""
+        assert self._resolved is not None
+        return gate.distance + self._gate_lap * self._resolved.length
+
+    def _pass_gate(self) -> None:
+        """Latch the gate ahead; on a closed path, wrap to the next lap's first."""
+        assert self._resolved is not None
+        self._gate_next += 1
+        self._waiting = False
+        if self._resolved.closed and self._gate_next >= len(self._gates):
+            self._gate_next = 0
+            self._gate_lap += 1
+
+    def _gate_opens(self, world: "carla.World", gate: "_Gate") -> bool:
+        """Whether *gate*'s condition holds now; logs the hold and the release."""
+        opened = gate.condition.check(world, self._elapsed) is not None
+        if opened and self._waiting:
+            logger.info(
+                "FollowTrajectoryAction: '%s' leaves vertex %d of %r: %s holds",
+                self._entity_name,
+                gate.vertex,
+                self._trajectory.name,
+                gate.condition.label,
+            )
+        elif not opened and not self._waiting:
+            logger.info(
+                "FollowTrajectoryAction: '%s' is held at vertex %d of %r until "
+                "%s holds",
+                self._entity_name,
+                gate.vertex,
+                self._trajectory.name,
+                gate.condition.label,
+            )
+        return opened
+
+    def _gated_clock(self, world: "carla.World") -> float:
+        """``POSITION`` mode's clock: the trajectory time, paused at a held gate.
+
+        Every gate whose time the clock has reached is checked in order; the
+        first that does not hold stops the clock at its time, and the time
+        it stands there is added to the hold, which every later vertex is
+        reached after.  On the tick a gate that held the entity opens, the
+        entity is at the vertex, moving off.
+        """
+        raw = self._trajectory_time()
+        self._held = False
+        if not self._gates:
+            return raw
+        now = raw - self._hold
+        for _ in range(len(self._gates)):
+            gate = self._gate_ahead()
+            if gate is None or gate.time is None or now < gate.time:
+                break
+            waited = self._waiting
+            if not self._gate_opens(world, gate):
+                self._waiting = True
+                self._held = True
+                self._hold = raw - gate.time
+                return gate.time
+            if waited:
+                # Paused up to and including this tick: it leaves from the
+                # vertex now, rather than a tick's travel past it.
+                self._hold = raw - gate.time
+                now = gate.time
+            self._pass_gate()
+        return now
+
+    def _follow_clock(self) -> float:
+        """``FOLLOW`` mode's clock: the trajectory time, paused at a gate not passed.
+
+        Whether a gate is passed is decided by where the entity is
+        (:meth:`_follow_gates`), so here the clock only waits for it: it does
+        not run past the time of a gate the entity has not passed.
+        """
+        raw = self._trajectory_time()
+        if not self._gates:
+            return raw
+        now = raw - self._hold
+        gate = self._gate_ahead()
+        if gate is not None and gate.time is not None and now >= gate.time:
+            self._hold = raw - gate.time
+            now = gate.time
+        return now
+
+    def _track(self, here: float) -> float:
+        """*here* unwrapped across the laps of a closed path, for the gates."""
+        resolved = self._resolved
+        assert resolved is not None
+        if not resolved.closed or resolved.length <= 1e-6:
+            self._progress = here
+            return here
+        delta = here - self._last_here
+        half = resolved.length / 2.0
+        if delta < -half:
+            delta += resolved.length
+        elif delta > half:
+            delta -= resolved.length
+        self._last_here = here
+        self._progress += delta
+        return self._progress
+
+    def _follow_gates(
+        self, world: "carla.World", here: float, tolerance: float
+    ) -> Optional[float]:
+        """Check the gates a ``FOLLOW`` entity has reached; the stop ahead, if any.
+
+        Returns:
+            The distance along the path, in the frame of *here*, of the next
+            gate not passed -- the stop line the entity has to stop at -- or
+            ``None`` when there is none.  :attr:`_held` says whether the
+            entity has reached it and is being held there.
+        """
+        self._held = False
+        if not self._gates:
+            return None
+        progress = self._track(here)
+        for _ in range(len(self._gates)):
+            gate = self._gate_ahead()
+            if gate is None:
+                return None
+            at = self._gate_distance(gate)
+            if progress < at - tolerance:
+                return here + (at - progress)
+            if not self._gate_opens(world, gate):
+                self._waiting = True
+                self._held = True
+                return here + (at - progress)
+            self._pass_gate()
+        gate = self._gate_ahead()
+        return None if gate is None else here + (self._gate_distance(gate) - progress)
+
+    # ------------------------------------------------------------------
+    # Modes
+    # ------------------------------------------------------------------
+
     def _position_sample(self, world: "carla.World") -> TrajectorySample:
         """Where ``POSITION`` mode puts the entity this tick."""
         resolved = self._resolved
         assert resolved is not None
         if self._time_reference is not None:
-            now = self._trajectory_time()
-            if now >= resolved.end_time:
+            now = self._now = self._gated_clock(world)
+            if now >= resolved.end_time and not self._held:
                 self._finished = True
             sample = resolved.at_time(now)
+            if self._held:
+                return TrajectorySample(sample.x, sample.y, sample.z, sample.yaw)
             # The sample moves in vertex time; the world, in scenario time,
             # which runs `scale` times slower.
             scale = self._time_reference.scale
@@ -415,8 +670,42 @@ class FollowTrajectoryAction(BaseAction):
                 vy=sample.vy / scale,
                 yaw_rate=sample.yaw_rate / scale,
             )
+        if self._gates:
+            return self._untimed_gated_sample(world)
         sample = resolved.at_distance(self._distance, self._speed)
         if not resolved.closed and self._distance >= resolved.length:
+            self._finished = True
+        self._distance += self._speed * _tick_seconds(world)
+        return sample
+
+    def _untimed_gated_sample(self, world: "carla.World") -> TrajectorySample:
+        """``POSITION`` mode without a timing, on a trajectory with gates.
+
+        The distance runs on at the action's speed up to a gate, stops there
+        while it is held, and runs on from it once it opens.
+        """
+        resolved = self._resolved
+        assert resolved is not None
+        self._held = False
+        distance = self._distance
+        for _ in range(len(self._gates)):
+            gate = self._gate_ahead()
+            if gate is None:
+                break
+            at = self._gate_distance(gate)
+            if distance < at:
+                break
+            if not self._gate_opens(world, gate):
+                self._waiting = True
+                self._held = True
+                distance = at
+                break
+            self._pass_gate()
+        self._distance = distance
+        if self._held:
+            return resolved.at_distance(distance, 0.0)
+        sample = resolved.at_distance(distance, self._speed)
+        if not resolved.closed and distance >= resolved.length:
             self._finished = True
         self._distance += self._speed * _tick_seconds(world)
         return sample
@@ -432,10 +721,21 @@ class FollowTrajectoryAction(BaseAction):
             transform.location.x, transform.location.y, near=self._distance
         )
         self._distance = here
+        if self._time_reference is not None:
+            self._now = self._follow_clock()
+        stop = self._follow_gates(world, here, ARRIVAL_TOLERANCE_M)
+        if self._held:
+            # Standing at the gate: on the brake, and the controller's memory
+            # of the run up to it cleared, so it pulls away cleanly.
+            import typesafe_carla.carla as carla  # noqa: PLC0415
+
+            self._follower.reset()
+            actor.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+            return
         if not resolved.closed and here >= resolved.length - ARRIVAL_TOLERANCE_M:
             self._finished = True
             return
-        plan = self._plan(here)
+        plan = self._plan(here, stop)
         velocity = actor.get_velocity()
         angular = actor.get_angular_velocity()
         control = actor.get_control()
@@ -457,8 +757,14 @@ class FollowTrajectoryAction(BaseAction):
         )
         actor.apply_control(command.to_carla_control())
 
-    def _plan(self, here: float) -> Any:
-        """The path ahead of *here*, timed on the scenario clock, for the controller."""
+    def _plan(self, here: float, stop: Optional[float] = None) -> Any:
+        """The path ahead of *here*, timed on the scenario clock, for the controller.
+
+        With a *stop* -- a gate not passed, as a distance in the frame of
+        *here* -- the plan ends there, and is slowed so that it comes to rest
+        there at :data:`_GATE_DECELERATION_MPS2`: no faster anywhere than a
+        car braking at that rate would be, that far from the stop.
+        """
         from carla_driver_interface.geometry import Pose  # noqa: PLC0415
         from carla_driver_interface.geometry import Trajectory as Plan  # noqa: PLC0415
 
@@ -470,14 +776,28 @@ class FollowTrajectoryAction(BaseAction):
         last = here + _PLAN_HORIZON_M
         if not resolved.closed:
             last = min(last, resolved.length)
-        previous_us: Optional[int] = None
+        if stop is not None:
+            last = min(last, stop)
+        distances: list[float] = []
         while distance <= last + 1e-9:
-            sample = resolved.at_distance(distance)
+            distances.append(distance)
+            distance += step
+        if stop is not None and stop <= last + 1e-9:
+            if not distances or distances[-1] < stop - 1e-6:
+                # The plan has to end on the stop itself, not short of it.
+                distances.append(stop)
+        stamps: list[float] = []
+        for distance in distances:
             if self._time_reference is not None:
-                stamp = self._scenario_time_at(distance)
+                stamps.append(self._scenario_time_at(distance))
             else:
                 speed = max(self._speed, _STANDSTILL_MPS)
-                stamp = self._elapsed + (distance - here) / speed
+                stamps.append(self._elapsed + (distance - here) / speed)
+        if stop is not None:
+            stamps = _brake_to(stop, distances, stamps)
+        previous_us: Optional[int] = None
+        for distance, stamp in zip(distances, stamps):
+            sample = resolved.at_distance(distance)
             stamp_us = int(round(stamp * 1e6))
             if previous_us is not None and stamp_us <= previous_us:
                 # Standing still on the recording: one microsecond on, so the
@@ -490,7 +810,6 @@ class FollowTrajectoryAction(BaseAction):
                 ),
             )
             previous_us = stamp_us
-            distance += step
         return plan
 
     def _scenario_time_at(self, distance: float) -> float:
@@ -498,12 +817,15 @@ class FollowTrajectoryAction(BaseAction):
         assert self._time_reference is not None and self._resolved is not None
         reference = self._time_reference
         vertex_time = self._resolved.time_at_distance(distance) - self._clock_shift
+        if self._hold:
+            # Every vertex past the gates passed is reached that much later.
+            vertex_time += self._hold
         origin = (
             0.0 if reference.domain is ReferenceContext.ABSOLUTE else self._start_time
         )
         return origin + reference.offset + vertex_time * reference.scale
 
-    def _walk(self, actor: Any) -> None:
+    def _walk(self, world: "carla.World", actor: Any) -> None:
         """One tick of ``FOLLOW`` mode for a pedestrian."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -512,11 +834,19 @@ class FollowTrajectoryAction(BaseAction):
         location = actor.get_transform().location
         here = resolved.project(location.x, location.y, near=self._distance)
         self._distance = here
+        if self._time_reference is not None:
+            self._now = self._follow_clock()
+        stop = self._follow_gates(world, here, _WALKER_GATE_TOLERANCE_M)
+        if self._held:
+            actor.apply_control(
+                carla.WalkerControl(direction=carla.Vector3D(1.0, 0.0, 0.0), speed=0.0)
+            )
+            return
         if not resolved.closed and here >= resolved.length - ARRIVAL_TOLERANCE_M:
             self._finished = True
             return
         if self._time_reference is not None:
-            now = self._trajectory_time()
+            now = self._now
             wanted = resolved.distance_at_time(now)
             # The recorded speed in scenario time, plus a catch-up of the
             # distance it is behind, closed over about a second.
@@ -525,7 +855,12 @@ class FollowTrajectoryAction(BaseAction):
             )
         else:
             speed = self._speed
-        target = resolved.at_distance(here + _WALKER_LOOKAHEAD_M)
+        aim = here + _WALKER_LOOKAHEAD_M
+        if stop is not None:
+            # Slow down onto the gate rather than walk through it.
+            speed = min(speed, max(stop - here, _WALKER_GATE_CREEP_MPS))
+            aim = min(aim, stop)
+        target = resolved.at_distance(aim)
         dx, dy = target.x - location.x, target.y - location.y
         norm = math.hypot(dx, dy)
         if norm < 1e-6:
@@ -536,6 +871,39 @@ class FollowTrajectoryAction(BaseAction):
                 speed=_walker_speed(speed),
             )
         )
+
+
+@dataclass(frozen=True)
+class _Gate:
+    """A vertex with an ``advance`` condition, placed on the resolved path."""
+
+    vertex: int
+    distance: float
+    time: Optional[float]
+    condition: BaseCondition
+
+
+def _brake_to(stop: float, distances: list[float], stamps: list[float]) -> list[float]:
+    """*stamps* slowed so the plan comes to rest at *stop*.
+
+    Each step takes at least as long as braking at
+    :data:`_GATE_DECELERATION_MPS2` towards *stop* would: the speed cap at a
+    point *d* short of the stop is ``sqrt(2 * a * d)``, and a step between two
+    caps takes ``2 * length / (v0 + v1)``.  The first stamp stays where it was,
+    so the plan's clock still starts where the timing has it.
+    """
+    caps = [
+        math.sqrt(2.0 * _GATE_DECELERATION_MPS2 * max(0.0, stop - distance))
+        for distance in distances
+    ]
+    out = stamps[:1]
+    for index in range(1, len(stamps)):
+        length = distances[index] - distances[index - 1]
+        given = stamps[index] - stamps[index - 1]
+        both = caps[index - 1] + caps[index]
+        braking = 2.0 * length / both if both > 1e-9 else given
+        out.append(out[-1] + max(given, braking))
+    return out
 
 
 class _ReferenceMissing(Exception):

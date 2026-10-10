@@ -176,6 +176,10 @@ class FollowTrajectoryAction(BaseAction):
     def finished(self) -> bool:
         raise NotImplementedError()
 
+    @property
+    def held_vertex(self) -> Optional[int]:
+        raise NotImplementedError()
+
 
 class SetSpeedAction(BaseAction):
     def __init__(self, entity_name, target_speed_kmh: float, rate_kmh_s = None, condition = None,
