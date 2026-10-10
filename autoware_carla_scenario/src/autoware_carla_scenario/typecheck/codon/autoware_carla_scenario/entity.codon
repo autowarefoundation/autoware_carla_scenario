@@ -189,6 +189,10 @@ class EgoVehicle:
     def termination_requested(self) -> bool:
         raise NotImplementedError()
 
+    @property
+    def termination_reason(self) -> Optional[str]:
+        raise NotImplementedError()
+
     def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
                  initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
                  waypoints = ()) -> None:

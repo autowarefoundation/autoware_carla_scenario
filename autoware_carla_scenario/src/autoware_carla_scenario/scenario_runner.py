@@ -1018,9 +1018,11 @@ class ScenarioRunner:
                         elapsed,
                         tick_count,
                     )
+                    reason = ego.termination_reason
                     result = ScenarioResult(
                         passed=False,
-                        message="Ego entity requested session termination",
+                        message="Ego entity requested session termination"
+                        + ("" if reason is None else f": {reason}"),
                         elapsed_seconds=elapsed,
                         condition_statuses=_collect_condition_statuses(
                             scenario, world, elapsed, scenario_name

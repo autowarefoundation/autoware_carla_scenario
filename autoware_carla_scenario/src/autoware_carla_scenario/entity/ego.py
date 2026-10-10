@@ -98,6 +98,15 @@ class EgoVehicle(BackendDriven):
         """
         return False
 
+    @property
+    def termination_reason(self) -> Optional[str]:
+        """Why this entity asked to end the scenario, when it says.
+
+        Part of the result's message when :attr:`termination_requested` ends a
+        run; ``None`` leaves the message generic.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

@@ -24,6 +24,8 @@ class FakeAutowareBridge(AutowareBridge):
     """
 
     ready_after: int = 0
+    #: What :attr:`client_connected` says.
+    connected: bool = True
 
     #: Ordered log of method names invoked, for assertions.
     calls: List[str] = field(default_factory=list)
@@ -56,6 +58,10 @@ class FakeAutowareBridge(AutowareBridge):
         ready = self._ready_polls >= self.ready_after
         self._ready_polls += 1
         return ready
+
+    @property
+    def client_connected(self) -> bool:
+        return self.connected
 
     def close(self) -> None:
         self.calls.append("close")

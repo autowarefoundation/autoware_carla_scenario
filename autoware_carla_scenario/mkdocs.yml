@@ -89,6 +89,7 @@ nav:
       - Pedestrian Dart-out: scenarios/pedestrian_dart_out.md
       - Cut-in: scenarios/cut_in.md
   - HD Maps: maps.md
+  - Autoware as the Ego: autoware.md
   - External Driver Interface: driver_interface.md
   - Traffic Backends: traffic_backends.md
   - Trajectories and Recorded-Scene Replay: trajectory.md
