@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/dev/quickstart/">
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/dev/autoware/">
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../maps/">
       
       
-        <link rel="next" href="../installation/">
+        <link rel="next" href="../driver_interface/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Quick Start - Autoware CARLA Scenario</title>
+        <title>Autoware as the Ego - Autoware CARLA Scenario</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#quick-start-test-a-driving-policy" class="md-skip">
+        <a href="#autoware-as-the-ego" class="md-skip">
           Skip to content
         </a>
       
@@ -131,7 +131,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Quick Start
+              Autoware as the Ego
             
           </span>
         </div>
@@ -261,11 +261,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
         
   
   
@@ -397,9 +395,11 @@
   
   
   
+    
   
-    <li class="md-tabs__item">
-      <a href="../autoware/" class="md-tabs__link">
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
         
   
   
@@ -678,37 +678,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Quick Start
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
         
   
   
@@ -724,81 +697,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-add-the-framework-to-your-project" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Add the framework to your project
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-download-carla" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Download CARLA
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-run-a-scenario-against-a-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Run a scenario against a policy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-test-your-own-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Test your own policy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#running-the-policy-as-a-separate-process" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running the policy as a separate process
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1197,10 +1095,37 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../autoware/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1216,6 +1141,87 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#a-local-workspace-in-its-dev-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A local workspace in its dev container
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="A local workspace in its dev container">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sweeps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sweeps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#autoware-on-the-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autoware on the host
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1517,10 +1523,38 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-add-the-framework-to-your-project" class="md-nav__link">
+  <a href="#a-local-workspace-in-its-dev-container" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Add the framework to your project
+        A local workspace in its dev container
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="A local workspace in its dev container">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sweeps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sweeps
       
     </span>
   </a>
@@ -1528,10 +1562,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-download-carla" class="md-nav__link">
+  <a href="#autoware-on-the-host" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Download CARLA
+        Autoware on the host
       
     </span>
   </a>
@@ -1539,32 +1573,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-run-a-scenario-against-a-policy" class="md-nav__link">
+  <a href="#from-python" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Run a scenario against a policy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-test-your-own-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Test your own policy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#running-the-policy-as-a-separate-process" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running the policy as a separate process
+        From Python
       
     </span>
   </a>
@@ -1591,134 +1603,238 @@
   
 
 
-<h1 id="quick-start-test-a-driving-policy">Quick start: test a driving policy<a class="headerlink" href="#quick-start-test-a-driving-policy" title="Permanent link">&para;</a></h1>
-<p>From an empty directory to a scenario result, with no ROS 2 and no Autoware.
-The framework downloads CARLA, launches it, serves the driving policy in its own
-process and runs the scenario: after the setup it is one command.</p>
-<p>You need Linux x86_64, <a href="https://docs.astral.sh/uv/">uv</a>, <code>git</code>, an NVIDIA GPU
-that runs CARLA UE5, and about 30 GB of free disk for the simulator.</p>
-<h2 id="1-add-the-framework-to-your-project">1. Add the framework to your project<a class="headerlink" href="#1-add-the-framework-to-your-project" title="Permanent link">&para;</a></h2>
-<p>The framework is a Python library on
-<a href="https://pypi.org/project/autoware-carla-scenario/">PyPI</a>. Depend on it from your
-project's <code>pyproject.toml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[project]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my-policy-tests"</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.1.0"</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">requires-python</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"&gt;=3.10,&lt;3.15"</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">dependencies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"autoware-carla-scenario&gt;=5"</span><span class="p">]</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>sync
-</code></pre></div>
-<p>This also installs <a href="https://github.com/hakuturu583/carla_driver_interface"><code>carla-driver-interface</code></a>
-1.x, the policy side of the gRPC contract (versioned on its own; a policy depending on
-any 1.x shares the environment),
-and the CARLA client, typesafe_carla. Its wheel carries a prebuilt CPython package.
-Where that package does not match the installed toolchain, the first run that
-imports the client builds it once instead (15-50 min, ~14 GB of memory, needs <code>cc</code>)
-into <code>~/.cache/typesafe_carla</code>. <code>uv run typesafe-codon pycarla</code> does that ahead of
-time, and says "nothing to build" when the prebuilt package applies.</p>
-<h2 id="2-download-carla">2. Download CARLA<a class="headerlink" href="#2-download-carla" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-setup
-</code></pre></div>
-<p>This downloads CARLA's nightly Linux build (about 16 GB, with a progress bar) and
-unpacks it, while it downloads, into <code>~/.autoware_carla_scenario/bin/carla</code>. That is
-where the scenario runner looks for CARLA when <code>CARLA_EXECUTABLE</code> is not set. Run
-it again at any time: an install that is still the current nightly is kept, a
-newer one replaces it. If the connection drops partway, the download picks up
-where it stopped (with an HTTP range request) instead of starting over; it gives
-up after several reconnections in a row that deliver nothing, and stops (the next
-run fetches it whole) if the nightly was replaced in the meantime.</p>
+<h1 id="autoware-as-the-ego">Autoware as the Ego<a class="headerlink" href="#autoware-as-the-ego" title="Permanent link">&para;</a></h1>
+<p><code>ego.entity=autoware</code> hands the ego to Autoware. The framework spawns the ego
+at the scenario's start, serves the scenario's mission (initial pose, goal,
+waypoints) on the <code>AutowareBridge</code> gRPC server, and waits for Autoware to
+report it is localized, routed, engaged and driving before the scenario clock
+starts. Autoware's side of the bridge is the <code>scenario_bridge</code> node of
+<code>autoware_carla_interface</code>
+(<a href="https://github.com/autowarefoundation/autoware_universe/pull/13319">autowarefoundation/autoware_universe#13319</a>).</p>
+<p>Who starts Autoware is <code>autoware.launcher.type</code>:</p>
 <table>
 <thead>
 <tr>
-<th>Option</th>
+<th>Value</th>
+<th>Who starts Autoware</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>none</code> (default)</td>
+<td>Someone else: launched by hand, or by Autoware's own <code>with_scenario</code> launch, for one scenario</td>
+</tr>
+<tr>
+<td><code>docker</code></td>
+<td>The framework, from a local Autoware workspace, in that workspace's dev container</td>
+</tr>
+<tr>
+<td><code>command</code></td>
+<td>The framework, by running <code>autoware.launcher.command</code> on this host</td>
+</tr>
+</tbody>
+</table>
+<p>With a launcher, every scenario gets <strong>a fresh Autoware</strong>: started once the
+scenario's ego exists and its mission is being served, and removed (every
+process, and with <code>docker</code> the container) when the scenario ends. Nothing
+carries over from one scenario to the next -- not the localization, not the
+route, not the operation mode, not a planner's memory of the last run -- which
+is what makes a batch or a sweep of Autoware scenarios meaningful.</p>
+<h2 id="a-local-workspace-in-its-dev-container">A local workspace in its dev container<a class="headerlink" href="#a-local-workspace-in-its-dev-container" title="Permanent link">&para;</a></h2>
+<p>The workspace is the one you already build in: a clone of
+<a href="https://github.com/autowarefoundation/autoware"><code>autowarefoundation/autoware</code></a>
+with Autoware's sources in <code>src/</code>, checked out on a branch whose
+<code>autoware_carla_interface</code> has <code>scenario_bridge</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="s1">'scenario=intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ego.entity<span class="o">=</span>autoware<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>autoware.launcher.type<span class="o">=</span>docker<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>autoware.launcher.workspace<span class="o">=</span><span class="nv">$HOME</span>/autoware<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="s1">'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt","simulator_type:=carla","bridge_address:={bridge_address}"]'</span>
+</code></pre></div>
+<p>What happens:</p>
+<ol>
+<li><strong>Before anything else</strong> (before CARLA starts), the workspace is checked:<ul>
+<li>The image and the workspace's mount point are read from
+  <code>.devcontainer/&lt;autoware.launcher.devcontainer&gt;/devcontainer.json</code> and the
+  Compose service it names -- the same image and the same path
+  (<code>/home/aw/autoware</code>) VS Code uses. colcon writes absolute paths into
+  <code>install/</code>, so a workspace built in VS Code runs here, and the reverse.</li>
+<li>The workspace is built (<code>colcon build</code> in that image) when
+  <code>autoware.launcher.build</code> says so: <code>auto</code> builds it only when
+  <code>install/setup.bash</code> is missing, <code>always</code> before every batch, <code>never</code>
+  leaves building to you. The output goes to <code>autoware-build.log</code>.</li>
+<li>A workspace whose <code>autoware_carla_interface</code> has no <code>scenario_bridge</code> --
+  one built from a branch without scenario support -- is refused here,
+  not after the first scenario has timed out waiting for it.</li>
+<li>Containers left behind by a run of yours that was killed (they carry the
+  <code>autoware_carla_scenario.stack=uid-&lt;your uid&gt;</code> label) are removed.
+  Another user's are left alone, but two of your own batches on one host
+  are not supported -- the shared host network (CARLA's ports, the
+  bridge's, the ROS graph) would not allow them anyway.</li>
+</ul>
+</li>
+<li><strong>For each scenario</strong>, once the ego is spawned and the mission served:
+    <code>docker run --rm --network host</code> of the dev container image, the workspace
+    mounted where it was built, <code>source install/setup.bash &amp;&amp; exec ros2 launch
+    &lt;autoware.launcher.launch&gt;</code>. <code>{bridge_address}</code> in the launch arguments
+    becomes the bridge's address, which the launch has to hand to
+    <code>scenario_bridge</code>. The stack's output goes to
+    <code>autoware-&lt;n&gt;-&lt;scenario&gt;.log</code> in the run's output directory.</li>
+<li><strong>While the stack starts</strong> (until <code>scenario_bridge</code> first reaches the
+    bridge), the world ticks at about real time and the wait is measured in
+    wall-clock seconds, <code>autoware.boot_timeout_s</code>. Once it has reached the
+    bridge, localizing, routing and engaging is measured in ticks,
+    <code>autoware.ready_timeout_ticks</code>, as before.</li>
+<li><strong>When the scenario ends</strong>, however it ends, the stack is stopped (<code>SIGINT</code>
+    to <code>ros2 launch</code>, through <code>docker run --init</code>) and its container removed
+    once it has stopped or <code>stop_timeout_s</code> has passed, before the next
+    scenario starts. A scenario that is retried (<code>server.cooldown_max_retries</code>)
+    starts another fresh stack, with nothing of the failed attempt's carried
+    over.</li>
+</ol>
+<p>Every scenario of a batch uses the same launcher: set <code>autoware.launcher</code> on
+the command line, not in a scenario's config (a batch whose scenarios disagree
+on it is refused).</p>
+<p>A stack that exits during a scenario ends it: the result's message says
+<code>The Autoware stack exited with code &lt;n&gt;</code>.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
 <th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>--force</code></td>
-<td>Download again even if the install is current</td>
+<td><code>workspace</code></td>
+<td><code>~/autoware</code></td>
+<td>The <code>autowarefoundation/autoware</code> clone</td>
 </tr>
 <tr>
-<td><code>--url URL</code></td>
-<td>Install another CARLA Linux package (<code>.tar.gz</code>), e.g. a release</td>
+<td><code>devcontainer</code></td>
+<td><code>universe-devel-cuda</code></td>
+<td>The <code>.devcontainer/</code> variant whose image and mount are used</td>
 </tr>
 <tr>
-<td><code>--dir DIR</code></td>
-<td>Unpack into <code>DIR</code> (new or empty) instead; then point <code>CARLA_EXECUTABLE</code> at the launcher it prints</td>
+<td><code>image</code></td>
+<td><code>null</code></td>
+<td>An image to use instead of the dev container's</td>
+</tr>
+<tr>
+<td><code>workspace_mount</code></td>
+<td><code>null</code></td>
+<td>Where to mount the workspace instead of where the dev container does</td>
+</tr>
+<tr>
+<td><code>build</code></td>
+<td><code>auto</code></td>
+<td><code>auto</code> / <code>always</code> / <code>never</code></td>
+</tr>
+<tr>
+<td><code>colcon_args</code></td>
+<td><code>[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]</code></td>
+<td>Arguments to <code>colcon build</code></td>
+</tr>
+<tr>
+<td><code>launch</code></td>
+<td>(required)</td>
+<td><code>ros2 launch</code> package, file and <code>name:=value</code> arguments</td>
+</tr>
+<tr>
+<td><code>mounts</code></td>
+<td><code>{~/autoware_data: /home/aw/autoware_data}</code></td>
+<td>Further mounts; a missing host path is skipped</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td><code>{}</code></td>
+<td>Variables set in the container, over the dev container's own</td>
+</tr>
+<tr>
+<td><code>ros_domain_ids</code></td>
+<td><code>[]</code></td>
+<td><code>ROS_DOMAIN_ID</code> per scenario, cycling; empty keeps the dev container's</td>
+</tr>
+<tr>
+<td><code>gpus</code></td>
+<td><code>all</code></td>
+<td>Docker's <code>--gpus</code>; <code>null</code> for none</td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td><code>null</code></td>
+<td>Docker's <code>--user</code>; by default the image maps <code>aw</code> to your <code>HOST_UID</code>/<code>HOST_GID</code></td>
+</tr>
+<tr>
+<td><code>docker_args</code></td>
+<td><code>[]</code></td>
+<td>Further <code>docker run</code> arguments</td>
+</tr>
+<tr>
+<td><code>stop_timeout_s</code></td>
+<td><code>20.0</code></td>
+<td>How long stopping waits after each signal</td>
 </tr>
 </tbody>
 </table>
-<p><code>AUTOWARE_CARLA_SCENARIO_HOME</code> moves <code>~/.autoware_carla_scenario</code> as a whole.</p>
-<h2 id="3-run-a-scenario-against-a-policy">3. Run a scenario against a policy<a class="headerlink" href="#3-run-a-scenario-against-a-policy" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>ego.spawn_lanelet_id<span class="o">=</span><span class="m">324</span><span class="w"> </span>scenario.npc_lanelet_id<span class="o">=</span><span class="m">446</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy<span class="o">=</span>route_follower
+<p><code>ros_domain_ids</code> moves each scenario's stack to another ROS domain, so it does
+not discover what is left of the last one before those participants time out:
+<code>'autoware.launcher.ros_domain_ids=[10,11]'</code>.</p>
+<h2 id="sweeps">Sweeps<a class="headerlink" href="#sweeps" title="Permanent link">&para;</a></h2>
+<p>A sweep (<code>--multirun hydra/sweeper=lanelet_constraint</code>) runs each case in a
+job of its own, and each job starts and removes its own Autoware the same way:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span>hydra/sweeper<span class="o">=</span>lanelet_constraint<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/right_turn_sweep<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>ego.entity<span class="o">=</span>autoware<span class="w"> </span>autoware.launcher.type<span class="o">=</span>docker<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>autoware.launcher.workspace<span class="o">=</span><span class="nv">$HOME</span>/autoware<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="s1">'autoware.launcher.launch=[...]'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>+sweep.job_timeout_seconds<span class="o">=</span><span class="m">900</span>
 </code></pre></div>
-<p>The single command does everything:</p>
-<ol>
-<li>It launches CARLA (<code>CarlaUnreal.sh</code>, on <code>server.port</code>). The first boot takes a
-   minute or two. A CARLA already listening on that port is used instead.</li>
-<li>It fetches the Town10HD_Opt Lanelet2 map into <code>~/autoware_data/maps</code>, the first
-   time only.</li>
-<li>It serves <code>route_follower</code>, a reference policy, inside the scenario's own process.</li>
-<li>It runs the scenario, prints the pass/fail result, writes it under <code>outputs/</code>,
-   and stops CARLA again.</li>
-</ol>
-<p><code>ego.entity=carla_driver</code> hands the ego to a policy over alpasim's
-<code>egodriver.EgodriverService</code> contract. <code>driver.policy</code> names the policy the
-scenario serves itself.</p>
-<p>The example scenarios name lanelets of the NishishinjukuMap by default, so on
-Town10HD_Opt a run gives its own. The two above are one of the cases the
-scenario's sweep matches. <code>scenario-expand</code> lists every case, each as the
-overrides to add to the command above, without running anything:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-expand<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt
+<p><code>sweep.job_timeout_seconds</code> (120 s by default; <code>+</code> adds it to a sweep YAML
+that does not set it) is a whole job's budget --
+starting Autoware, localizing, routing, engaging and the scenario itself --
+so raise it: launching Autoware alone can take most of two minutes. A job the
+sweeper kills at that limit leaves its container behind, and the next job's
+preparation removes it before its own stack starts.</p>
+<h2 id="autoware-on-the-host">Autoware on the host<a class="headerlink" href="#autoware-on-the-host" title="Permanent link">&para;</a></h2>
+<p><code>autoware.launcher.type=command</code> runs a command of your own instead, as a
+process group stopped with <code>SIGINT</code>, then <code>SIGTERM</code>, then <code>SIGKILL</code>. It is
+sent <code>SIGTERM</code> if the process that started it dies -- a sweeper job killed at
+its timeout -- so it does not outlive the job. <code>{bridge_address}</code>, <code>{index}</code> and <code>{name}</code>
+are filled in, and the address is in <code>AUTOWARE_BRIDGE_ADDRESS</code> too:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>autoware<span class="w"> </span>autoware.launcher.type<span class="o">=</span><span class="nb">command</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="s1">'autoware.launcher.command=[bash,-c,"source ~/autoware/install/setup.bash &amp;&amp; exec ros2 launch autoware_launch e2e_simulator.launch.xml bridge_address:={bridge_address} ..."]'</span>
 </code></pre></div>
-<h2 id="4-test-your-own-policy">4. Test your own policy<a class="headerlink" href="#4-test-your-own-policy" title="Permanent link">&para;</a></h2>
-<p>A policy implements <code>BaseDriver.drive()</code>. It gets the session's observations and
-returns a trajectory in the rig frame (x forward, y left):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># src/my_policy_tests/__init__.py</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.driver</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDriver</span><span class="p">,</span> <span class="n">DriveContext</span><span class="p">,</span> <span class="n">DriveResult</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.geometry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Pose</span><span class="p">,</span> <span class="n">Trajectory</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_policy"</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">DriveContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveResult</span><span class="p">:</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>        <span class="n">plan</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="o">.</span><span class="n">empty</span><span class="p">()</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">41</span><span class="p">):</span>  <span class="c1"># 4 s ahead at 5 m/s</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>            <span class="n">plan</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">time_now_us</span> <span class="o">+</span> <span class="n">i</span> <span class="o">*</span> <span class="mi">100_000</span><span class="p">,</span> <span class="n">Pose</span><span class="o">.</span><span class="n">from_xyz_yaw</span><span class="p">(</span><span class="mf">0.5</span> <span class="o">*</span> <span class="n">i</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>        <span class="k">return</span> <span class="n">DriveResult</span><span class="p">(</span><span class="n">trajectory_in_rig</span><span class="o">=</span><span class="n">plan</span><span class="p">)</span>
+<h2 id="from-python">From Python<a class="headerlink" href="#from-python" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScenarioQueue</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.autoware_stack</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">DockerAutowareConfig</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">DockerAutowareLauncher</span><span class="p">,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">)</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">launcher</span> <span class="o">=</span> <span class="n">DockerAutowareLauncher</span><span class="p">(</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">DockerAutowareConfig</span><span class="p">(</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>        <span class="n">workspace</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"~/autoware"</span><span class="p">),</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">launch</span><span class="o">=</span><span class="p">(</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>            <span class="s2">"autoware_launch"</span><span class="p">,</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>            <span class="s2">"e2e_simulator.launch.xml"</span><span class="p">,</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>            <span class="s2">"bridge_address:=</span><span class="si">{bridge_address}</span><span class="s2">"</span><span class="p">,</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        <span class="p">),</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    <span class="p">)</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="p">)</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="n">queue</span> <span class="o">=</span> <span class="n">ScenarioQueue</span><span class="p">(</span><span class="n">map_name</span><span class="o">=</span><span class="s2">"Town10HD_Opt"</span><span class="p">,</span> <span class="n">autoware_launcher</span><span class="o">=</span><span class="n">launcher</span><span class="p">)</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="c1"># Each scenario's AutowareEgoEntity is given the same launcher:</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="c1">#   AutowareEgoEntity(config, bridge=..., launcher=launcher)</span>
 </code></pre></div>
-<p>So that <code>uv sync</code> installs the module, give the project a build backend:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[build-system]</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">requires</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"uv_build&gt;=0.9.7,&lt;0.10.0"</span><span class="p">]</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">build-backend</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"uv_build"</span>
-</code></pre></div>
-<p>Then name the policy by its import path:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>ego.spawn_lanelet_id<span class="o">=</span><span class="m">324</span><span class="w"> </span>scenario.npc_lanelet_id<span class="o">=</span><span class="m">446</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy<span class="o">=</span>my_policy_tests:MyPolicy
-</code></pre></div>
-<p>See <a href="../driver_interface/">External Driver Interface</a> for what a policy receives
-(cameras, LiDAR, the map, traffic lights). Other scenarios are listed in
-<a href="../scenarios/">Example Scenarios</a>.</p>
-<h2 id="running-the-policy-as-a-separate-process">Running the policy as a separate process<a class="headerlink" href="#running-the-policy-as-a-separate-process" title="Permanent link">&para;</a></h2>
-<p>A policy can also live in a process of its own, for example an alpasim driver or a
-model in another environment. Leave <code>driver.policy</code> unset and point
-<code>driver.address</code> at it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Terminal 1 -- the policy</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>uv<span class="w"> </span>run<span class="w"> </span>carla-driver-interface<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>my_policy_tests:MyPolicy<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Terminal 2 -- the scenario</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span>ego.spawn_lanelet_id<span class="o">=</span><span class="m">324</span><span class="w"> </span>scenario.npc_lanelet_id<span class="o">=</span><span class="m">446</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.address<span class="o">=</span>localhost:50051
-</code></pre></div>
-<p>Both modes use the same gRPC contract and the same policy class. The only
-difference is which process serves the policy.</p>
+<p>The queue prepares the launcher when it starts and closes it when it stops;
+<code>AutowareEgoEntity</code> starts and stops a stack per scenario. Any object with
+<code>prepare</code> / <code>start</code> / <code>poll</code> / <code>stop</code> / <code>close</code>
+(<code>autoware_carla_scenario.autoware_stack.AutowareLauncher</code>) can stand in for
+the two launchers that ship.</p>
 
 
 
@@ -1741,7 +1857,7 @@ difference is which process serves the policy.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 00:49:55 UTC"><span class="timeago" datetime="2026-10-10T00:49:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 00:49:55 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 15:43:17 UTC"><span class="timeago" datetime="2026-10-10T15:43:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 15:43:17 UTC">2026-10-10</span>
   </span>
 
     
@@ -1751,7 +1867,7 @@ difference is which process serves the policy.</p>
     <span class="md-icon" title="Created">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 00:53:54 UTC"><span class="timeago" datetime="2026-10-09T00:53:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 00:53:54 UTC">2026-10-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 15:43:17 UTC"><span class="timeago" datetime="2026-10-10T15:43:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 15:43:17 UTC">2026-10-10</span>
   </span>
 
     
