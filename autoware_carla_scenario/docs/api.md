@@ -49,8 +49,23 @@ See [Coverage](coverage.md).
 | `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
 | `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
 | `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
-| `odd_cover_items()`, `OddProbe` | The ODD items the runner samples on every run, and what reads them from the world. |
 | `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
+
+## ODD (`autoware_carla_scenario.odd`)
+
+See [ODD](odd.md).
+
+| Symbol | Purpose |
+|--------|---------|
+| `OddAttribute(name, probe, *, unit, range, every, buckets, values, text)` | A measured taxonomy leaf. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`. |
+| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text)` | A named rule. |
+| `OddDefinition(name, attributes, modules, *, root, text)` | The ODD: evaluates values three-valued, and marks buckets outside it. |
+| `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
+| `default_odd()` | The built-in ODD: every attribute, no modules. |
+| `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group. |
+| `load_openodd(*sources, name=None)` | Read OpenODD YAML (`TAXONOMY`, `MODULES`, plus `COVERAGE` and `ODD`). |
+| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
+| `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
 
@@ -266,6 +281,7 @@ Defined in `pyproject.toml`:
 | `scenario-editor` | `autoware_carla_scenario.editor:main` |
 | `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
 | `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` |
+| `scenario-odd` | `autoware_carla_scenario.odd.cli:main` |
 
 The `scenario` command also exposes Python-level helpers in
 `autoware_carla_scenario.examples.run` for downstream packages:

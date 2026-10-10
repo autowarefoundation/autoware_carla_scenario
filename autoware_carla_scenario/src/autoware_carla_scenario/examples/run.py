@@ -58,6 +58,7 @@ from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
+    check_odd,
     check_registered_scenario,
     typecheck_mode,
 )
@@ -392,6 +393,7 @@ def run_scenario_with_queue(
     max_tick_rate_hz: float | None = None,
     projector_type: str | None = None,
     traffic_backend: TrafficBackend | None = None,
+    odd: str | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -421,6 +423,7 @@ def run_scenario_with_queue(
         max_tick_rate_hz=max_tick_rate_hz,
         projector_type=projector_type,
         traffic_backend=traffic_backend,
+        odd=odd,
     )
     queue.add(scenario)
     with queue:
@@ -431,6 +434,12 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def _odd_spec(cfg: DictConfig) -> str | None:
+    """The ``odd`` the config names (docs/odd.md), or ``None`` for the default."""
+    value = cfg.get("odd")
+    return None if value is None else str(value)
 
 
 def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
@@ -694,6 +703,7 @@ def run_batch(
         max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(first_cfg),
+        odd=_odd_spec(first_cfg),
     )
 
     for cfg, scenario in zip(configs, scenarios):
@@ -751,6 +761,8 @@ def build_scenario(
     # Compile the scenario before building anything of it: one that does not
     # type-check is refused here, before the runner touches CARLA.
     check_registered_scenario(scenario_name, scenario_dict, typecheck_mode(cfg))
+    # And the ODD the run is measured against, when it is written in Python.
+    check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
@@ -899,6 +911,7 @@ def run_scenario(
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(cfg),
+        odd=_odd_spec(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

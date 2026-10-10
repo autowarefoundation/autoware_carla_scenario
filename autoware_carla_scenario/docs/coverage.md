@@ -129,15 +129,23 @@ is the product of the items' bucket counts, so cross only items that interact.
 
 ## ODD coverage
 
-Every run samples these items on every tick, without the scenario declaring
-anything. They are a first subset of the
-[ISO 34503](https://www.iso.org/standard/78952.html) ODD taxonomy, from each
-of its three top-level categories:
+Every run is measured against an **ODD**, picked with the `odd` config key
+(`odd=default` unless told otherwise). Every tick, the ODD's attributes are
+sampled. Their buckets are the ODD coverage, and the ODD's modules decide
+whether the tick was inside the ODD. [ODD](odd.md) explains how to write one
+in Python or OpenODD YAML.
+
+The built-in `default` ODD has no modules, so every condition is inside it.
+Its attributes are a first subset of the
+[ISO 34503](https://www.iso.org/standard/78952.html) taxonomy, from each of its
+three top-level categories:
 
 | Item | Buckets | Read from |
 |---|---|---|
 | `odd.scenery.junction` | false, true | The ego's CARLA waypoint |
-| `odd.scenery.speed_limit` | 0-30-40-50-60-80-100-130 km/h | `vehicle.get_speed_limit()` |
+| `odd.scenery.location` | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
+| `odd.scenery.road_type` | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
+| `odd.scenery.speed_limit` | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
 | `odd.scenery.lane_count` | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions |
 | `odd.environment.illumination` | day, low_sun, twilight, night | Sun altitude: day from 15°, low sun from 0°, civil twilight to -6° |
 | `odd.environment.rain` | none, light, moderate, heavy | CARLA precipitation (0-100): 1, 30, 70 |
@@ -147,8 +155,13 @@ of its three top-level categories:
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
 
 A reading the simulator does not support returns nothing. The item then has
-no samples, and the report says so; the run is not affected. One example is
-the weather on a CARLA build without weather.
+no samples, the report says so, and the run is not affected. Examples are the
+weather on a CARLA build without weather, and the Lanelet2 tags in a run
+without a Lanelet2 map.
+
+A bucket an ODD's module rules out (`nonurban`, when the ODD is urban roads
+only) is **outside the ODD**. It is listed, and its hits are shown, but it is
+not a coverage target: the grade counts only the buckets inside the ODD.
 
 CARLA's weather values are 0-100 intensities, not physical quantities such as
 mm/h of rain. The rain and fog buckets are therefore named levels.
@@ -167,8 +180,11 @@ scenario-coverage outputs/ multirun/
 scenario-coverage outputs/ --json coverage.json --markdown coverage.md
 ```
 
-The Markdown report has a summary table per group: item, event, grade,
-covered buckets and holes. Below it, each item gets its buckets with hits and
+For each ODD the runs were measured against, the Markdown report first says
+how long they spent inside it, outside it, and with the verdict unknown. It
+then lists the modules that ruled ticks out, and the runs that left the ODD,
+with when. After that comes a summary table per group: item, event, grade,
+covered buckets (of those inside the ODD) and holes. Below it, each item gets its buckets with hits and
 runs. Runs merge per item: two coverage files describe the same item when the
 name, event and buckets agree. An item whose definition changed between runs
 is reported once per definition (`name#2`, ...), because adding up hits of
@@ -189,6 +205,7 @@ different buckets would mean nothing.
       "event": "condition:cut_in_started",
       "kind": "numeric",
       "buckets": ["[0, 5)", "[5, 15)", "[15, 40]"],
+      "outside_odd": [],
       "target": 1,
       "samples": 1,
       "ignored": 0,
@@ -206,18 +223,23 @@ different buckets would mean nothing.
       "target": 1,
       "hits": {"[0, 10) / [0, 5)": 0, "...": 0}
     }
-  ]
+  ],
+  "odd": {
+    "name": "urban",
+    "text": "Urban roads up to 60 km/h",
+    "root": "root",
+    "modules": [{"name": "roads", "include_and": ["scenery.location in [urban]"], "...": "..."}],
+    "unmeasured": [],
+    "ticks": {"inside": 512, "outside": 40, "unknown": 8},
+    "seconds": {"inside": 25.6, "outside": 2.0, "unknown": 0.4},
+    "module_ticks": {"roads": {"failed_ticks": 40, "unknown_ticks": 8}},
+    "out_intervals": [[12.3, 14.3]]
+  }
 }
 ```
 
 ## Not yet supported
 
-- **An ODD definition.** The report treats every bucket as a target. It does
-  not yet say which conditions are inside the system's ODD, or flag time spent
-  outside it. An OpenODD-style YAML definition is the planned next step.
 - **`record()`.** KPIs such as minimum TTC are not collected.
 - **`sample()`.** There is no value captured at one event and reported at
   another. Sample on the event itself instead.
-- **Map attributes from Lanelet2.** Road attributes come from CARLA (its
-  waypoints and speed limits), not from Lanelet2 tags such as `location` or
-  `speed_limit`.

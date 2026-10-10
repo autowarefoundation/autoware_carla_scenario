@@ -32,7 +32,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .driver import DRIVER_MODULE, render_driver
+from .driver import DRIVER_MODULE, render_driver, render_odd_driver
 from .toolchain import (
     SUPPORTED_CODON_SERIES,
     Toolchain,
@@ -56,6 +56,7 @@ __all__ = [
     "available_toolchain",
     "find_supported_codon",
     "model_dir",
+    "typecheck_odd",
     "typecheck_scenario",
 ]
 
@@ -550,6 +551,53 @@ def typecheck_scenario(
     if key not in _CACHE:
         result = _compile(name, sources, driver, toolchain, codon_path, timeout)
         if result is None:  # timed out: no verdict worth keeping
+            return _timed_out(name, timeout)
+        _CACHE[key] = result
+    return _CACHE[key]
+
+
+def typecheck_odd(
+    builder: Any,
+    *,
+    toolchain: Toolchain | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> TypeCheckResult:
+    """Compile the ODD *builder* returns, as :func:`typecheck_scenario` compiles a scenario.
+
+    *builder* is a module-level function that takes nothing and returns an
+    :class:`~autoware_carla_scenario.OddDefinition`.  The driver calls it, so
+    everything it reaches is checked: each attribute's probe is called with a
+    world, each condition must come from an attribute, and the result must
+    be an ODD.
+
+    Returns:
+        The result; ``result.ok`` is ``False`` when the ODD must not be used.
+    """
+    module, qualname = builder.__module__, builder.__qualname__
+    name = f"{module}.{qualname}"
+    if "." in qualname or "<" in qualname:
+        return TypeCheckResult(
+            name, ok=True, skipped="only a module-level function can be compiled"
+        )
+    if toolchain is None:
+        try:
+            toolchain = find_supported_codon()
+        except ToolchainError as exc:
+            return TypeCheckResult(name, ok=True, skipped=f"no Codon compiler: {exc}")
+    try:
+        codon_path = codon_path_dir()
+    except ToolchainError as exc:
+        return TypeCheckResult(name, ok=True, skipped=f"no CARLA API to check: {exc}")
+    if _module_file(module) is None:
+        return TypeCheckResult(
+            name, ok=True, skipped="the ODD has no source file to compile"
+        )
+    sources = _collect([module], toolchain, codon_path)
+    driver = render_odd_driver(module, qualname)
+    key = _cache_key(toolchain, codon_path, sources, driver.source)
+    if key not in _CACHE:
+        result = _compile(name, sources, driver, toolchain, codon_path, timeout)
+        if result is None:
             return _timed_out(name, timeout)
         _CACHE[key] = result
     return _CACHE[key]

@@ -11,24 +11,16 @@ from typing import Any, Optional
 import pytest
 
 from autoware_carla_scenario.conditions import BaseCondition, ScenarioResult
-from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.coverage import (
     COVERAGE_SCHEMA,
     CoverageCollector,
     CoverGroup,
     CoverItem,
     CrossItem,
-    OddProbe,
     SamplingEvent,
     merge_coverage,
-    odd_cover_items,
 )
 from autoware_carla_scenario.coverage.items import ABOVE_RANGE, BELOW_RANGE
-from autoware_carla_scenario.coverage.odd import (
-    illumination_level,
-    intensity_level,
-    traffic_density_level,
-)
 from autoware_carla_scenario.coverage.report import load_and_merge, main
 
 
@@ -250,168 +242,6 @@ class TestScenarioRegistration:
         scenario.register_cover("a", lambda w: 1, values=[1])
         with pytest.raises(ValueError, match="already registered"):
             scenario.register_cover("a", lambda w: 1, values=[1])
-
-
-# ---------------------------------------------------------------------------
-# ODD items
-# ---------------------------------------------------------------------------
-
-
-class _Vec(SimpleNamespace):
-    pass
-
-
-class _Actor:
-    def __init__(
-        self,
-        actor_id: int,
-        type_id: str,
-        role: str = "",
-        at: tuple[float, float] = (0.0, 0.0),
-        speed_mps: float = 0.0,
-        speed_limit: float = 0.0,
-    ) -> None:
-        self.id = actor_id
-        self.type_id = type_id
-        self.attributes = {"role_name": role}
-        self._at = _Vec(x=at[0], y=at[1], z=0.0)
-        self._v = _Vec(x=speed_mps, y=0.0, z=0.0)
-        self._limit = speed_limit
-
-    def get_location(self) -> _Vec:
-        return self._at
-
-    def get_velocity(self) -> _Vec:
-        return self._v
-
-    def get_speed_limit(self) -> float:
-        return self._limit
-
-
-class _Lane:
-    def __init__(self, lane_id: int, *, left: Any = None, right: Any = None) -> None:
-        self.lane_id = lane_id
-        self.lane_type = "LaneType.Driving"
-        self.is_junction = False
-        self._left, self._right = left, right
-
-    def get_left_lane(self) -> Any:
-        return self._left
-
-    def get_right_lane(self) -> Any:
-        return self._right
-
-
-class _OddWorld:
-    def __init__(self, actors: list[_Actor], waypoint: Any, weather: Any) -> None:
-        self._actors = actors
-        self._waypoint = waypoint
-        self._weather = weather
-        self.frame = 1
-        self.map_fetches = 0
-
-    def get_snapshot(self) -> Any:
-        return SimpleNamespace(frame=self.frame)
-
-    def get_actors(self) -> list[_Actor]:
-        return self._actors
-
-    def get_map(self) -> Any:
-        self.map_fetches += 1
-        return SimpleNamespace(get_waypoint=lambda loc: self._waypoint)
-
-    def get_weather(self) -> Any:
-        if self._weather is None:
-            raise RuntimeError("no weather on this server")
-        return self._weather
-
-
-def _odd_world(weather: Any = "default") -> _OddWorld:
-    ego = _Actor(1, "vehicle.ego", str(EGO_ROLE_NAME), speed_mps=10.0, speed_limit=50)
-    actors = [
-        ego,
-        _Actor(2, "vehicle.a", at=(10.0, 0.0)),
-        _Actor(3, "vehicle.b", at=(500.0, 0.0)),
-        _Actor(4, "walker.pedestrian.0001", at=(5.0, 5.0)),
-    ]
-    # Two lanes in the ego's direction, one the other way.
-    own = _Lane(-1)
-    own._left = _Lane(1)
-    own._right = _Lane(-2)
-    if weather == "default":
-        weather = SimpleNamespace(
-            sun_altitude_angle=45.0, precipitation=50.0, fog_density=0.0
-        )
-    return _OddWorld(actors, own, weather)
-
-
-class TestOdd:
-    def test_levels(self) -> None:
-        assert [illumination_level(a) for a in (45, 5, -3, -30)] == [
-            "day",
-            "low_sun",
-            "twilight",
-            "night",
-        ]
-        assert [intensity_level(i) for i in (0, 10, 50, 90)] == [
-            "none",
-            "light",
-            "moderate",
-            "heavy",
-        ]
-        assert [traffic_density_level(n) for n in (0, 2, 5, 6)] == [
-            "none",
-            "low",
-            "medium",
-            "high",
-        ]
-
-    def test_every_odd_item_is_a_tick_item_in_the_odd_group(self) -> None:
-        items = odd_cover_items()
-        assert all(i.event is SamplingEvent.TICK for i in items)
-        assert all(i.group is CoverGroup.ODD for i in items)
-        assert all(i.name.startswith("odd.") for i in items)
-
-    def test_the_probe_reads_the_world(self) -> None:
-        world = _odd_world()
-        collector = CoverageCollector(odd_cover_items(OddProbe()))
-        collector.tick(world, 0.0)
-        hits = {
-            i["name"]: [b for b, n in i["hits"].items() if n]
-            for i in collector.to_dict("S")["items"]
-        }
-        assert hits == {
-            "odd.scenery.junction": ["false"],
-            "odd.scenery.speed_limit": ["[50, 60)"],
-            "odd.scenery.lane_count": ["2"],
-            "odd.environment.illumination": ["day"],
-            "odd.environment.rain": ["moderate"],
-            "odd.environment.fog": ["none"],
-            "odd.dynamic.ego_speed": ["[30, 40)"],
-            "odd.dynamic.traffic_density": ["low"],
-            "odd.dynamic.pedestrian_nearby": ["true"],
-        }
-
-    def test_a_server_without_weather_leaves_the_weather_items_empty(self) -> None:
-        collector = CoverageCollector(odd_cover_items(OddProbe()))
-        collector.tick(_odd_world(weather=None), 0.0)
-        samples = {i["name"]: i["samples"] for i in collector.to_dict("S")["items"]}
-        assert samples["odd.environment.rain"] == 0
-        assert samples["odd.dynamic.ego_speed"] == 1
-
-    def test_without_an_ego_nothing_is_sampled(self) -> None:
-        world = _OddWorld([], None, None)
-        collector = CoverageCollector(odd_cover_items(OddProbe()))
-        collector.tick(world, 0.0)
-        assert all(i["samples"] == 0 for i in collector.to_dict("S")["items"])
-
-    def test_the_map_is_fetched_once_per_run(self) -> None:
-        world = _odd_world()
-        collector = CoverageCollector(odd_cover_items(OddProbe()))
-        for frame in range(3):
-            world.frame = frame
-            collector.tick(world, 0.0)
-        assert world.map_fetches == 1
 
 
 # ---------------------------------------------------------------------------

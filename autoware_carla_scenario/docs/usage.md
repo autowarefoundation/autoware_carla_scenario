@@ -394,6 +394,19 @@ Each scenario registers **pass conditions** and **fail conditions**. The tick lo
 - **First fail condition triggered** → scenario fails
 - Common fail conditions: `TimeoutCondition` (exceeded time limit), `EntityExistenceCondition` (ego destroyed)
 
+### ODD and Coverage
+
+Every run is measured against an ODD, named by the `odd` key (`default` unless
+overridden). Its attributes are sampled on every tick and written, with the
+scenario's own cover items, to `{ScenarioName}_coverage.json`.
+`scenario-coverage outputs/` merges those files into a report. See
+[ODD](odd.md) and [Coverage](coverage.md).
+
+```bash
+uv run scenario scenario=intersection_passing/left_turn odd=path/to/urban.yaml
+uv run scenario-coverage outputs/ --markdown coverage.md
+```
+
 ### Output Files
 
 Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:

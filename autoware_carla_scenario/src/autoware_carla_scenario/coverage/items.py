@@ -129,6 +129,8 @@ class CoverItem:
     edges: list[float] = field(init=False, default_factory=list)
     #: Bucket labels, in order.
     labels: list[str] = field(init=False, default_factory=list)
+    #: Labels of buckets outside the ODD: reported, but not coverage targets.
+    outside: list[str] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -218,6 +220,7 @@ class CoverItem:
             "event": event_name(self.event),
             "kind": "numeric" if self.numeric else "categorical",
             "buckets": list(self.labels),
+            "outside_odd": list(self.outside),
             "target": self.target,
         }
 

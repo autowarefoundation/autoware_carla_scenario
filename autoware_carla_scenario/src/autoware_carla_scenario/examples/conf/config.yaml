@@ -9,6 +9,13 @@ defaults:
   - scenario: intersection_passing/left_turn
   - map: nishishinjuku
 
+# The ODD every run is measured against (docs/odd.md): "default", a name
+# registered with register_odd() or an entry point, an OpenODD YAML file
+# (odd=path/to/odd.yaml), or package.module:function.  Its attributes are the
+# ODD coverage in {Scenario}_coverage.json; its modules say which ticks were
+# outside it.
+odd: default
+
 # Compile the scenario with Codon before it runs, and refuse it if it does not
 # type-check (docs/typecheck.md): auto (when Codon is installed), required, off.
 typecheck: auto

@@ -277,6 +277,91 @@ def test_a_cover_event_that_is_neither_an_event_nor_a_condition_is_refused(
     assert error.line == _line_of(path, 'event="end"')
 
 
+_ODD_MODULE = """
+from __future__ import annotations
+
+import typesafe_carla.carla as carla
+
+from autoware_carla_scenario import (
+    OddAttribute,
+    OddDefinition,
+    OddModule,
+    any_of,
+    module_holds,
+    register_odd,
+)
+from autoware_carla_scenario.odd import INTENSITY_LEVELS, lanelet_location, rain, speed_limit_kph
+
+
+def yaw_rate(world: carla.World) -> float | None:
+    return 0.0
+
+
+def build() -> OddDefinition:
+    location = OddAttribute("scenery.location", lanelet_location, values=["urban", "nonurban"])
+    speed_limit = OddAttribute(
+        "scenery.speed_limit", speed_limit_kph, unit="km/h", buckets=[0, 30, 60, 100]
+    )
+    weather = OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS)
+    yaw = OddAttribute("dynamic.yaw_rate", yaw_rate, range=(-30.0, 30.0), every=10.0)
+    return OddDefinition(
+        "urban",
+        [location, speed_limit, weather, yaw],
+        [
+            OddModule("roads", include_and=[location.is_in(["urban"]), speed_limit.between(0, 60)]),
+            OddModule("weather", exclude_or=[weather.is_in(["heavy"])], labels=["fair"]),
+            OddModule(
+                "root",
+                include_and=[module_holds("roads"), module_holds("fair")],
+                include_or=[yaw.at_most(20.0), any_of([yaw.less_than(25.0)])],
+            ),
+        ],
+        root="root",
+    )
+
+
+register_odd("urban_case", build)
+"""
+
+
+def _write_odd(tmp_path: Path, source: str) -> Any:
+    global _counter
+    _counter += 1
+    package = f"acs_typecheck_odd_{_counter}"
+    root = tmp_path / package
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "odds.py").write_text(source)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        return importlib.import_module(f"{package}.odds"), root / "odds.py"
+    finally:
+        sys.path.remove(str(tmp_path))
+
+
+def test_an_odd_written_in_python_compiles(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    module, _ = _write_odd(tmp_path, _ODD_MODULE)
+    result = typecheck_odd(module.build)
+    assert result.ok, result.format()
+
+
+def test_an_odd_condition_of_the_wrong_type_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace(
+        "speed_limit.between(0, 60)", 'speed_limit.between("0", 60)'
+    )
+    module, path = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "expected a float" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, 'between("0"')
+
+
 def test_a_custom_condition_is_checked_through_its_check_method(tmp_path: Path) -> None:
     custom = """
 

@@ -32,6 +32,8 @@ from .items import (
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..odd.model import OddDefinition
+
 __all__ = ["COVERAGE_SCHEMA", "CoverageCollector", "CROSS_SEPARATOR"]
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,53 @@ COVERAGE_SCHEMA = "autoware_carla_scenario.coverage/1"
 CROSS_SEPARATOR = " / "
 
 _NO_SAMPLE = object()
+
+#: Out-of-ODD intervals kept per run; a run that leaves the ODD more often is
+#: still counted in full, only the intervals past this are not listed.
+MAX_OUT_INTERVALS = 100
+
+
+class _OddMonitor:
+    """Whether each tick was inside the ODD, and which modules ruled it out."""
+
+    def __init__(self, odd: "OddDefinition") -> None:
+        self.odd = odd
+        self.ticks = {"inside": 0, "outside": 0, "unknown": 0}
+        self.seconds = {"inside": 0.0, "outside": 0.0, "unknown": 0.0}
+        self.modules = {
+            m.name: {"failed_ticks": 0, "unknown_ticks": 0} for m in odd.modules
+        }
+        self.out_intervals: list[list[float]] = []
+        self._previous_out = False
+
+    def record(self, values: dict[str, Any], start: float, end: float) -> None:
+        verdict = self.odd.evaluate(values)
+        key = {True: "inside", False: "outside", None: "unknown"}[verdict.inside]
+        self.ticks[key] += 1
+        self.seconds[key] += max(0.0, end - start)
+        for name, holds in verdict.modules.items():
+            if holds is False:
+                self.modules[name]["failed_ticks"] += 1
+            elif holds is None:
+                self.modules[name]["unknown_ticks"] += 1
+        outside = verdict.inside is False
+        if outside:
+            if self._previous_out and self.out_intervals:
+                self.out_intervals[-1][1] = end
+            elif len(self.out_intervals) < MAX_OUT_INTERVALS:
+                self.out_intervals.append([start, end])
+        self._previous_out = outside
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.odd.describe(),
+            "ticks": dict(self.ticks),
+            "seconds": {k: round(v, 3) for k, v in self.seconds.items()},
+            "module_ticks": {k: dict(v) for k, v in self.modules.items()},
+            "out_intervals": [
+                [round(a, 3), round(b, 3)] for a, b in self.out_intervals
+            ],
+        }
 
 
 class _ItemHits:
@@ -83,7 +132,19 @@ class CoverageCollector:
         self,
         items: list[CoverItem],
         crosses: Optional[list[CrossItem]] = None,
+        odd: Optional["OddDefinition"] = None,
     ) -> None:
+        """Collect *items* and *crosses*, and the attributes of *odd* if given.
+
+        With an *odd*, its attributes' cover items come first, and every tick
+        is also judged inside or outside it.
+        """
+        if odd is not None:
+            items = [*odd.cover_items(), *items]
+        self._odd = _OddMonitor(odd) if odd is not None else None
+        self._last_elapsed = 0.0
+        #: The value each item sampled last, ``None`` when it took no sample.
+        self._values: dict[str, Any] = {}
         names = [i.name for i in items] + [c.name for c in crosses or ()]
         duplicates = sorted({n for n in names if names.count(n) > 1})
         if duplicates:
@@ -107,11 +168,15 @@ class CoverageCollector:
 
     def start(self, world: "carla.World", elapsed: float) -> None:
         """Sample the items on :attr:`SamplingEvent.START`."""
+        self._last_elapsed = elapsed
         self._sample_event(world, SamplingEvent.START)
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Sample the items on :attr:`SamplingEvent.TICK` and on conditions that fired."""
         self._sample_event(world, SamplingEvent.TICK)
+        if self._odd is not None:
+            self._odd.record(self._odd_values(world), self._last_elapsed, elapsed)
+        self._last_elapsed = elapsed
         for key, condition in self._conditions.items():
             try:
                 satisfied = condition.check(world, elapsed) is not None
@@ -138,6 +203,7 @@ class CoverageCollector:
             "scenario": scenario,
             "items": [e.to_dict() for e in self._items],
             "crosses": [c.to_dict() for c in self._crosses],
+            "odd": self._odd.to_dict() if self._odd is not None else None,
         }
 
     def write(self, path: Path, scenario: str) -> None:
@@ -151,6 +217,20 @@ class CoverageCollector:
             logger.warning("coverage: could not write %s", path, exc_info=True)
 
     # ------------------------------------------------------------------
+
+    def _odd_values(self, world: "carla.World") -> dict[str, Any]:
+        """The ODD's attribute values this tick: as sampled, or read now."""
+        assert self._odd is not None
+        values: dict[str, Any] = {}
+        for attribute in self._odd.odd.attributes:
+            if attribute.item is not None:
+                values[attribute.name] = self._values.get(attribute.item.name)
+                continue
+            try:
+                values[attribute.name] = attribute.probe(world)
+            except Exception:
+                values[attribute.name] = None
+        return values
 
     def _sample_event(self, world: "carla.World", event: Event) -> None:
         buckets: dict[str, Optional[str]] = {}
@@ -173,7 +253,9 @@ class CoverageCollector:
         item = entry.item
         value = self._evaluate(entry, world)
         if value is _NO_SAMPLE or value is None:
+            self._values[item.name] = None
             return None
+        self._values[item.name] = value
         try:
             if item.ignore is not None and item.ignore(value):
                 entry.ignored += 1

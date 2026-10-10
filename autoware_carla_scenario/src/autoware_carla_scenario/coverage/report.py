@@ -28,11 +28,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
-from .collector import COVERAGE_SCHEMA
+from .collector import COVERAGE_SCHEMA, CROSS_SEPARATOR
 
 __all__ = [
     "CoverageReport",
     "MergedEntry",
+    "OddExposure",
     "find_coverage_files",
     "main",
     "merge_coverage",
@@ -61,18 +62,28 @@ class MergedEntry:
     out_of_range: dict[str, int] = field(default_factory=dict)
     samples: int = 0
     ignored: int = 0
+    #: Buckets outside the ODD: reported, but not coverage targets.
+    outside: list[str] = field(default_factory=list)
+
+    @property
+    def targets(self) -> list[str]:
+        """The buckets coverage aims at: all but those outside the ODD."""
+        excluded = set(self.outside)
+        return [b for b in self.buckets if b not in excluded]
 
     @property
     def covered(self) -> list[str]:
-        return [b for b in self.buckets if self.hits.get(b, 0) >= self.target]
+        return [b for b in self.targets if self.hits.get(b, 0) >= self.target]
 
     @property
     def holes(self) -> list[str]:
-        return [b for b in self.buckets if self.hits.get(b, 0) < self.target]
+        return [b for b in self.targets if self.hits.get(b, 0) < self.target]
 
     @property
     def grade(self) -> float:
-        return len(self.covered) / len(self.buckets) if self.buckets else 0.0
+        """Covered targets over targets; 1.0 when the ODD leaves no target."""
+        targets = self.targets
+        return len(self.covered) / len(targets) if targets else 1.0
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -89,6 +100,7 @@ class MergedEntry:
                     "hits": self.hits.get(b, 0),
                     "runs": self.runs.get(b, 0),
                     "covered": self.hits.get(b, 0) >= self.target,
+                    "outside_odd": b in self.outside,
                 }
                 for b in self.buckets
             ],
@@ -106,12 +118,75 @@ class MergedEntry:
 
 
 @dataclass
+class OddExposure:
+    """How long the runs of one ODD spent inside and outside it."""
+
+    name: str
+    text: str = ""
+    runs: int = 0
+    #: Runs that left the ODD at least once.
+    runs_outside: int = 0
+    ticks: dict[str, int] = field(
+        default_factory=lambda: {"inside": 0, "outside": 0, "unknown": 0}
+    )
+    seconds: dict[str, float] = field(
+        default_factory=lambda: {"inside": 0.0, "outside": 0.0, "unknown": 0.0}
+    )
+    #: Module -> ticks it failed (ruled the ODD out) and ticks it was unknown.
+    module_ticks: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Attributes the ODD monitors but has no buckets for.
+    unmeasured: list[str] = field(default_factory=list)
+    #: (scenario, outside seconds, out intervals) of the runs that left it.
+    excursions: list[tuple[str, float, list[list[float]]]] = field(default_factory=list)
+
+    def add(self, scenario: str, raw: dict[str, Any]) -> None:
+        self.runs += 1
+        self.text = self.text or raw.get("text", "")
+        for key in self.ticks:
+            self.ticks[key] += int(raw.get("ticks", {}).get(key, 0))
+            self.seconds[key] += float(raw.get("seconds", {}).get(key, 0.0))
+        for module, counts in raw.get("module_ticks", {}).items():
+            mine = self.module_ticks.setdefault(
+                module, {"failed_ticks": 0, "unknown_ticks": 0}
+            )
+            for key in mine:
+                mine[key] += int(counts.get(key, 0))
+        for name in raw.get("unmeasured", ()):
+            if name not in self.unmeasured:
+                self.unmeasured.append(name)
+        outside_seconds = float(raw.get("seconds", {}).get("outside", 0.0))
+        if int(raw.get("ticks", {}).get("outside", 0)) > 0:
+            self.runs_outside += 1
+            self.excursions.append(
+                (scenario, outside_seconds, list(raw.get("out_intervals", ())))
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "text": self.text,
+            "runs": self.runs,
+            "runs_outside": self.runs_outside,
+            "ticks": dict(self.ticks),
+            "seconds": {k: round(v, 3) for k, v in self.seconds.items()},
+            "module_ticks": {k: dict(v) for k, v in self.module_ticks.items()},
+            "unmeasured": list(self.unmeasured),
+            "excursions": [
+                {"scenario": s, "outside_seconds": round(t, 3), "intervals": i}
+                for s, t, i in self.excursions
+            ],
+        }
+
+
+@dataclass
 class CoverageReport:
     """Coverage merged over a number of runs."""
 
     runs: int = 0
     scenarios: dict[str, int] = field(default_factory=dict)
     entries: list[MergedEntry] = field(default_factory=list)
+    #: ODD name -> how the runs measured against it fared.
+    odds: dict[str, OddExposure] = field(default_factory=dict)
 
     def groups(self) -> list[str]:
         order = {"odd": 0, "scenario": 1}
@@ -127,6 +202,7 @@ class CoverageReport:
         return {
             "runs": self.runs,
             "scenarios": dict(self.scenarios),
+            "odds": {k: v.to_dict() for k, v in self.odds.items()},
             "groups": {
                 g: {
                     "grade": self.group_grade(g),
@@ -145,6 +221,8 @@ class CoverageReport:
         ]
         for scenario, count in sorted(self.scenarios.items()):
             lines.append(f"- {scenario}: {count}")
+        for exposure in self.odds.values():
+            lines += self._odd_markdown(exposure)
         for group in self.groups():
             entries = [e for e in self.entries if e.group == group]
             title = (
@@ -165,7 +243,7 @@ class CoverageReport:
                 label = f"{e.name} ({' x '.join(e.items)})" if e.items else e.name
                 lines.append(
                     f"| {label} | {e.event} | {e.grade:.0%} "
-                    f"| {len(e.covered)}/{len(e.buckets)} | {shown or '-'} |"
+                    f"| {len(e.covered)}/{len(e.targets)} | {shown or '-'} |"
                 )
             for e in entries:
                 if e.kind == "cross":
@@ -179,7 +257,12 @@ class CoverageReport:
                     lines += [e.text, ""]
                 lines += ["| Bucket | Hits | Runs |", "|---|---|---|"]
                 for b in e.buckets:
-                    mark = "" if e.hits.get(b, 0) >= e.target else " (hole)"
+                    if b in e.outside:
+                        mark = " (outside ODD" + (
+                            ", reached)" if e.hits.get(b) else ")"
+                        )
+                    else:
+                        mark = "" if e.hits.get(b, 0) >= e.target else " (hole)"
                     lines.append(
                         f"| {b}{mark} | {e.hits.get(b, 0)} | {e.runs.get(b, 0)} |"
                     )
@@ -188,6 +271,56 @@ class CoverageReport:
                 if e.samples == 0:
                     lines += ["", "_No samples: the value was never available._"]
         return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _odd_markdown(exposure: OddExposure) -> list[str]:
+        total = sum(exposure.seconds.values())
+
+        def share(key: str) -> str:
+            seconds = exposure.seconds[key]
+            pct = f" ({seconds / total:.1%})" if total else ""
+            return f"{seconds:.1f} s{pct}"
+
+        lines = [
+            "",
+            f"## ODD: {exposure.name}",
+            "",
+        ]
+        if exposure.text:
+            lines += [exposure.text, ""]
+        lines += [
+            f"- Runs: {exposure.runs}, of which left the ODD: {exposure.runs_outside}",
+            f"- Inside: {share('inside')}",
+            f"- Outside: {share('outside')}",
+            f"- Unknown: {share('unknown')}",
+        ]
+        if exposure.unmeasured:
+            lines.append(
+                "- Monitored but not covered (no buckets): "
+                + ", ".join(exposure.unmeasured)
+            )
+        failing = [
+            (name, counts)
+            for name, counts in exposure.module_ticks.items()
+            if counts["failed_ticks"] or counts["unknown_ticks"]
+        ]
+        if failing:
+            lines += ["", "| Module | Failed ticks | Unknown ticks |", "|---|---|---|"]
+            for name, counts in failing:
+                lines.append(
+                    f"| {name} | {counts['failed_ticks']} | {counts['unknown_ticks']} |"
+                )
+        if exposure.excursions:
+            lines += [
+                "",
+                "| Scenario | Outside | First intervals [s] |",
+                "|---|---|---|",
+            ]
+            worst = sorted(exposure.excursions, key=lambda e: -e[1])[:10]
+            for scenario, seconds, intervals in worst:
+                shown = ", ".join(f"{a:g}-{b:g}" for a, b in intervals[:3])
+                lines.append(f"| {scenario} | {seconds:.1f} s | {shown} |")
+        return lines
 
 
 def find_coverage_files(paths: Iterable[Path]) -> list[Path]:
@@ -210,7 +343,23 @@ def _key(entry: dict[str, Any], kind: str) -> tuple[Any, ...]:
         entry.get("event", ""),
         tuple(entry.get("buckets", ())),
         tuple(entry.get("items", ())),
+        tuple(entry.get("outside_odd", ())),
     )
+
+
+def _cross_outside(
+    cross: dict[str, Any], outside_by_item: dict[str, set[str]]
+) -> list[str]:
+    """Cells of *cross* with a bucket outside the ODD in any of its items."""
+    items = list(cross.get("items", ()))
+    out = []
+    for cell in cross.get("hits", {}):
+        labels = cell.split(CROSS_SEPARATOR)
+        if len(labels) == len(items) and any(
+            label in outside_by_item.get(item, ()) for item, label in zip(items, labels)
+        ):
+            out.append(cell)
+    return out
 
 
 def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
@@ -226,8 +375,18 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
         report.runs += 1
         scenario = str(doc.get("scenario", ""))
         report.scenarios[scenario] = report.scenarios.get(scenario, 0) + 1
+        odd = doc.get("odd")
+        if odd:
+            name = str(odd.get("name", ""))
+            report.odds.setdefault(name, OddExposure(name)).add(scenario, odd)
+        outside_by_item = {
+            e["name"]: set(e.get("outside_odd", ())) for e in doc.get("items", ())
+        }
         entries = [(e, e["kind"]) for e in doc.get("items", ())]
-        entries += [(c, "cross") for c in doc.get("crosses", ())]
+        entries += [
+            ({**c, "outside_odd": _cross_outside(c, outside_by_item)}, "cross")
+            for c in doc.get("crosses", ())
+        ]
         for raw, kind in entries:
             key = _key(raw, kind)
             entry = merged.get(key)
@@ -252,6 +411,7 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
                     buckets=list(raw.get("buckets") or raw.get("hits", {}).keys()),
                     unit=raw.get("unit", ""),
                     items=list(raw.get("items", ())),
+                    outside=list(raw.get("outside_odd", ())),
                 )
                 merged[key] = entry
                 report.entries.append(entry)

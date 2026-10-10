@@ -22,7 +22,8 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
-from .coverage import CoverageCollector, odd_cover_items
+from .coverage import CoverageCollector
+from .odd import OddDefinition, default_odd, reset_probes
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
@@ -300,6 +301,7 @@ class ScenarioRunner:
         output_dir: Path = Path("scenario_outputs"),
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
+        odd: Optional[OddDefinition] = None,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -322,7 +324,11 @@ class ScenarioRunner:
                 author.  *None* selects CARLA's TrafficManager on *tm_port*,
                 which is what every scenario written before the backend seam
                 existed expects.
+            odd: The ODD every run is measured against: its attributes are
+                the ODD coverage, its modules say which ticks were outside it
+                (docs/odd.md).  *None* selects :func:`default_odd`.
         """
+        self.odd = odd if odd is not None else default_odd()
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
         self._tm_port = tm_port
@@ -838,11 +844,12 @@ class ScenarioRunner:
             # the world from outside.
             trajectory.start(world)
             trajectory.record(world, clock.simulated)
-            # What the run covers: the ODD items every run samples, then the
-            # scenario's own, declared in setup() with register_cover().
+            # What the run covers: the attributes of the run's ODD, sampled
+            # on every tick and judged against its modules, then the
+            # scenario's own items, declared in setup() with register_cover().
+            reset_probes()
             coverage = CoverageCollector(
-                [*odd_cover_items(), *scenario._cover_items],
-                scenario._cross_items,
+                scenario._cover_items, scenario._cross_items, odd=self.odd
             )
             coverage.start(world, clock.simulated)
 

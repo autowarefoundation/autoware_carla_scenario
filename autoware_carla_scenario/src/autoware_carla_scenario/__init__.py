@@ -208,6 +208,19 @@ if TYPE_CHECKING:
         unregister_scenario as unregister_scenario,
     )
     from .coverage import SamplingEvent as SamplingEvent
+    from .odd import (
+        OddAttribute as OddAttribute,
+        OddCondition as OddCondition,
+        OddDefinition as OddDefinition,
+        OddModule as OddModule,
+        all_of as all_of,
+        any_of as any_of,
+        default_odd as default_odd,
+        load_openodd as load_openodd,
+        module_holds as module_holds,
+        register_odd as register_odd,
+        resolve_odd as resolve_odd,
+    )
     from .scenario_base import (
         BaseScenario as BaseScenario,
         EgoConfig as EgoConfig,
@@ -293,6 +306,17 @@ __all__ = [
     "BaseCondition",
     "BaseScenario",
     "SamplingEvent",
+    "OddAttribute",
+    "OddCondition",
+    "OddDefinition",
+    "OddModule",
+    "all_of",
+    "any_of",
+    "default_odd",
+    "load_openodd",
+    "module_holds",
+    "register_odd",
+    "resolve_odd",
     "CarlaWorldPose",
     "CollisionCondition",
     "CollisionTargetType",
@@ -526,6 +550,18 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BaseScenario": (".scenario_base", "BaseScenario"),
     # coverage
     "SamplingEvent": (".coverage", "SamplingEvent"),
+    # odd
+    "OddAttribute": (".odd", "OddAttribute"),
+    "OddCondition": (".odd", "OddCondition"),
+    "OddDefinition": (".odd", "OddDefinition"),
+    "OddModule": (".odd", "OddModule"),
+    "all_of": (".odd", "all_of"),
+    "any_of": (".odd", "any_of"),
+    "default_odd": (".odd", "default_odd"),
+    "load_openodd": (".odd.openodd", "load_openodd"),
+    "module_holds": (".odd", "module_holds"),
+    "register_odd": (".odd", "register_odd"),
+    "resolve_odd": (".odd", "resolve_odd"),
     "EgoConfig": (".scenario_base", "EgoConfig"),
     # scenario package extension API (registry)
     "register_scenario": (".registry", "register_scenario"),

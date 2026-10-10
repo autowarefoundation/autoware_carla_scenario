@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from tqdm import tqdm
 
@@ -15,6 +15,7 @@ from .conditions import ScenarioResult
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
+from .odd import OddDefinition, resolve_odd
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
@@ -71,6 +72,7 @@ class ScenarioQueue:
         max_tick_rate_hz: Optional[float] = None,
         projector_type: Optional[str] = None,
         traffic_backend: Optional[TrafficBackend] = None,
+        odd: Union[str, OddDefinition, None] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -124,6 +126,10 @@ class ScenarioQueue:
                 author.  *None* selects CARLA's TrafficManager on *tm_port*.
                 One backend serves every scenario in the queue, the same way
                 one CARLA server does.
+            odd: The ODD every run is measured against: an
+                :class:`OddDefinition`, or what :func:`resolve_odd` reads (a
+                registered name, an OpenODD YAML path, ``module:function``).
+                *None* selects the built-in ``default`` ODD.
         """
         if server is not None:
             self._server = server
@@ -151,6 +157,8 @@ class ScenarioQueue:
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
         self._traffic_backend = traffic_backend
+        # Resolved now, so a misspelt ODD fails before CARLA starts.
+        self._odd = resolve_odd(odd)
 
         self._scenarios: List[BaseScenario] = []
         #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
@@ -287,6 +295,7 @@ class ScenarioQueue:
             output_dir=self._output_dir,
             max_tick_rate_hz=self._max_tick_rate_hz,
             traffic_backend=self._traffic_backend,
+            odd=self._odd,
         )
         if self._overwrite_xodr:
             if self._xodr_path is None or self._map_name is None:

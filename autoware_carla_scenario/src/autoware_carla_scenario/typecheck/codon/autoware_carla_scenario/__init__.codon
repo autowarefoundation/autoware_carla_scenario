@@ -37,6 +37,8 @@ from .entity_role import EntityRole
 from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
                          FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
 from .coverage import SamplingEvent
+from .odd import (OddAttribute, OddCondition, OddDefinition, OddModule, all_of, any_of,
+                  default_odd, module_holds, register_odd)
 from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
