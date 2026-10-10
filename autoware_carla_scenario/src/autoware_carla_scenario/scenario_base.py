@@ -5,7 +5,17 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Union,
+)
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
@@ -16,6 +26,7 @@ import typesafe_carla.carla as carla
 from .actions import BaseAction, RoutingAction
 from .conditions import BaseCondition, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
+from .coverage.items import CoverItem, CrossItem, SamplingEvent
 from .coordinate import (
     CarlaWorldPose,
     GroundProjectionConfig,
@@ -168,6 +179,8 @@ class BaseScenario(ABC):
         self._pass_conditions: List[BaseCondition] = []
         self._fail_conditions: List[BaseCondition] = []
         self._spectator_camera_config: Optional[SpectatorCameraConfig] = None
+        self._cover_items: List[CoverItem] = []
+        self._cross_items: List[CrossItem] = []
 
     # ------------------------------------------------------------------
     # Ego construction
@@ -658,6 +671,127 @@ class BaseScenario(ABC):
             condition: Condition to add to the fail-condition list.
         """
         self._fail_conditions.append(condition)
+
+    # ------------------------------------------------------------------
+    # Coverage
+    # ------------------------------------------------------------------
+
+    def register_cover(
+        self,
+        name: str,
+        expression: Callable[["carla.World"], Any],
+        *,
+        unit: str = "",
+        range: Optional[tuple[float, float]] = None,
+        every: Optional[float] = None,
+        buckets: Optional[Sequence[float]] = None,
+        values: Optional[Iterable[Any]] = None,
+        ignore: Optional[Callable[[Any], bool]] = None,
+        event: Union[SamplingEvent, BaseCondition] = SamplingEvent.END,
+        text: str = "",
+        target: int = 1,
+    ) -> None:
+        """Declare a cover item: a value sampled during the run, in buckets.
+
+        The counterpart of ``cover()`` in OpenSCENARIO DSL.  On each *event*
+        the runner calls *expression* with the world and counts a hit in the
+        bucket the value falls in; ``scenario-coverage`` merges the hits of
+        many runs and lists the buckets none of them hit.  An expression that
+        returns ``None`` (or raises) has taken no sample.
+
+        Give exactly one of:
+
+        * *range* and *every* -- equal buckets, ``range=(10, 130), every=10``
+          making twelve;
+        * *buckets* -- explicit edges, ``N`` of them making ``N - 1`` buckets;
+        * *values* -- one bucket per value: an enum class, ``[False, True]``,
+          a list of strings.
+
+        Each numeric bucket holds its lower edge, and the last its upper edge
+        too.  A value outside every bucket is counted apart, as out of range.
+
+        Args:
+            name: The item's name, unique within the scenario.
+            expression: Reads the value from the world.
+            unit: The unit *expression* returns, for the report.  Nothing is
+                converted.
+            range: ``(low, high)`` of the buckets made with *every*.
+            every: The width of each bucket over *range*.
+            buckets: Explicit bucket edges, ascending.
+            values: The values, one bucket each.
+            ignore: Called with each sampled value; a sample it returns true
+                for is left out.
+            event: When to sample: a :class:`SamplingEvent` (``END`` by
+                default, as in the DSL; ``START``; ``TICK`` for every tick), or
+                a :class:`BaseCondition`, to sample each time it becomes
+                satisfied.  A condition is checked once per tick for this, so
+                pass one that is not also a pass or fail condition.
+            text: A description for the report.
+            target: Hits a bucket needs to count as covered.
+        """
+        self._require_unused_coverage_name(name)
+        self._cover_items.append(
+            CoverItem(
+                name=name,
+                expression=expression,
+                unit=unit,
+                range=range,
+                every=every,
+                buckets=buckets,
+                values=values,
+                ignore=ignore,
+                event=event,
+                text=text,
+                target=target,
+            )
+        )
+
+    def register_cross(
+        self,
+        name: str,
+        items: Sequence[str],
+        *,
+        text: str = "",
+        target: int = 1,
+    ) -> None:
+        """Declare cross coverage of cover items already registered.
+
+        Every combination of the items' buckets is a cell, hit when all the
+        items hit those buckets on the same sample -- ``cover(name, items:
+        [...])`` in OpenSCENARIO DSL.  The items must share their *event*.
+
+        Args:
+            name: The cross's name, unique within the scenario.
+            items: Names of cover items registered with :meth:`register_cover`.
+            text: A description for the report.
+            target: Hits a cell needs to count as covered.
+        """
+        self._require_unused_coverage_name(name)
+        by_name = {i.name: i for i in self._cover_items}
+        missing = [n for n in items if n not in by_name]
+        if missing:
+            raise ValueError(
+                f"register_cross({name!r}): no cover item named {missing}; "
+                "register the items with register_cover() first"
+            )
+        self._cross_items.append(
+            CrossItem(
+                name=name,
+                items=[by_name[n] for n in items],
+                text=text,
+                target=target,
+            )
+        )
+
+    def _require_unused_coverage_name(self, name: str) -> None:
+        if name.startswith("odd."):
+            raise ValueError(
+                f"coverage: {name!r}: names starting with 'odd.' are the ODD's"
+            )
+        taken = {i.name for i in self._cover_items}
+        taken |= {c.name for c in self._cross_items}
+        if name in taken:
+            raise ValueError(f"coverage: {name!r} is already registered")
 
     # ------------------------------------------------------------------
     # Convenience helpers for common post-tick patterns

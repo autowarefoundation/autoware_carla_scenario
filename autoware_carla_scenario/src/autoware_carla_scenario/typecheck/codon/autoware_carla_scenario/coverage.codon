@@ -1,0 +1,55 @@
+# Model of autoware_carla_scenario.coverage (docs/typecheck.md).
+#
+# Only what a scenario names: the sampling event of a cover item.  Cover items
+# themselves are declared through BaseScenario.register_cover().
+
+import typesafe_carla.carla as carla
+
+from ._tc import _expect_float, _expect_optional_float
+from .conditions import BaseCondition, _expect_condition
+
+
+@tuple
+class SamplingEvent:
+    value: str
+    START: ClassVar[SamplingEvent] = SamplingEvent("start")
+    END: ClassVar[SamplingEvent] = SamplingEvent("end")
+    TICK: ClassVar[SamplingEvent] = SamplingEvent("tick")
+
+
+def _expect_sampling_event(event):
+    """A Union[SamplingEvent, BaseCondition] argument."""
+    if hasattr(event, "_acs_condition"):
+        _expect_condition(event)
+    elif isinstance(event, SamplingEvent):
+        pass
+    else:
+        compile_error("event must be a SamplingEvent or a condition")
+
+
+def _expect_cover_expression(expression):
+    """A Callable[[carla.World], Any] argument: a cover expression or an ODD probe."""
+    expression(carla.Client().get_world())
+
+
+def _expect_optional_range(r):
+    """An Optional[tuple[float, float]] argument."""
+    if isinstance(r, None):
+        pass
+    elif isinstance(r, Optional[NoneType]):
+        pass
+    else:
+        low, high = r
+        _expect_float(low)
+        _expect_float(high)
+
+
+def _expect_optional_edges(edges):
+    """An Optional[Sequence[float]] argument."""
+    if isinstance(edges, None):
+        pass
+    elif isinstance(edges, Optional[NoneType]):
+        pass
+    else:
+        for edge in edges:
+            _expect_float(edge)

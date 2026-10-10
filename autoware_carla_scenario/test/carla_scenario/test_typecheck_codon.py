@@ -63,6 +63,7 @@ from autoware_carla_scenario import (
     Lanelet2Pose,
     MapPose,
     ReferenceContext,
+    SamplingEvent,
     ScenarioResult,
     SpeedCondition,
     StickyCondition,
@@ -229,6 +230,158 @@ def test_a_correct_scenario_compiles(tmp_path: Path) -> None:
     scenario, config, _ = _write_case(tmp_path, _VALID_SETUP)
     result = typecheck_scenario(scenario, config, {"min_speed_kmh": 5})
     assert result.ok, result.format()
+
+
+_COVER_SETUP = """
+self.register_cover(
+    "ego_speed",
+    lambda world: 3.0,
+    unit="km/h",
+    range=(0.0, 60.0),
+    every=10.0,
+    event=SamplingEvent.TICK,
+)
+self.register_cover(
+    "gap",
+    ego_gap,
+    buckets=[0.0, 5.0, 10.0, 30.0],
+    ignore=lambda v: v < 0.0,
+    event=SamplingEvent.TICK,
+)
+self.register_cover(
+    "turn",
+    lambda world: TurnDirection.LEFT,
+    values=[TurnDirection.LEFT, TurnDirection.RIGHT],
+    event=ElapsedTimeCondition(1.0, label="sample_at_1s"),
+    text="the turn taken",
+    target=2,
+)
+self.register_cover("braking", lambda world: False, values=[False, True])
+self.register_cross("speed_x_gap", ["ego_speed", "gap"], text="speed and gap")
+"""
+
+_COVER_EXTRA = """
+
+
+def ego_gap(world: carla.World) -> float | None:
+    return 4.0
+"""
+
+
+def test_cover_items_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(tmp_path, _COVER_SETUP, _COVER_EXTRA)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_cover_event_that_is_neither_an_event_nor_a_condition_is_refused(
+    tmp_path: Path,
+) -> None:
+    setup = 'self.register_cover("x", ego_gap, values=[1], event="end")\n'
+    scenario, config, path = _write_case(tmp_path, setup, _COVER_EXTRA)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "event must be a SamplingEvent or a condition" in error.message
+    assert error.line == _line_of(path, 'event="end"')
+
+
+_ODD_MODULE = """
+from __future__ import annotations
+
+import typesafe_carla.carla as carla
+
+from autoware_carla_scenario import (
+    OddAttribute,
+    OddDefinition,
+    OddModule,
+    any_of,
+    module_holds,
+    register_odd,
+)
+from autoware_carla_scenario.odd import INTENSITY_LEVELS, lanelet_location, rain, speed_limit_kph
+
+
+def yaw_rate(world: carla.World) -> float | None:
+    return 0.0
+
+
+def build() -> OddDefinition:
+    location = OddAttribute("scenery.location", lanelet_location, values=["urban", "nonurban"])
+    speed_limit = OddAttribute(
+        "scenery.speed_limit", speed_limit_kph, unit="km/h", buckets=[0, 30, 60, 100]
+    )
+    weather = OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS)
+    yaw = OddAttribute("dynamic.yaw_rate", yaw_rate, range=(-30.0, 30.0), every=10.0)
+    return OddDefinition(
+        "urban",
+        [location, speed_limit, weather, yaw],
+        [
+            OddModule("roads", include_and=[location.is_in(["urban"]), speed_limit.between(0, 60)]),
+            OddModule("weather", exclude_or=[weather.is_in(["heavy"])], labels=["fair"]),
+            OddModule("steady", include_or=[yaw.at_most(20.0), any_of((yaw.less_than(25.0),))]),
+            OddModule(
+                "root",
+                include_and=[module_holds("roads"), module_holds("fair"), module_holds("steady")],
+                exclude_or=[yaw.is_unknown()],
+                labels=[],
+            ),
+            OddModule("empty", include_and=[], active=False),
+        ],
+        roots=("root",),
+    )
+
+
+register_odd("urban_case", build)
+"""
+
+
+def _write_odd(tmp_path: Path, source: str) -> Any:
+    global _counter
+    _counter += 1
+    package = f"acs_typecheck_odd_{_counter}"
+    root = tmp_path / package
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "odds.py").write_text(source)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        return importlib.import_module(f"{package}.odds"), root / "odds.py"
+    finally:
+        sys.path.remove(str(tmp_path))
+
+
+def test_an_odd_written_in_python_compiles(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    module, _ = _write_odd(tmp_path, _ODD_MODULE)
+    result = typecheck_odd(module.build)
+    assert result.ok, result.format()
+
+
+def test_a_module_with_two_include_sections_is_refused(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace(
+        'OddModule("steady", include_or=',
+        'OddModule("steady", include_and=[yaw.at_most(1.0)], include_or=',
+    )
+    module, _ = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "one include section" in error.message, error.format()
+
+
+def test_an_odd_condition_of_the_wrong_type_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace(
+        "speed_limit.between(0, 60)", 'speed_limit.between("0", 60)'
+    )
+    module, path = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "expected a float" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, 'between("0"')
 
 
 def test_a_custom_condition_is_checked_through_its_check_method(tmp_path: Path) -> None:

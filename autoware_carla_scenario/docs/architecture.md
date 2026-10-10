@@ -220,10 +220,11 @@ The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode.
 │  5. Traffic backend       → backend.tick(world, elapsed)  │
 │  6. Post-tick actions     → action.tick(world, elapsed)   │
 │  7. Post-tick callbacks   → callback(world)               │
-│  8. Periodic logging      → ego OpenDRIVE position (1/s)  │
-│  9. Pass conditions       → first satisfied → PASS & exit │
-│  10. Fail conditions      → first triggered → FAIL & exit │
-│  11. is_done() check      → True → PASS & exit            │
+│  8. Coverage              → sample TICK / condition items │
+│  9. Periodic logging      → ego OpenDRIVE position (1/s)  │
+│  10. Pass conditions      → first satisfied → PASS & exit │
+│  11. Fail conditions      → first triggered → FAIL & exit │
+│  12. is_done() check      → True → PASS & exit            │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -797,6 +798,7 @@ base_path/
 │   └── YYYY-MM-DD/
 │       └── HH-MM-SS/
 │           ├── ScenarioName_result.json
+│           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
 │           ├── ScenarioName.log        # CARLA native recording
 │           ├── ScenarioName.mp4        # Rendered video
 │           ├── batch_results.json      # Batch summary (batch mode only)
