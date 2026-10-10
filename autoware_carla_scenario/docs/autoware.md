@@ -100,6 +100,27 @@ A stack that exits during a scenario ends it: the result's message says
 not discover what is left of the last one before those participants time out:
 `'autoware.launcher.ros_domain_ids=[10,11]'`.
 
+## Sweeps
+
+A sweep (`--multirun hydra/sweeper=lanelet_constraint`) runs each case in a
+job of its own, and each job starts and removes its own Autoware the same way:
+
+```bash
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+  scenario=intersection_passing/right_turn_sweep map=town10hd_opt \
+  ego.entity=autoware autoware.launcher.type=docker \
+  autoware.launcher.workspace=$HOME/autoware \
+  'autoware.launcher.launch=[...]' \
+  +sweep.job_timeout_seconds=900
+```
+
+`sweep.job_timeout_seconds` (120 s by default; `+` adds it to a sweep YAML
+that does not set it) is a whole job's budget --
+starting Autoware, localizing, routing, engaging and the scenario itself --
+so raise it: launching Autoware alone can take most of two minutes. A job the
+sweeper kills at that limit leaves its container behind, and the next job's
+preparation removes it before its own stack starts.
+
 ## Autoware on the host
 
 `autoware.launcher.type=command` runs a command of your own instead, as a
