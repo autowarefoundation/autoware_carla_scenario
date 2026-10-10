@@ -210,10 +210,14 @@ If pre-commit hooks fail:
 
 ## Project Structure
 
-- `autoware_carla_scenario/` - The framework package (the only uv workspace member)
+- `autoware_carla_scenario/` - The framework package (published to PyPI)
   - `src/autoware_carla_scenario/` - Package sources
   - `test/` - pytest suite
   - `docs/`, `mkdocs.yml` - Documentation
+- `autoware_carla_scenario_t4/` - Reads T4 driving scenes and writes them down
+  as scenario documents (`t4-scenario`). Depends on the framework, never the
+  other way round: the framework carries no dataset format, and its Codon
+  model covers only itself
 - `data/` - The nishishinjuku fixture map (Lanelet2 `.osm` and its committed OpenDRIVE `.xodr`) shared by the tests and the example configs
 - `examples/scenario_package_template/` - A standalone scenario package to copy
 - `.github/actions/pack-scenario-image/` - Composite action that packs a scenario package into an image

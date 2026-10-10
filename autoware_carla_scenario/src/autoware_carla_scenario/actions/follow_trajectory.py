@@ -5,7 +5,7 @@ trajectory, its time reference, the following mode and an initial distance
 offset (see :mod:`autoware_carla_scenario.trajectory.model`).  It is what lets a
 recorded drive be written down as a scenario: every vehicle and pedestrian of a
 T4 scene becomes an entity following the trajectory it was recorded on
-(:mod:`autoware_carla_scenario.trajectory.t4`).
+(the ``autoware_carla_scenario_t4`` package).
 """
 
 from __future__ import annotations

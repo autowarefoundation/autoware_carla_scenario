@@ -75,9 +75,6 @@ dependencies = [
     # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
     # so the range has to reach past it; the ceiling is the newest major tested.
     "protobuf>=4.25.0,<8",
-    # A T4 scene's `derived/frames.pack` (the per-frame object boxes) is
-    # zstd-compressed frame by frame; `trajectory/t4.py` reads it.
-    "zstandard>=0.23",
 ]
 
 [project.urls]

@@ -1,6 +1,7 @@
 [tool.uv.workspace]
 members = [
     "autoware_carla_scenario",
+    "autoware_carla_scenario_t4",
 ]
 
 [dependency-groups]
@@ -60,6 +61,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 testpaths = [
     "autoware_carla_scenario/test",
+    "autoware_carla_scenario_t4/test",
 ]
 addopts = "-n auto --testmon"
 markers = [

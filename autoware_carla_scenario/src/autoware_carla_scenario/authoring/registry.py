@@ -105,6 +105,11 @@ FieldKind = Literal[
     "signal_phase",
     "int_list",
     "int_list_or_ref",
+    # A polyline of map-frame vertices, ``[x, y, yaw, time]`` per row (see
+    # :mod:`autoware_carla_scenario.trajectory.authoring`).  Kept in the
+    # document as data and edited as text, one vertex per line: a recording
+    # transcribes to hundreds of them, which no row of form controls could hold.
+    "trajectory",
 ]
 
 #: Field kinds that hold one whole number, and those that hold a list of them.
@@ -1066,6 +1071,171 @@ register_action_spec(
             "destination.  It keeps going rather than routing around the "
             "vehicle the scenario is about, which is what makes it usable "
             "for a crossing."
+        ),
+    )
+)
+
+#: Mirrors ``TrajectoryFollowingMode``; ``test_authoring_registry`` keeps the
+#: two in step (the codegen refuses an option that names no member).
+_FOLLOWING_MODES: tuple[SelectOption, ...] = (
+    SelectOption("position", "Position -- placed on it every tick (replay)"),
+    SelectOption("follow", "Follow -- a controller drives along it"),
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="follow_trajectory",
+        title="Follow Trajectory",
+        category="Vehicle / Motion",
+        builder="build_follow_trajectory_action",
+        target="..actions:FollowTrajectoryAction",
+        actor_kinds=("ego", "vehicle", "pedestrian"),
+        visual_kind="continuous",
+        # The trajectory and its time reference are each assembled from
+        # several fields, which the constructor's signature alone cannot say.
+        builds=(
+            BuiltArgument(
+                kwarg="trajectory",
+                target="..trajectory.authoring:authored_trajectory",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("path_source", "path_source"),
+                            ("vertices", "vertices"),
+                            ("lanelet_ids", "lanelet_ids"),
+                            ("speed_kmh", "speed_kmh"),
+                            ("lateral_offset_m", "lateral_offset_m"),
+                        ),
+                    ),
+                ),
+            ),
+            BuiltArgument(
+                kwarg="time_reference",
+                target="..trajectory.authoring:authored_timing",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("time_domain", "time_domain"),
+                            ("scale", "time_scale"),
+                            ("offset", "time_offset"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="path_source",
+                label="Path",
+                kind="select",
+                default="vertices",
+                options=(
+                    SelectOption("vertices", "Vertices (map frame)"),
+                    SelectOption("lanelets", "Along lanelets"),
+                ),
+                help=(
+                    "Vertices are written out below -- a recording transcribes "
+                    "to them; a lanelet path follows the centrelines of the "
+                    "lanelets picked on the map."
+                ),
+            ),
+            FieldSpec(
+                name="vertices",
+                label="Vertices",
+                kind="trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "One vertex per line: x, y[, yaw][, time] in the map frame "
+                    "(m, rad, s).  Leave yaw empty to face along the path, and "
+                    "give every vertex a time or none."
+                ),
+            ),
+            FieldSpec(
+                name="lanelet_ids",
+                label="Lanelets",
+                kind="lanelet_list",
+                default=None,
+                required=False,
+                help="The route, in the order it is driven.",
+            ),
+            FieldSpec(
+                name="speed_kmh",
+                label="Path speed",
+                kind="number",
+                default=30.0,
+                required=False,
+                unit="km/h",
+                help="Times the lanelet path; empty or 0 leaves it untimed.",
+            ),
+            FieldSpec(
+                name="lateral_offset_m",
+                label="Lateral offset",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="From the lanelets' centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="time_domain",
+                label="Time reference",
+                kind="select",
+                default="relative",
+                options=(
+                    SelectOption("relative", "From when the action starts"),
+                    SelectOption("absolute", "From when the scenario starts"),
+                    SelectOption("none", "None -- keep the entity's own speed"),
+                ),
+                help=(
+                    "A vertex at time t is reached at t * scale + offset, "
+                    "counted from the start this names."
+                ),
+            ),
+            FieldSpec(
+                name="time_scale",
+                label="Time scale",
+                kind="number",
+                default=1.0,
+                help="2 plays the trajectory at half speed.",
+            ),
+            FieldSpec(
+                name="time_offset",
+                label="Time offset",
+                kind="number",
+                default=0.0,
+                unit="s",
+            ),
+            FieldSpec(
+                name="following_mode",
+                label="Following mode",
+                kind="select",
+                default="position",
+                options=_FOLLOWING_MODES,
+            ),
+            FieldSpec(
+                name="initial_distance_offset",
+                label="Start this far along",
+                kind="number",
+                default=0.0,
+                unit="m",
+            ),
+            FieldSpec(
+                name="hidden_outside_trajectory",
+                label="Out of the world before its first and after its last vertex",
+                kind="bool",
+                default=False,
+                help=(
+                    "For a road user a recording picks up late or loses early. "
+                    "Needs the Position mode and a time reference."
+                ),
+            ),
+        ),
+        description=(
+            "Move a vehicle or pedestrian along a trajectory (OpenSCENARIO "
+            "FollowTrajectoryAction).  The card runs until the entity reaches "
+            "the end of it; while it runs, the action is the entity's only "
+            "driver."
         ),
     )
 )

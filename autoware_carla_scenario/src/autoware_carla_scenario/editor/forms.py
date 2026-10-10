@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Sequence
 
+from ..trajectory.authoring import parse_vertices
 from ..authoring.registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -63,6 +64,8 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
         return float(text)
     if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
         return parse_int_list(text)
+    if spec.kind == "trajectory":
+        return [list(row) for row in parse_vertices(text)]
     return text
 
 

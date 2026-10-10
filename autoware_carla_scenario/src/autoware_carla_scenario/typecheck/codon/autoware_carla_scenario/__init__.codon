@@ -42,7 +42,5 @@ from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import LaneChangeDirection, TurnDirection
-from .trajectory import (MapPose, ReferenceContext, T4Category, T4ObjectTrack,
-                         T4SceneTranscription, Trajectory, TrajectoryFollowingMode,
-                         TrajectoryTiming, TrajectoryVertex, read_t4_scene)
-from .t4_replay import T4ReplayScenario, replay_t4_objects
+from .trajectory import (MapPose, ReferenceContext, Trajectory, TrajectoryFollowingMode,
+                         TrajectoryTiming, TrajectoryVertex)

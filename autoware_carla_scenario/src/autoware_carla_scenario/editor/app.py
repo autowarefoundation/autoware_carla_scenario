@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from ..authoring import registry
 from ..authoring.models import SIGNAL_STATE_NAMES
 from ..authoring.persistence import DraftStore, default_draft_dir
+from ..trajectory.authoring import format_vertices, trajectory_summary
 from .service import EditorError, EditorService, condition_actions
 
 logger = logging.getLogger(__name__)
@@ -177,6 +178,9 @@ def create_app(
         # The colours a phase may set, from the one list the runtime and the
         # validator both hold to.
         signal_state_names=SIGNAL_STATE_NAMES,
+        # A trajectory field's rows as the text the inspector edits.
+        format_vertices=format_vertices,
+        trajectory_summary=trajectory_summary,
     )
 
     application.state.templates = templates

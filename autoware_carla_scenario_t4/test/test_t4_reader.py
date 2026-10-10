@@ -17,12 +17,13 @@ import numpy as np
 import pytest
 import zstandard
 
-from autoware_carla_scenario import (
+from autoware_carla_scenario_t4 import (
     T4Category,
+    T4Detection,
     T4SceneTranscription,
+    associate_tracks,
     read_t4_scene,
 )
-from autoware_carla_scenario.trajectory.t4 import T4Detection, associate_tracks
 
 _FRAMES = 20
 _HZ = 10.0

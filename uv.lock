@@ -21,6 +21,7 @@ resolution-markers = [
 [manifest]
 members = [
     "autoware-carla-scenario",
+    "autoware-carla-scenario-t4",
 ]
 
 [manifest.dependency-groups]
@@ -180,7 +181,6 @@ dependencies = [
     { name = "tqdm" },
     { name = "typesafe-carla", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "uvicorn", extra = ["standard"] },
-    { name = "zstandard" },
 ]
 
 [package.optional-dependencies]
@@ -225,9 +225,27 @@ requires-dist = [
     { name = "traci", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "typesafe-carla", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=0.3.0,<0.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
-    { name = "zstandard", specifier = ">=0.23" },
 ]
 provides-extras = ["sumo", "map"]
+
+[[package]]
+name = "autoware-carla-scenario-t4"
+version = "0.1.0"
+source = { editable = "autoware_carla_scenario_t4" }
+dependencies = [
+    { name = "autoware-carla-scenario" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "zstandard" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "autoware-carla-scenario", editable = "autoware_carla_scenario" },
+    { name = "numpy", specifier = ">=1.21" },
+    { name = "zstandard", specifier = ">=0.23" },
+]
 
 [[package]]
 name = "babel"

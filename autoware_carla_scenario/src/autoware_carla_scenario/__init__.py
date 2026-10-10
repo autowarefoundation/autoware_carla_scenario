@@ -102,14 +102,6 @@ if TYPE_CHECKING:
         TrajectoryFollowingMode as TrajectoryFollowingMode,
         TrajectoryTiming as TrajectoryTiming,
         TrajectoryVertex as TrajectoryVertex,
-        T4Category as T4Category,
-        T4ObjectTrack as T4ObjectTrack,
-        T4SceneTranscription as T4SceneTranscription,
-        read_t4_scene as read_t4_scene,
-    )
-    from .trajectory.replay import (
-        T4ReplayScenario as T4ReplayScenario,
-        replay_t4_objects as replay_t4_objects,
     )
     from .conditions import (
         AccelerationCondition as AccelerationCondition,
@@ -408,19 +400,13 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
-    # Trajectories and T4 scenes
+    # Trajectories
     "MapPose",
     "ReferenceContext",
     "Trajectory",
     "TrajectoryFollowingMode",
     "TrajectoryTiming",
     "TrajectoryVertex",
-    "T4Category",
-    "T4ObjectTrack",
-    "T4SceneTranscription",
-    "read_t4_scene",
-    "T4ReplayScenario",
-    "replay_t4_objects",
     # Sensors
     "CameraRecorder",
     "CameraSensorBase",
@@ -454,19 +440,13 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficSourceAction": (".actions", "TrafficSourceAction"),
     "TrafficSinkAction": (".actions", "TrafficSinkAction"),
     "TurnDirection": (".actions", "TurnDirection"),
-    # trajectories / T4 scenes
+    # trajectories
     "MapPose": (".trajectory", "MapPose"),
     "ReferenceContext": (".trajectory", "ReferenceContext"),
     "Trajectory": (".trajectory", "Trajectory"),
     "TrajectoryFollowingMode": (".trajectory", "TrajectoryFollowingMode"),
     "TrajectoryTiming": (".trajectory", "TrajectoryTiming"),
     "TrajectoryVertex": (".trajectory", "TrajectoryVertex"),
-    "T4Category": (".trajectory", "T4Category"),
-    "T4ObjectTrack": (".trajectory", "T4ObjectTrack"),
-    "T4SceneTranscription": (".trajectory", "T4SceneTranscription"),
-    "read_t4_scene": (".trajectory", "read_t4_scene"),
-    "T4ReplayScenario": (".trajectory.replay", "T4ReplayScenario"),
-    "replay_t4_objects": (".trajectory.replay", "replay_t4_objects"),
     # camera / sensor
     "CameraRecorder": (".camera_recorder", "CameraRecorder"),
     "CameraSensorBase": (".sensor", "CameraSensorBase"),

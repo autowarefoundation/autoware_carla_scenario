@@ -64,6 +64,7 @@ __all__ = [
     "build_traffic_sink_action",
     "build_traffic_source_action",
     "build_walk_straight_action",
+    "build_follow_trajectory_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
@@ -832,6 +833,46 @@ def build_walk_straight_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+    )
+
+
+def build_follow_trajectory_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`FollowTrajectoryAction`."""
+    from ..actions import FollowTrajectoryAction  # noqa: PLC0415
+    from ..trajectory.authoring import authored_trajectory  # noqa: PLC0415
+    from ..trajectory.authoring import authored_timing  # noqa: PLC0415
+    from ..trajectory.model import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    trajectory = authored_trajectory(
+        path_source=params["path_source"],
+        vertices=params["vertices"],
+        lanelet_ids=params["lanelet_ids"],
+        speed_kmh=params["speed_kmh"],
+        lateral_offset_m=params["lateral_offset_m"],
+    )
+    time_reference = authored_timing(
+        time_domain=params["time_domain"],
+        scale=params["time_scale"],
+        offset=params["time_offset"],
+    )
+    return FollowTrajectoryAction(
+        entity_name=compiled.actor_role,
+        trajectory=trajectory,
+        time_reference=time_reference,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+        initial_distance_offset=params["initial_distance_offset"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        hidden_outside_trajectory=params["hidden_outside_trajectory"],
     )
 
 

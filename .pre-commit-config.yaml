@@ -42,6 +42,8 @@ repos:
           - --ignore-missing-imports
           - autoware_carla_scenario/src
           - autoware_carla_scenario/test
+          - autoware_carla_scenario_t4/src
+          - autoware_carla_scenario_t4/test
         pass_filenames: false
         always_run: true
 
@@ -63,7 +65,7 @@ repos:
       # edited.
       - id: pytest-carla
         name: pytest (autoware_carla_scenario)
-        entry: uv run pytest --no-testmon -m "not integration and not slow" autoware_carla_scenario/test
+        entry: uv run pytest --no-testmon -m "not integration and not slow" autoware_carla_scenario/test autoware_carla_scenario_t4/test
         language: system
         pass_filenames: false
-        files: '^(autoware_carla_scenario/|data/|pyproject\.toml$|uv\.lock$)'
+        files: '^(autoware_carla_scenario/|autoware_carla_scenario_t4/|data/|pyproject\.toml$|uv\.lock$)'

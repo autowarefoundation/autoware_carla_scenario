@@ -97,6 +97,13 @@
            value="{{ current if current is string else (current or [])|join(', ') }}"
            {% if spec.kind == 'int_list_or_ref' %}list="ref-values"{% endif %}
            placeholder="{{ '3, 4, 41' if spec.kind == 'int_list' else '3, 4, 41  or  ${map.no_3d_model_lanelet_ids}' }}">
+  {% elif spec.kind == 'trajectory' %}
+    {# Rows of data rather than one value: a recording transcribes to hundreds
+       of vertices, so they are edited as text, one per line, and the line
+       above says what the text adds up to. #}
+    <p class="ed-help mono">{{ trajectory_summary(current) }}</p>
+    <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
+              placeholder="x, y[, yaw][, time]  -- one vertex per line">{{ format_vertices(current or []) }}</textarea>
   {% elif spec.kind == 'int' %}
     <input type="number" step="1" name="{{ name }}" class="ed-input"
            value="{{ '' if current is none else current }}">

@@ -1,4 +1,4 @@
-"""Transcribe a T4 driving scene into trajectories a scenario can replay.
+"""Read a T4 driving scene and transcribe it into trajectories.
 
 A converted T4 scene (the format ``tier4/e2e-devkit`` reads) is a directory:
 
@@ -13,8 +13,8 @@ A converted T4 scene (the format ``tier4/e2e-devkit`` reads) is a directory:
   ``gt_labels`` ``[M]``, in that frame's ego (rear-axle) frame.
 
 The ego trajectory and every object's track become a
-:class:`~autoware_carla_scenario.trajectory.model.Trajectory` of
-:class:`~autoware_carla_scenario.trajectory.model.MapPose` vertices, timed on the
+:class:`~autoware_carla_scenario.Trajectory` of
+:class:`~autoware_carla_scenario.MapPose` vertices, timed on the
 scene's own clock (frame 0 at ``t = 0``, 10 Hz).  Nothing is converted to CARLA
 coordinates here: that happens when the action runs, through the map the
 scenario loaded -- which has to be the scene's area map
@@ -46,7 +46,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from .model import MapPose, Trajectory, TrajectoryVertex
+from autoware_carla_scenario.trajectory import MapPose, Trajectory, TrajectoryVertex
 
 logger = logging.getLogger(__name__)
 

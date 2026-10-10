@@ -62,13 +62,8 @@ class TestSpecCoverage:
         from autoware_carla_scenario import actions
         from autoware_carla_scenario.actions.base import BaseAction
 
-        # Every action the runtime has is authorable, but one:
-        # FollowTrajectoryAction's trajectory is data -- hundreds of timed
-        # vertices transcribed from a recording (trajectory/t4.py) -- and not
-        # something a form field edits.
-        self._assert_every_class_is_built(
-            actions, BaseAction, {"FollowTrajectoryAction"}, "action"
-        )
+        # Empty on purpose: every action the runtime has is authorable.
+        self._assert_every_class_is_built(actions, BaseAction, set(), "action")
 
     def test_reissue_never_reaches_the_authoring_surface(self) -> None:
         """A scenario cannot know what drives an entity, so it must not say.
