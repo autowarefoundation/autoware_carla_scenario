@@ -247,6 +247,9 @@ self.register_cover(
     buckets=[0.0, 5.0, 10.0, 30.0],
     ignore=lambda v: v < 0.0,
     event=SamplingEvent.TICK,
+    cover_by="meters",
+    target=50,
+    min_stay=1.0,
 )
 self.register_cover(
     "turn",
@@ -257,7 +260,9 @@ self.register_cover(
     target=2,
 )
 self.register_cover("braking", lambda world: False, values=[False, True])
-self.register_cross("speed_x_gap", ["ego_speed", "gap"], text="speed and gap")
+self.register_cross(
+    "speed_x_gap", ["ego_speed", "gap"], text="speed and gap", cover_by="seconds", target=2.5
+)
 """
 
 _COVER_EXTRA = """
@@ -305,7 +310,14 @@ def yaw_rate(world: carla.World) -> float | None:
 
 
 def build() -> OddDefinition:
-    location = OddAttribute("scenery.location", lanelet_location, values=["urban", "nonurban"])
+    location = OddAttribute(
+        "scenery.location",
+        lanelet_location,
+        values=["urban", "nonurban"],
+        cover_by="meters",
+        target=200,
+        min_stay=2.0,
+    )
     speed_limit = OddAttribute(
         "scenery.speed_limit", speed_limit_kph, unit="km/h", buckets=[0, 30, 60, 100]
     )

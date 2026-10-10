@@ -55,8 +55,11 @@ class OddAttribute:
     text: str
 
     def __init__(self, name: str, probe, *_kw, unit: str = "", range = None,
-                 every = None, buckets = None, values = None, text: str = ""):
+                 every = None, buckets = None, values = None, text: str = "",
+                 target = 1.0, cover_by: str = "hits", min_stay = None):
         _keyword_only(_kw, "OddAttribute(): every argument but name and probe")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
         _expect_cover_expression(probe)
         _expect_optional_range(range)
         _expect_optional_float(every)

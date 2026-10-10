@@ -100,7 +100,9 @@ class CutInScenario(BaseScenario):
 | `ignore` | `ignore:` | Called with each value; a sample it returns true for is left out. |
 | `event` | `event:` | When to sample (below). Default `SamplingEvent.END`, as in the DSL. |
 | `text` | `text:` | A description for the report. |
-| `target` | `target:` | Hits a bucket needs to be covered. |
+| `target` | `target:` | What a bucket needs to be covered, in `cover_by` (hits by default). |
+| `cover_by` | - | What `target` counts: `"hits"`, or `"seconds"`, `"meters"`, `"entries"` (below). |
+| `min_stay` | - | Stays in a bucket shorter than this many seconds do not count (below). |
 
 Give exactly one of `range` (with `every`), `buckets` and `values`. Each
 numeric bucket holds its lower edge, and the last bucket its upper edge too.
@@ -144,16 +146,27 @@ three top-level categories:
 | Item | Buckets | Read from |
 |---|---|---|
 | `odd.scenery.junction` | false, true | The ego's CARLA waypoint |
-| `odd.scenery.location` | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
-| `odd.scenery.road_type` | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
-| `odd.scenery.speed_limit` | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
-| `odd.scenery.lane_count` | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions |
+| `odd.scenery.location` ² | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
+| `odd.scenery.road_type` ² | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
+| `odd.scenery.speed_limit` ² | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
+| `odd.scenery.lane_count` ² | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions |
 | `odd.environment.illumination` | day, low_sun, twilight, night | Sun altitude: day from 15°, low sun from 0°, civil twilight to -6° |
 | `odd.environment.rain` | none, light, moderate, heavy | CARLA precipitation (0-100): 1, 30, 70 |
 | `odd.environment.fog` | none, light, moderate, heavy | CARLA fog density (0-100): 1, 30, 70 |
-| `odd.dynamic.ego_speed` | 0-120 km/h every 10 | Ego velocity |
+| `odd.dynamic.ego_speed` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
 | `odd.dynamic.traffic_density` | none, low (1-2), medium (3-5), high (6+) | Other vehicles within 50 m |
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
+
+² Covered by a stay of 2 s or more (`cover_by="entries", min_stay=2`).
+Clipping a section while merging or changing lanes does not cover it.
+
+³ Covered by a stay of 3 s or more (`cover_by="entries", min_stay=3`). An ego
+accelerating from a stop to 60 km/h passes through every bucket below 60
+without driving at any of those speeds. Holding a bucket for 3 s means
+driving at roughly that speed, not passing through it. The buckets are
+centred on the multiples of 10 km/h, where speed limits are, so an ego
+cruising at 50 km/h stays in `[45, 55)` instead of flickering between two
+buckets whose edge is at 50.
 
 A reading the simulator does not support returns nothing. The item then has
 no samples, the report says so, and the run is not affected. Examples are the
@@ -170,6 +183,37 @@ mm/h of rain. The rain and fog buckets are therefore named levels.
 Because ODD items are sampled every tick, their hits count ticks. The report
 also counts, per bucket, how many **runs** hit it. A bucket held for many
 ticks in a single run is still only one situation.
+
+### Coverage criteria: `cover_by` and `min_stay`
+
+By default a bucket is covered after `target` hits, one by default: a single
+tick is enough. That lets an ego that clips a three-lane section for one frame
+while merging cover `lane_count=3`. Two parameters say what covering means
+instead:
+
+- `cover_by` picks the measure `target` counts: `"hits"` (the default),
+  `"seconds"` spent in the bucket, `"meters"` the ego drove in it, or
+  `"entries"` into it (see exposure, below).
+- `min_stay` (seconds) leaves out stays shorter than it: their hits, seconds,
+  metres and the entry itself do not count towards `target`.
+
+```python
+self.register_cover(
+    "gap", ego_gap, buckets=[0, 5, 10, 30], event=SamplingEvent.TICK,
+    cover_by="meters", target=50, min_stay=1.0,   # 50 m per bucket, stays of 1 s or more
+)
+```
+
+`"seconds"`, `"meters"` and `min_stay` need an item sampled on
+`SamplingEvent.TICK`: a one-shot sample has no duration or distance.
+`"entries"` works on any event. ODD attributes take the same three
+parameters (`OddAttribute(..., cover_by="meters", target=200, min_stay=2)`,
+or the same keys in a binding file). Crosses take them too.
+
+The coverage file keeps the raw measures and, with `min_stay`, the counted
+ones under `counted`. The report grades on the counted measure and shows a
+hole's progress (`(hole: 120/200 m)`). Items whose criteria differ between
+runs are reported apart, like items whose buckets differ.
 
 ### Exposure: seconds, meters, entries
 
