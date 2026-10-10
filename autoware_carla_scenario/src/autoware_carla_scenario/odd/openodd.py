@@ -206,6 +206,10 @@ class _Documents:
     first_stem: Optional[str] = None
     #: Files read already: one imported twice is read once.
     seen: set[Path] = field(default_factory=set)
+    #: File name -> the file read under it (names are unique in a transmission).
+    names: dict[str, Path] = field(default_factory=dict)
+    #: Taxonomy concept -> the file defining it.
+    origins: dict[str, str] = field(default_factory=dict)
     #: Where an ``IMPORT`` not next to its importer is looked for: the
     #: directories of the sources, and the roots of their git checkouts.
     search: list[Path] = field(default_factory=list)
@@ -248,14 +252,40 @@ def _under(path: Path, roots: Sequence[Path]) -> bool:
     return any(resolved.is_relative_to(root.resolve()) for root in roots)
 
 
-def _merge(into: dict[str, Any], doc: Mapping[str, Any], where: str) -> None:
+def _merge(
+    into: dict[str, Any],
+    doc: Mapping[str, Any],
+    where: str,
+    origin: str,
+    origins: Optional[dict[str, str]] = None,
+) -> None:
+    """Merge *doc*, read from *origin*, into *into*.
+
+    Containers merge, so a file can add concepts to a taxonomy another file
+    started.  With *origins* (concept -> the file defining it), a concept
+    defined in two files is refused even when both say the same: OpenODD
+    makes ids unique within a transmission.  Without, only a contradiction
+    is.
+    """
     for key, value in doc.items():
+        name = f"{where}.{key}"
         if isinstance(value, Mapping) and isinstance(into.get(key), dict):
-            _merge(into[key], value, f"{where}.{key}")
-        elif key in into and into[key] != value:
-            raise OpenOddError(f"{where}.{key} is defined twice, differently")
+            _merge(into[key], value, name, origin, origins)
+        elif key in into and (origins is not None or into[key] != value):
+            first = f" (in {origins[name]} and {origin})" if origins else ""
+            same = "" if origins is not None else ", differently"
+            raise OpenOddError(f"{name} is defined twice{same}{first}")
         else:
             into[key] = dict(value) if isinstance(value, Mapping) else value
+            if origins is not None:
+                _record(origins, name, value, origin)
+
+
+def _record(origins: dict[str, str], name: str, value: Any, origin: str) -> None:
+    origins[name] = origin
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            _record(origins, f"{name}.{key}", child, origin)
 
 
 def _read(
@@ -274,7 +304,14 @@ def _read(
             raise OpenOddError(f"IMPORT cycle: {chain}")
         if path in docs.seen:
             return
+        other = docs.names.get(path.name)
+        if other is not None:
+            raise OpenOddError(
+                f"two files named {path.name} ({other} and {path}): OpenODD "
+                "makes file names unique within a transmission"
+            )
         docs.seen.add(path)
+        docs.names[path.name] = path
         base, stack = path.parent, (*stack, path)
         docs.first_stem = docs.first_stem or path.stem
     else:
@@ -294,8 +331,11 @@ def _read(
             raise OpenOddError(f"not OpenODD YAML keys: {unknown}{hint}")
         for imported in _as_list(doc.get("IMPORT")):
             _read(docs.locate(base, str(imported)), docs, stack)
-        _merge(docs.taxonomy, doc.get("TAXONOMY") or {}, "TAXONOMY")
-        _merge(docs.conversion, doc.get("conversion") or {}, "conversion")
+        origin = path.name if path is not None else "<text>"
+        _merge(
+            docs.taxonomy, doc.get("TAXONOMY") or {}, "TAXONOMY", origin, docs.origins
+        )
+        _merge(docs.conversion, doc.get("conversion") or {}, "conversion", origin)
         for section in ("MODULES", "ODD"):
             for name, mdef in (doc.get(section) or {}).items():
                 name = str(name)

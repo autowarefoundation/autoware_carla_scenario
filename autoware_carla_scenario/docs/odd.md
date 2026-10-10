@@ -294,6 +294,15 @@ From Python, pass `GitSource(url, rev, path)` to `load_openodd()`.
 **`IMPORT`**: other files, relative to the importing one, or else in the
 other sources (see above). A cycle is refused.
 
+Every file read with an ODD makes up one transmission, in the standard's
+words, and the standard makes two things unique within one. Both are
+refused rather than guessed at:
+
+- two different files of the same name, wherever they come from;
+- a concept defined in two files, even the same way. A file can still add
+  concepts to a container another file started (`weather:` in both, with
+  different concepts under it).
+
 **`TAXONOMY`**: nested mappings are records and containers. A leaf is one of:
 
 - `integer|long|float|double <unit type>`: a number;

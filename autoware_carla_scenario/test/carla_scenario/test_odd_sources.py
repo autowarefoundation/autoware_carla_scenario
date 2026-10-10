@@ -222,14 +222,64 @@ class TestGitSources:
     def test_an_import_found_in_two_sources_is_refused(
         self, tmp_path: Path, repos: tuple[Path, Path]
     ) -> None:
+        _, modules = repos
+        first = _repo(
+            tmp_path / "first", {"a.yml": "{}\n", "taxonomy.yml": _taxonomy()}
+        )
+        second = _repo(
+            tmp_path / "second", {"b.yml": "{}\n", "taxonomy.yml": _taxonomy()}
+        )
+        with pytest.raises(OpenOddError, match="in several sources"):
+            load_openodd(
+                GitSource(str(first), "main", "a.yml"),
+                GitSource(str(second), "main", "b.yml"),
+                GitSource(str(modules), "main", "odd/calm.yml"),
+            )
+
+    def test_two_files_of_one_name_are_refused(
+        self, tmp_path: Path, repos: tuple[Path, Path]
+    ) -> None:
         taxonomy, modules = repos
         other = _repo(tmp_path / "other", {"taxonomy.yml": _taxonomy()})
-        with pytest.raises(OpenOddError, match="in several sources"):
+        with pytest.raises(OpenOddError, match="two files named taxonomy.yml"):
             load_openodd(
                 GitSource(str(taxonomy), "v1", "taxonomy.yml"),
                 GitSource(str(other), "main", "taxonomy.yml"),
                 GitSource(str(modules), "main", "odd/calm.yml"),
             )
+
+    def test_a_concept_defined_in_two_files_is_refused(
+        self, tmp_path: Path, repos: tuple[Path, Path]
+    ) -> None:
+        taxonomy, modules = repos
+        other = _repo(tmp_path / "other", {"more.yml": _taxonomy()})
+        with pytest.raises(
+            OpenOddError,
+            match=r"TAXONOMY.wind_speed is defined twice \(in taxonomy.yml and more.yml\)",
+        ):
+            load_openodd(
+                GitSource(str(taxonomy), "v1", "taxonomy.yml"),
+                GitSource(str(other), "main", "more.yml"),
+            )
+
+    def test_a_file_adds_concepts_to_a_taxonomy_another_started(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "base.yml").write_text(
+            "TAXONOMY:\n    weather:\n        wind_speed: float velocity\n"
+        )
+        (tmp_path / "extra.yml").write_text(
+            "IMPORT: [base.yml]\n"
+            "TAXONOMY:\n    weather:\n        gust_speed: float velocity\n"
+            "ODD:\n    calm:\n        INCLUDE_AND:\n"
+            '            gust_speed: "< 20 m/s"\n'
+            '            wind_speed: "< 10 m/s"\n'
+        )
+        odd = load_openodd(tmp_path / "extra.yml")
+        assert {a.name for a in odd.attributes} >= {
+            "weather.wind_speed",
+            "weather.gust_speed",
+        }
 
     @pytest.mark.parametrize(
         ("entry", "message"),
