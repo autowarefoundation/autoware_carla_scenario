@@ -1657,11 +1657,34 @@ describes the alternative: handing the ego to an <strong>external driving policy
 over gRPC, so a scenario becomes a test of that policy rather than of TrafficManager.</p>
 <p>The wire contract is alpasim's <code>egodriver.EgodriverService</code>. Its policy side is
 <a href="https://github.com/hakuturu583/carla_driver_interface"><strong><code>carla-driver-interface</code></strong></a>
-(1.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
+(2.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
 depends on without pulling in the scenario framework. It is versioned on its own: the
-framework accepts any <code>carla-driver-interface&gt;=1.0,&lt;2</code>, so a policy and a scenario
-package can share an environment whenever their majors agree, and a policy run as a
-separate process only has to speak the same wire contract.</p>
+framework accepts any <code>carla-driver-interface&gt;=2.0,&lt;3</code>, so a policy and a scenario
+package can share an environment whenever their majors agree.</p>
+<p>A policy run as a separate process may be on another major. Each side declares the
+<strong>contract revision</strong> it speaks (carla-driver-interface's major) in gRPC metadata, and
+the framework declares its cameras in the policy's revision:</p>
+<table>
+<thead>
+<tr>
+<th>Policy on</th>
+<th><code>rig_to_camera</code> the framework declares</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>carla-driver-interface 2.x (revision 2)</td>
+<td>the camera's optical frame in the rig (x right, y down, z along the optical axis), as alpasim declares it</td>
+</tr>
+<tr>
+<td>carla-driver-interface 1.x (declares no revision)</td>
+<td>the camera body in the rig (x along the optical axis, y left, z up), as 1.x reads it</td>
+</tr>
+</tbody>
+</table>
+<p>A 2.x policy is handed the optical frame either way, also by autoware_carla_scenario 4.x,
+whose cameras its server translates. A revision the framework does not know fails
+<code>start_session</code> with <code>ContractError</code>, before the scenario starts.</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <p>The scenario framework plays the <strong>runtime</strong> role: it owns the world, ticks the
 simulation, renders observations, and asks the policy what to do. The policy is a
@@ -2060,7 +2083,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 05:59:13 UTC"><span class="timeago" datetime="2026-10-09T05:59:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 05:59:13 UTC">2026-10-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 00:49:55 UTC"><span class="timeago" datetime="2026-10-10T00:49:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 00:49:55 UTC">2026-10-10</span>
   </span>
 
     
