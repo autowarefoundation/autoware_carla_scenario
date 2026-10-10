@@ -107,10 +107,10 @@
     {% set gate_owner = document.vertex_condition_of(target.id) %}
     {% if gate_owner %}
       <p class="ed-help" style="margin-bottom:10px">
-        Waypoint condition: holds the entity of
+        Waypoint condition: the entity of
         <a href="#" hx-get="/draft/{{ draft.id }}/inspector/{{ gate_owner[0].id }}"
            hx-target="#inspector" hx-swap="innerHTML">{{ gate_owner[0].title or gate_owner[0].type }}</a>
-        at vertex {{ gate_owner[1].vertex }} until it holds.
+        departs vertex {{ gate_owner[1].vertex }} when it holds.
       </p>
     {% endif %}
     <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}"

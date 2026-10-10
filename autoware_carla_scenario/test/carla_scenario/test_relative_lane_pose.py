@@ -50,6 +50,7 @@ from autoware_carla_scenario.trajectory.relative_lane import (
 from autoware_carla_scenario.trajectory.resolve import resolve_trajectory
 
 from .test_follow_trajectory_action import _Actor, _Entity, _run, _World
+from .test_follow_trajectory_action import _at as _time
 
 B, R0, R1, R2, L0, L1, L2 = 100, 101, 102, 103, 111, 112, 113
 
@@ -298,9 +299,9 @@ class TestResolution:
         trajectory = Trajectory(
             "mixed",
             [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), 0.0),
-                TrajectoryVertex(RelativeLanePose(10.0, d_lane=1), 1.0),
-                TrajectoryVertex(Lanelet2Pose(L2, 5.0), 2.0),
+                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), _time(0.0)),
+                TrajectoryVertex(RelativeLanePose(10.0, d_lane=1), _time(1.0)),
+                TrajectoryVertex(Lanelet2Pose(L2, 5.0), _time(2.0)),
             ],
         )
         resolved = resolve_trajectory(trajectory, reference=_at(5.0, 0.0))
@@ -377,9 +378,9 @@ def _overtake() -> Trajectory:
     return Trajectory(
         "overtake",
         [
-            TrajectoryVertex(RelativeLanePose(), 0.0),
-            TrajectoryVertex(RelativeLanePose(10.0, d_lane=1), 1.0),
-            TrajectoryVertex(RelativeLanePose(20.0, d_lane=1), 2.0),
+            TrajectoryVertex(RelativeLanePose(), _time(0.0)),
+            TrajectoryVertex(RelativeLanePose(10.0, d_lane=1), _time(1.0)),
+            TrajectoryVertex(RelativeLanePose(20.0, d_lane=1), _time(2.0)),
         ],
     )
 
@@ -394,11 +395,13 @@ class TestTheAction:
         assert (npc.actor.x, npc.actor.y) == (pytest.approx(25.0), pytest.approx(-3.5))
 
     def test_a_relative_vertex_can_hold_it(self, npc: _Entity) -> None:
-        """A gate on a relative vertex holds the entity where the vertex was placed."""
+        """A condition on a relative vertex holds the entity where it was placed."""
+        # Its time replaced by the condition; to it, at the action's speed.
         action = FollowTrajectoryAction(
             "npc1",
             _overtake().gated({1: ElapsedTimeCondition(2.0, label="go")}),
             TrajectoryTiming(),
+            speed=10.0,
         )
         _run(action, npc.actor, 1.5)
         # Placed against where npc1 started (5 m along R0): 10 m on, one lane left.
@@ -415,8 +418,10 @@ class TestTheAction:
             ahead_of_ego = Trajectory(
                 "ahead",
                 [
-                    TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), 0.0),
-                    TrajectoryVertex(RelativeLanePose(20.0, entity_ref="ego"), 1.0),
+                    TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), _time(0.0)),
+                    TrajectoryVertex(
+                        RelativeLanePose(20.0, entity_ref="ego"), _time(1.0)
+                    ),
                 ],
             )
             action = FollowTrajectoryAction("npc1", ahead_of_ego, TrajectoryTiming())
@@ -432,8 +437,8 @@ class TestTheAction:
         trajectory = Trajectory(
             "behind",
             [
-                TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), 0.0),
-                TrajectoryVertex(RelativeLanePose(-2.0, entity_ref="late"), 1.0),
+                TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), _time(0.0)),
+                TrajectoryVertex(RelativeLanePose(-2.0, entity_ref="late"), _time(1.0)),
             ],
         )
         action = FollowTrajectoryAction("npc1", trajectory, TrajectoryTiming())
@@ -457,8 +462,8 @@ class TestTheAction:
         trajectory = Trajectory(
             "hop",
             [
-                TrajectoryVertex(RelativeLanePose(entity_ref="lead"), 0.0),
-                TrajectoryVertex(RelativeLanePose(5.0, entity_ref="lead"), 0.5),
+                TrajectoryVertex(RelativeLanePose(entity_ref="lead"), _time(0.0)),
+                TrajectoryVertex(RelativeLanePose(5.0, entity_ref="lead"), _time(0.5)),
             ],
         )
         action = FollowTrajectoryAction(
@@ -490,8 +495,10 @@ class TestTheAction:
         trajectory = Trajectory(
             "behind",
             [
-                TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), 0.0),
-                TrajectoryVertex(RelativeLanePose(-2.0, entity_ref="nobody"), 1.0),
+                TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), _time(0.0)),
+                TrajectoryVertex(
+                    RelativeLanePose(-2.0, entity_ref="nobody"), _time(1.0)
+                ),
             ],
         )
         action = FollowTrajectoryAction("npc1", trajectory, TrajectoryTiming())
@@ -503,8 +510,8 @@ class TestTheAction:
         trajectory = Trajectory(
             "hop",
             [
-                TrajectoryVertex(RelativeLanePose(), 0.0),
-                TrajectoryVertex(RelativeLanePose(5.0), 0.5),
+                TrajectoryVertex(RelativeLanePose(), _time(0.0)),
+                TrajectoryVertex(RelativeLanePose(5.0), _time(0.5)),
             ],
         )
         action = FollowTrajectoryAction(

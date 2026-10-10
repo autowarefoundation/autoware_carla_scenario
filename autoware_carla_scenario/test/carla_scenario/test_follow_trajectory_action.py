@@ -23,6 +23,7 @@ from autoware_carla_scenario import (
     ReferenceContext,
     Trajectory,
     TrajectoryFollowingMode,
+    TrajectoryTimeCondition,
     TrajectoryTiming,
     TrajectoryVertex,
 )
@@ -34,6 +35,11 @@ from autoware_carla_scenario.entity.registry import register_entity, unregister_
 from ._vehicle_physics import mkz_physics, mkz_powertrain
 
 _DT = 0.05
+
+
+def _at(time: Optional[float]) -> Optional[TrajectoryTimeCondition]:
+    """A vertex's time, as the condition it departs on (``None``: no time)."""
+    return None if time is None else TrajectoryTimeCondition(time)
 
 
 class _Actor:
@@ -160,7 +166,7 @@ def _line(
         [
             TrajectoryVertex(
                 CarlaWorldPose(length * i / (count - 1), 0.0, 0.0, yaw=0.0),
-                None if duration is None else duration * i / (count - 1),
+                _at(None if duration is None else duration * i / (count - 1)),
             )
             for i in range(count)
         ],
@@ -315,8 +321,8 @@ class TestHidden:
         late = Trajectory(
             "late",
             [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), 1.0),
-                TrajectoryVertex(CarlaWorldPose(10.0, 0.0, 0.0), 2.0),
+                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), _at(1.0)),
+                TrajectoryVertex(CarlaWorldPose(10.0, 0.0, 0.0), _at(2.0)),
             ],
         )
         action = FollowTrajectoryAction(
@@ -399,7 +405,7 @@ def _bend() -> Trajectory:
         if index:
             px, py = points[index - 1]
             elapsed += math.hypot(x - px, y - py) / 6.0
-        vertices.append(TrajectoryVertex(CarlaWorldPose(x, y, 0.0), elapsed))
+        vertices.append(TrajectoryVertex(CarlaWorldPose(x, y, 0.0), _at(elapsed)))
     return Trajectory("bend", vertices)
 
 

@@ -21,6 +21,7 @@ from autoware_carla_scenario import (
     ReferenceContext,
     RelativeLanePose,
     TrajectoryFollowingMode,
+    TrajectoryTimeCondition,
 )
 from autoware_carla_scenario.authoring.compiler import compile_document
 from autoware_carla_scenario.authoring.models import (
@@ -30,6 +31,7 @@ from autoware_carla_scenario.authoring.models import (
     Entity,
     ScenarioDocument,
     SpawnSpec,
+    VertexCondition,
 )
 from autoware_carla_scenario.authoring.persistence import DraftStore
 from autoware_carla_scenario.authoring.validator import validate_document
@@ -45,7 +47,25 @@ from autoware_carla_scenario.trajectory.authoring import (
     trajectory_summary,
 )
 
-_ROWS = [[100.0, 200.0, 0.5, 0.0], [110.0, 200.0, None, 1.0], [120.0, 200.0, None, 2.0]]
+_ROWS = [[100.0, 200.0, 0.5], [110.0, 200.0, None], [120.0, 200.0, None]]
+#: The times _ROWS's vertices depart at: their waypoint conditions.
+_TIMES = [0.0, 1.0, 2.0]
+
+
+def _timed(times: list[float]) -> list[VertexCondition]:
+    """A trajectory_time waypoint condition per vertex."""
+    return [
+        VertexCondition(
+            vertex=index,
+            condition=ConditionNode(type="trajectory_time", params={"time": t}),
+        )
+        for index, t in enumerate(times, start=1)
+    ]
+
+
+def _at(times: list[float]) -> dict[int, TrajectoryTimeCondition]:
+    """The runtime's form of :func:`_timed`, for ``authored_trajectory``."""
+    return {index: TrajectoryTimeCondition(t) for index, t in enumerate(times)}
 
 
 def _document(
@@ -53,6 +73,7 @@ def _document(
     *,
     hidden: bool = False,
     kind: Literal["vehicle", "pedestrian"] = "vehicle",
+    times: list[float] | None = None,
 ) -> ScenarioDocument:
     return ScenarioDocument(
         id="s",
@@ -61,7 +82,13 @@ def _document(
             Entity(id="npc1", kind=kind, spawn=SpawnSpec(lanelet_id=2, hidden=hidden)),
         ],
         actions=[
-            ActionNode(id="a1", type="follow_trajectory", actor="npc1", params=params)
+            ActionNode(
+                id="a1",
+                type="follow_trajectory",
+                actor="npc1",
+                params=params,
+                advance_conditions=_timed(times or []),
+            )
         ],
         assertions=Assertions.model_validate(
             {
@@ -86,18 +113,33 @@ def _messages(document: ScenarioDocument, severity: str = "error") -> list[str]:
 
 class TestVertexText:
     def test_one_vertex_per_line_with_optional_cells(self) -> None:
-        rows = parse_vertices("100, 200, 0.5, 0\n# a comment\n\n110, 200, , 1\n120,200")
+        rows = parse_vertices("100, 200, 0.5\n# a comment\n\n110, 200, \n120,200")
         assert rows == [
-            (100.0, 200.0, 0.5, 0.0),
-            (110.0, 200.0, None, 1.0),
-            (120.0, 200.0, None, None),
+            (100.0, 200.0, 0.5),
+            (110.0, 200.0, None),
+            (120.0, 200.0, None),
         ]
 
     def test_rows_and_mappings_are_read_too(self) -> None:
-        assert parse_vertices([[1, 2], {"x": 3, "y": 4, "time": 5}]) == [
-            (1.0, 2.0, None, None),
-            (3.0, 4.0, None, 5.0),
+        assert parse_vertices([[1, 2], {"x": 3, "y": 4}]) == [
+            (1.0, 2.0, None),
+            (3.0, 4.0, None),
         ]
+
+    def test_a_time_cell_is_refused_saying_how_to_write_it(self) -> None:
+        """Times are waypoint conditions now; a row with one is pointed there."""
+        for value in (
+            "1, 2\n3, 4, , 5",
+            [[1, 2], [3, 4, None, 5]],
+            [[1, 2], {"x": 3, "y": 4, "time": 5}],
+        ):
+            with pytest.raises(
+                ValueError, match="vertex 2: a vertex row has no time"
+            ) as raised:
+                parse_vertices(value)
+            assert "type: trajectory_time, params: {time: 5" in str(raised.value)
+        # An empty time cell, as old text often had, is just nothing.
+        assert parse_vertices([[1, 2, None, None]]) == [(1.0, 2.0, None)]
 
     def test_a_bad_line_is_named(self) -> None:
         with pytest.raises(ValueError, match="vertex 2"):
@@ -107,15 +149,15 @@ class TestVertexText:
 
     def test_the_text_reads_back_the_same(self) -> None:
         text = format_vertices(_ROWS)
-        assert text.splitlines()[1] == "110, 200, , 1"
+        assert text.splitlines() == ["100, 200, 0.5", "110, 200", "120, 200"]
         assert [list(row) for row in parse_vertices(text)] == _ROWS
 
     def test_map_coordinates_keep_their_precision(self) -> None:
         text = format_vertices([[81234.567, 50123.125]])
-        assert parse_vertices(text) == [(81234.567, 50123.125, None, None)]
+        assert parse_vertices(text) == [(81234.567, 50123.125, None)]
 
     def test_the_summary(self) -> None:
-        assert trajectory_summary(_ROWS) == "3 vertices, 20.0 m, 2.0 s"
+        assert trajectory_summary(_ROWS) == "3 vertices, 20.0 m"
         assert trajectory_summary(None) == "no vertices"
 
 
@@ -126,11 +168,14 @@ class TestVertexText:
 
 class TestFactories:
     def test_vertices_become_map_poses(self) -> None:
-        trajectory = authored_trajectory("vertices", vertices=_ROWS)
+        trajectory = authored_trajectory(
+            "vertices", vertices=_ROWS, advance=_at(_TIMES)
+        )
         first = trajectory.vertices[0]
         assert first.position == MapPose(100.0, 200.0, 0.5)
         assert first.time == 0.0
         assert trajectory.is_timed
+        assert not authored_trajectory("vertices", vertices=_ROWS).is_timed
 
     def test_a_lanelet_path_follows_the_centrelines_at_a_speed(
         self, monkeypatch: pytest.MonkeyPatch
@@ -177,7 +222,10 @@ class TestFactories:
 class TestValidation:
     def test_a_good_card_has_no_errors(self) -> None:
         assert (
-            _messages(_document({"path_source": "vertices", "vertices": _ROWS})) == []
+            _messages(
+                _document({"path_source": "vertices", "vertices": _ROWS}, times=_TIMES)
+            )
+            == []
         )
 
     def test_too_few_vertices(self) -> None:
@@ -213,19 +261,22 @@ class TestValidation:
                 "vertices": _ROWS,
                 "following_mode": "follow",
                 "hidden_outside_trajectory": True,
-            }
+            },
+            times=_TIMES,
         )
         assert any("Position mode" in m for m in _messages(document))
 
     def test_a_pedestrian_may_follow_a_trajectory(self) -> None:
         document = _document(
-            {"path_source": "vertices", "vertices": _ROWS}, kind="pedestrian"
+            {"path_source": "vertices", "vertices": _ROWS},
+            kind="pedestrian",
+            times=_TIMES,
         )
         assert _messages(document) == []
 
     def test_a_hidden_spawn_nothing_brings_in_is_warned_about(self) -> None:
         document = _document(
-            {"path_source": "vertices", "vertices": _ROWS}, hidden=True
+            {"path_source": "vertices", "vertices": _ROWS}, hidden=True, times=_TIMES
         )
         assert any("stays there" in m for m in _messages(document, "warning"))
         brought_in = _document(
@@ -235,6 +286,7 @@ class TestValidation:
                 "hidden_outside_trajectory": True,
             },
             hidden=True,
+            times=_TIMES,
         )
         assert not any("stays there" in m for m in _messages(brought_in, "warning"))
 
@@ -267,7 +319,8 @@ class TestBuild:
                 "time_scale": 2.0,
                 "following_mode": "follow",
                 "initial_distance_offset": 3.0,
-            }
+            },
+            times=_TIMES,
         )
         compiled = compile_document(document)
         (card,) = [a for a in compiled.actions if a.node.id == "a1"]
@@ -276,6 +329,7 @@ class TestBuild:
         assert action.timing is TickTiming.PRE_TICK
         assert len(action.trajectory.vertices) == 3
         assert action.trajectory.vertices[0].position == MapPose(100.0, 200.0, 0.5)
+        assert [v.time for v in action.trajectory.vertices] == _TIMES
         assert action._time_reference is not None
         assert action._time_reference.domain is ReferenceContext.ABSOLUTE
         assert action._time_reference.scale == 2.0
@@ -323,7 +377,7 @@ class TestEditor:
             f"/draft/{draft_id}/action/{card.id}",
             data={
                 "path_source": "vertices",
-                "vertices": "100, 200, 0.5, 0\n110, 200, , 1\n120, 200, , 2",
+                "vertices": "100, 200, 0.5\n110, 200\n120, 200",
                 "time_domain": "absolute",
                 "time_scale": "1",
                 "time_offset": "0",
@@ -341,8 +395,36 @@ class TestEditor:
         assert stored.params["hidden_outside_trajectory"] is True
 
         inspector = client.get(f"/draft/{draft_id}/inspector/{card.id}").text
-        assert "3 vertices, 20.0 m, 2.0 s" in inspector
-        assert "110, 200, , 1" in inspector
+        assert "3 vertices, 20.0 m" in inspector
+        assert "110, 200" in inspector
+
+    def test_a_time_cell_in_the_text_is_refused_by_the_form(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        response = client.post(
+            "/new", data={"kind": "cut_in", "title": "Cut in"}, follow_redirects=False
+        )
+        draft_id = response.headers["location"].rsplit("/", 1)[-1]
+        store = DraftStore(tmp_path / "drafts")
+        actor = next(e.id for e in _stored(store, draft_id).entities if e.kind != "ego")
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "follow_trajectory", "actor": actor},
+        )
+        card = next(
+            a for a in _stored(store, draft_id).actions if a.type == "follow_trajectory"
+        )
+        page = client.post(
+            f"/draft/{draft_id}/action/{card.id}",
+            data={
+                "path_source": "vertices",
+                "vertices": "100, 200, , 0\n110, 200, , 1",
+            },
+        )
+        assert "trajectory_time" in page.text
+        stored = _stored(store, draft_id).action(card.id)
+        assert stored is not None
+        assert stored.params.get("vertices") in (None, [])
 
     def test_an_entity_is_set_to_spawn_hidden(
         self, client: TestClient, tmp_path: Path
@@ -394,11 +476,12 @@ class TestHiddenSpawn:
 
 #: Pull out one lane to the left over 20 m and drive on, at 10 m/s.
 _RELATIVE_ROWS = [
-    [0.0, 0.0, 0, None, 0.0],
-    [20.0, 0.0, 1, None, 2.0],
-    [40.0, -0.5, 1, 0.1, 4.0],
+    [0.0, 0.0, 0, None],
+    [20.0, 0.0, 1, None],
+    [40.0, -0.5, 1, 0.1],
 ]
-_RELATIVE_TEXT = "0, 0, 0, , 0\n20, 0, 1, , 2\n40, -0.5, 1, 0.1, 4"
+_RELATIVE_TIMES = [0.0, 2.0, 4.0]
+_RELATIVE_TEXT = "0, 0, 0\n20, 0, 1\n40, -0.5, 1, 0.1"
 
 
 def _relative(params: dict[str, Any]) -> dict[str, Any]:
@@ -407,17 +490,23 @@ def _relative(params: dict[str, Any]) -> dict[str, Any]:
 
 class TestRelativeVertexText:
     def test_only_ds_is_required(self) -> None:
-        rows = parse_relative_vertices("10\n# a comment\n\n20, 0.5\n30, , -1, , 3")
+        rows = parse_relative_vertices("10\n# a comment\n\n20, 0.5\n30, , -1")
         assert rows == [
-            (10.0, 0.0, 0, None, None),
-            (20.0, 0.5, 0, None, None),
-            (30.0, 0.0, -1, None, 3.0),
+            (10.0, 0.0, 0, None),
+            (20.0, 0.5, 0, None),
+            (30.0, 0.0, -1, None),
         ]
 
     def test_rows_and_mappings_are_read_too(self) -> None:
-        assert parse_relative_vertices(
-            [[1, 2, 1], {"ds": -3, "d_lane": -2, "time": 5}]
-        ) == [(1.0, 2.0, 1, None, None), (-3.0, 0.0, -2, None, 5.0)]
+        assert parse_relative_vertices([[1, 2, 1], {"ds": -3, "d_lane": -2}]) == [
+            (1.0, 2.0, 1, None),
+            (-3.0, 0.0, -2, None),
+        ]
+
+    def test_a_time_cell_is_refused_saying_how_to_write_it(self) -> None:
+        for value in ("0\n10, 0, 0, , 3", [[0], {"ds": 10, "time": 3}]):
+            with pytest.raises(ValueError, match="vertex 2: a vertex row has no time"):
+                parse_relative_vertices(value)
 
     def test_d_lane_is_a_whole_number(self) -> None:
         with pytest.raises(ValueError, match="vertex 2: d_lane is a number of lanes"):
@@ -439,7 +528,7 @@ class TestRelativeVertexText:
     def test_the_summary(self) -> None:
         assert (
             relative_trajectory_summary(_RELATIVE_ROWS)
-            == "3 vertices, ds 0 to 40 m, lanes +0, +1, 4.0 s"
+            == "3 vertices, ds 0 to 40 m, lanes +0, +1"
         )
         assert (
             relative_trajectory_summary([[5.0], [10.0]]) == "2 vertices, ds 5 to 10 m"
@@ -450,7 +539,10 @@ class TestRelativeVertexText:
 class TestRelativeFactory:
     def test_rows_become_relative_lane_poses(self) -> None:
         trajectory = authored_trajectory(
-            "relative_lane", relative_vertices=_RELATIVE_ROWS, reference_entity="Ego"
+            "relative_lane",
+            relative_vertices=_RELATIVE_ROWS,
+            reference_entity="Ego",
+            advance=_at(_RELATIVE_TIMES),
         )
         positions = [vertex.position for vertex in trajectory.vertices]
         assert positions[1] == RelativeLanePose(20.0, 0.0, 1, entity_ref="Ego")
@@ -471,13 +563,20 @@ class TestRelativeFactory:
 class TestRelativeValidation:
     def test_a_good_card_has_no_errors(self) -> None:
         document = _document(
-            _relative({"relative_vertices": _RELATIVE_ROWS, "reference_entity": "ego"})
+            _relative({"relative_vertices": _RELATIVE_ROWS, "reference_entity": "ego"}),
+            times=_RELATIVE_TIMES,
         )
         assert _messages(document) == []
 
     def test_without_a_reference_it_is_the_actor(self) -> None:
         assert (
-            _messages(_document(_relative({"relative_vertices": _RELATIVE_ROWS}))) == []
+            _messages(
+                _document(
+                    _relative({"relative_vertices": _RELATIVE_ROWS}),
+                    times=_RELATIVE_TIMES,
+                )
+            )
+            == []
         )
 
     def test_an_unknown_reference_is_an_error(self) -> None:
@@ -497,13 +596,13 @@ class TestRelativeValidation:
         assert any(
             "at least two" in m
             for m in _messages(
-                _document(_relative({"relative_vertices": "0, 0, 0, , 0"}))
+                _document(_relative({"relative_vertices": "0"}), times=[0.0])
             )
         )
         assert any(
-            "either every vertex has a time" in m
+            "either every vertex has a time" in m.lower()
             for m in _messages(
-                _document(_relative({"relative_vertices": "0, 0, 0, , 0\n10"}))
+                _document(_relative({"relative_vertices": "0\n10"}), times=[0.0])
             )
         )
 
@@ -528,7 +627,8 @@ class TestRelativeBuild:
                     "relative_vertices": _RELATIVE_TEXT,
                     "reference_entity": "ego",
                 }
-            )
+            ),
+            times=_RELATIVE_TIMES,
         )
         compiled = compile_document(document)
         (card,) = [a for a in compiled.actions if a.node.id == "a1"]
@@ -545,7 +645,9 @@ class TestRelativeBuild:
         from autoware_carla_scenario.authoring.compiler import BuildContext
 
         compiled = compile_document(
-            _document(_relative({"relative_vertices": _RELATIVE_ROWS}))
+            _document(
+                _relative({"relative_vertices": _RELATIVE_ROWS}), times=_RELATIVE_TIMES
+            )
         )
         (card,) = [a for a in compiled.actions if a.node.id == "a1"]
         action = instantiate_action(card, BuildContext(scenario=None))
@@ -584,7 +686,7 @@ class TestRelativeEditor:
                 "reference_entity": ego,
                 "relative_vertices": _RELATIVE_TEXT,
                 "vertices": "",
-                "time_domain": "relative",
+                "time_domain": "none",
                 "time_scale": "1",
                 "time_offset": "0",
                 "following_mode": "position",
@@ -601,8 +703,8 @@ class TestRelativeEditor:
         assert stored.params["relative_vertices"] == _RELATIVE_ROWS
 
         inspector = client.get(f"/draft/{draft_id}/inspector/{card.id}").text
-        assert "3 vertices, ds 0 to 40 m, lanes +0, +1, 4.0 s" in inspector
-        assert "40, -0.5, 1, 0.1, 4" in inspector
+        assert "3 vertices, ds 0 to 40 m, lanes +0, +1" in inspector
+        assert "40, -0.5, 1, 0.1" in inspector
         assert "Relative to an entity&#39;s lane" in inspector
         assert validate_document(_stored(store, draft_id)).ok
 
@@ -634,7 +736,10 @@ class TestRelativeEditor:
         from autoware_carla_scenario.editor.service import EditorService
 
         document = _document(
-            _relative({"relative_vertices": _RELATIVE_ROWS, "reference_entity": "npc2"})
+            _relative(
+                {"relative_vertices": _RELATIVE_ROWS, "reference_entity": "npc2"}
+            ),
+            times=_RELATIVE_TIMES,
         )
         document.entities.append(Entity(id="npc2", spawn=SpawnSpec(lanelet_id=3)))
         assert _messages(document) == []

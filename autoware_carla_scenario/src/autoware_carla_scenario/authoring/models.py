@@ -572,21 +572,22 @@ class Assertions(_Node):
 
 
 class VertexCondition(_Node):
-    """A waypoint condition: when an action's entity may leave one vertex.
+    """A waypoint condition: what an action's entity departs one vertex on.
 
     Attached to an action whose spec takes them
     (:attr:`~autoware_carla_scenario.authoring.registry.ActionSpec.vertex_conditions`,
-    the *Follow Trajectory* card): the entity is held at vertex :attr:`vertex`
-    of its trajectory until :attr:`condition` holds -- the runtime's
-    :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  The condition
+    the *Follow Trajectory* card): the entity departs vertex :attr:`vertex` of
+    its trajectory when :attr:`condition` holds -- the runtime's
+    :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  It takes the
+    place of a time: the vertex's time cell has to be empty.  The condition
     is an ordinary condition tree, written, checked and compiled exactly as a
     trigger is.
 
     Attributes:
-        vertex: Which vertex, counted **from 1** in the order the card lists
-            them -- the line number in the editor's vertex text, and the
-            number its messages give ("vertex 3").
-        condition: The condition that releases the entity.
+        vertex: Which vertex, counted **from 1**: the Nth vertex of the card's
+            list (blank and comment lines are not counted) -- the number the
+            editor's messages give ("vertex 3").
+        condition: The condition the entity departs on.
     """
 
     vertex: int = Field(ge=1)

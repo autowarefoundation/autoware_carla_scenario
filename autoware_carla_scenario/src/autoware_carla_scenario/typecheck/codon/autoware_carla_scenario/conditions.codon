@@ -229,6 +229,16 @@ class ElapsedTimeCondition(BaseCondition):
         raise NotImplementedError()
 
 
+class TrajectoryTimeCondition(BaseCondition):
+    def __init__(self, time: float, *_kw, label: str = "trajectory_time"):
+        _keyword_only(_kw, "TrajectoryTimeCondition(): label")
+        super().__init__(label)
+
+    @property
+    def time(self) -> float:
+        raise NotImplementedError()
+
+
 class TimeoutCondition(BaseCondition):
     def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
         _keyword_only(_kw, "TimeoutCondition(): label")

@@ -58,6 +58,7 @@ __all__ = [
     "build_traffic_signal_controller_condition",
     "build_timeout_condition",
     "build_traffic_signal_condition",
+    "build_trajectory_time_condition",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
@@ -686,6 +687,21 @@ def build_traffic_signal_condition(
     )
 
 
+def build_trajectory_time_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TrajectoryTimeCondition`."""
+    from ..conditions import TrajectoryTimeCondition  # noqa: PLC0415
+
+    params = compiled.params
+    return TrajectoryTimeCondition(
+        time=params["time"],
+        label=compiled.label,
+    )
+
+
 def build_traffic_signal_controller_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -877,6 +893,7 @@ def build_follow_trajectory_action(
         label=compiled.label,
         once=compiled.node.once,
         hidden_outside_trajectory=params["hidden_outside_trajectory"],
+        speed=params["speed_ms"],
     )
 
 

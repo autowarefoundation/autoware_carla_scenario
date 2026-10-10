@@ -2,8 +2,8 @@
 #
 # A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose,
 # MapPose or RelativeLanePose), which Codon cannot store: TrajectoryVertex checks the position it
-# is given with _expect_trajectory_position and keeps only its time and its advance
-# condition, which is all the model needs -- it is compiled, never run.
+# is given with _expect_trajectory_position and keeps only its advance condition,
+# which is all the model needs -- it is compiled, never run.
 
 from ._tc import _expect_float, _expect_optional_float
 from .conditions import BaseCondition, _expect_condition, _expect_optional_condition
@@ -58,27 +58,39 @@ def _expect_trajectory_position(position):
 
 
 class TrajectoryVertex:
-    time: Optional[float]
     advance: Optional[BaseCondition]
 
-    def __init__(self, position, time = None, advance = None):
+    def __init__(self, position, advance = None):
         _expect_trajectory_position(position)
-        self.time = _expect_optional_float(time)
         self.advance = _expect_optional_condition(advance)
+
+    @property
+    def time(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def gate(self) -> Optional[BaseCondition]:
+        raise NotImplementedError()
 
 
 class Trajectory:
     name: str
+    vertices: List[TrajectoryVertex]
     closed: bool
 
     def __init__(self, name: str, vertices, closed: bool = False):
+        self.vertices = List[TrajectoryVertex]()
         for vertex in vertices:
-            _expect_vertex(vertex)
+            self.vertices.append(_expect_vertex(vertex))
         self.name = name
         self.closed = closed
 
     @property
     def is_timed(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def has_times(self) -> bool:
         raise NotImplementedError()
 
     @property
@@ -90,7 +102,7 @@ class Trajectory:
         raise NotImplementedError()
 
     def gated(self, advance) -> Trajectory:
-        """advance: a mapping of vertex index to the condition that gates it."""
+        """advance: a mapping of vertex index to its departure condition."""
         for index, condition in advance.items():
             vertex_index: int = index
             _expect_condition(condition)

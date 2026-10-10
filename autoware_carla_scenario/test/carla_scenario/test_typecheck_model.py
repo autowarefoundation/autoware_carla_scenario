@@ -31,6 +31,9 @@ _MODEL = model_dir() / "autoware_carla_scenario"
 #: free-form mapping (dict[str, Any]), which has no Codon type.
 _OMITTED_PARAMETERS: dict[str, set[str]] = {
     "SweepConfig": {"constraints", "bindings"},
+    # Catches the removed `time=` to say how a time is written now; the model
+    # refuses it outright.
+    "TrajectoryVertex": {"removed"},
 }
 
 #: (kind, name, has default): kind is "pos", "kw", "*args" or "**kwargs".
