@@ -15,11 +15,13 @@ names:
   (``speed_limit.between(0, 60)``), groups others (:func:`all_of`,
   :func:`any_of`), or refers to another module or a label
   (:func:`module_holds`).  A label holds when any module declaring it holds.
-* An **inactive** module is ignored: every condition referring to it is
-  satisfied.
+* An **inactive** module is ignored: a condition referring to it drops out
+  of its section, as if it were not written (OpenODD: "it is ignored").  A
+  section left with nothing in it is absent: an include holds, an exclude
+  does not.
 * The **roots** are the entry points.  Each root candidate (by default,
-  every active module) that no other module refers to, by name or through a
-  label it declares, is a root.  The ODD holds when its roots hold.
+  every module) that no other module refers to, by name or through a label
+  it declares, is a root.  The ODD holds when its active roots hold.
 
 Missing values follow OpenODD's *missing-value semantics*: a value the probe
 could not read (``None``) does not by itself put a situation outside the ODD.
@@ -67,8 +69,8 @@ __all__ = [
 Probe = Callable[[Any], Any]
 
 #: What a module's or label's entry in the evaluation's truth table holds.
-#: ``INACTIVE`` marks an inactive module, which conditions referring to it
-#: take as satisfied.
+#: ``INACTIVE`` marks an inactive module (or a label only inactive modules
+#: declare): a condition referring to it drops out of its section.
 INACTIVE = "inactive"
 Truth = Mapping[str, Union[Optional[bool], str]]
 
@@ -86,9 +88,11 @@ def read_probe(probe: Probe, world: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _and(values: Iterable[Optional[bool]]) -> Optional[bool]:
+def _and(values: Iterable[Any]) -> Optional[bool]:
     unknown = False
     for v in values:
+        if v == INACTIVE:
+            continue
         if v is False:
             return False
         if v is None:
@@ -96,9 +100,11 @@ def _and(values: Iterable[Optional[bool]]) -> Optional[bool]:
     return None if unknown else True
 
 
-def _or(values: Iterable[Optional[bool]]) -> Optional[bool]:
+def _or(values: Iterable[Any]) -> Optional[bool]:
     unknown = False
     for v in values:
+        if v == INACTIVE:
+            continue
         if v is True:
             return True
         if v is None:
@@ -131,11 +137,28 @@ class _Bucket:
 # ---------------------------------------------------------------------------
 
 
+def _number(value: Any) -> Optional[float]:
+    """*value* as a float when it is a number (not a bool), else ``None``."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _missing_value(value: Any) -> bool:
+    """Whether *value* says nothing: ``None``, or a NaN (say, 0/0)."""
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
 @dataclass(frozen=True)
 class _InSet:
     labels: frozenset[str]
+    #: The numbers among the values, compared as numbers (30 is 30.0).
+    numbers: frozenset[float] = frozenset()
 
     def holds(self, value: Any) -> bool:
+        number = _number(value)
+        if number is not None and number in self.numbers:
+            return True
         return value_label(value) in self.labels
 
     def describe(self) -> str:
@@ -183,11 +206,10 @@ class _Equal:
     value: Any
 
     def holds(self, value: Any) -> bool:
-        if isinstance(self.value, (int, float)) and not isinstance(self.value, bool):
-            try:
-                return float(value) == float(self.value)
-            except (TypeError, ValueError):
-                return False
+        expected = _number(self.value)
+        if expected is not None:
+            actual = _number(value)
+            return actual == expected if actual is not None else False
         return value_label(value) == value_label(self.value)
 
     def describe(self) -> str:
@@ -234,14 +256,14 @@ class _Leaf(OddCondition):
 
     def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         value = values.get(self.attribute.name)
-        if value is None or value is _OPEN:
+        if value is _OPEN or _missing_value(value):
             return None
         if isinstance(value, _Bucket):
             return self._on_bucket(value)
         try:
             return self.predicate.holds(value)
         except (TypeError, ValueError):
-            return None
+            return False  # present, but not a value the condition can hold for
 
     def _on_bucket(self, bucket: _Bucket) -> Optional[bool]:
         item, i = bucket.item, bucket.index
@@ -252,9 +274,13 @@ class _Leaf(OddCondition):
                 return self.predicate.holds(values[i])
             except (TypeError, ValueError):
                 return None
-        if isinstance(self.predicate, _Interval):
-            last = i == len(item.labels) - 1
-            return self.predicate.on_bucket(item.edges[i], item.edges[i + 1], last)
+        last = i == len(item.labels) - 1
+        predicate = self.predicate
+        if isinstance(predicate, _Equal) and _number(predicate.value) is not None:
+            point = float(predicate.value)
+            predicate = _Interval(point, point)
+        if isinstance(predicate, _Interval):
+            return predicate.on_bucket(item.edges[i], item.edges[i + 1], last)
         return None
 
     def describe(self) -> str:
@@ -272,7 +298,7 @@ class _Missing(OddCondition):
 
     def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         value = values.get(self.attribute.name)
-        return None if value is _OPEN else value is None
+        return None if value is _OPEN else _missing_value(value)
 
     def describe(self) -> str:
         return f"{self.attribute.name} is unknown"
@@ -288,8 +314,11 @@ class _Group(OddCondition):
         self.op = op
         self.children = list(children)
 
-    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
-        results = (c.evaluate(values, truth) for c in self.children)
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Any:
+        """The group's verdict; ``INACTIVE`` when every condition dropped out."""
+        results = [c.evaluate(values, truth) for c in self.children]
+        if all(r == INACTIVE for r in results):
+            return INACTIVE
         return _and(results) if self.op == "all" else _or(results)
 
     def describe(self) -> str:
@@ -308,10 +337,10 @@ class _ModuleRef(OddCondition):
         self.name = name
         self.holds = holds
 
-    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Any:
         verdict = truth.get(self.name)
         if verdict == INACTIVE:
-            return True  # OpenODD: a condition on an inactive module is satisfied
+            return INACTIVE  # OpenODD: an inactive module is ignored
         if verdict is None:
             return None
         return verdict == self.holds
@@ -337,7 +366,7 @@ def module_holds(name: str, holds: bool = True) -> OddCondition:
     """A condition on another module or a label: that it holds (or not).
 
     A label holds when any active module that declares it holds.  A condition
-    on an inactive module is satisfied whatever *holds* says.
+    on an inactive module drops out of its section, whatever *holds* says.
     """
     if not name:
         raise ValueError("module_holds(): name must not be empty")
@@ -411,10 +440,11 @@ class OddAttribute:
 
     def is_in(self, values: Iterable[Any]) -> OddCondition:
         """The value is one of *values* (an OpenODD list expression)."""
-        labels = frozenset(value_label(v) for v in values)
-        if not labels:
+        values = list(values)
+        if not values:
             raise ValueError(f"{self.name}.is_in(): no values")
-        return _Leaf(self, _InSet(labels))
+        numbers = frozenset(n for n in map(_number, values) if n is not None)
+        return _Leaf(self, _InSet(frozenset(map(value_label, values)), numbers))
 
     def equals(self, value: Any) -> OddCondition:
         """The value equals *value* (an OpenODD equal expression)."""
@@ -470,8 +500,8 @@ class OddModule:
         exclude_or: The module fails when one of these holds (``EXCLUDE_OR``).
         labels: Labels the module declares.  A label holds when any active
             module declaring it holds.
-        active: An inactive module is ignored: conditions referring to it are
-            satisfied.
+        active: An inactive module is ignored: conditions referring to it drop
+            out of their sections.
         text: A description for the report (OpenODD's ``TITLE``).
 
     As in OpenODD, a module has at most one include section and at most one
@@ -527,6 +557,10 @@ class OddModule:
         """Whether the module holds for *values*, given *truth* of the others."""
         include = self.include.evaluate(values, truth) if self.include else True
         exclude = self.exclude.evaluate(values, truth) if self.exclude else False
+        if include == INACTIVE:
+            include = True  # an include with nothing left in it is absent
+        if exclude == INACTIVE:
+            exclude = False
         return _and([include, _not(exclude)])
 
     def describe(self) -> dict[str, Any]:
@@ -572,7 +606,7 @@ class OddDefinition:
         modules: The rules.  With none, every situation is inside the ODD.
         roots: The root candidates: those no other module refers to are the
             roots (all of them, if every one is referred to).  ``None``
-            takes every active module.
+            takes every module.  An inactive root is ignored.
         text: A description for the report.
     """
 
@@ -644,10 +678,11 @@ class OddDefinition:
         referenced: set[str] = set()
         for module in self.modules:
             referenced |= self._depends_on(module)
-        candidates = (
-            list(roots) if roots else [m.name for m in self.modules if m.active]
-        )
-        self.roots = [r for r in candidates if r not in referenced] or candidates
+        if roots:
+            self.roots = [r for r in roots if r not in referenced] or list(roots)
+        else:
+            # A graph without cycles always has a module nothing refers to.
+            self.roots = [m.name for m in self.modules if m.name not in referenced]
         self._plain = [a for a in self.attributes if not _derived(a.probe)]
         self._derived = [a for a in self.attributes if _derived(a.probe)]
         self._outside = self._outside_buckets()
@@ -739,12 +774,25 @@ class OddDefinition:
                 label
                 for index, label in enumerate(item.labels)
                 if not self.evaluate(
-                    {**open_values, attribute.name: _Bucket(item, index)}
+                    self._with_derived(
+                        {**open_values, attribute.name: _Bucket(item, index)},
+                        attribute,
+                    )
                 ).inside
             ]
             if labels:
                 outside[attribute.name] = labels
         return outside
+
+    def _with_derived(
+        self, values: dict[str, Any], given: OddAttribute
+    ) -> dict[str, Any]:
+        """*values* with every derived attribute but *given* worked out, if it can be."""
+        for attribute in self._derived:
+            if attribute is not given:
+                value = attribute.probe.from_values(values)  # type: ignore[attr-defined]
+                values[attribute.name] = _OPEN if value is None else value
+        return values
 
     def outside_buckets(self, attribute: OddAttribute) -> list[str]:
         """The labels of *attribute*'s buckets that lie outside the ODD."""

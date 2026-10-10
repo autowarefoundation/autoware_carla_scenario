@@ -96,7 +96,7 @@ def value_label(value: Any) -> str:
     """The bucket label of a categorical value: an enum by name, a bool in lowercase."""
     if isinstance(value, enum.Enum):
         return value.name
-    if isinstance(value, bool):
+    if isinstance(value, bool) or type(value).__name__ == "bool_":  # numpy too
         return "true" if value else "false"
     return str(value)
 

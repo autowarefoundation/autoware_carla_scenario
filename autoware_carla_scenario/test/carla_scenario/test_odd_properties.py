@@ -339,18 +339,22 @@ def reference(odd: Odd, values: dict[str, Any]) -> bool:
             ">=": value >= x,
         }[op]
 
-    def ref(child: Ref) -> bool:
+    ignored = object()  # a condition on an inactive module: "it is ignored"
+
+    def ref(child: Ref) -> Any:
         members = label_members.get(child.name, [child.name])
         active = [n for n in members if by_name[n].active]
         if not active:
-            return True  # a condition on an inactive module is satisfied
+            return ignored
         return any(module(n) for n in active) == child.holds
 
-    def holds(child: Any) -> bool:
+    def holds(child: Any) -> Any:
         if isinstance(child, Ref):
             return ref(child)
         if isinstance(child, Group):
-            results = [holds(c) for c in child.children]
+            results = [r for r in map(holds, child.children) if r is not ignored]
+            if not results:
+                return ignored
             return all(results) if child.op == "AND" else any(results)
         return leaf(child)
 
@@ -359,7 +363,9 @@ def reference(odd: Odd, values: dict[str, Any]) -> bool:
             m = by_name[name]
             include = holds(m.include) if m.include else True
             exclude = holds(m.exclude) if m.exclude else False
-            truth[name] = include and not exclude
+            truth[name] = (include is ignored or include) and not (
+                exclude is not ignored and exclude
+            )
         return truth[name]
 
     referenced: set[str] = set()
@@ -375,9 +381,8 @@ def reference(odd: Odd, values: dict[str, Any]) -> bool:
         for group in (m.include, m.exclude):
             if group is not None:
                 walk(group)
-    candidates = [m.name for m in odd.modules if m.active]
-    roots = [r for r in candidates if r not in referenced] or candidates
-    return all(module(r) for r in roots)
+    roots = [m.name for m in odd.modules if m.name not in referenced]
+    return all(module(r) for r in roots if by_name[r].active)
 
 
 # ---------------------------------------------------------------------------

@@ -153,9 +153,11 @@ class BaseScenario:
         _expect_sampling_event(event)
         raise NotImplementedError()
 
-    def register_cross(self, name: str, items: List[str], *_kw, text: str = "",
+    def register_cross(self, name: str, items, *_kw, text: str = "",
                        target: int = 1) -> None:
         _keyword_only(_kw, "BaseScenario.register_cross(): text and target")
+        for item in items:
+            n: str = item
         raise NotImplementedError()
 
     def follow_with_spectator(self, actor_getter, *_kw, offset_back: float = 8.0,

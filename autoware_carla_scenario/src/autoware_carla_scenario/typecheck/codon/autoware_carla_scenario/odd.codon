@@ -29,6 +29,8 @@ def _expect_optional_conditions(conditions):
         pass
     elif isinstance(conditions, Optional[NoneType]):
         pass
+    elif isinstance(conditions, List[NoneType]):
+        pass
     else:
         for condition in conditions:
             c: OddCondition = condition
@@ -39,6 +41,8 @@ def _expect_optional_labels(labels):
     if isinstance(labels, None):
         pass
     elif isinstance(labels, Optional[NoneType]):
+        pass
+    elif isinstance(labels, List[NoneType]):
         pass
     else:
         for label in labels:
@@ -94,11 +98,19 @@ class OddAttribute:
         raise NotImplementedError()
 
 
-def all_of(conditions: List[OddCondition]) -> OddCondition:
+def _expect_conditions(conditions):
+    """A Sequence[OddCondition] argument (a list or a tuple)."""
+    for condition in conditions:
+        c: OddCondition = condition
+
+
+def all_of(conditions) -> OddCondition:
+    _expect_conditions(conditions)
     raise NotImplementedError()
 
 
-def any_of(conditions: List[OddCondition]) -> OddCondition:
+def any_of(conditions) -> OddCondition:
+    _expect_conditions(conditions)
     raise NotImplementedError()
 
 
@@ -115,6 +127,12 @@ class OddModule:
                  exclude_and = None, exclude_or = None, labels = None,
                  active: bool = True, text: str = ""):
         _keyword_only(_kw, "OddModule(): every argument but name")
+        if not (isinstance(include_and, None) or isinstance(include_and, Optional[NoneType])):
+            if not (isinstance(include_or, None) or isinstance(include_or, Optional[NoneType])):
+                compile_error("OddModule(): one include section, include_and or include_or")
+        if not (isinstance(exclude_and, None) or isinstance(exclude_and, Optional[NoneType])):
+            if not (isinstance(exclude_or, None) or isinstance(exclude_or, Optional[NoneType])):
+                compile_error("OddModule(): one exclude section, exclude_and or exclude_or")
         _expect_optional_conditions(include_and)
         _expect_optional_conditions(include_or)
         _expect_optional_conditions(exclude_and)
@@ -131,6 +149,8 @@ def _expect_optional_modules(modules):
         pass
     elif isinstance(modules, Optional[NoneType]):
         pass
+    elif isinstance(modules, List[NoneType]):
+        pass
     else:
         for module in modules:
             m: OddModule = module
@@ -140,9 +160,11 @@ class OddDefinition:
     name: str
     text: str
 
-    def __init__(self, name: str, attributes: List[OddAttribute], modules = None, *_kw,
+    def __init__(self, name: str, attributes, modules = None, *_kw,
                  roots = None, text: str = ""):
         _keyword_only(_kw, "OddDefinition(): roots and text")
+        for attribute in attributes:
+            a: OddAttribute = attribute
         _expect_optional_modules(modules)
         _expect_optional_labels(roots)
         self.name = name

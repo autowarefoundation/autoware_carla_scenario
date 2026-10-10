@@ -593,7 +593,8 @@ def typecheck_odd(
     Returns:
         The result; ``result.ok`` is ``False`` when the ODD must not be used.
     """
-    module, qualname = builder.__module__, builder.__qualname__
+    module = getattr(builder, "__module__", "") or ""
+    qualname = getattr(builder, "__qualname__", "<callable>")
     name = f"{module}.{qualname}"
     if "." in qualname or "<" in qualname:
         return TypeCheckResult(

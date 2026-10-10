@@ -181,11 +181,13 @@ def import_callable(spec: str) -> Callable[..., Any]:
 
 
 def _is_yaml(text: str) -> bool:
-    return text.endswith((".yaml", ".yml"))
+    return text.lower().endswith((".yaml", ".yml"))
 
 
 def odd_builder(spec: Union[str, Path, OddDefinition, None]) -> Optional[OddBuilder]:
     """The Python builder *spec* names, or ``None`` for the built-in ODD or YAML."""
+    if isinstance(spec, Path) and not _is_yaml(str(spec)):
+        raise ValueError(f"{spec}: an ODD file is .yaml or .yml")
     if spec is None or isinstance(spec, (OddDefinition, Path)):
         return None
     text = str(spec).strip()

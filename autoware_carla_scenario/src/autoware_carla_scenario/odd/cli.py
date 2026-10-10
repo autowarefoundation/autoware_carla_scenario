@@ -40,13 +40,17 @@ def _check(spec: str) -> int:
     result = typecheck_odd(builder)
     if result.skipped is not None:
         print(f"[SKIPPED] {spec}: {result.format()}")  # noqa: T201
-        return 2
+        return 2 if "Codon" in result.skipped else 0
     print(f"[{'ok' if result.ok else 'FAILED'}] {spec}: {result.format()}")  # noqa: T201
     return 0 if result.ok else 1
 
 
 def _show(spec: str) -> int:
-    odd = resolve_odd(spec)
+    try:
+        odd = resolve_odd(spec)
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        print(f"scenario-odd: {spec}: {exc}", file=sys.stderr)  # noqa: T201
+        return 1
     out = odd.describe()
     out["attributes"] = [
         {**a.item.describe(), "outside_odd": odd.outside_buckets(a)}
@@ -83,6 +87,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command == "show":
         return _show(args.odd)
     statuses = [_check(spec) for spec in args.odds]
+    if 1 in statuses:
+        return 1  # a failure outranks a check that could not be made
     return max(statuses)
 
 

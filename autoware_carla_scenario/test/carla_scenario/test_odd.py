@@ -131,7 +131,7 @@ class TestModulesAndOdd:
 
     def test_unreferenced_active_modules_are_the_roots(self) -> None:
         odd, _ = self._odd()
-        assert odd.roots == ["roads", "weather"]
+        assert odd.roots == ["roads", "weather", "never"]  # "never" is inactive
         inside = {"speed": 40, "loc": "urban", "rain": "none"}
         assert odd.evaluate(inside).inside is True
         assert odd.evaluate({**inside, "rain": "heavy"}).inside is False
@@ -170,7 +170,8 @@ class TestModulesAndOdd:
         odd, a = self._odd()
         root = OddModule("root", exclude_or=[module_holds("ok", False)])
         odd = OddDefinition("t", odd.attributes, [*odd.modules, root])
-        assert odd.roots == ["roads", "root"]  # weather is referenced via its label
+        # weather is referenced via its label; "never" is inactive, so ignored.
+        assert odd.roots == ["roads", "never", "root"]
 
     def test_a_condition_on_an_inactive_module_is_satisfied(self) -> None:
         odd, a = self._odd()
@@ -415,7 +416,7 @@ class _Actor:
 class _Lane:
     def __init__(self, lane_id: int) -> None:
         self.lane_id = lane_id
-        self.lane_type = "LaneType.Driving"
+        self.lane_type = 2  # carla.LaneType.Driving, an int in typesafe_carla
         self.road_id, self.section_id = 1, 0
         self.is_junction = False
         self._left: Any = None
@@ -977,3 +978,187 @@ def test_the_model_declares_the_probes_as_python_does() -> None:
         "traffic_density_level",
     }
     assert probe_functions <= set(functions), probe_functions - set(functions)
+
+
+# ---------------------------------------------------------------------------
+# Regressions found in review
+# ---------------------------------------------------------------------------
+
+
+class TestReviewRegressions:
+    def test_an_inactive_module_does_not_promote_what_it_refers_to(self) -> None:
+        x = _attr("x", buckets=[0, 5, 10])
+        hazard = OddModule("hazard", include_and=[x.greater_than(5)])
+        main = OddModule("main", exclude_or=[module_holds("hazard")], active=False)
+        odd = OddDefinition("t", [x], [hazard, main])
+        assert odd.roots == ["main"]
+        assert odd.evaluate({"x": 0}).inside is True
+        assert odd.outside_buckets(x) == []
+
+    def test_an_inactive_hazard_in_an_exclude_section_is_ignored(self) -> None:
+        x = _attr("x", buckets=[0, 5, 10])
+        hazard = OddModule("hazard", include_and=[x.greater_than(5)], active=False)
+        main = OddModule("main", exclude_or=[module_holds("hazard")])
+        odd = OddDefinition("t", [x], [hazard, main])
+        assert odd.evaluate({"x": 9}).inside is True
+        assert odd.outside_buckets(x) == []
+
+    def test_numbers_in_a_list_compare_as_numbers(self) -> None:
+        s = _attr("s", values=[30, 50])
+        assert s.is_in([30, 50]).evaluate({"s": 30.0}, {}) is True
+        assert s.equals(1).evaluate({"s": True}, {}) is False
+
+    def test_nan_is_missing_and_a_malformed_value_is_not(self) -> None:
+        x = _attr("x", buckets=[0, 10])
+        odd = OddDefinition("t", [x], [OddModule("m", include_and=[x.at_least(5)])])
+        nan = odd.evaluate({"x": float("nan")})
+        assert nan.inside is True and nan.assumed is True
+        assert odd.evaluate({"x": "abc"}).inside is False
+
+    def test_an_equality_rules_out_buckets_without_its_value(self) -> None:
+        s = _attr("s", buckets=[0, 30, 60, 120])
+        odd = OddDefinition("t", [s], [OddModule("m", include_and=[s.equals(100)])])
+        assert odd.outside_buckets(s) == ["[0, 30)", "[30, 60)"]
+
+    def test_a_non_yaml_path_is_refused(self) -> None:
+        from pathlib import Path as _P
+
+        with pytest.raises(ValueError, match="yaml"):
+            resolve_odd(_P("odd.json"))
+
+    def test_speed_limit_falls_back_to_the_vehicle(self) -> None:
+        world = _odd_world()
+        ego = world._actors[0]
+        ego._limit = 0.0
+
+        class _Vehicle:
+            def get_speed_limit(self) -> float:
+                return 40.0
+
+        ego.as_vehicle = lambda: _Vehicle()  # type: ignore[attr-defined]
+        assert probes.speed_limit_kph(world) == 40.0
+
+
+_REVIEW_TAXONOMY = """
+TAXONOMY:
+    rain_rate: float precipitation_rate
+    rain_level:
+        dry:
+            rain_rate: "< 1 mm/h"
+        wet:
+            rain_rate: ">= 1 mm/h"
+    rainfall: [none, light, heavy]
+    wipers: [off, intermittent, continuous]
+    country: [DE, NO, SE]
+    road_type: [urban, rural]
+    ego:
+        state:
+            road_type: [urban, rural]
+    other: rain_level
+    s: float velocity
+    t: s
+    flag: boolean
+"""
+
+
+class TestReaderRegressions:
+    def _load(self, modules: str, **kw: Any) -> OddDefinition:
+        return load_openodd(_REVIEW_TAXONOMY + "MODULES:\n" + modules, name="n", **kw)
+
+    def test_a_literal_named_none_is_a_literal(self) -> None:
+        odd = self._load("    m:\n        INCLUDE_AND:\n            rainfall: none\n")
+        assert odd.evaluate({"rainfall": "none"}).inside is True
+        assert odd.evaluate({"rainfall": "heavy"}).inside is False
+
+    def test_yaml_1_1_booleans_stay_literals(self) -> None:
+        odd = self._load(
+            "    m:\n        INCLUDE_AND:\n            wipers: off\n            country: NO\n"
+        )
+        assert odd.evaluate({"wipers": "off", "country": "NO"}).inside is True
+
+    def test_a_key_written_twice_is_refused(self) -> None:
+        with pytest.raises(OpenOddError, match="written twice"):
+            self._load(
+                "    m:\n        INCLUDE_AND:\n            flag: true\n            flag: false\n"
+            )
+
+    def test_a_record_of_categoricals_is_a_record(self) -> None:
+        odd = self._load(
+            "    m:\n        INCLUDE_AND:\n            state.road_type: [urban]\n"
+        )
+        assert "ego.state.road_type" in {a.name for a in odd.attributes}
+
+    def test_metadata_in_a_section_is_ignored(self) -> None:
+        odd = self._load(
+            "    m:\n        INCLUDE_AND:\n            METADATA: {k: v}\n            flag: true\n"
+        )
+        assert odd.evaluate({"flag": True}).inside is True
+
+    def test_a_reference_keeps_order_and_numbers(self) -> None:
+        odd = self._load(
+            '    m:\n        INCLUDE_AND:\n            other: "< wet"\n            t: "> 5 km/h"\n'
+        )
+        module = odd.modules[0].describe()["include_and"]
+        assert module == ["other in [dry]", "t > 5"]
+
+    def test_a_list_on_a_number_is_refused(self) -> None:
+        with pytest.raises(OpenOddError, match="is a number"):
+            self._load("    m:\n        INCLUDE_AND:\n            s: [30, 60]\n")
+
+    def test_a_boolean_takes_true_or_false(self) -> None:
+        with pytest.raises(OpenOddError, match="is a boolean"):
+            self._load("    m:\n        INCLUDE_AND:\n            flag: maybe\n")
+
+    def test_a_reversed_range_is_refused(self) -> None:
+        with pytest.raises(OpenOddError, match="ends before it starts"):
+            self._load('    m:\n        INCLUDE_AND:\n            s: "[10 .. 2] m/s"\n')
+
+    def test_a_module_named_like_a_concept_is_refused(self) -> None:
+        with pytest.raises(OpenOddError, match="must not be a concept's"):
+            self._load("    flag:\n        INCLUDE_AND:\n            s: 1\n")
+
+    def test_units_need_the_probes_unit(self) -> None:
+        with pytest.raises(OpenOddError, match="needs the probe's unit"):
+            self._load(
+                '    m:\n        INCLUDE_AND:\n            s: "> 36 km/h"\n',
+                bindings={"s": {"probe": f"{__name__}:wind_mps"}},
+            )
+        # Without a probe, numbers are read in the first unit written.
+        odd = self._load(
+            '    m:\n        INCLUDE_AND:\n            s: "> 36 km/h"\n'
+            '    n:\n        INCLUDE_AND:\n            s: "< 20 m/s"\n'
+        )
+        assert odd.modules[1].describe()["include_and"] == ["s < 72"]
+
+    def test_a_derived_categorical_may_come_before_what_it_reads(self) -> None:
+        text = """
+TAXONOMY:
+    surface:
+        good:
+            rain_level: dry
+        bad:
+            rain_level: wet
+    rain_level:
+        dry:
+            rain_rate: "< 1 mm/h"
+        wet:
+            rain_rate: ">= 1 mm/h"
+    rain_rate: float precipitation_rate
+"""
+        odd = load_openodd(
+            text,
+            name="n",
+            bindings={"rain_rate": {"probe": f"{__name__}:rain_rate", "unit": "mm/h"}},
+        )
+        RAIN["value"] = 3.0
+        assert odd.sample(None)["surface"] == "bad"
+        RAIN["value"] = 0.0
+
+    def test_a_file_imported_twice_is_read_once(self, tmp_path: Path) -> None:
+        (tmp_path / "common.yml").write_text(
+            "TAXONOMY:\n  flag: boolean\nMODULES:\n  m:\n    INCLUDE_AND:\n      flag: true\n"
+        )
+        (tmp_path / "b.yml").write_text("IMPORT: [common.yml]\n")
+        (tmp_path / "c.yml").write_text("IMPORT: [common.yml]\n")
+        (tmp_path / "a.yml").write_text("IMPORT: [b.yml, c.yml]\n")
+        assert [m.name for m in load_openodd(tmp_path / "a.yml").modules] == ["m"]

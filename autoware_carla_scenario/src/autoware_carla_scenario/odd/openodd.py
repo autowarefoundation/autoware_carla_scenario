@@ -159,6 +159,39 @@ def _missing(world: Any) -> None:
 _KNOWN_KEYS = {"IMPORT", "TAXONOMY", "MODULES", "ODD", "COD", "OD", "conversion"}
 
 
+class _Loader(yaml.SafeLoader):
+    """PyYAML's safe loader with YAML 1.2 booleans, refusing duplicate keys.
+
+    YAML 1.1 reads ``off``, ``no`` and ``NO`` as booleans, which turns
+    literals such as ``wipers: [off, on]`` or a country code into ``false``.
+    A key written twice would otherwise silently drop the first.
+    """
+
+    def construct_mapping(self, node: Any, deep: bool = False) -> Any:
+        keys = [self.construct_object(k, deep=deep) for k, _ in node.value]
+        seen: set[Any] = set()
+        for key, (key_node, _) in zip(keys, node.value):
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"{key!r} is written twice", key_node.start_mark
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+_Loader.yaml_implicit_resolvers = {
+    first: [
+        (tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:bool"
+    ]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_Loader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+
+
 @dataclass
 class _Documents:
     taxonomy: dict[str, Any] = field(default_factory=dict)
@@ -166,6 +199,8 @@ class _Documents:
     roots: list[str] = field(default_factory=list)
     conversion: dict[str, Any] = field(default_factory=dict)
     first_stem: Optional[str] = None
+    #: Files read already: one imported twice is read once.
+    seen: set[Path] = field(default_factory=set)
 
 
 def _merge(into: dict[str, Any], doc: Mapping[str, Any], where: str) -> None:
@@ -192,6 +227,9 @@ def _read(
         if path in stack:
             chain = " -> ".join(p.name for p in (*stack, path))
             raise OpenOddError(f"IMPORT cycle: {chain}")
+        if path in docs.seen:
+            return
+        docs.seen.add(path)
         base, stack = path.parent, (*stack, path)
         docs.first_stem = docs.first_stem or path.stem
     else:
@@ -231,7 +269,7 @@ def _parse(source: Union[Path, str]) -> list[Any]:
         text = (
             source.read_text(encoding="utf-8") if isinstance(source, Path) else source
         )
-        return [d for d in yaml.safe_load_all(text) if d is not None]
+        return [d for d in yaml.load_all(text, Loader=_Loader) if d is not None]
     except OSError as exc:
         raise OpenOddError(f"cannot read {source}: {exc}") from exc
     except yaml.YAMLError as exc:
@@ -251,6 +289,7 @@ def _as_list(value: Any) -> list[Any]:
 _PRIMITIVES = {"integer", "long", "float", "double"}
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+#: The standard's keyword for a missing value, and its accepted replacements.
 _UNKNOWN = {"unknown", "none", "null", "undefined"}
 
 
@@ -262,16 +301,14 @@ class _Concept:
     literals: list[str] = field(default_factory=list)
     #: literal -> the expressions defining it (a derived categorical)
     definitions: dict[str, Mapping[str, Any]] = field(default_factory=dict)
+    #: Literals defined by bounds and ranges on one number are ordered, in
+    #: the order written.
+    ordered: bool = False
     attribute: Optional[OddAttribute] = None
 
     @property
     def name(self) -> str:
         return ".".join(self.path)
-
-    @property
-    def ordered(self) -> bool:
-        """Literals defined by ranges are ordered (in the order written)."""
-        return bool(self.definitions)
 
 
 def _literal(key: Any) -> str:
@@ -307,17 +344,26 @@ def _defines_literals(node: Mapping[str, Any], ids: Counter[str]) -> bool:
     outside it.
     """
     own = _keys(node, Counter())
-    return bool(node) and all(
+    # One literal makes no categorical: a single key is a record's field.
+    return len(node) >= 2 and all(
         isinstance(v, Mapping)
         and v
-        and all(ids[str(k)] > own[str(k)] for k in v)
+        and all(ids[_tail(k)] > own[_tail(k)] for k in v if str(k) != "METADATA")
         and all(_is_expression(x) for x in v.values())
         for v in node.values()
     )
 
 
+def _tail(key: Any) -> str:
+    return str(key).rsplit(".", 1)[-1]
+
+
 def _flatten(
-    node: Any, prefix: tuple[str, ...], ids: Counter[str], out: dict[str, _Concept]
+    node: Any,
+    prefix: tuple[str, ...],
+    ids: Counter[str],
+    out: dict[str, _Concept],
+    records: frozenset[tuple[str, ...]] = frozenset(),
 ) -> None:
     path = ".".join(prefix)
     if isinstance(node, list):
@@ -326,14 +372,14 @@ def _flatten(
         )
         return
     if isinstance(node, Mapping):
-        if _defines_literals(node, ids):
+        if prefix not in records and _defines_literals(node, ids):
             concept = _Concept(prefix, "categorical")
             concept.literals = [_literal(k) for k in node]
             concept.definitions = {_literal(k): v for k, v in node.items()}
             out[path] = concept
             return
         for key, child in node.items():
-            _flatten(child, (*prefix, str(key)), ids, out)
+            _flatten(child, (*prefix, str(key)), ids, out, records)
         return
     if not isinstance(node, str):
         raise OpenOddError(f"TAXONOMY {path}: cannot read {node!r}")
@@ -379,9 +425,24 @@ class _Reader:
         self.units = Units()
         self.units.add_conversions(docs.conversion)
         ids = _keys(docs.taxonomy, Counter())
-        self.concepts: dict[str, _Concept] = {}
-        _flatten(docs.taxonomy, (), ids, self.concepts)
-        self._resolve_references()
+        # A mapping of literals to expressions looks like a record of
+        # categoricals: one whose "expressions" do not fit the concepts they
+        # name is read again as a record.
+        records: frozenset[tuple[str, ...]] = frozenset()
+        while True:
+            self.concepts: dict[str, _Concept] = {}
+            _flatten(docs.taxonomy, (), ids, self.concepts, records)
+            self._resolve_references()
+            misread = frozenset(
+                c.path
+                for c in self.concepts.values()
+                if c.definitions and not self._fits(c)
+            )
+            if not misread:
+                break
+            records |= misread
+        for concept in self.concepts.values():
+            concept.ordered = concept.ordered or self._defined_by_ranges(concept)
         self.module_names = set(docs.modules)
         self.labels: set[str] = set()
         for mdef in docs.modules.values():
@@ -391,6 +452,8 @@ class _Reader:
             self.concept(str(k), "binding").name: dict(v or {})
             for k, v in bindings.items()
         }
+        #: Concept -> the unit its numbers are read in, when no probe says.
+        self.assumed_units: dict[str, str] = {}
 
     # -- names -----------------------------------------------------------
 
@@ -413,7 +476,11 @@ class _Reader:
         return found[0]
 
     def _resolve_references(self) -> None:
-        """A concept typed by a categorical's id takes its literals."""
+        """A concept typed by another concept's id takes its type.
+
+        A categorical's literals (and their order), a number's unit type, a
+        boolean.  A record type is not followed.
+        """
         for concept in list(self.concepts.values()):
             if concept.kind != "reference":
                 continue
@@ -421,7 +488,7 @@ class _Reader:
                 (
                     c
                     for c in self.concepts.values()
-                    if c.path[-1] == concept.unit_type and c.kind == "categorical"
+                    if c.path[-1] == concept.unit_type and c.kind != "reference"
                 ),
                 None,
             )
@@ -433,9 +500,78 @@ class _Reader:
                 )
                 del self.concepts[concept.name]
                 continue
-            concept.kind = "categorical"
+            concept.kind = target.kind
             concept.literals = list(target.literals)
-            concept.unit_type = ""
+            concept.unit_type = target.unit_type
+            concept.ordered = target.ordered or self._defined_by_ranges(target)
+
+    def _outside(self, ref: str, concept: _Concept) -> Optional[_Concept]:
+        """The concept *ref* names, outside *concept*; ``None`` if none or several."""
+        found = [
+            c
+            for c in self.concepts.values()
+            if (c.name == ref or c.name.endswith("." + ref))
+            and c.path[: len(concept.path)] != concept.path
+        ]
+        return found[0] if len(found) == 1 else None
+
+    def _fits(self, concept: _Concept) -> bool:
+        """Whether each literal's expressions fit the concepts they name."""
+        for definition in concept.definitions.values():
+            for key, value in definition.items():
+                if str(key) == "METADATA":
+                    continue
+                target = self._outside(str(key), concept)
+                if target is None or target is concept:
+                    return False
+                if target.kind == "number":
+                    if not isinstance(value, (int, float, str)) or isinstance(
+                        value, bool
+                    ):
+                        return False
+                    if isinstance(value, str) and not (
+                        _RANGE_RE.match(value.strip())
+                        or _BOUND_RE.match(value.strip())
+                        or _QUANTITY_RE.match(value.strip())
+                    ):
+                        return False
+                elif target.kind == "boolean":
+                    if not isinstance(value, bool):
+                        return False
+                elif target.kind == "categorical":
+                    literals = (
+                        [_literal(v) for v in value]
+                        if isinstance(value, list)
+                        else [_literal(value)]
+                    )
+                    if not target.definitions and any(
+                        x not in target.literals for x in literals
+                    ):
+                        return False
+        return True
+
+    def _defined_by_ranges(self, concept: _Concept) -> bool:
+        """Whether every literal is a bound or range on one and the same number."""
+        if not concept.definitions:
+            return False
+        targets = set()
+        for definition in concept.definitions.values():
+            keys = [k for k in definition if str(k) != "METADATA"]
+            if len(keys) != 1:
+                return False
+            value = definition[keys[0]]
+            target = self._outside(str(keys[0]), concept)
+            if (
+                target is None
+                or target.kind != "number"
+                or not isinstance(value, str)
+                or not (
+                    _RANGE_RE.match(value.strip()) or _BOUND_RE.match(value.strip())
+                )
+            ):
+                return False
+            targets.add(target.name)
+        return len(targets) == 1
 
     # -- units -----------------------------------------------------------
 
@@ -457,30 +593,58 @@ class _Reader:
                 f"{where}: {concept.name}: {token!r} is not a number "
                 "(numeric terms and $parameters are not read)"
             ) from exc
-        if (
-            unit
-            and self.units.unit_type(unit) is None
-            and unit != self.unit_of(concept)
-        ):
+        to = self.unit_of(concept)
+        if unit and self.units.unit_type(unit) is None and unit != to:
             raise OpenOddError(
                 f"{where}: {concept.name}: unknown unit {unit!r} "
                 "(numeric terms and $parameters are not read)"
             )
+        if unit and not to:
+            # The probe's unit is unknown: numbers on this concept are read in
+            # the first unit written, and another unit is converted into it.
+            # A probe that measures needs its unit to compare at all.
+            if (
+                concept.attribute is not None
+                and concept.attribute.probe is not _missing
+            ):
+                raise OpenOddError(
+                    f"{where}: {concept.name}: {unit!r} needs the probe's unit "
+                    "(binding 'unit:')"
+                )
+            to = self.assumed_units.setdefault(concept.name, normalize_unit(unit))
         try:
             if unit and concept.unit_type:
                 self.units.check_type(unit, concept.unit_type)
-            return self.units.convert(value, unit or "", self.unit_of(concept))
+            return self.units.convert(value, unit or "", to)
         except UnitError as exc:
             raise OpenOddError(f"{where}: {concept.name}: {exc}") from exc
 
     # -- attributes --------------------------------------------------------
 
     def build_attributes(self) -> list[OddAttribute]:
-        # Plain concepts first: a derived categorical's probe reads them.
-        ordered = sorted(self.concepts.values(), key=lambda c: bool(c.definitions))
-        for concept in ordered:
-            concept.attribute = self.attribute_of(concept)
-        return [c.attribute for c in ordered if c.attribute is not None]
+        # A derived categorical after every concept its expressions read.
+        built: list[_Concept] = []
+        pending = list(self.concepts.values())
+        while pending:
+            ready = [
+                c
+                for c in pending
+                if all(
+                    (target := self._outside(str(k), c)) is not None
+                    and target.attribute is not None
+                    for d in c.definitions.values()
+                    for k in d
+                    if str(k) != "METADATA"
+                )
+            ]
+            if not ready:
+                names = ", ".join(c.name for c in pending)
+                raise OpenOddError(f"TAXONOMY: {names} are defined by each other")
+            for concept in ready:
+                concept.attribute = self.attribute_of(concept)
+                built.append(concept)
+                pending.remove(concept)
+        return [c.attribute for c in built if c.attribute is not None]
 
     def attribute_of(self, concept: _Concept) -> OddAttribute:
         binding = self.bindings.get(concept.name, {})
@@ -582,8 +746,12 @@ class _Reader:
         if not isinstance(section, Mapping) or not section:
             raise OpenOddError(f"{where}: a section maps concepts to expressions")
         out: list[OddCondition] = []
+        if not [k for k in section if str(k) != "METADATA"]:
+            raise OpenOddError(f"{where}: a section maps concepts to expressions")
         for key, value in section.items():
             key = str(key)
+            if key == "METADATA":
+                continue  # carries no semantics
             if key in ("AND", "OR"):
                 if nested:
                     raise OpenOddError(f"{where}: sections nest one level only")
@@ -610,18 +778,29 @@ class _Reader:
         if attribute is None:
             raise OpenOddError(f"{where}: {concept.name} is defined by itself")
         if value is None or (
-            isinstance(value, str) and value.strip().lower() in _UNKNOWN
+            isinstance(value, str)
+            and value.strip().lower() in _UNKNOWN
+            and value.strip() not in concept.literals  # a literal named "none"
         ):
             return attribute.is_unknown()
+        if concept.kind == "boolean":
+            if not isinstance(value, bool):
+                raise OpenOddError(
+                    f"{where}: {concept.name} is a boolean: true or false, not {value!r}"
+                )
+            return attribute.equals(value)
         if isinstance(value, list):
+            if concept.kind == "number":
+                raise OpenOddError(
+                    f"{where}: {concept.name} is a number: a list is for "
+                    'literals; a range is written "[low .. high] unit"'
+                )
             literals = [_literal(v) for v in value]
             self.require_literals(concept, literals, where)
             return attribute.is_in(literals)
-        if isinstance(value, bool):
-            if concept.kind == "categorical":
-                self.require_literals(concept, [_literal(value)], where)
-                return attribute.is_in([_literal(value)])
-            return attribute.equals(value)
+        if concept.kind == "categorical" and not isinstance(value, str):
+            self.require_literals(concept, [_literal(value)], where)
+            return attribute.is_in([_literal(value)])
         if isinstance(value, (int, float)):
             return attribute.equals(self.number(str(value), None, concept, where))
         text = str(value).strip()
@@ -636,6 +815,10 @@ class _Reader:
         if m:
             low = self.number(m["low"], m["unit"], concept, where)
             high = self.number(m["high"], m["unit"], concept, where)
+            if low > high:
+                raise OpenOddError(
+                    f"{where}: {concept.name}: {text!r} ends before it starts"
+                )
             return attribute.between(low, high)
         m = _BOUND_RE.match(text)
         if m:
@@ -726,6 +909,8 @@ class _Reader:
                 raise OpenOddError(f"{where}: expected a mapping")
             if "unknown" in name.lower():
                 raise OpenOddError(f"{where}: a module's id must not contain 'unknown'")
+            if any(c.path[-1] == name for c in self.concepts.values()):
+                raise OpenOddError(f"{where}: a module's id must not be a concept's")
             extra = sorted(str(k) for k in mdef if k not in self._MODULE_KEYS)
             if extra:
                 raise OpenOddError(f"{where}: unknown keys {extra}")

@@ -310,13 +310,16 @@ def build() -> OddDefinition:
         [
             OddModule("roads", include_and=[location.is_in(["urban"]), speed_limit.between(0, 60)]),
             OddModule("weather", exclude_or=[weather.is_in(["heavy"])], labels=["fair"]),
+            OddModule("steady", include_or=[yaw.at_most(20.0), any_of((yaw.less_than(25.0),))]),
             OddModule(
                 "root",
-                include_and=[module_holds("roads"), module_holds("fair")],
-                include_or=[yaw.at_most(20.0), any_of([yaw.less_than(25.0)])],
+                include_and=[module_holds("roads"), module_holds("fair"), module_holds("steady")],
+                exclude_or=[yaw.is_unknown()],
+                labels=[],
             ),
+            OddModule("empty", include_and=[], active=False),
         ],
-        roots=["root"],
+        roots=("root",),
     )
 
 
@@ -345,6 +348,18 @@ def test_an_odd_written_in_python_compiles(tmp_path: Path) -> None:
     module, _ = _write_odd(tmp_path, _ODD_MODULE)
     result = typecheck_odd(module.build)
     assert result.ok, result.format()
+
+
+def test_a_module_with_two_include_sections_is_refused(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace(
+        'OddModule("steady", include_or=',
+        'OddModule("steady", include_and=[yaw.at_most(1.0)], include_or=',
+    )
+    module, _ = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "one include section" in error.message, error.format()
 
 
 def test_an_odd_condition_of_the_wrong_type_is_refused_at_its_line(

@@ -167,12 +167,13 @@ def _read(cache: dict[str, Any], key: str, read: Callable[[], Any]) -> Any:
 
 
 def _ego(world: "carla.World") -> Any:
-    """The ego actor, found once per run."""
-    if _RUN.ego is None:
+    """The ego actor, found once per run (again if it is gone)."""
+    ego = _RUN.ego
+    if ego is None or not getattr(ego, "is_alive", True):
         try:
             _RUN.ego = find_actor_in_list(world.get_actors(), EGO_ROLE_NAME)
         except Exception:
-            return None
+            _RUN.ego = None
     return _RUN.ego
 
 
@@ -305,7 +306,9 @@ def speed_limit_kph(world: "carla.World") -> Optional[float]:
     ego = _ego(world)
     if ego is None:
         return None
-    limit = float(ego.get_speed_limit() or 0.0)
+    # The speed limit is a vehicle's: a plain carla.Actor does not have it.
+    vehicle = ego.as_vehicle() if hasattr(ego, "as_vehicle") else ego
+    limit = float(vehicle.get_speed_limit() or 0.0)
     return limit if limit > 0.0 else None
 
 
@@ -319,6 +322,10 @@ def lane_count(world: "carla.World") -> Optional[int]:
         return None
     key = (waypoint.road_id, waypoint.section_id, waypoint.lane_id)
     if key not in _RUN.lane_counts:
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        # typesafe_carla's lane type is an int (an IntEnum on the API side).
+        driving = int(carla.LaneType.Driving)
         count = 1
         for step in ("get_left_lane", "get_right_lane"):
             lane = getattr(waypoint, step)()
@@ -327,7 +334,7 @@ def lane_count(world: "carla.World") -> Optional[int]:
                 lane is not None
                 and seen < 16
                 and lane.lane_id * waypoint.lane_id > 0
-                and str(lane.lane_type).endswith("Driving")
+                and int(lane.lane_type) == driving
             ):
                 count += 1
                 seen += 1

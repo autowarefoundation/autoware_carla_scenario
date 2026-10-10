@@ -35,7 +35,7 @@ The model and its semantics follow OpenODD 1.0 (chapters 6 and 7).
 | **Condition** | A test on one attribute (`speed_limit.between(0, 60)`), a group of conditions (`all_of`, `any_of`), another module's verdict (`module_holds`), or a missing value (`is_unknown`). |
 | **Module** | A named rule: `INCLUDE AND (NOT EXCLUDE)`. It has at most one include section and at most one exclude section. |
 | **Label** | A name several modules declare. It holds when any active module declaring it holds. |
-| **Root** | An entry point. Each root candidate (`roots=`; by default every active module) that no other module refers to, by name or through a label, is a root. The ODD holds when its roots hold. |
+| **Root** | An entry point. Each root candidate (`roots=`; by default every module) that no other module refers to, by name or through a label, is a root. The ODD holds when its active roots hold. |
 
 **Missing values.** OpenODD's *missing-value semantics* apply. A value the
 probe could not read does not, by itself, put a situation outside the ODD
@@ -44,8 +44,13 @@ Lanelet2 map. When a value is required, the ODD says so with
 `attr.is_unknown()` in an exclude section (`x: unknown` in YAML). A tick that
 is inside only because values were missing is reported as such.
 
-**Inactive modules.** An inactive module is ignored: a condition referring to
-it, either way, is satisfied.
+**Inactive modules.** An inactive module is ignored. A condition referring to
+it, either way, drops out of its section, as if it were not written. A
+section with nothing left in it counts as absent: an include section then
+holds, and an exclude section does not. The standard says such conditions
+are "automatically satisfied"; taken literally, that would make an exclude
+section that refers to a switched-off hazard exclude everything, so this
+reads "ignored" as the neutral element.
 
 Modules follow ISO 34503's "default" definition mode, as OpenODD requires.
 Whatever no module rules out is inside the ODD.
@@ -165,6 +170,10 @@ These live in `autoware_carla_scenario.odd`:
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing.
 
+Import them from `autoware_carla_scenario.odd` itself
+(`from autoware_carla_scenario.odd import rain`). The Codon model that checks
+an ODD has no `probes` submodule.
+
 
 ## Writing an ODD in OpenODD YAML
 
@@ -185,7 +194,7 @@ TAXONOMY:
                 rainfall_rate: "> 2.5 mm/h"
         wind_speed: float velocity
     scenery:
-        road_type: [town_local, dead_end, expressway]
+        road_type: [road, highway, road_shoulder]
         lane_count: integer count
 ```
 
@@ -199,13 +208,14 @@ ODD:
         TITLE: The baseline ODD
         INCLUDE_AND:
             low_speed_roads: true
+            needs_wind: true
         EXCLUDE_OR:
             bad_weather: true
 
 MODULES:
     low_speed_roads:
         INCLUDE_AND:
-            road_type: [town_local, dead_end]
+            road_type: [road]
             lane_count: "< 3"
     bad_weather_1:
         LABEL: bad_weather
@@ -226,7 +236,7 @@ openodd: [odd.yml]                 # relative to this file
 name: urban                        # default: this file's stem
 text: Urban roads, fair weather
 probes:
-  road_type: {probe: lanelet_location}
+  road_type: {probe: lanelet_subtype}
   rainfall_rate: {probe: my_package.probes:rain_rate_mm_h, unit: mm/h}
   wind_speed: {probe: my_package.probes:wind_mps, unit: m/s}
   lane_count: {probe: lane_count, values: [1, 2, 3, 4]}
@@ -264,7 +274,7 @@ A module's keys are:
 - `TITLE`, `DESCRIPTION`;
 - `ACTIVE`;
 - `LABEL` / `LABELS` (one name or a list);
-- `METADATA` (ignored);
+- `METADATA` (ignored, here and inside a section);
 - one `INCLUDE_AND` or `INCLUDE_OR`, and one `EXCLUDE_AND` or `EXCLUDE_OR`.
 
 A section nests one level of the other operator: `OR:` in an `AND` section,
@@ -281,7 +291,7 @@ its path as makes it unique.
 | `"> x unit"`, `">= x"`, `"< x"`, `"<= x"` | a bound (`>` excludes `x`, `>=` includes it) |
 | `"[low .. high] unit"`, `"[low, high] unit"` | an inclusive range |
 | `"< literal"`, `"[a .. b]"` | a bound or range over an ordered categorical |
-| `unknown` (`none`, `null`, `undefined`) | the value is missing |
+| `unknown` (`none`, `null`, `undefined`, or YAML `null`) | the value is missing, unless the categorical has a literal of that name |
 
 A number's unit must measure the concept's unit type. It is converted into
 the probe's unit, so `"> 50 km/h"` against a probe in m/s is `> 13.89`. The
@@ -311,6 +321,11 @@ The following are refused, each with the module it appears in:
 - a second include or exclude section;
 - deeper nesting;
 - a module or label id containing `unknown`.
+
+The YAML is read with YAML 1.2 booleans: only `true` and `false` are
+booleans, so literals such as `off` or `NO` stay literals. A key written
+twice is refused. As the standard notes, an unquoted expression starting
+with `>` (`speed: > 50 km/h`) is a YAML block scalar, so quote it.
 
 Not read: `COD` / `OD` records, numeric terms (`1.75*ego_width`), `$`
 parameters, and condition-level metadata.

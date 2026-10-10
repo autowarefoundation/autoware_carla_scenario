@@ -328,3 +328,39 @@ class TestReport:
 
     def test_the_cli_fails_when_there_is_nothing_to_merge(self, tmp_path: Path) -> None:
         assert main([str(tmp_path)]) == 1
+
+
+class TestReviewRegressions:
+    def test_labels_that_cannot_be_told_apart_are_refused(self) -> None:
+        with pytest.raises(ValueError, match="too close"):
+            _item(buckets=[1.0, 1.0 + 1e-13, 1.0 + 2e-13, 1.0 + 3e-13])
+
+    def test_nan_is_no_sample(self) -> None:
+        collector = CoverageCollector([_item(buckets=[0, 1], event=SamplingEvent.TICK)])
+        collector.tick(_World(float("nan")), 0.0)
+        item = collector.to_dict("S")["items"][0]
+        assert item["samples"] == 0 and item["out_of_range"] == {}
+
+    def test_crosses_over_different_buckets_are_not_merged(self) -> None:
+        def run(edges: list[float]) -> dict[str, Any]:
+            a = CoverItem("a", lambda w: 0.5, buckets=edges, event=SamplingEvent.TICK)
+            b = CoverItem("b", lambda w: 1, values=[1, 2], event=SamplingEvent.TICK)
+            collector = CoverageCollector([a, b], [CrossItem("ab", [a, b])])
+            collector.tick(_World(None), 0.0)
+            return collector.to_dict("S")
+
+        report = merge_coverage([run([0, 1, 2]), run([0, 5, 10])])
+        assert sorted(e.name for e in report.entries if e.kind == "cross") == [
+            "ab",
+            "ab#2",
+        ]
+
+    def test_files_of_another_schema_are_skipped(self, tmp_path: Path) -> None:
+        (tmp_path / "S_coverage.json").write_text(json.dumps(_run(1)))
+        (tmp_path / "merged_coverage.json").write_text(json.dumps({"runs": 1}))
+        assert load_and_merge([tmp_path]).runs == 1
+
+    def test_a_scenario_cannot_take_an_odd_name(self) -> None:
+        scenario = TestScenarioRegistration()._scenario()
+        with pytest.raises(ValueError, match="odd."):
+            scenario.register_cover("odd.x", lambda w: 1, values=[1])

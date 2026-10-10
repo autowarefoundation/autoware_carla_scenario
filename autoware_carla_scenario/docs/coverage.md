@@ -21,7 +21,8 @@ and keep its vocabulary.
 2. On the item's **sampling event**, the runner reads the value and counts a
    **hit** in the bucket it falls in.
 3. Each run writes its hits to `{ScenarioName}_coverage.json` next to
-   `{ScenarioName}_result.json`.
+   `{ScenarioName}_result.json`. A batch that runs one scenario class more
+   than once writes `{ScenarioName}-1_coverage.json` and so on.
 4. `scenario-coverage` merges any number of those files. It grades each item
    and lists its **holes**: the buckets no run has hit.
 
@@ -222,6 +223,8 @@ different buckets would mean nothing.
       "event": "condition:cut_in_started",
       "items": ["speed_at_cut_in", "gap_at_cut_in"],
       "target": 1,
+      "buckets": ["[0, 10) / [0, 5)", "..."],
+      "outside_odd": [],
       "hits": {"[0, 10) / [0, 5)": 0, "...": 0}
     }
   ],
