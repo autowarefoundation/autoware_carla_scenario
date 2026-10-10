@@ -143,6 +143,9 @@ class CompiledAction:
     params: dict[str, Any]
     actor_role: Optional[str]
     trigger: Optional[CompiledCondition] = None
+    #: Waypoint conditions as ``(vertex index from 0, condition)``, in vertex
+    #: order.  The document counts vertices from 1; this is where that ends.
+    advance_conditions: "tuple[tuple[int, CompiledCondition], ...]" = ()
 
     @property
     def label(self) -> str:
@@ -244,12 +247,17 @@ def _compile_action(node: ActionNode, roles: dict[str, str]) -> CompiledAction:
     )
     actor_role = roles.get(node.actor) if node.actor else None
     trigger = _compile_condition(node.trigger, roles) if node.trigger else None
+    advance = tuple(
+        (gate.vertex - 1, _compile_condition(gate.condition, roles))
+        for gate in sorted(node.advance_conditions, key=lambda g: g.vertex)
+    )
     return CompiledAction(
         spec=spec,
         node=node,
         params=params,
         actor_role=actor_role,
         trigger=trigger,
+        advance_conditions=advance,
     )
 
 

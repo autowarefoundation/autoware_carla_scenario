@@ -417,6 +417,83 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
+    _check_advance_conditions(out, path, node, spec.vertex_conditions, refs)
+
+
+def _check_advance_conditions(
+    out: _Collector, path: str, node: ActionNode, accepted: bool, refs: _Refs
+) -> None:
+    """Check an action's waypoint conditions: where they sit, and what they say.
+
+    Each condition tree is checked as a trigger is.  Where it sits is checked
+    against the vertices the card lists: a vertex it does not have, the last
+    one -- which has no next vertex to advance to -- or one named twice.  A
+    lanelet path's vertices are made by the map, every two metres, so they
+    are nothing an author could count; it takes none.
+    """
+    gates = node.advance_conditions
+    if not gates:
+        return
+    if not accepted:
+        out.error(
+            f"{path}.advance_conditions",
+            f"{node.type!r} follows no vertices, so it takes no waypoint "
+            "conditions.",
+            node.id,
+        )
+        return
+    count = _vertex_count(node)
+    seen: set[int] = set()
+    for index, gate in enumerate(gates):
+        where = f"{path}.advance_conditions[{index}]"
+        if gate.vertex in seen:
+            out.error(
+                f"{where}.vertex",
+                f"Vertex {gate.vertex} has two waypoint conditions; combine them "
+                "into one (All or Any).",
+                node.id,
+            )
+        seen.add(gate.vertex)
+        if count is None:
+            out.error(
+                f"{where}.vertex",
+                "Waypoint conditions need vertices written in the card (map "
+                "frame or relative); a lanelet path's vertices are generated.",
+                node.id,
+            )
+        elif count >= 2 and gate.vertex > count:
+            out.error(
+                f"{where}.vertex",
+                f"There is no vertex {gate.vertex}: the trajectory has {count}.",
+                node.id,
+            )
+        elif count >= 2 and gate.vertex == count:
+            out.error(
+                f"{where}.vertex",
+                f"Vertex {gate.vertex} is the last one: there is no next vertex "
+                "to advance to. Put the condition on the vertex before it, or "
+                "stop the action another way.",
+                node.id,
+            )
+        _check_condition(out, f"{where}.condition", gate.condition, refs)
+
+
+def _vertex_count(node: ActionNode) -> Optional[int]:
+    """How many vertices a vertex-listing card has; ``None`` if it lists none.
+
+    A count that cannot be read -- a malformed line -- is reported against
+    its own field, and comes back as ``0`` here so nothing is said twice.
+    """
+    params = node.params
+    source = params.get("path_source", "vertices")
+    try:
+        if source == "vertices":
+            return len(parse_vertices(params.get("vertices")))
+        if source == "relative_lane":
+            return len(parse_relative_vertices(params.get("relative_vertices")))
+    except ValueError:
+        return 0
+    return None
 
 
 def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> None:
@@ -1423,6 +1500,10 @@ def _signal_controller_nodes(
             found.append((path, action))
         if action.trigger is not None:
             walk_condition(f"{path}.trigger", action.trigger)
+        for gate_index, gate in enumerate(action.advance_conditions):
+            walk_condition(
+                f"{path}.advance_conditions[{gate_index}].condition", gate.condition
+            )
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         walk_condition(f"assertions.pass[{index}]", condition)

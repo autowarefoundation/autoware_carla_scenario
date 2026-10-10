@@ -22,7 +22,7 @@ needs the loaded map and imports it only then.
 from __future__ import annotations
 
 import math
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from .model import (
     MapPose,
@@ -32,6 +32,9 @@ from .model import (
     TrajectoryTiming,
     TrajectoryVertex,
 )
+
+if TYPE_CHECKING:
+    from ..conditions.base import BaseCondition
 
 __all__ = [
     "PATH_SOURCES",
@@ -326,6 +329,7 @@ def authored_trajectory(
     name: str = "trajectory",
     relative_vertices: Any = None,
     reference_entity: Optional[str] = None,
+    advance: Optional[Mapping[int, "BaseCondition"]] = None,
 ) -> Trajectory:
     """The trajectory a *Follow Trajectory* card describes.
 
@@ -344,10 +348,36 @@ def authored_trajectory(
         reference_entity: The ``relative_lane`` source's reference: the
             ``role_name`` of the entity its vertices are relative to, ``None``
             for the entity the action moves.
+        advance: Waypoint conditions, by vertex index counted from 0 (see
+            :meth:`~.model.Trajectory.gated`).
 
     Raises:
         ValueError: On an unknown source, or a source without what it needs.
     """
+    trajectory = _authored_path(
+        path_source,
+        vertices,
+        lanelet_ids,
+        speed_kmh,
+        lateral_offset_m,
+        name,
+        relative_vertices,
+        reference_entity,
+    )
+    return trajectory.gated(advance) if advance else trajectory
+
+
+def _authored_path(
+    path_source: str,
+    vertices: Any,
+    lanelet_ids: Optional[Sequence[int]],
+    speed_kmh: Optional[float],
+    lateral_offset_m: float,
+    name: str,
+    relative_vertices: Any,
+    reference_entity: Optional[str],
+) -> Trajectory:
+    """The card's trajectory, before any waypoint condition is put on it."""
     if path_source == "vertices":
         rows = parse_vertices(vertices)
         problems = vertex_problems(rows)

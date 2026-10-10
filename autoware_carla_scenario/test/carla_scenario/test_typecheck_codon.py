@@ -488,6 +488,43 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
+    """Any condition gates a vertex: a leaf, a composition, one put on later."""
+    setup = """
+        self._setup_ego_spawn()
+        path = Trajectory(
+            "gated",
+            [
+                TrajectoryVertex(MapPose(100.0, 200.0), 0.0),
+                TrajectoryVertex(
+                    MapPose(110.0, 200.0), 1.0, advance=ElapsedTimeCondition(5.0, label="go")
+                ),
+                TrajectoryVertex(
+                    MapPose(120.0, 200.0),
+                    2.0,
+                    AndCondition(
+                        [
+                            ElapsedTimeCondition(6.0, label="late"),
+                            SpeedCondition(EGO_ROLE_NAME, 1.0, ComparisonRule.LESS_THAN, label="slow"),
+                        ]
+                    ),
+                ),
+                TrajectoryVertex(MapPose(130.0, 200.0), 3.0),
+            ],
+        )
+        if path.is_gated:
+            path = path.gated({0: StickyCondition(ElapsedTimeCondition(1.0, label="start"))})
+        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated")
+        self.register_pre_tick(action)
+        held = action.held_vertex
+        if held is not None:
+            logger.info("held at %d", held)
+        """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 # ---------------------------------------------------------------------------
 # What is refused, and where it is reported
 # ---------------------------------------------------------------------------
@@ -547,6 +584,11 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
             "expected a trajectory position",
         ),
         (
+            "TrajectoryVertex(MapPose(1.0, 2.0), 0.0, advance=3.0)\n",
+            "advance=3.0",
+            "'float' does not match expected type 'BaseCondition'",
+        ),
+        (
             "RelativeLanePose(10.0, entity_ref=3)\n",
             "RelativeLanePose(10.0",
             "expected an EntityRole or a str",
@@ -569,6 +611,7 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
         "carla-wrong-argument",
         "carla-int-for-str",
         "trajectory-str-position",
+        "trajectory-advance-not-a-condition",
         "relative-lane-int-entity-ref",
         "trajectory-mode-for-timing",
     ],

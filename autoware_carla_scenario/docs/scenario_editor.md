@@ -242,7 +242,10 @@ Three rules make it readable:
   how much later is not on screen because the document does not know.
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
   the action it fires and joined to it by a solid line, so cause and effect are
-  next to each other instead of being correlated across the screen.
+  next to each other instead of being correlated across the screen. A
+  *Follow Trajectory* card can also hold conditions on its vertices --
+  [waypoint conditions](trajectory.md#waypoint-conditions), edited in its
+  inspector with the same condition controls.
 * **One actor reacting to another is a reference, not a coincidence.**
   "Swerve once NPC1 has cut in" is a `Lane Change` clip on the ego track whose
   trigger is an **Action state** condition naming NPC1's cut-in and the state

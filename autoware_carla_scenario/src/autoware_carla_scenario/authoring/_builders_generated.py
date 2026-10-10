@@ -845,6 +845,7 @@ def build_follow_trajectory_action(
     """Build a :class:`FollowTrajectoryAction`."""
     from ..actions import FollowTrajectoryAction  # noqa: PLC0415
     from ..trajectory.authoring import authored_trajectory  # noqa: PLC0415
+    from .builders import instantiate_advance_conditions  # noqa: PLC0415
     from ..trajectory.authoring import authored_timing  # noqa: PLC0415
     from ..trajectory.model import TrajectoryFollowingMode  # noqa: PLC0415
 
@@ -858,6 +859,7 @@ def build_follow_trajectory_action(
         lateral_offset_m=params["lateral_offset_m"],
         relative_vertices=params["relative_vertices"],
         reference_entity=params["reference_entity"],
+        advance=instantiate_advance_conditions(compiled, ctx),
     )
     time_reference = authored_timing(
         time_domain=params["time_domain"],

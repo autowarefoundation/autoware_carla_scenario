@@ -248,6 +248,11 @@ class BuiltPart:
     args: tuple[tuple[str, str], ...] = ()
     constants: tuple[tuple[str, str], ...] = ()
     when_present: str = ""
+    #: Keywords filled from the compiled node rather than from a field, by
+    #: name: ``("advance", "advance_conditions")`` passes the action's
+    #: waypoint conditions, built into runtime conditions.  The names the
+    #: generator knows are listed in its ``COMPILED_SOURCES``.
+    sources: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -359,6 +364,10 @@ class ActionSpec:
     #: has to be set up with rather than driven by -- a goal, the starting state
     #: of the lights.
     default_phase: Literal["init", "pre_tick", "post_tick"] = "pre_tick"
+    #: Whether the action follows a list of vertices that can carry waypoint
+    #: conditions (:attr:`~autoware_carla_scenario.authoring.models.ActionNode.advance_conditions`).
+    #: The editor offers them, and the validator accepts them, only then.
+    vertex_conditions: bool = False
     description: str = ""
 
     @property
@@ -1096,6 +1105,7 @@ register_action_spec(
         target="..actions:FollowTrajectoryAction",
         actor_kinds=("ego", "vehicle", "pedestrian"),
         visual_kind="continuous",
+        vertex_conditions=True,
         # The trajectory and its time reference are each assembled from
         # several fields, which the constructor's signature alone cannot say.
         builds=(
@@ -1113,6 +1123,7 @@ register_action_spec(
                             ("relative_vertices", "relative_vertices"),
                             ("reference_entity", "reference_entity"),
                         ),
+                        sources=(("advance", "advance_conditions"),),
                     ),
                 ),
             ),
@@ -1271,7 +1282,8 @@ register_action_spec(
             "Move a vehicle or pedestrian along a trajectory (OpenSCENARIO "
             "FollowTrajectoryAction).  The card runs until the entity reaches "
             "the end of it; while it runs, the action is the entity's only "
-            "driver."
+            "driver.  Waypoint conditions hold the entity at a vertex until "
+            "they hold."
         ),
     )
 )

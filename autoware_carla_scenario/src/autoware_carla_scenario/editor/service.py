@@ -34,6 +34,7 @@ from ..authoring.models import (
     MapRef,
     ScenarioDocument,
     SpawnSpec,
+    VertexCondition,
     as_action_phase,
     condition_refs,
 )
@@ -1142,9 +1143,12 @@ class EditorService:
         """Add a condition into *slot*.
 
         Slots are ``trigger:<action_id>`` (the action's trigger),
-        ``node:<node_id>`` (a child of a composition), ``pass`` or ``fail``.
-        Attaching a second condition to an action whose trigger is a single leaf
-        wraps both in an ``ALL`` -- the reading the swimlane already implies.
+        ``advance:<action_id>:<vertex>`` (the waypoint condition on a vertex of
+        the action's trajectory, counted from 1), ``node:<node_id>`` (a child
+        of a composition), ``pass`` or ``fail``.  Attaching a second condition
+        to an action whose trigger -- or a vertex whose waypoint condition --
+        is a single leaf wraps both in an ``ALL``, the reading the swimlane
+        already implies.
         """
         spec = get_condition_spec(type_id)
         if spec is None:
@@ -1171,6 +1175,21 @@ class EditorService:
                     "loop to give it a trigger."
                 )
             action.trigger = _attach_trigger(action.trigger, node)
+            return node
+        if target == "advance":
+            action_id, _, raw_vertex = identifier.partition(":")
+            action = self._vertex_condition_action(document, action_id)
+            vertex = as_int(raw_vertex, "Vertex", 0)
+            if vertex < 1:
+                raise EditorError("Vertices are counted from 1.")
+            gate = action.vertex_condition(vertex)
+            if gate is None:
+                action.advance_conditions.append(
+                    VertexCondition(vertex=vertex, condition=node)
+                )
+                action.advance_conditions.sort(key=lambda g: g.vertex)
+            else:
+                gate.condition = _attach_trigger(gate.condition, node)
             return node
         if target == "node":
             parent = document.condition(identifier)
@@ -1205,8 +1224,18 @@ class EditorService:
         node.params.update(_parse(spec.fields, form))
 
     def delete_condition(self, document: ScenarioDocument, node_id: str) -> None:
-        """Remove a condition subtree from wherever it sits."""
+        """Remove a condition subtree from wherever it sits.
+
+        Removing the whole condition of a waypoint removes the waypoint
+        condition: a vertex with nothing to wait for is an ungated vertex.
+        """
         for action in document.actions:
+            for index, gate in enumerate(action.advance_conditions):
+                if gate.condition.id == node_id:
+                    del action.advance_conditions[index]
+                    return
+                if gate.condition.remove(node_id):
+                    return
             trigger = action.trigger
             if trigger is None:
                 continue
@@ -1226,6 +1255,59 @@ class EditorService:
                 if root.remove(node_id):
                     return
         raise EditorError(f"No condition named {node_id!r}.")
+
+    # ------------------------------------------------------------------
+    # Waypoint conditions
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _vertex_condition_action(
+        document: ScenarioDocument, action_id: str
+    ) -> ActionNode:
+        """The action *action_id*, if it takes waypoint conditions."""
+        action = document.action(action_id)
+        if action is None:
+            raise EditorError(f"No action named {action_id!r}.")
+        spec = get_action_spec(action.type)
+        if spec is None or not spec.vertex_conditions:
+            raise EditorError(
+                f"{action.title or action.type} follows no vertices, so it takes "
+                "no waypoint conditions."
+            )
+        return action
+
+    def move_vertex_condition(
+        self, document: ScenarioDocument, action_id: str, index: int, vertex: Any
+    ) -> None:
+        """Put the action's *index*-th waypoint condition on another vertex.
+
+        Refused onto a vertex that already has one: merging two condition
+        trees is a decision about how they combine, which is the author's.
+        """
+        action = self._vertex_condition_action(document, action_id)
+        if not 0 <= index < len(action.advance_conditions):
+            raise EditorError(f"No waypoint condition {index} on {action_id!r}.")
+        number = as_int(vertex, "Vertex", 0)
+        if number < 1:
+            raise EditorError("Vertices are counted from 1.")
+        gate = action.advance_conditions[index]
+        other = action.vertex_condition(number)
+        if other is not None and other is not gate:
+            raise EditorError(
+                f"Vertex {number} already has a waypoint condition; add to that "
+                "one instead."
+            )
+        gate.vertex = number
+        action.advance_conditions.sort(key=lambda g: g.vertex)
+
+    def delete_vertex_condition(
+        self, document: ScenarioDocument, action_id: str, index: int
+    ) -> None:
+        """Remove the action's *index*-th waypoint condition, tree and all."""
+        action = self._vertex_condition_action(document, action_id)
+        if not 0 <= index < len(action.advance_conditions):
+            raise EditorError(f"No waypoint condition {index} on {action_id!r}.")
+        del action.advance_conditions[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1310,6 +1392,8 @@ def _signal_controller_uses(document: ScenarioDocument) -> "list[tuple[str, Any]
             found.append((path, action))
         if action.trigger is not None:
             walk(f"{path}.trigger", action.trigger)
+        for gate_index, gate in enumerate(action.advance_conditions):
+            walk(f"{path}.advance_conditions[{gate_index}].condition", gate.condition)
     for index, condition in enumerate(document.assertions.pass_conditions):
         walk(f"assertions.pass[{index}]", condition)
     for index, condition in enumerate(document.assertions.fail_conditions):
@@ -1417,6 +1501,13 @@ def _purge_references(document: ScenarioDocument, kind: str, target: str) -> Non
     for action in document.actions:
         if action.trigger is not None and names_target(action.trigger):
             action.trigger = None
+        # A waypoint condition that names what is gone could never be
+        # evaluated; the gate goes with it, as a trigger does.
+        action.advance_conditions = [
+            gate
+            for gate in action.advance_conditions
+            if not names_target(gate.condition)
+        ]
     assertions = document.assertions
     assertions.pass_conditions = [
         c for c in assertions.pass_conditions if not names_target(c)
