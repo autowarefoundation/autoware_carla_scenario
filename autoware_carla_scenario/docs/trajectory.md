@@ -1,12 +1,12 @@
-# Trajectories and T4 Scene Replay
+# Trajectories and Recorded-Scene Replay
 
 `FollowTrajectoryAction` moves a vehicle or a pedestrian along a given
 trajectory. It is OpenSCENARIO's `FollowTrajectoryAction`, and it is what lets a
-recorded drive be **written down as a scenario**: a T4 scene (the format
-TIER IV's private `tier4/e2e-devkit` reads) is transcribed into one trajectory
-per road user, and each one is replayed around the ego. The T4 reader is a
-package of its own, `autoware_carla_scenario_t4`, so the framework carries no
-dataset format.
+recorded drive be **written down as a scenario**: a recording is transcribed
+into one trajectory per road user, and each one is replayed around the ego.
+Reading a dataset is left to tools outside the framework (see
+[Replaying a recorded scene](#replaying-a-recorded-scene)), so the framework
+carries no dataset format.
 
 ## The action
 
@@ -120,68 +120,27 @@ the map with its physics off, for a card that brings it in at its first vertex:
 a road user a recording picks up late, placed where it first appears, could
 otherwise collide at spawn with whatever stood there when the run began.
 
-## Writing a T4 scene down as a scenario
+## Replaying a recorded scene
 
-The `autoware_carla_scenario_t4` workspace package reads a converted T4 scene and
-writes it down as a scenario document -- the one the editor edits and the
-declarative runtime runs:
+A transcribed recording becomes an ordinary scenario document -- the one the
+editor edits and the declarative runtime runs -- with nothing beyond the parts
+above:
 
-```bash
-uv run t4-scenario /data/t4/prd_jt/2025-12-09/scene_0001 \
-    --lanelet2 maps/my_area/lanelet2_map.osm --xodr maps/my_area/map.xodr \
-    --map-group my_area --map-name MyArea \
-    --to-editor --transcription scene_0001.json
-```
+- the ego spawns where the recording's ego started and is sent where it went;
+- every road user is an entity spawned on the lanelet it was first seen on,
+  with one Follow Trajectory card: map-frame vertices timed on the scenario
+  clock (`time_domain: absolute`, `time_offset` moving the recording's first
+  frame to `t = 0`), in Position mode and hidden outside its trajectory;
+- a road user first seen after the start spawns **out of the world**
+  (`spawn.hidden`) and appears at its first vertex.
 
-- `--to-editor` saves it as a draft (`scenario-editor` lists it); `--output`
-  writes the document YAML instead or as well.
-- The ego is placed where the recording's ego started and sent to the scene's
-  goal (or where the recording ended); `--ego-driver autoware` makes Autoware
-  drive it, `--replay-ego` replays the recorded drive on a TrafficManager ego.
-- Every road user on a lanelet becomes an entity with a Follow Trajectory card:
-  timed from the scenario start, in Position mode, out of the world before its
-  first sighting and after its last (`--following-mode follow` drives the
-  vehicles with the controller instead). `--categories` picks which,
-  `--vehicle-type`/`--pedestrian-type` their blueprints; cyclists are replayed
-  as walkers, since CARLA 0.10 has no bicycle.
-- The run passes when the recording's duration has elapsed and fails on an ego
-  collision. Add the conditions the test is about in the editor.
-- A saved transcription (`--transcription`, a `.json`) can be given instead of
-  the scene directory, so the dataset is read once.
+Open it in the editor to add the conditions the test is about.
 
-The same is available from Python: `read_t4_scene`, `T4SceneTranscription` and
-`transcription_to_document` (`autoware_carla_scenario_t4.document`).
-
-### What is read
-
-| File | What is used |
-|---|---|
-| `derived/meta.json` | `scene_name`, `area_map_id`, `annotation_source` |
-| `derived/scalars.npz` | `trajectory` `[N, 4]` (the ego's rear axle, `x, y, cos, sin` in the `map` frame), `shape` (`wheel_base, length, width`), `goal` |
-| `derived/frames.pack` | `gt_boxes` `[M, 9]` = `x, y, z, width, length, height, yaw, vx, vy` and `gt_labels`, per frame, in that frame's ego frame |
-
-- The **ego** becomes a timed trajectory of its vehicle centre (the rear axle
-  moved forward by half the wheel base), on the scene clock: frame 0 at
-  `t = 0`, 10 Hz. Frames without a valid pose are left out.
-- Every **box** is moved into the `map` frame through the ego pose of its frame,
-  and the boxes are **associated into tracks**: `frames.pack` stores boxes per
-  frame with no track identity, so each open track predicts its object's
-  position at constant velocity and takes the nearest box of the same category
-  within `match_distance_m` (widened by how far the object could have moved).
-  A track unseen for more than `max_gap_frames` is closed; tracks shorter than
-  `min_track_frames` are dropped as clutter.
-- T4 labels map onto `T4Category.VEHICLE` (0, 1, 2), `BICYCLE` (3) and
-  `PEDESTRIAN` (4).
-- Entities spawn on a lanelet, so each first pose is placed on the Lanelet2 map:
-  among the lanelets nearest it, the one it is inside and whose direction
-  matches its heading. A road user near no lanelet is left out (with a warning).
-
-!!! note
-    Labels in a T4 scene may come from a tracker rather than a person
-    (`annotation_source == "ground_truth"` marks the human-labelled ones). A
-    track can break where the recording lost the object for longer than
-    `max_gap_frames`.
+T4 scenes are transcribed this way by `scenario-import-t4` of the separate
+`scene_to_scenario_transpiler` package, which depends on the framework, never
+the other way round.
 
 !!! warning
-    The poses are read as Autoware's `map` frame, so the document has to run on
-    **the scene's area map** (`area_map_id`) loaded with the same projector.
+    Map-frame vertices are Autoware's `map` frame, so a document replaying a
+    recording has to run on **the map the scene was recorded on**, loaded with
+    the same projector.

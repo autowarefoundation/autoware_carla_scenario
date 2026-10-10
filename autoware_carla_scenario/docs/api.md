@@ -79,11 +79,11 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
-| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`). See [Trajectories and T4 Replay](trajectory.md). |
+| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`). See [Trajectories and Recorded-Scene Replay](trajectory.md). |
 
 ## Trajectories (`autoware_carla_scenario.trajectory`)
 
-See [Trajectories and T4 Replay](trajectory.md).
+See [Trajectories and Recorded-Scene Replay](trajectory.md).
 
 | Symbol | Description |
 |--------|-------------|
@@ -92,9 +92,8 @@ See [Trajectories and T4 Replay](trajectory.md).
 | `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
 | `TrajectoryFollowingMode` | `POSITION` (kinematic replay) or `FOLLOW` (a controller tracks it). |
 
-T4 scenes are read by the separate `autoware_carla_scenario_t4` package
-(`read_t4_scene`, `T4SceneTranscription`, `transcription_to_document`, and the
-`t4-scenario` command).
+Recorded scenes (T4) are transcribed into documents outside the framework, by
+the separate `scene_to_scenario_transpiler` package (`scenario-import-t4`).
 
 ## Sensors (`autoware_carla_scenario.sensor`)
 

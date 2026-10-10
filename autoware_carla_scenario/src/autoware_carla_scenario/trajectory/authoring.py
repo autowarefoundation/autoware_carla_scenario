@@ -5,8 +5,8 @@ two ways (:data:`PATH_SOURCES`):
 
 * ``vertices`` -- a list of map-frame vertices ``[x, y, yaw, time]`` kept in the
   document itself, ``yaw`` and ``time`` optional.  This is what a recording
-  transcribes to (``autoware_carla_scenario_t4`` writes it), and what an author
-  pastes or edits as text, one vertex per line;
+  transcribes to, and what an author pastes or edits as text, one vertex per
+  line;
 * ``lanelets`` -- a route of lanelets picked on the map, followed along their
   centrelines at a lateral offset and timed at a constant speed.
 

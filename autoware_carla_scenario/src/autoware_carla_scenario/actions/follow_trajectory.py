@@ -4,8 +4,7 @@ The OpenSCENARIO ``FollowTrajectoryAction``, with the same four parts -- the
 trajectory, its time reference, the following mode and an initial distance
 offset (see :mod:`autoware_carla_scenario.trajectory.model`).  It is what lets a
 recorded drive be written down as a scenario: every vehicle and pedestrian of a
-T4 scene becomes an entity following the trajectory it was recorded on
-(the ``autoware_carla_scenario_t4`` package).
+recorded scene becomes an entity following the trajectory it was recorded on.
 """
 
 from __future__ import annotations
