@@ -262,11 +262,14 @@ class CoverageCollector:
         self._failed_conditions: set[int] = set()
         self._last_elapsed = 0.0
         self._last_position: Optional[tuple[float, float, float]] = None
+        # Whether anything is sampled every tick, and so measures distance.
+        tick = id(SamplingEvent.TICK)
+        self._timed = tick in self._items_on or tick in self._crosses_on
 
     def start(self, world: "carla.World", elapsed: float) -> None:
         """Sample the items on :attr:`SamplingEvent.START`."""
         self._last_elapsed = elapsed
-        self._last_position = self._ego_position(world)
+        self._last_position = self._ego_position(world) if self._timed else None
         self._sample_event(world, SamplingEvent.START)
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
@@ -325,13 +328,19 @@ class CoverageCollector:
     def _step(self, world: "carla.World", elapsed: float) -> _Step:
         """The step since the previous tick; remembers this tick's time and place."""
         seconds = max(0.0, elapsed - self._last_elapsed)
+        # A clock that went back does not move the start of the next step.
+        self._last_elapsed = max(elapsed, self._last_elapsed)
+        if not self._timed:
+            return _Step(seconds, 0.0)  # nothing measures distance: no lookup
         position = self._ego_position(world)
         meters = 0.0
         if position is not None and self._last_position is not None:
             meters = math.dist(position, self._last_position)
-            if meters > MAX_EGO_SPEED_MPS * max(seconds, 0.05):
+            # NaN (a physics blow-up) or a jump (a respawn) is not driving.
+            if not math.isfinite(meters) or meters > MAX_EGO_SPEED_MPS * max(
+                seconds, 0.05
+            ):
                 meters = 0.0
-        self._last_elapsed = elapsed
         self._last_position = position
         return _Step(seconds, meters)
 

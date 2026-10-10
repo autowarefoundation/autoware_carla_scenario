@@ -425,6 +425,28 @@ class TestExposure:
         assert out["meters"]["a"] == 0.0
         assert out["seconds"]["a"] == 2.0
 
+    def test_a_nan_position_adds_no_distance(self, drive: Any) -> None:
+        out = drive([("a", 1.0, 1.0), ("a", float("nan"), 2.0), ("a", 3.0, 3.0)])
+        assert out["meters"]["a"] == 1.0
+
+    def test_a_clock_going_back_counts_no_time_twice(self, drive: Any) -> None:
+        out = drive([("a", 0.0, 2.0), ("a", 0.0, 1.5), ("a", 0.0, 3.0)])
+        assert out["seconds"]["a"] == 3.0
+
+    def test_without_tick_items_the_ego_is_not_looked_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.odd import probes
+
+        calls: list[Any] = []
+        monkeypatch.setattr(probes, "ego_position", lambda w: calls.append(w))
+        collector = CoverageCollector([_item(values=["a"])])
+        collector.start(_World(), 0.0)
+        for t in range(1, 5):
+            collector.tick(_World(), float(t))
+        collector.end(_World("a"), 4.0)
+        assert calls == []
+
     def test_a_one_shot_sample_is_an_entry_of_no_duration(self) -> None:
         collector = CoverageCollector([_item(values=["a", "b"])])
         collector.start(_World(), 0.0)
