@@ -21,6 +21,13 @@ import numpy as np
 from google.protobuf.message import DecodeError
 from numpy.typing import NDArray
 
+from carla_driver_interface.contract import (
+    CONTRACT_REVISION,
+    cameras_to_revision,
+    contract_metadata,
+    negotiate,
+)
+from carla_driver_interface.geometry import body_to_optical
 from carla_driver_interface.policies import load_policy
 from carla_driver_interface.server import build_server
 from carla_driver_interface.protocol import (
@@ -95,7 +102,11 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         return self._stub
 
     def _camera_specs(self) -> list:
-        """Return the ``AvailableCamera`` entries describing the configured rig."""
+        """Return the ``AvailableCamera`` entries describing the configured rig.
+
+        As contract revision 2 declares them: ``rig_to_camera`` is the camera's
+        optical frame in the rig (x right, y down, z along the optical axis).
+        """
         cameras = []
         for camera in self._config.cameras:
             sensor = camera.to_sensor_config()
@@ -116,13 +127,15 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
                     # Without this the policy sees the protobuf-default (identity,
                     # origin) pose and reads every frame from the wrong viewpoint,
                     # not even the configured (1.5, 0, 1.6) mount.
-                    rig_to_camera=camera_extrinsics_to_rig(
-                        camera.position_x,
-                        camera.position_y,
-                        camera.position_z,
-                        camera.roll,
-                        camera.pitch,
-                        camera.yaw,
+                    rig_to_camera=body_to_optical(
+                        camera_extrinsics_to_rig(
+                            camera.position_x,
+                            camera.position_y,
+                            camera.position_z,
+                            camera.roll,
+                            camera.pitch,
+                            camera.yaw,
+                        )
                     ).to_proto(),
                     logical_id=camera.logical_id,
                 )
@@ -138,19 +151,25 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
 
         Also calls ``get_version`` first so that an unreachable or mismatched policy
         fails immediately with a clear message rather than midway through the scenario.
+        Its answer says which contract revision the policy speaks
+        (``carla_driver_interface.contract``); the cameras are declared in that
+        revision, so a policy on carla-driver-interface 1.x still reads them right.
 
         Raises:
             grpc.RpcError: If the policy cannot be reached.
+            carla_driver_interface.contract.ContractError: If the policy speaks a
+                revision this release cannot translate.
         """
         stub = self._connect()
 
-        version = stub.get_version(common_pb2.Empty(), timeout=self._config.timeout_s)
+        version, revision = negotiate(stub, timeout=self._config.timeout_s)
         logger.info(
-            "Connected to %s at %s (version_id=%r git_hash=%r)",
+            "Connected to %s at %s (version_id=%r git_hash=%r contract revision %d)",
             EGODRIVER_SERVICE_FULL_NAME,
             self._config.address,
             version.version_id,
             version.git_hash,
+            revision,
         )
 
         request = egodriver_pb2.DriveSessionRequest(
@@ -159,11 +178,17 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             debug_info=egodriver_pb2.DriveSessionRequest.DebugInfo(scene_id=scene_id),
             rollout_spec=egodriver_pb2.DriveSessionRequest.RolloutSpec(
                 vehicle=egodriver_pb2.DriveSessionRequest.RolloutSpec.VehicleDefinition(
-                    available_cameras=self._camera_specs()
+                    available_cameras=cameras_to_revision(
+                        self._camera_specs(), CONTRACT_REVISION, revision
+                    )
                 )
             ),
         )
-        stub.start_session(request, timeout=self._config.timeout_s)
+        stub.start_session(
+            request,
+            timeout=self._config.timeout_s,
+            metadata=contract_metadata(revision),
+        )
         self._session_uuid = session_uuid
         logger.info("Driver session started: uuid=%s scene=%s", session_uuid, scene_id)
 
