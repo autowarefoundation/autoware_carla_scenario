@@ -783,6 +783,13 @@ class ScenarioRunner:
             # scenario, so the ones from an attempt that failed are dropped.
             scenario._cover_items.clear()
             scenario._cross_items.clear()
+            # A logical scenario's route is process-wide, like the signal
+            # controllers: one left by the previous scenario of a batch must
+            # not be read as this one's.  A scenario with a route sets its own
+            # in setup().
+            from .route import clear_scenario_route  # noqa: PLC0415
+
+            clear_scenario_route()
             scenario.setup()
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once

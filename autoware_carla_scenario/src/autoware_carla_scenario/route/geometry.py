@@ -11,16 +11,20 @@ The definitions are the ones ``docs/logical_scenarios.md`` states:
 * the **lanes beside** a lanelet are its routing-graph neighbours of the same
   direction, lane-changeable or not (``left()`` / ``adjacentLeft()``), counted
   outwards;
-* the **opposite lane** of a lanelet is a lanelet running the other way
+* the **opposite lane** abreast of a point is a lanelet running the other way
   (heading difference over :data:`OPPOSITE_MIN_TURN_DEG`) next to the
-  outermost same-direction lane on either side: one sharing that lane's outer
-  bound, else one within :data:`OPPOSITE_SEARCH_M` of it -- so a map of
-  left-hand traffic (opposite lanes on the right) answers as one of
-  right-hand traffic does;
-* the **members** of a junction are the junction lanelets reachable from the
-  ego's through the routing graph's ``conflicting`` relation, within
-  :data:`JUNCTION_RADIUS_M` of the ego's way through it; each one's
-  **approach** is its heading where it enters, against the ego's (see
+  outermost same-direction lane on either side, there: one sharing that
+  lane's outer bound, else one within :data:`OPPOSITE_SEARCH_M` of it -- so a
+  map of left-hand traffic (opposite lanes on the right) answers as one of
+  right-hand traffic does.  Both lanes are followed along to the lanelet
+  actually abreast of the point (:meth:`MapFeatures.abreast`), since the two
+  directions of a road are often split into lanelets at different places; a
+  lanelet's own opposite lane is the one abreast of its middle;
+* the **members** of a junction are the paths through it that are reachable
+  from the ego's way through the routing graph's ``conflicting`` relation,
+  within :data:`JUNCTION_RADIUS_M`; a member is named by the first junction
+  lanelet of its path (where it enters), and its **approach** is that
+  lanelet's heading where it enters, against the ego's (see
   :func:`approach_of`);
 * a **crosswalk** (a lanelet of subtype ``crosswalk``) is on the junction's
   **entry** leg when its centreline crosses the ego's path between
@@ -85,6 +89,10 @@ OPPOSITE_SEARCH_M = 4.0
 OPPOSITE_MIN_TURN_DEG = 150.0
 #: The most same-direction lanes counted on one side.
 _MAX_LANES = 12
+#: The most lanelets :meth:`MapFeatures.abreast` walks along a lane.
+_MAX_ABREAST_HOPS = 20
+#: The most junction lanelets walked back to where another path enters.
+_MAX_JUNCTION_HOPS = 4
 #: Lanelet subtypes that are not for vehicles.
 _NOT_ROADS = frozenset(
     {"crosswalk", "walkway", "stairs", "bicycle_lane", "road_shoulder", "parking"}
@@ -112,13 +120,16 @@ def approach_of(entry_heading: float, other_heading: float) -> str:
 
 @dataclass(frozen=True)
 class JunctionMember:
-    """Another lanelet of a junction the ego drives through.
+    """Another path through a junction the ego drives through.
 
     Attributes:
-        lanelet: The junction lanelet.
-        approach: ``left``, ``right`` or ``opposite`` (:func:`approach_of`).
-        turn: Its ``turn_direction``.
-        conflicts: Whether it conflicts with the ego's way through.
+        lanelet: The path's first junction lanelet: where it enters.
+        approach: ``left``, ``right`` or ``opposite`` (:func:`approach_of`),
+            by that lanelet's heading.
+        turn: The path's turn: ``straight``, or the one non-straight
+            ``turn_direction`` of its lanelets (``mixed`` for both ways).
+        conflicts: Whether any lanelet of the path conflicts with the ego's
+            way through.
     """
 
     lanelet: Any
@@ -269,33 +280,90 @@ class MapFeatures:
     def opposite(self, lanelet: Any) -> Optional[tuple[Any, str]]:
         """``(lanelet, side)`` of the lane running the other way beside it.
 
+        Looked for abreast of *lanelet*'s middle (:meth:`opposite_abreast`);
         *side* is which side of *lanelet* the opposite road is on.  ``None``
-        when it has none (a one-way road).
+        when it has none there (a one-way road).
         """
         key = int(lanelet.id)
         if key not in self._opposite:
-            self._opposite[key] = self._find_opposite(lanelet)
+            points = _centreline(lanelet)
+            x, y = _point_at(points, self.length(lanelet) / 2.0)
+            self._opposite[key] = self.opposite_abreast(lanelet, x, y)
         return self._opposite[key]
 
-    def _find_opposite(self, lanelet: Any) -> Optional[tuple[Any, str]]:
+    def opposite_abreast(
+        self, lanelet: Any, x: float, y: float
+    ) -> Optional[tuple[Any, str]]:
+        """``(lanelet, side)`` of the opposite-direction lane abreast of ``(x, y)``.
+
+        ``(x, y)`` is a point on *lanelet*.  The outermost same-direction lane
+        on each side is taken where it is abreast of the point, the lane
+        beyond its outer bound looked for there, and the lanelet of that lane
+        abreast of the point returned -- not whichever lanelet of it happens
+        to touch the edge lane's middle, which on a road whose two directions
+        are split into lanelets at different places is another one.
+        """
         best: Optional[tuple[float, int, Any, str]] = None
         for side in ("left", "right"):
-            edge = self.outermost(lanelet, side)
-            found = self._opposite_of_edge(edge, side)
+            edge = self.abreast(self.outermost(lanelet, side), x, y)
+            found = self._opposite_of_edge(edge, side, x, y)
             if found is None:
                 continue
             gap, other = found
+            other = self.abreast(other, x, y)
             key = (gap, int(other.id))
             if best is None or key < best[:2]:
                 best = (gap, int(other.id), other, side)
         return None if best is None else (best[2], best[3])
 
-    def _opposite_of_edge(self, edge: Any, side: str) -> Optional[tuple[float, Any]]:
-        """The lanelet running the other way beyond *edge*'s *side* bound."""
+    @staticmethod
+    def gap_to(lanelet: Any, x: float, y: float) -> float:
+        """How far ``(x, y)`` is from *lanelet*'s centreline (m)."""
+        points = _centreline(lanelet)
+        best = math.inf
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            dx, dy = x1 - x0, y1 - y0
+            squared = dx * dx + dy * dy
+            f = 0.0 if squared < 1e-12 else ((x - x0) * dx + (y - y0) * dy) / squared
+            f = min(max(f, 0.0), 1.0)
+            best = min(best, math.hypot(x0 + f * dx - x, y0 + f * dy - y))
+        return best
+
+    def abreast(self, lanelet: Any, x: float, y: float) -> Any:
+        """The lanelet of *lanelet*'s lane that ``(x, y)`` is abreast of.
+
+        Walks the lane forwards and backwards through the routing graph --
+        not into or out of a junction -- while that brings its centreline
+        nearer the point.
+        """
+        current, best = lanelet, self.gap_to(lanelet, x, y)
+        junction = self.is_junction(lanelet)
+        seen = {int(lanelet.id)}
+        for _hop in range(_MAX_ABREAST_HOPS):
+            nearer = None
+            for other in [*self.previous(current), *self.following(current)]:
+                if int(other.id) in seen or self.is_junction(other) != junction:
+                    continue
+                gap = self.gap_to(other, x, y)
+                if gap < best - 1e-6:
+                    best, nearer = gap, other
+            if nearer is None:
+                break
+            seen.add(int(nearer.id))
+            current = nearer
+        return current
+
+    def _opposite_of_edge(
+        self, edge: Any, side: str, px: float, py: float
+    ) -> Optional[tuple[float, Any]]:
+        """The lanelet running the other way beyond *edge*'s *side* bound.
+
+        Looked for abreast of ``(px, py)``.
+        """
         points = _centreline(edge)
-        mid_s = self.length(edge) / 2.0
-        mx, my = _point_at(points, mid_s)
-        heading = _heading_at(points, mid_s)
+        along, _t = _arc(edge, px, py)
+        mx, my = _point_at(points, along)
+        heading = _heading_at(points, along)
         bound = edge.leftBound if side == "left" else edge.rightBound
         candidates: list[tuple[float, Any]] = []
         try:
@@ -417,21 +485,46 @@ class MapFeatures:
                     continue
                 members[oid] = other
                 frontier.append(other)
-        found: list[JunctionMember] = []
+        # A member part-way along another path through the junction is
+        # classified, and placed, by where that path enters: its first
+        # junction lanelet.
+        paths: dict[tuple[int, str], JunctionMember] = {}
         for oid in sorted(members):
-            other = members[oid]
-            approach = approach_of(entry_heading, _start_heading(other))
+            path = self._path_into(members[oid])
+            first = path[0]
+            if int(first.id) in own:
+                continue  # a branch off the ego's own way
+            approach = approach_of(entry_heading, _start_heading(first))
             if approach == "same":
                 continue
-            found.append(
-                JunctionMember(
-                    lanelet=other,
-                    approach=approach,
-                    turn=self.turn(other),
-                    conflicts=oid in direct,
-                )
+            turns = {self.turn(ll) for ll in path} - {"straight", ""}
+            turn = (
+                "straight"
+                if not turns
+                else (turns.pop() if len(turns) == 1 else "mixed")
             )
-        return found
+            key = (int(first.id), turn)
+            conflicts = any(int(ll.id) in direct for ll in path)
+            known = paths.get(key)
+            if known is not None:
+                conflicts = conflicts or known.conflicts
+            paths[key] = JunctionMember(
+                lanelet=first, approach=approach, turn=turn, conflicts=conflicts
+            )
+        return [paths[key] for key in sorted(paths)]
+
+    def _path_into(self, lanelet: Any) -> list[Any]:
+        """*lanelet* and the junction lanelets before it, from where they enter."""
+        path = [lanelet]
+        for _hop in range(_MAX_JUNCTION_HOPS):
+            before = [p for p in self.previous(path[0]) if self.is_junction(p)]
+            if not before:
+                break
+            entering = _straightest(before, _start_heading(path[0]), ahead=False)
+            if entering is None or any(int(entering.id) == int(p.id) for p in path):
+                break
+            path.insert(0, entering)
+        return path
 
     # -- crosswalks ----------------------------------------------------------
 

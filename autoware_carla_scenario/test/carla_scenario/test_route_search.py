@@ -576,3 +576,71 @@ class TestNishishinjuku:
         }
         # Japan drives on the left: the opposite road is mostly on the right.
         assert "right" in sides
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+
+def test_each_split_between_two_lane_segments_is_its_own_match() -> None:
+    """Three lanelets, two lane segments: split after the first or the second."""
+    builder = rm._Builder()
+    for lanelet_id, (a, b) in enumerate(((0, 50), (50, 100), (100, 150)), start=1):
+        builder.lanelet(lanelet_id, rm._line((a, -rm._HALF), (b, -rm._HALF)))
+    graph = rm.routing_graph(builder.map)
+    matches = find_route_matches(
+        parse_route_search({"segments": [_lane(), _lane()]}), builder.map, graph
+    )
+    splits = [[s.lanelet_ids for s in m.segments] for m in matches]
+    assert splits == [[(1,), (2, 3)], [(1, 2), (3,)]]
+    assert [m.index for m in matches] == [0, 1]
+
+
+class TestJunctionPaths:
+    """A path drawn as two junction lanelets is classified by where it enters."""
+
+    @pytest.fixture(scope="class")
+    def split(self) -> tuple[Any, Any]:
+        lanelet_map = rm.crossroads(split_path=True)
+        return lanelet_map, rm.routing_graph(lanelet_map)
+
+    def test_a_member_is_named_by_its_first_lanelet(
+        self, split: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.geometry import MapFeatures
+
+        lanelet_map, graph = split
+        members = MapFeatures(lanelet_map, graph).junction_members(
+            [lanelet_map.laneletLayer[rm.J[("W", "E")]]]
+        )
+        by_id = {int(m.lanelet.id): m for m in members}
+        # Its second lanelet heads within 45 deg of the ego: by its own
+        # heading it would read as the ego's approach and be dropped.
+        assert rm.SPLIT_SECOND not in by_id
+        first = by_id[rm.SPLIT_FIRST]
+        assert (first.approach, first.turn, first.conflicts) == ("left", "left", True)
+
+    def test_a_crossing_pose_is_measured_from_where_the_path_enters(
+        self, split: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.frame import RouteFrame
+        from autoware_carla_scenario.route.positions import resolve_route_pose
+        from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+        (match,) = find_route_matches(
+            parse_route_search(
+                {
+                    "segments": [
+                        _lane(length={"max": 50}),
+                        _junction(turn="straight", traffic_light="yes"),
+                    ]
+                }
+            ),
+            *split,
+        )
+        pose = resolve_route_pose(
+            RouteCrossingPose(approach="left", turn="left", distance=1.0),
+            RouteFrame(match, *split),
+        )
+        assert (pose.lanelet_id, pose.s) == (rm.SPLIT_FIRST, pytest.approx(1.0))  # type: ignore[union-attr]

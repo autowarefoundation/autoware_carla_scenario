@@ -29,7 +29,8 @@ Where the road forks, every branch is tried.  The search is a depth-first walk
 from every lanelet that may start the first segment, by id, bounded by each
 segment's maximum length and lanelet count and by
 :data:`~.model.MAX_EXPANSIONS` steps in all; matches are sorted by their
-lanelet ids, then by where they start.
+lanelet ids, then by where they start and end, then by where their segments
+meet.
 """
 
 from __future__ import annotations
@@ -99,7 +100,9 @@ class _Search:
     expansions: int = 0
 
     def __post_init__(self) -> None:
-        self.found: dict[tuple[tuple[int, ...], float, float], RouteMatch] = {}
+        self.found: dict[
+            tuple[tuple[int, ...], float, float, tuple[int, ...]], RouteMatch
+        ] = {}
         self._junction_ok: dict[tuple[Any, ...], bool] = {}
 
     # -- the walk ------------------------------------------------------------
@@ -380,7 +383,14 @@ class _Search:
                 )
             )
         ids = tuple(int(ll.id) for ll in path)
-        key = (ids, round(start_s, 6), round(end_s, 6))
+        # Where the segments meet is part of the match: two lane segments over
+        # three lanelets split after the first or after the second are two.
+        key = (
+            ids,
+            round(start_s, 6),
+            round(end_s, 6),
+            tuple(len(seg.lanelet_ids) for seg in segments),
+        )
         if key not in self.found:
             self.found[key] = RouteMatch(
                 lanelet_ids=ids,
@@ -399,7 +409,8 @@ def find_route_matches(
 ) -> list[RouteMatch]:
     """Every route of *lanelet_map* that matches *spec*, up to ``spec.max_matches``.
 
-    Sorted by lanelet ids, then by start; with ``spec.seed`` shuffled by it
+    Sorted by lanelet ids, then by start, end and segment boundaries; with
+    ``spec.seed`` shuffled by it
     first.  Each match's :attr:`~.model.RouteMatch.index` is its position in
     the list returned.  When the search runs out of steps
     (:data:`~.model.MAX_EXPANSIONS`) it returns what it found, and logs that.
@@ -421,7 +432,15 @@ def find_route_matches(
             MAX_EXPANSIONS,
             len(search.found),
         )
-    matches = sorted(search.found.values(), key=lambda m: (m.lanelet_ids, m.start_s))
+    matches = sorted(
+        search.found.values(),
+        key=lambda m: (
+            m.lanelet_ids,
+            m.start_s,
+            m.end_s,
+            tuple(len(seg.lanelet_ids) for seg in m.segments),
+        ),
+    )
     if spec.seed is not None:
         random.Random(spec.seed).shuffle(matches)
     matches = matches[: spec.max_matches]

@@ -108,7 +108,7 @@ def _opposite(
     lanelet_id, along = frame.locate(s)
     lanelet = frame.map.laneletLayer[lanelet_id]
     x, y = _point_at(_centreline(lanelet), along)
-    found = frame.features.opposite(lanelet)
+    found = frame.features.opposite_abreast(lanelet, x, y)
     if found is None:
         raise ValueError(
             f"there is no opposite-direction lane abreast of route s={s:.1f} m "
@@ -130,12 +130,16 @@ def _opposite(
 
 
 def _outward(frame: RouteFrame, lanelet: Any, x: float, y: float) -> Any:
-    """*lanelet*'s same-direction neighbour farther from ``(x, y)``, or ``None``."""
+    """*lanelet*'s same-direction neighbour farther from ``(x, y)``, or ``None``.
+
+    The neighbour's lanelet abreast of the point, as *lanelet* is.
+    """
     best: Optional[tuple[float, Any]] = None
     for side in ("left", "right"):
         beside = frame.features.neighbour(lanelet, side)
         if beside is None:
             continue
+        beside = frame.features.abreast(beside, x, y)
         s, _t = _arc(beside, x, y)
         bx, by = _point_at(_centreline(beside), s)
         own_s, _ = _arc(lanelet, x, y)
@@ -219,8 +223,8 @@ def _roadside(
     points = _centreline(lanelet)
     x, y = _point_at(points, along)
     heading = _heading_at(points, along)
-    edge = frame.features.outermost(lanelet, pose.side)
-    opposite = frame.features.opposite(lanelet)
+    edge = frame.features.abreast(frame.features.outermost(lanelet, pose.side), x, y)
+    opposite = frame.features.opposite_abreast(lanelet, x, y)
     if opposite is not None and opposite[1] == pose.side:
         # The opposite road is on this side: its outermost lane is the edge.
         edge = opposite[0]

@@ -31,6 +31,9 @@ __all__ = ["RouteFrame"]
 #: How far (m) either side of the last answer :meth:`RouteFrame.project` looks
 #: when it is given one.
 PROJECT_WINDOW_M = 40.0
+#: Farther than this (m) from the route within the window, a projection
+#: searches the whole route instead (a few lane widths).
+PROJECT_FALLBACK_M = 12.0
 
 
 class RouteFrame:
@@ -131,10 +134,31 @@ class RouteFrame:
     ) -> tuple[float, float]:
         """``(s, distance)``: route s of the point nearest ``(x, y)``, and how far.
 
-        Clamped to the route.  *near* restricts the search to
+        Clamped to the route.  *near* first restricts the search to
         :data:`PROJECT_WINDOW_M` either side of it, so a route that passes the
-        same place twice answers with the pass that is meant.
+        same place twice answers with the pass that is meant; when the point
+        is more than :data:`PROJECT_FALLBACK_M` from the route there -- the
+        entity was teleported, or *near* is stale -- the whole route is
+        searched and the nearer answer taken.
         """
+        if near is not None:
+            windowed = self._nearest(x, y, near)
+            if windowed[0] <= PROJECT_FALLBACK_M:
+                return self._clamped(windowed)
+            whole = self._nearest(x, y, None)
+            return self._clamped(min(windowed, whole))
+        return self._clamped(self._nearest(x, y, None))
+
+    def _clamped(self, found: tuple[float, float]) -> tuple[float, float]:
+        gap, s = found
+        if gap is math.inf:
+            return 0.0, math.inf
+        return min(max(s, 0.0), self.length), gap
+
+    def _nearest(
+        self, x: float, y: float, near: Optional[float]
+    ) -> tuple[float, float]:
+        """``(distance, s)`` of the nearest reference-line point, within the window."""
         best = (math.inf, 0.0)
         arc = self._arc
         for i in range(len(arc) - 1):
@@ -150,10 +174,22 @@ class RouteFrame:
             gap = math.hypot(x0 + f * dx - x, y0 + f * dy - y)
             if gap < best[0]:
                 best = (gap, arc[i] + f * (arc[i + 1] - arc[i]))
-        if best[0] is math.inf:
-            return (0.0 if near is None else near), math.inf
-        s = min(max(best[1], 0.0), self.length)
-        return s, best[0]
+        return best
+
+    def height(self, s: float) -> float:
+        """The reference line's elevation at route s *s* (map frame, m)."""
+        lanelet_id, along = self.locate(min(max(s, 0.0), self.length))
+        points = [
+            (float(p.x), float(p.y), float(p.z))
+            for p in self.map.laneletLayer[lanelet_id].centerline
+        ]
+        travelled = 0.0
+        for (x0, y0, z0), (x1, y1, z1) in zip(points, points[1:]):
+            span = math.hypot(x1 - x0, y1 - y0)
+            if span > 0.0 and travelled + span >= along:
+                return z0 + (z1 - z0) * max(0.0, (along - travelled) / span)
+            travelled += span
+        return points[-1][2]
 
     def junction_way(self, index: int) -> tuple[list[Any], Any, Any]:
         """Junction *index*'s lanelets, and the lanelets it is entered from and left onto.

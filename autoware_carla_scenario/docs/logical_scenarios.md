@@ -138,7 +138,7 @@ assertions:
 | `ego_spawn_s` | float >= 0 | `0.0` | The ego spawns this far along the route (route s). Must lie on the route. |
 | `ego_goal` | bool | `true` | The ego's goal is the route's end (less `ego_goal_margin`). With `true` the ego must not name a goal of its own (validation error); set `false` to keep the ego's own goal. |
 | `ego_goal_margin` | float >= 0 | `0.0` | How far before the route's end the goal is. The goal must be ahead of the spawn. |
-| `match_index` | int >= 0 | `0` | Which match a run that was **not** expanded takes. |
+| `match_index` | int >= 0 | `0` | Which match a run that was **not** expanded takes. Must be below `max_matches` (validation error). |
 | `max_matches` | int 1..1000 | `64` | How many matches the search returns at most. |
 | `seed` | int or null | `null` | `null` keeps matches sorted (by lanelet ids, then start); an int shuffles the full list with `random.Random(seed)` before `max_matches` cuts it -- a deterministic sample spread over the map. |
 
@@ -199,11 +199,14 @@ from 0.
 * **`opposite`** -- the lane running the other way abreast of route s
   `base + ds`, on whichever side the opposite road is (left- and right-hand
   traffic alike); `lane` counts from the centre line outwards (1 = next to
-  it). Faces that lane's own direction.
+  it). The pose is on that lane's lanelet abreast of the route point, at the
+  point's projection onto it -- also where the two directions are split into
+  lanelets at different places. Faces that lane's own direction.
 * **`crossing`** -- a lanelet of junction `junction` entering from `approach`
-  (`left`, `right` or `opposite`, seen from the ego), turning `turn` if given;
-  of several, the one conflicting with the ego's way wins, then the lowest id.
-  `distance` is metres along that lanelet's path from its junction entry:
+  (`left`, `right` or `opposite`, seen from the ego), whose path through the
+  junction turns `turn` if given; of several, one whose path conflicts with
+  the ego's way wins, then the lowest id. `distance` is metres along that path
+  from where it enters the junction (its first junction lanelet's start):
   negative is back on its approach road (straightest predecessors), positive
   through the junction and beyond.
 * **`crosswalk`** -- the crosswalk across the `leg` (`entry`/`exit`) of
@@ -212,8 +215,9 @@ from 0.
   the other (negative: behind the end, on the pavement). Faces across.
 * **`roadside`** -- abreast of route s `base + ds`, beyond the road's edge on
   `side` -- past every same-direction lane and, when the opposite road is on
-  that side, past it too -- `kerb_distance` metres out (negative: onto the
-  road). Faces along the route.
+  that side, past it too, taking each lane's lanelet abreast of the route
+  point -- `kerb_distance` metres out (negative: onto the road). Faces along
+  the route.
 
 A pose the map cannot give -- no opposite lane there, no crosswalk on that
 leg, no lanelet from that approach, a `ds` running off the map -- raises when
@@ -249,8 +253,13 @@ reference line (the route lanelets' centrelines end to end) -- compares with
 `anchor_s + value` by `rule`. Projection makes it robust to lane changes onto
 parallel lanes: a vehicle on the lane beside the route is at the route s it is
 abreast of. Successive checks look within 40 m of the last answer, so a route
-that passes the same place twice is followed pass by pass; the result is
-clamped to `[0, length]`. Usable anywhere a condition is: a trigger, an
+that passes the same place twice is followed pass by pass; when the entity is
+more than 12 m from the route within that window (it was teleported -- an
+appearing entity --, or the condition was not checked for a while) the whole
+route is searched instead and the nearer answer kept. The result is clamped
+to `[0, length]`. An entity 50 m or more below the route where it projects
+(spawned hidden, parked under the map) or not in the world has **no**
+progress: the condition does not hold, and `progress` is `None`. Usable anywhere a condition is: a trigger, an
 assertion, inside `all`/`any`/`not`, and as a **waypoint condition**
 (`advance_conditions`) -- a vertex departs when the ego has progressed to the
 recorded point.
@@ -305,9 +314,10 @@ The part of the road a match covers is fixed, so one road is found once:
 * a **first junction segment** starts where the junction does (its first
   lanelet has no junction predecessor); a **last** one ends where it does.
 
-At a fork every branch is tried. Matches are deduplicated and sorted by their
-lanelet ids, then by where they start; `RouteMatch.index` is the position in
-the returned list.
+At a fork every branch is tried, and where two adjacent lane segments may meet
+at more than one lanelet boundary, each split is its own match. Matches are
+deduplicated by (lanelet ids, start, end, lanelets per segment) and sorted by
+the same; `RouteMatch.index` is the position in the returned list.
 
 **Route s** runs along the route lanelets' centrelines, `0` at the match's
 start (`start_s` metres into its first lanelet) to its length (`end_s` metres
@@ -319,8 +329,12 @@ The ego's **entry heading** is its way's heading where it enters (the start of
 its first junction lanelet). The junction's **members** are the junction
 lanelets reachable from the ego's through the routing graph's `conflicting`
 relation (transitively), starting within **60 m** of the centroid of the
-ego's way. A member's **approach** is the angle from the ego's entry heading
-to the member's heading where it enters:
+ego's way. Each is walked back through junction predecessors (the straightest
+one, at most 4) to the first junction lanelet of its **path**: a member is that
+path, named by its first lanelet, with the path's turn (`straight`, or its one
+non-straight `turn_direction`); paths are deduplicated by (first lanelet,
+turn). A member's **approach** is the angle from the ego's entry heading to
+its first lanelet's heading where it enters:
 
 | Angle | Approach |
 |-------|----------|
@@ -329,8 +343,8 @@ to the member's heading where it enters:
 | +45 to +135 deg | `right` |
 | beyond +-135 deg | `opposite` |
 
-`crossing_from_X: yes` needs a member from approach X that **directly
-conflicts** with one of the ego's junction lanelets. A `crossing` *pose* takes
+`crossing_from_X: yes` needs a member from approach X with a lanelet that
+**directly conflicts** with one of the ego's junction lanelets. A `crossing` *pose* takes
 any member from that approach (conflicting ones first).
 
 ### Crosswalks
@@ -346,12 +360,16 @@ straightest predecessor is the one it enters on).
 
 ### Opposite lanes
 
-The opposite lane of a lanelet is a road lanelet whose heading differs by at
-least **150 deg**, beside the outermost same-direction lane on either side:
-one sharing that lane's outer bound, else one within **4 m** beyond it (probed
-1 m past the bound's nearest point to the lane's middle). Both sides are
-looked at, so a left-hand-traffic map (opposite road on the right) answers the
-same way as a right-hand one.
+The opposite lane abreast of a point is a road lanelet whose heading differs
+by at least **150 deg**, beside the outermost same-direction lane on either
+side there: one sharing that lane's outer bound, else one within **4 m**
+beyond it (probed 1 m past the bound's nearest point). Both lanes are followed
+along (forwards and backwards through the routing graph, not across a
+junction) to the lanelet whose centreline is nearest the point, so it is the
+lanelet actually abreast. Both sides are looked at, so a left-hand-traffic map
+(opposite road on the right) answers the same way as a right-hand one. For
+the search's `opposite_lane`, a lanelet "has" an opposite lane when one is
+abreast of its middle.
 
 ## Caps and performance
 
@@ -365,9 +383,11 @@ same way as a right-hand one.
 
 The search is a depth-first walk from every lanelet that may start the first
 segment, in id order. Unshuffled (`seed: null`) it stops once it has
-`max_matches` matches, since later starting lanelets sort later. On the
-nishishinjuku fixture map (884 road lanelets) a three-segment pattern takes
-well under a second; properties are cached per lanelet.
+`max_matches` matches, since later starting lanelets sort later. Measured on
+the nishishinjuku fixture map (884 road lanelets): a lane / junction / lane
+pattern with the default `max_matches: 64` takes about 0.2 s; one that has to
+walk the whole map -- `max_matches: 200`, or a five-segment pattern with no
+match -- takes about 3.5-4 s. Properties are cached per lanelet.
 
 ## Running it
 
@@ -428,6 +448,8 @@ so a hand-written scenario using them passes the [static check](typecheck.md).
 ## Limits
 
 * One route per scenario, the ego's. Route poses are always measured on it.
+  The route is process-wide; the runner clears it before every scenario's
+  setup, and a scenario with a route search sets it there.
 * Lane properties hold on *every* lanelet of a segment; a road whose lane count
   changes mid-way needs two lane segments (whose boundary is then a lanelet
   boundary).

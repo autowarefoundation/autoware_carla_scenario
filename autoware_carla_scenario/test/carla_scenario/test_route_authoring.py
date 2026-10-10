@@ -530,3 +530,11 @@ def test_the_documented_example_is_a_valid_document() -> None:
     assert report.ok, report.errors
     assert not report.warnings, report.warnings
     compile_document(document)
+
+
+def test_a_match_index_the_search_never_returns() -> None:
+    raw = _raw()
+    raw["route"]["max_matches"] = 2
+    raw["route"]["match_index"] = 2
+    messages = _messages(ScenarioDocument.model_validate(raw))
+    assert any("can never be taken" in m for m in messages)

@@ -18,7 +18,24 @@ from .comparison import ComparisonRule, ScalarComparisonRule
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["RouteProgressCondition", "route_s_of_carla_point"]
+__all__ = [
+    "HIDDEN_BELOW_ROUTE_M",
+    "RouteProgressCondition",
+    "route_s_of_carla_point",
+]
+
+#: An entity this far (m) or more below the route where it projects is out of
+#: the world -- spawned hidden, parked under the map -- and has no progress.
+HIDDEN_BELOW_ROUTE_M = 50.0
+
+
+def route_below(s: float, z: float) -> float:
+    """How far (m) CARLA height *z* is below the scenario route at route s *s*."""
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..route.active import scenario_route_frame  # noqa: PLC0415
+
+    frame = scenario_route_frame()
+    return frame.height(s) - MapManager.get_instance().z_offset - z
 
 
 def route_s_of_carla_point(
@@ -57,7 +74,12 @@ class RouteProgressCondition(BaseCondition):
     junction on, on whatever map the route was found.
 
     Successive checks look for the entity near where it was last found, so a
-    route that passes the same place twice is followed pass by pass.
+    route that passes the same place twice is followed pass by pass -- and
+    over the whole route again when it is not near there any more (it was
+    teleported, or the condition was not checked for a while).  An entity
+    :data:`HIDDEN_BELOW_ROUTE_M` or more below the route (spawned hidden,
+    parked under the map) or not in the world has no progress: the condition
+    does not hold and :attr:`progress` is ``None``.
 
     Usable as an action's trigger and as a waypoint condition (a vertex of a
     *Follow Trajectory* departs once it holds).
@@ -126,9 +148,14 @@ class RouteProgressCondition(BaseCondition):
             )
         actor = find_actor_by_role_name(world, self._entity_name)
         if actor is None:
+            self._last = None
             return None
         location = actor.get_transform().location
         s, _gap = route_s_of_carla_point(location.x, location.y, self._last)
+        if route_below(s, location.z) >= HIDDEN_BELOW_ROUTE_M:
+            # Parked out of the world: wherever it projects is not progress.
+            self._last = None
+            return None
         self._last = s
         target = route.anchor_s(self._anchor) + self._value
         comparison = ScalarComparisonRule(

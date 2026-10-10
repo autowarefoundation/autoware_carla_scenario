@@ -188,8 +188,15 @@ def _bezier(
     return out
 
 
-def crossroads() -> Any:
-    """The map described in the module docstring."""
+#: With ``split_path``: a left turn from the N road into the E road drawn as
+#: two junction lanelets -- ``SPLIT_FIRST`` from the N road's end to (3, 3),
+#: heading -40 deg, then ``SPLIT_SECOND`` on to the E road.  The second one's
+#: own heading where it starts is within 45 deg of an eastbound ego's.
+SPLIT_FIRST, SPLIT_SECOND = 590, 591
+
+
+def crossroads(split_path: bool = False) -> Any:
+    """The map described in the module docstring (see also ``SPLIT_FIRST``)."""
     b = _Builder()
     # Road reference lines are the centre lines (y = 0 / x = 0).
     # --- W road ---------------------------------------------------------------
@@ -238,6 +245,20 @@ def crossroads() -> Any:
         direction = "straight" if abs(turn) < 0.1 else ("left" if turn > 0 else "right")
         centre = _line(a, z, 5.0) if direction == "straight" else _bezier(a, ha, z, hz)
         b.lanelet(lid, centre, {"turn_direction": direction}, ends=(ha, hz))
+    if split_path:
+        middle, heading = (3.0, 3.0), math.radians(-40.0)
+        b.lanelet(
+            SPLIT_FIRST,
+            _bezier((-_HALF, 10.0), -math.pi / 2, middle, heading),
+            {"turn_direction": "left"},
+            ends=(-math.pi / 2, heading),
+        )
+        b.lanelet(
+            SPLIT_SECOND,
+            _bezier(middle, heading, (10.0, -_HALF), 0.0),
+            {"turn_direction": "left"},
+            ends=(heading, 0.0),
+        )
     # --- traffic light on the W approach --------------------------------------
     light = LineString3d(
         next(b._next),

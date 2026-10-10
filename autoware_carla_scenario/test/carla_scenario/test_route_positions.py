@@ -497,3 +497,76 @@ class TestAppearOnStart:
 def test_the_simulated_vehicle_helpers_are_shared() -> None:
     """The action tests above drive the same fake as test_follow_trajectory_action."""
     assert callable(_run)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def staggered() -> tuple[Any, Any, RouteFrame]:
+    """One lanelet eastbound x 0..100, the other way split at x 120 and 40."""
+    builder = rm._Builder()
+    half = rm._HALF
+    builder.lanelet(1, rm._line((0.0, -half), (100.0, -half)))
+    builder.lanelet(2, rm._line((100.0, -half), (200.0, -half)))
+    builder.lanelet(11, rm._line((200.0, half), (120.0, half)))
+    builder.lanelet(12, rm._line((120.0, half), (40.0, half)))
+    builder.lanelet(13, rm._line((40.0, half), (-60.0, half)))
+    lanelet_map = builder.map
+    graph = rm.routing_graph(lanelet_map)
+    (match,) = find_route_matches(
+        parse_route_search({"segments": [{"kind": "lane", "opposite_lane": "yes"}]}),
+        lanelet_map,
+        graph,
+    )
+    return lanelet_map, graph, RouteFrame(match, lanelet_map, graph)
+
+
+class TestOppositeLaneletsSplitElsewhere:
+    @pytest.mark.parametrize(
+        ("ds", "lanelet_id", "s"),
+        [(10.0, 13, 30.0), (50.0, 12, 70.0), (150.0, 11, 50.0)],
+    )
+    def test_the_opposite_pose_is_abreast(
+        self,
+        staggered: tuple[Any, Any, RouteFrame],
+        ds: float,
+        lanelet_id: int,
+        s: float,
+    ) -> None:
+        pose = resolve_route_pose(
+            RouteOppositePose(ds=ds, anchor="start"), staggered[2]
+        )
+        assert pose == _approx_pose(lanelet_id, s)
+
+    def test_the_roadside_is_abreast(
+        self, staggered: tuple[Any, Any, RouteFrame]
+    ) -> None:
+        pose = resolve_route_pose(
+            RouteRoadsidePose(ds=10.0, side="left", kerb_distance=1.0, anchor="start"),
+            staggered[2],
+        )
+        assert (pose.x, pose.y) == pytest.approx((10.0, 4.5))  # type: ignore[union-attr]
+
+
+class TestProgressIsNotStale:
+    def test_a_teleported_entity_is_found_at_once(self, loaded: None) -> None:
+        ego = _Ego(-60.0, -1.75)  # route s 10
+        world = _RouteWorld(ego)
+        condition = RouteProgressCondition(value=1000.0, label="far")
+        condition.check(world, 0.0)
+        assert condition.progress == pytest.approx(10.0)
+        ego.move(50.0, -1.75)  # route s 120, in one tick
+        condition.check(world, 0.1)
+        assert condition.progress == pytest.approx(120.0)
+
+    def test_a_hidden_entity_has_no_progress(self, loaded: None) -> None:
+        npc = _Actor(x=50.0, y=1.75)  # route s 120 ...
+        world = _RouteWorld(npc)
+        condition = RouteProgressCondition("npc1", value=0.0, label="npc")
+        assert condition.check(world, 0.0) is not None
+        npc.z = -500.0  # ... parked under the map
+        assert condition.check(world, 0.1) is None
+        assert condition.progress is None

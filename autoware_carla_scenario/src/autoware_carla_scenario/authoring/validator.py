@@ -1109,6 +1109,13 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
                 parse_route_search(route.to_sweep_dict())
             except ValueError as exc:
                 out.error("route", f"Route search: {exc}.")
+        if route.match_index >= route.max_matches:
+            out.error(
+                "route.match_index",
+                f"match_index {route.match_index} can never be taken: the "
+                f"search returns at most max_matches={route.max_matches} "
+                "matches, counted from 0.",
+            )
         for slot in document.searched_lanelet_slots():
             out.error(
                 slot.key,
