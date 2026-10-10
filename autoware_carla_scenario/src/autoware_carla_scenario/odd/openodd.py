@@ -11,8 +11,9 @@ constructs of its own in an OpenODD document, so they are kept apart.
 What is read
 ============
 
-``IMPORT``: other OpenODD files, relative to the importing one (a cycle is
-refused).
+``IMPORT``: other OpenODD files, relative to the importing one, or else in
+the directories of the other sources (a cycle is refused).  Sources can be
+files in git repositories at a revision (:mod:`.sources`).
 
 ``TAXONOMY``: the concepts.  Nested mappings are records and containers.  A
 leaf is one of:
@@ -77,6 +78,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 import yaml
+
+from .sources import GitSource, GitSourceError
+from .sources import checkout as git_checkout
+from .sources import parse_entry as parse_git_entry
 
 from . import probes
 from .model import (
@@ -201,6 +206,46 @@ class _Documents:
     first_stem: Optional[str] = None
     #: Files read already: one imported twice is read once.
     seen: set[Path] = field(default_factory=set)
+    #: Where an ``IMPORT`` not next to its importer is looked for: the
+    #: directories of the sources, and the roots of their git checkouts.
+    search: list[Path] = field(default_factory=list)
+    #: The git sources read, with the commits their revisions named.
+    provenance: list[dict[str, str]] = field(default_factory=list)
+    #: The roots of their checkouts: a file in one imports only from the
+    #: sources, never from elsewhere on this machine.
+    checkouts: list[Path] = field(default_factory=list)
+
+    def locate(self, base: Path, name: str) -> Path:
+        """The file an ``IMPORT`` of *name* in a file under *base* names.
+
+        Next to the importer first.  Otherwise in the other sources: the
+        standard makes file names unique within one transmission, so a
+        module file may import a taxonomy kept in another repository.
+        """
+        here = base / name
+        if not here.exists():
+            found = {
+                (root / name).resolve()
+                for root in self.search
+                if (root / name).is_file()
+            }
+            if len(found) > 1:
+                raise OpenOddError(
+                    f"IMPORT {name} is in several sources: "
+                    + ", ".join(sorted(map(str, found)))
+                )
+            here = found.pop() if found else here
+        if _under(base, self.checkouts) and not _under(here, self.search):
+            raise OpenOddError(
+                f"IMPORT {name} in {base}: a file from git imports only from "
+                "the sources"
+            )
+        return here
+
+
+def _under(path: Path, roots: Sequence[Path]) -> bool:
+    resolved = path.resolve()
+    return any(resolved.is_relative_to(root.resolve()) for root in roots)
 
 
 def _merge(into: dict[str, Any], doc: Mapping[str, Any], where: str) -> None:
@@ -248,7 +293,7 @@ def _read(
             )
             raise OpenOddError(f"not OpenODD YAML keys: {unknown}{hint}")
         for imported in _as_list(doc.get("IMPORT")):
-            _read(base / str(imported), docs, stack)
+            _read(docs.locate(base, str(imported)), docs, stack)
         _merge(docs.taxonomy, doc.get("TAXONOMY") or {}, "TAXONOMY")
         _merge(docs.conversion, doc.get("conversion") or {}, "conversion")
         for section in ("MODULES", "ODD"):
@@ -1029,7 +1074,7 @@ def _flag(value: Any, where: str) -> bool:
 
 
 def load_openodd(
-    *sources: Union[str, Path],
+    *sources: Union[str, Path, GitSource],
     bindings: Optional[Mapping[str, Any]] = None,
     name: Optional[str] = None,
     text: str = "",
@@ -1037,9 +1082,10 @@ def load_openodd(
     """Read an ODD from OpenODD YAML files or text.
 
     Args:
-        sources: Paths, or YAML text.  Several are read together, as if one
+        sources: Paths, YAML text, or files in git repositories
+            (:class:`GitSource`).  Several are read together, as if one
             imported the others.  A file's ``IMPORT`` entries are read
-            relative to it.
+            relative to it, or else from the other sources' directories.
         bindings: Concept -> how to measure it:
             ``{"probe": ..., "unit": ..., "values" | "buckets" | "range" +
             "every": ..., "text": ...}`` (see :func:`load_odd_binding`).  A
@@ -1053,10 +1099,34 @@ def load_openodd(
     if not sources:
         raise OpenOddError("load_openodd(): no sources")
     docs = _Documents()
+    paths: list[Union[str, Path]] = []
     for source in sources:
-        _read(source, docs, ())
+        if isinstance(source, GitSource):
+            try:
+                path, checkout = git_checkout(source)
+            except GitSourceError as exc:
+                raise OpenOddError(str(exc)) from exc
+            docs.search += [path.parent, checkout.root]
+            docs.checkouts.append(checkout.root)
+            docs.provenance.append(
+                {
+                    "git": source.url,
+                    "rev": source.rev,
+                    "commit": checkout.commit,
+                    "path": source.path,
+                }
+            )
+            paths.append(path)
+        else:
+            if isinstance(source, Path):
+                docs.search.append(source.resolve().parent)
+            paths.append(source)
+    for item in paths:
+        _read(item, docs, ())
     reader = _Reader(docs, bindings or {}, name or docs.first_stem or "openodd", text)
-    return reader.build()
+    odd = reader.build()
+    odd.sources = docs.provenance
+    return odd
 
 
 def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
@@ -1064,7 +1134,11 @@ def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
 
     A binding file is this framework's, not OpenODD's::
 
-        openodd: [taxonomy.yaml, odd.yaml]   # relative to this file
+        openodd:                             # relative to this file,
+          - odd.yaml
+          - git: https://example.com/odd/taxonomy.git
+            rev: v1.2.0                      # or in git (:mod:`.sources`)
+            path: taxonomy.yaml
         name: urban                          # default: this file's stem
         text: Urban roads, fair weather
         probes:
@@ -1093,7 +1167,15 @@ def _load_binding(path: Path, doc: Mapping[str, Any]) -> OddDefinition:
     )
     if extra:
         raise OpenOddError(f"{path}: unknown keys {extra}")
-    sources = [path.parent / str(p) for p in _as_list(doc["openodd"])]
+    sources: list[Union[Path, GitSource]] = []
+    for entry in _as_list(doc["openodd"]):
+        if isinstance(entry, Mapping):
+            try:
+                sources += parse_git_entry(entry, str(path))
+            except GitSourceError as exc:
+                raise OpenOddError(str(exc)) from exc
+        else:
+            sources.append(path.parent / str(entry))
     return load_openodd(
         *sources,
         bindings=doc.get("probes") or {},

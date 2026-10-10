@@ -245,9 +245,54 @@ probes:
 Run with `odd=path/to/urban.yaml`. An OpenODD file on its own can be named
 too, but then nothing is measured: every concept is missing.
 
+### Taxonomies and modules from git
+
+An `openodd` entry can name a file in a git repository at a revision, so a
+taxonomy or a module library kept elsewhere is used as it was at that
+revision:
+
+```yaml
+# urban.yaml
+openodd:
+  - git: https://example.com/odd/taxonomy.git
+    rev: v1.2.0                    # a tag, a branch, or a commit
+    path: taxonomy.yml             # a list for several files
+  - git: git@example.com:odd/modules.git
+    rev: 3f2a9c1e0b7d4a6c8e5f1a2b3c4d5e6f7a8b9c0d
+    path: odd/urban.yml
+  - local_overrides.yml            # relative to this file
+probes:
+  ...
+```
+
+- An `IMPORT` is looked for next to the importing file first, and then in
+  the other sources: the directory of each file named, and the root of each
+  repository. The standard makes file names unique within one transmission,
+  so `odd/urban.yml` in one repository can `IMPORT: [taxonomy.yml]` from
+  another. A name found in two sources is refused.
+- `git fetch` does the fetching, so `url` is anything it takes, with the
+  credentials it is configured with. Prompts are turned off, and the `ext::`
+  transport is refused.
+- Repositories and checkouts are cached in
+  `$AUTOWARE_CARLA_SCENARIO_ODD_CACHE` (default
+  `~/.cache/autoware_carla_scenario/openodd`). A full commit id checked out
+  once is read from the cache without the network; a tag or a branch is
+  fetched on every load, to learn which commit it names now. Pin a commit for
+  runs that must be reproducible.
+- Fetching needs `git`, which the scenario image does not have. A run there
+  can still read a source pinned to a full commit id, from a cache filled
+  beforehand (`scenario-odd show urban.yaml` with the same cache directory)
+  and mounted at `$AUTOWARE_CARLA_SCENARIO_ODD_CACHE`.
+- The commit each source was read at is written to the coverage file (the
+  ODD's `sources`), and `scenario-coverage` lists it, warning when the merged
+  runs read different commits of a source.
+
+From Python, pass `GitSource(url, rev, path)` to `load_openodd()`.
+
 ### What is read
 
-**`IMPORT`**: other files, relative to the importing one. A cycle is refused.
+**`IMPORT`**: other files, relative to the importing one, or else in the
+other sources (see above). A cycle is refused.
 
 **`TAXONOMY`**: nested mappings are records and containers. A leaf is one of:
 

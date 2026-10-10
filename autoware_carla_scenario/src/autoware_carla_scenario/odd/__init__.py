@@ -10,6 +10,7 @@ which ticks were outside it.  See ``docs/odd.md``.
 
 from . import probes
 from .openodd import OpenOddError, load_odd_binding, load_odd_file, load_openodd
+from .sources import GitSource, GitSourceError
 from .model import (
     OddAttribute,
     OddCondition,
@@ -73,6 +74,8 @@ __all__ = [
     "lanelet_location",
     "lanelet_speed_limit_kph",
     "lanelet_subtype",
+    "GitSource",
+    "GitSourceError",
     "OpenOddError",
     "load_odd_binding",
     "load_odd_file",

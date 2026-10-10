@@ -625,6 +625,8 @@ class OddDefinition:
         self.text = text
         self.attributes = list(attributes)
         self.modules = list(modules or ())
+        #: The git sources an OpenODD ODD was read from, with their commits.
+        self.sources: list[dict[str, str]] = []
 
         names = [a.name for a in self.attributes]
         if duplicates(names):
@@ -814,6 +816,7 @@ class OddDefinition:
             "roots": list(self.roots),
             "modules": [m.describe() for m in self.modules],
             "unmeasured": self.unmeasured(),
+            **({"sources": list(self.sources)} if self.sources else {}),
         }
 
     def __repr__(self) -> str:

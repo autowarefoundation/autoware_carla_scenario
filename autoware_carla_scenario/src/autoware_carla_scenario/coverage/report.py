@@ -137,6 +137,9 @@ class OddExposure:
     module_ticks: dict[str, dict[str, int]] = field(default_factory=dict)
     #: Attributes the ODD monitors but has no buckets for.
     unmeasured: list[str] = field(default_factory=list)
+    #: The git sources the ODD was read from; more than one commit of a
+    #: source means the runs measured different versions of it.
+    sources: list[dict[str, str]] = field(default_factory=list)
     #: (scenario, outside seconds, out intervals) of the runs that left it.
     excursions: list[tuple[str, float, list[list[float]]]] = field(default_factory=list)
 
@@ -155,6 +158,9 @@ class OddExposure:
         for name in raw.get("unmeasured", ()):
             if name not in self.unmeasured:
                 self.unmeasured.append(name)
+        for source in raw.get("sources", ()):
+            if source not in self.sources:
+                self.sources.append(dict(source))
         outside_seconds = float(raw.get("seconds", {}).get("outside", 0.0))
         if int(raw.get("ticks", {}).get("outside", 0)) > 0:
             self.runs_outside += 1
@@ -172,6 +178,7 @@ class OddExposure:
             "seconds": {k: round(v, 3) for k, v in self.seconds.items()},
             "module_ticks": {k: dict(v) for k, v in self.module_ticks.items()},
             "unmeasured": list(self.unmeasured),
+            "sources": [dict(s) for s in self.sources],
             "excursions": [
                 {"scenario": s, "outside_seconds": round(t, 3), "intervals": i}
                 for s, t, i in self.excursions
@@ -300,6 +307,18 @@ class CoverageReport:
                 "- Monitored but not covered (no buckets): "
                 + ", ".join(exposure.unmeasured)
             )
+        for source in exposure.sources:
+            lines.append(
+                f"- Source: {source.get('git')} {source.get('path')} at "
+                f"{source.get('rev')} ({str(source.get('commit', ''))[:12]})"
+            )
+        commits: dict[tuple[Any, Any], set[Any]] = {}
+        for s in exposure.sources:
+            commits.setdefault((s.get("git"), s.get("path")), set()).add(
+                s.get("commit")
+            )
+        if any(len(c) > 1 for c in commits.values()):
+            lines.append("- **Warning:** the runs read different commits of a source")
         failing = [
             (name, counts)
             for name, counts in exposure.module_ticks.items()
