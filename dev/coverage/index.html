@@ -1282,6 +1282,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#coverage-criteria-cover_by-and-min_stay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage criteria: cover_by and min_stay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#exposure-seconds-meters-entries" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1589,6 +1600,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#coverage-criteria-cover_by-and-min_stay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage criteria: cover_by and min_stay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#exposure-seconds-meters-entries" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1811,7 +1833,17 @@ share.</p>
 <tr>
 <td><code>target</code></td>
 <td><code>target:</code></td>
-<td>Hits a bucket needs to be covered.</td>
+<td>What a bucket needs to be covered, in <code>cover_by</code> (hits by default).</td>
+</tr>
+<tr>
+<td><code>cover_by</code></td>
+<td>-</td>
+<td>What <code>target</code> counts: <code>"hits"</code>, or <code>"seconds"</code>, <code>"meters"</code>, <code>"entries"</code> (below).</td>
+</tr>
+<tr>
+<td><code>min_stay</code></td>
+<td>-</td>
+<td>Stays in a bucket shorter than this many seconds do not count (below).</td>
 </tr>
 </tbody>
 </table>
@@ -1881,22 +1913,22 @@ three top-level categories:</p>
 <td>The ego's CARLA waypoint</td>
 </tr>
 <tr>
-<td><code>odd.scenery.location</code></td>
+<td><code>odd.scenery.location</code> ²</td>
 <td>urban, nonurban, private</td>
 <td>Lanelet2 <code>location</code> tag of the ego's lanelet</td>
 </tr>
 <tr>
-<td><code>odd.scenery.road_type</code></td>
+<td><code>odd.scenery.road_type</code> ²</td>
 <td>road, highway, road_shoulder, play_street, parking</td>
 <td>Lanelet2 <code>subtype</code> tag of the ego's lanelet</td>
 </tr>
 <tr>
-<td><code>odd.scenery.speed_limit</code></td>
+<td><code>odd.scenery.speed_limit</code> ²</td>
 <td>0-30-40-50-60-80-100-130 km/h</td>
 <td>Lanelet2 <code>speed_limit</code> tag, else <code>vehicle.get_speed_limit()</code></td>
 </tr>
 <tr>
-<td><code>odd.scenery.lane_count</code></td>
+<td><code>odd.scenery.lane_count</code> ²</td>
 <td>1, 2, 3, 4</td>
 <td>Driving lanes in the ego's direction, outside junctions</td>
 </tr>
@@ -1916,8 +1948,8 @@ three top-level categories:</p>
 <td>CARLA fog density (0-100): 1, 30, 70</td>
 </tr>
 <tr>
-<td><code>odd.dynamic.ego_speed</code></td>
-<td>0-120 km/h every 10</td>
+<td><code>odd.dynamic.ego_speed</code> ³</td>
+<td>0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...)</td>
 <td>Ego velocity</td>
 </tr>
 <tr>
@@ -1932,6 +1964,15 @@ three top-level categories:</p>
 </tr>
 </tbody>
 </table>
+<p>² Covered by a stay of 2 s or more (<code>cover_by="entries", min_stay=2</code>).
+Clipping a section while merging or changing lanes does not cover it.</p>
+<p>³ Covered by a stay of 3 s or more (<code>cover_by="entries", min_stay=3</code>). An ego
+accelerating from a stop to 60 km/h passes through every bucket below 60
+without driving at any of those speeds. Holding a bucket for 3 s means
+driving at roughly that speed, not passing through it. The buckets are
+centred on the multiples of 10 km/h, where speed limits are, so an ego
+cruising at 50 km/h stays in <code>[45, 55)</code> instead of flickering between two
+buckets whose edge is at 50.</p>
 <p>A reading the simulator does not support returns nothing. The item then has
 no samples, the report says so, and the run is not affected. Examples are the
 weather on a CARLA build without weather, and the Lanelet2 tags in a run
@@ -1944,6 +1985,32 @@ mm/h of rain. The rain and fog buckets are therefore named levels.</p>
 <p>Because ODD items are sampled every tick, their hits count ticks. The report
 also counts, per bucket, how many <strong>runs</strong> hit it. A bucket held for many
 ticks in a single run is still only one situation.</p>
+<h3 id="coverage-criteria-cover_by-and-min_stay">Coverage criteria: <code>cover_by</code> and <code>min_stay</code><a class="headerlink" href="#coverage-criteria-cover_by-and-min_stay" title="Permanent link">&para;</a></h3>
+<p>By default a bucket is covered after <code>target</code> hits, one by default: a single
+tick is enough. That lets an ego that clips a three-lane section for one frame
+while merging cover <code>lane_count=3</code>. Two parameters say what covering means
+instead:</p>
+<ul>
+<li><code>cover_by</code> picks the measure <code>target</code> counts: <code>"hits"</code> (the default),
+  <code>"seconds"</code> spent in the bucket, <code>"meters"</code> the ego drove in it, or
+  <code>"entries"</code> into it (see exposure, below).</li>
+<li><code>min_stay</code> (seconds) leaves out stays shorter than it: their hits, seconds,
+  metres and the entry itself do not count towards <code>target</code>.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_cover</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="s2">"gap"</span><span class="p">,</span> <span class="n">ego_gap</span><span class="p">,</span> <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">30</span><span class="p">],</span> <span class="n">event</span><span class="o">=</span><span class="n">SamplingEvent</span><span class="o">.</span><span class="n">TICK</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">cover_by</span><span class="o">=</span><span class="s2">"meters"</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">min_stay</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>   <span class="c1"># 50 m per bucket, stays of 1 s or more</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>
+</code></pre></div>
+<p><code>"seconds"</code>, <code>"meters"</code> and <code>min_stay</code> need an item sampled on
+<code>SamplingEvent.TICK</code>: a one-shot sample has no duration or distance.
+<code>"entries"</code> works on any event. ODD attributes take the same three
+parameters (<code>OddAttribute(..., cover_by="meters", target=200, min_stay=2)</code>,
+or the same keys in a binding file). Crosses take them too.</p>
+<p>The coverage file keeps the raw measures and, with <code>min_stay</code>, the counted
+ones under <code>counted</code>. The report grades on the counted measure and shows a
+hole's progress (<code>(hole: 120/200 m)</code>). Items whose criteria differ between
+runs are reported apart, like items whose buckets differ.</p>
 <h3 id="exposure-seconds-meters-entries">Exposure: seconds, meters, entries<a class="headerlink" href="#exposure-seconds-meters-entries" title="Permanent link">&para;</a></h3>
 <p>Ticks are a poor measure of how much of a situation a run saw: a stopped ego
 keeps adding them. So every item sampled on <code>TICK</code> (every ODD item, and any
@@ -1979,11 +2046,11 @@ and adds no distance; without an ego, no distance is measured. A one-shot item
 (<code>START</code>, <code>END</code>, a condition) has no duration: each hit is an entry, and its
 seconds and meters stay 0.</p>
 <h2 id="the-report">The report<a class="headerlink" href="#the-report" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Every *_coverage.json under outputs/ and multirun/</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>multirun/
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Also write the merged report as JSON, and the Markdown to a file</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>--json<span class="w"> </span>coverage.json<span class="w"> </span>--markdown<span class="w"> </span>coverage.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Every *_coverage.json under outputs/ and multirun/</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>multirun/
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Also write the merged report as JSON, and the Markdown to a file</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>--json<span class="w"> </span>coverage.json<span class="w"> </span>--markdown<span class="w"> </span>coverage.md
 </code></pre></div>
 <p>For each ODD the runs were measured against, the Markdown report first says
 how long they spent inside it, inside only because values were missing, and
@@ -1998,57 +2065,57 @@ name, event and buckets agree. An item whose definition changed between runs
 is reported once per definition (<code>name#2</code>, ...), because adding up hits of
 different buckets would mean nothing.</p>
 <h2 id="coverage-file-format">Coverage file format<a class="headerlink" href="#coverage-file-format" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="s2">"autoware_carla_scenario.coverage/1"</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"CutInScenario"</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gap_at_cut_in"</span><span class="p">,</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">"group"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scenario"</span><span class="p">,</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="nt">"unit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"m"</span><span class="p">,</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">      </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"condition:cut_in_started"</span><span class="p">,</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"numeric"</span><span class="p">,</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">      </span><span class="nt">"buckets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"[0, 5)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"[5, 15)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"[15, 40]"</span><span class="p">],</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">      </span><span class="nt">"outside_odd"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">      </span><span class="nt">"samples"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">      </span><span class="nt">"ignored"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">      </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">      </span><span class="nt">"meters"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">      </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">      </span><span class="nt">"out_of_range"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">  </span><span class="p">],</span>
-<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">  </span><span class="nt">"crosses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"speed_x_gap"</span><span class="p">,</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">      </span><span class="nt">"group"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scenario"</span><span class="p">,</span>
-<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">      </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">      </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"condition:cut_in_started"</span><span class="p">,</span>
-<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">      </span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"speed_at_cut_in"</span><span class="p">,</span><span class="w"> </span><span class="s2">"gap_at_cut_in"</span><span class="p">],</span>
-<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="w">      </span><span class="nt">"buckets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"[0, 10) / [0, 5)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="p">],</span>
-<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="w">      </span><span class="nt">"outside_odd"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 10) / [0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
-<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="w">      </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
-<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="w">      </span><span class="nt">"meters"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
-<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="w">      </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
-<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a><span class="w">  </span><span class="p">],</span>
-<a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a><span class="w">  </span><span class="nt">"odd"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urban"</span><span class="p">,</span>
-<a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a><span class="w">    </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Urban roads up to 60 km/h"</span><span class="p">,</span>
-<a id="__codelineno-2-43" name="__codelineno-2-43" href="#__codelineno-2-43"></a><span class="w">    </span><span class="nt">"roots"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"root"</span><span class="p">],</span>
-<a id="__codelineno-2-44" name="__codelineno-2-44" href="#__codelineno-2-44"></a><span class="w">    </span><span class="nt">"modules"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"roads"</span><span class="p">,</span><span class="w"> </span><span class="nt">"include_and"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"scenery.location in [urban]"</span><span class="p">],</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
-<a id="__codelineno-2-45" name="__codelineno-2-45" href="#__codelineno-2-45"></a><span class="w">    </span><span class="nt">"unmeasured"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-46" name="__codelineno-2-46" href="#__codelineno-2-46"></a><span class="w">    </span><span class="nt">"ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mi">512</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">},</span>
-<a id="__codelineno-2-47" name="__codelineno-2-47" href="#__codelineno-2-47"></a><span class="w">    </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mf">25.6</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.4</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mf">2.0</span><span class="p">},</span>
-<a id="__codelineno-2-48" name="__codelineno-2-48" href="#__codelineno-2-48"></a><span class="w">    </span><span class="nt">"module_ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"roads"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"failed_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">}},</span>
-<a id="__codelineno-2-49" name="__codelineno-2-49" href="#__codelineno-2-49"></a><span class="w">    </span><span class="nt">"out_intervals"</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="mf">12.3</span><span class="p">,</span><span class="w"> </span><span class="mf">14.3</span><span class="p">]]</span>
-<a id="__codelineno-2-50" name="__codelineno-2-50" href="#__codelineno-2-50"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-2-51" name="__codelineno-2-51" href="#__codelineno-2-51"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="s2">"autoware_carla_scenario.coverage/1"</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"CutInScenario"</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gap_at_cut_in"</span><span class="p">,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">"group"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scenario"</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">"unit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"m"</span><span class="p">,</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">      </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"condition:cut_in_started"</span><span class="p">,</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"numeric"</span><span class="p">,</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">      </span><span class="nt">"buckets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"[0, 5)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"[5, 15)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"[15, 40]"</span><span class="p">],</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">      </span><span class="nt">"outside_odd"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">      </span><span class="nt">"samples"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">      </span><span class="nt">"ignored"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">      </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">      </span><span class="nt">"meters"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">      </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="w">      </span><span class="nt">"out_of_range"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="w">  </span><span class="nt">"crosses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"speed_x_gap"</span><span class="p">,</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">      </span><span class="nt">"group"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scenario"</span><span class="p">,</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="w">      </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="w">      </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"condition:cut_in_started"</span><span class="p">,</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="w">      </span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"speed_at_cut_in"</span><span class="p">,</span><span class="w"> </span><span class="s2">"gap_at_cut_in"</span><span class="p">],</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="w">      </span><span class="nt">"buckets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"[0, 10) / [0, 5)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="p">],</span>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="w">      </span><span class="nt">"outside_odd"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 10) / [0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="w">      </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a><span class="w">      </span><span class="nt">"meters"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a><span class="w">      </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
+<a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-3-40" name="__codelineno-3-40" href="#__codelineno-3-40"></a><span class="w">  </span><span class="nt">"odd"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-41" name="__codelineno-3-41" href="#__codelineno-3-41"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urban"</span><span class="p">,</span>
+<a id="__codelineno-3-42" name="__codelineno-3-42" href="#__codelineno-3-42"></a><span class="w">    </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Urban roads up to 60 km/h"</span><span class="p">,</span>
+<a id="__codelineno-3-43" name="__codelineno-3-43" href="#__codelineno-3-43"></a><span class="w">    </span><span class="nt">"roots"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"root"</span><span class="p">],</span>
+<a id="__codelineno-3-44" name="__codelineno-3-44" href="#__codelineno-3-44"></a><span class="w">    </span><span class="nt">"modules"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"roads"</span><span class="p">,</span><span class="w"> </span><span class="nt">"include_and"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"scenery.location in [urban]"</span><span class="p">],</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
+<a id="__codelineno-3-45" name="__codelineno-3-45" href="#__codelineno-3-45"></a><span class="w">    </span><span class="nt">"unmeasured"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-3-46" name="__codelineno-3-46" href="#__codelineno-3-46"></a><span class="w">    </span><span class="nt">"ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mi">512</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">},</span>
+<a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a><span class="w">    </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mf">25.6</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.4</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mf">2.0</span><span class="p">},</span>
+<a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a><span class="w">    </span><span class="nt">"module_ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"roads"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"failed_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">}},</span>
+<a id="__codelineno-3-49" name="__codelineno-3-49" href="#__codelineno-3-49"></a><span class="w">    </span><span class="nt">"out_intervals"</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="mf">12.3</span><span class="p">,</span><span class="w"> </span><span class="mf">14.3</span><span class="p">]]</span>
+<a id="__codelineno-3-50" name="__codelineno-3-50" href="#__codelineno-3-50"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-3-51" name="__codelineno-3-51" href="#__codelineno-3-51"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="not-yet-supported">Not yet supported<a class="headerlink" href="#not-yet-supported" title="Permanent link">&para;</a></h2>
 <ul>
@@ -2078,7 +2145,7 @@ different buckets would mean nothing.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 10:24:25 UTC"><span class="timeago" datetime="2026-10-10T10:24:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 10:24:25 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 10:34:00 UTC"><span class="timeago" datetime="2026-10-10T10:34:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 10:34:00 UTC">2026-10-10</span>
   </span>
 
     
