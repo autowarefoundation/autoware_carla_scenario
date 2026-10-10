@@ -1236,3 +1236,147 @@ class TestDefaultCriteria:
             if e.name == "odd.dynamic.ego_speed"
         )
         assert speed.covered == ["[45, 55)"]
+
+
+class TestSituations:
+    """#31: ODD modules covered as situations."""
+
+    @staticmethod
+    def _odd(**situation: Any) -> OddDefinition:
+        lanes = OddAttribute("lanes", lambda w: w.lanes, values=[1, 2, 3])
+        speed = OddAttribute("speed", lambda w: w.speed, buckets=[0, 50, 100])
+        return OddDefinition(
+            "o",
+            [lanes, speed],
+            [
+                OddModule("roads", include_and=[lanes.at_most(3)]),
+                OddModule(
+                    "three_lane_cruise",
+                    include_and=[lanes.equals(3), speed.between(55, 65)],
+                    situation=True,
+                    **situation,
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _run(odd: OddDefinition, steps: list[tuple[Any, Any]]) -> dict[str, Any]:
+        collector = CoverageCollector([], odd=odd)
+        collector.start(SimpleNamespace(lanes=None, speed=None), 0.0)
+        for i, (lanes, speed) in enumerate(steps, start=1):
+            collector.tick(SimpleNamespace(lanes=lanes, speed=speed), i * 1.0)
+        return {
+            "schema": COVERAGE_SCHEMA,
+            "scenario": "s",
+            "items": collector.to_dict("s")["items"],
+            "odd": collector.to_dict("s")["odd"],
+        }
+
+    def test_a_situation_is_not_a_root(self) -> None:
+        odd = self._odd()
+        assert odd.roots == ["roads"]
+        assert [m.name for m in odd.situations()] == ["three_lane_cruise"]
+
+    def test_it_counts_only_when_every_condition_holds_together(self) -> None:
+        # Three lanes at 30 km/h, then 60 km/h on two lanes: never both.
+        doc = self._run(self._odd(), [(3, 30.0), (3, 30.0), (2, 60.0), (2, 60.0)])
+        report = merge_coverage([doc])
+        entry = next(e for e in report.entries if e.group == "situation")
+        assert entry.name == "odd.situation.three_lane_cruise"
+        assert entry.holes == ["holds"]
+        doc = self._run(self._odd(), [(3, 60.0), (3, 61.0)])
+        assert next(
+            e for e in merge_coverage([doc]).entries if e.group == "situation"
+        ).covered == ["holds"]
+        assert "## Situation coverage" in merge_coverage([doc]).to_markdown()
+
+    def test_criteria_apply_to_the_stay(self) -> None:
+        odd = self._odd(cover_by="seconds", target=3, min_stay=2.0)
+        steps = [(3, 60.0), (2, 60.0), (3, 60.0), (3, 60.0), (3, 60.0)]
+        item = next(
+            i
+            for i in self._run(odd, steps)["items"]
+            if i["name"] == "odd.situation.three_lane_cruise"
+        )
+        assert item["entries"] == {"holds": 2}
+        assert item["counted"]["seconds"] == {"holds": 3.0}
+
+    def test_a_verdict_on_missing_values_is_counted_apart(self) -> None:
+        item = next(
+            i
+            for i in self._run(self._odd(), [(None, 60.0), (3, 60.0)])["items"]
+            if i["name"] == "odd.situation.three_lane_cruise"
+        )
+        assert item["hits"] == {"holds": 1}
+        assert item["out_of_range"] == {"unknown": 1}
+
+    def test_criteria_need_situation(self) -> None:
+        with pytest.raises(ValueError, match="need situation=True"):
+            OddModule("m", include_and=[], target=2)
+
+    def test_explicit_roots_keep_a_situation(self) -> None:
+        lanes = OddAttribute("lanes", lambda w: w, values=[1])
+        odd = OddDefinition(
+            "o",
+            [lanes],
+            [OddModule("s", include_and=[lanes.equals(1)], situation=True)],
+            roots=["s"],
+        )
+        assert odd.roots == ["s"]
+
+    def test_a_binding_names_situations(self, tmp_path: Path) -> None:
+        (tmp_path / "odd.yml").write_text(
+            "TAXONOMY:\n    lanes: integer count\n"
+            "MODULES:\n"
+            "    roads:\n        INCLUDE_AND:\n            lanes: '<= 4'\n"
+            "    three_lanes:\n        INCLUDE_AND:\n            lanes: 3\n"
+        )
+        binding = tmp_path / "b.yaml"
+        binding.write_text(
+            "openodd: [odd.yml]\n"
+            "situations:\n"
+            "  three_lanes: {cover_by: entries, target: 2, min_stay: 1}\n"
+        )
+        odd = load_odd_binding(binding)
+        assert odd.roots == ["roads"]
+        (situation,) = odd.situations()
+        assert situation.item is not None
+        assert (situation.item.cover_by, situation.item.target) == ("entries", 2.0)
+        assert odd.describe()["modules"][1]["situation"]["min_stay"] == 1.0
+        for bad, message in (
+            ("  nope: {}\n", "no module 'nope'"),
+            ("  three_lanes: {laps: 1}\n", r"unknown keys \['laps'\]"),
+            ("  three_lanes: {target: 0}\n", "whole number"),
+        ):
+            binding.write_text("openodd: [odd.yml]\nsituations:\n" + bad)
+            with pytest.raises(OpenOddError, match=message):
+                load_odd_binding(binding)
+
+    def test_a_situation_referring_to_a_bound_keeps_the_bound(self) -> None:
+        lanes = OddAttribute("lanes", lambda w: w, values=[1, 2, 3])
+        roads = OddModule("roads", include_and=[lanes.at_most(3)])
+        cruise = OddModule(
+            "cruise",
+            include_and=[lanes.equals(3), module_holds("roads")],
+            situation=True,
+        )
+        odd = OddDefinition("o", [lanes], [roads, cruise])
+        assert odd.roots == ["roads"]
+        assert odd.evaluate({"lanes": 5}).inside is False
+        explicit = OddDefinition("o", [lanes], [roads, cruise], roots=["roads"])
+        assert explicit.roots == ["roads"]
+
+    def test_an_odd_of_situations_only_is_warned_about(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        lanes = OddAttribute("lanes", lambda w: w, values=[1])
+        OddDefinition(
+            "o",
+            [lanes],
+            [OddModule("s", include_and=[lanes.equals(1)], situation=True)],
+        )
+        assert "every module is a situation" in caplog.text
+
+    def test_a_situation_is_not_a_bound_in_the_module_table(self) -> None:
+        doc = self._run(self._odd(), [(2, 30.0)])
+        assert set(doc["odd"]["module_ticks"]) == {"roads"}

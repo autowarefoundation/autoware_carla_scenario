@@ -56,6 +56,7 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
     check_odd,
@@ -203,6 +204,40 @@ def build_waypoint_poses(cfg: DictConfig) -> list[Lanelet2Pose]:
     ego_cfg = cfg.get("ego") or {}
     lanelet_ids = ego_cfg.get("waypoint_lanelet_ids") or []
     return [Lanelet2Pose(lanelet_id=int(x), s=0.0) for x in lanelet_ids]
+
+
+def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
+    """The route the config sends the ego along, for checking it against an ODD.
+
+    Raises :class:`~autoware_carla_scenario.odd.route.RouteError` when the
+    config names no spawn lanelet.
+
+    From ``ego.spawn_lanelet_id`` / ``ego.spawn_s``, through
+    ``ego.waypoint_lanelet_ids``, to ``ego.goal_lanelet_id`` / ``ego.goal_s``:
+    the poses a run hands the ego (``scenario-odd route``, docs/odd.md).
+
+    A scenario may derive its goal and waypoints in ``setup()``, which needs
+    CARLA.  The one way a built-in scenario does -- the goal from
+    ``scenario.expected_route_lanelet_ids``, with
+    :meth:`~autoware_carla_scenario.BaseScenario.derive_goal_from_route` --
+    is followed here with the same rule (a configured goal wins).  Any other
+    is not known before the run: the route then has no goal.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    spawn_lanelet_id = ego_cfg.get("spawn_lanelet_id")
+    if spawn_lanelet_id is None:
+        raise RouteError("no ego.spawn_lanelet_id: the route has no start")
+    start = Lanelet2Pose(
+        lanelet_id=int(spawn_lanelet_id),
+        s=float(ego_cfg.get("spawn_s", 0.0)),
+    )
+    goal = build_goal_pose(cfg)
+    scenario_cfg = cfg.get("scenario") or {}
+    expected = scenario_cfg.get("expected_route_lanelet_ids") or []
+    if goal is None and expected:
+        goal = Lanelet2Pose(lanelet_id=int(expected[-1]), s=0.0)
+    via = build_waypoint_poses(cfg)
+    return PlannedRoute(start=start, goal=goal, via=tuple(via), name=name)
 
 
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:

@@ -146,8 +146,36 @@ Numbers are in the attribute's `unit`.
 ### Modules
 
 `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels,
-active, text)`. Give at most one of `include_and` / `include_or`, and at most
-one of `exclude_and` / `exclude_or`.
+active, text, situation, target, cover_by, min_stay)`. Give at most one of
+`include_and` / `include_or`, and at most one of `exclude_and` / `exclude_or`.
+
+### Situations
+
+Attribute coverage counts each attribute on its own: three lanes and 60 km/h
+can both be covered by runs that never drove 60 km/h on a three-lane road. A
+module already says such a combination, so a module can be **covered as a
+situation**:
+
+```python
+OddModule(
+    "three_lane_cruise",
+    include_and=[lanes.equals(3), speed.between(55, 65)],
+    situation=True,
+    cover_by="meters", target=200, min_stay=3.0,   # 200 m, counting stays of 3 s or more
+)
+```
+
+Every tick, the module's verdict (which the ODD works out anyway) is a sample
+of the item `odd.situation.three_lane_cruise`, which has one bucket, `holds`.
+A tick where the module holds is a sample in it. A tick where it fails, or is
+inactive, ends the stay. A tick where it rests on missing values ends the stay
+too, and is counted apart as `unknown`. `target`, `cover_by` and `min_stay`
+work as for attributes (`docs/coverage.md`). The report lists situations in a
+group of their own, **Situation coverage**.
+
+A situation is what the runs should drive, not a bound of the ODD: with
+`roots` left out, a situation nothing refers to is not a root candidate. To
+make it a bound too, refer to it from a root, or name it in `roots`.
 
 ### Built-in probes
 
@@ -169,6 +197,12 @@ These live in `autoware_carla_scenario.odd`:
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing.
+
+The probes whose value the map alone decides (`speed_limit_kph`,
+`lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
+`in_junction`, `lane_count`) can also read it off a lanelet, which is how a
+planned route is checked before a run
+([Checking a planned route](#checking-a-planned-route)).
 
 Import them from `autoware_carla_scenario.odd` itself
 (`from autoware_carla_scenario.odd import rain`). The Codon model that checks
@@ -390,7 +424,19 @@ parameters, and condition-level metadata.
 |---|---|
 | `openodd` | The OpenODD files, relative to the binding file |
 | `name`, `text` | The ODD's name and description |
-| `probes` | Concept → `probe` (built-in name or `package.module:function`), `unit` (built-in probes know theirs), buckets (`values`, `buckets`, or `range` + `every`), `text` |
+| `probes` | Concept → `probe` (built-in name or `package.module:function`), `unit` (built-in probes know theirs), buckets (`values`, `buckets`, or `range` + `every`), `text`, and the coverage criteria `target`, `cover_by`, `min_stay` |
+| `situations` | Module → its criteria (`target`, `cover_by`, `min_stay`, all optional): the modules to cover as situations (see Situations above) |
+
+```yaml
+situations:
+  three_lane_cruise: {cover_by: meters, target: 200, min_stay: 3}
+  urban_junction_rain: {}          # one stay of any length
+```
+
+Situations live in the binding file, not in the OpenODD documents: OpenODD has
+no notion of coverage, and a construct of its own in an OpenODD document would
+not be compliant. A module named under `situations` and not under the `ODD`
+section is not a root candidate.
 
 When no buckets are given:
 
@@ -456,6 +502,104 @@ compiled. It catches the following:
 
 The runner makes the same check before a run, under the `typecheck` config
 key. OpenODD YAML is checked as it is read (see [What is read](#what-is-read)).
+
+## Checking a planned route
+
+Before a scenario runs, its ego route can be checked against the ODD on the
+Lanelet2 map alone, with no CARLA server:
+
+```bash
+uv run scenario-odd route path/to/urban.yaml intersection_passing/left_turn
+uv run scenario-odd route urban 'intersection_passing/*' lane_change/left map=nishishinjuku
+uv run scenario-odd route urban 'lane_change/*' --json
+```
+
+Each scenario config is composed as a run composes it. Name it as
+`scenario=` does (a glob works too); arguments with an `=` are Hydra
+overrides for all of them. The route is planned from the ego's spawn pose
+(`ego.spawn_lanelet_id`, `ego.spawn_s`), through `ego.waypoint_lanelet_ids`,
+to the goal (`ego.goal_lanelet_id`, `ego.goal_s`), as the shortest path in
+the map's routing graph, leg by leg. A scenario that derives its goal in
+`setup()` from `scenario.expected_route_lanelet_ids`, as
+`intersection_passing` does, gets that goal here too (a configured goal
+wins). A goal derived any other way is only known once the scenario runs:
+that route is reported as not planned.
+
+The ODD's attributes are then read lanelet by lanelet along the route, and
+each lanelet gets one of three verdicts:
+
+| Verdict | Meaning |
+|---|---|
+| inside | The ODD holds there, whatever happens at run time. |
+| outside | The ODD fails there, whatever happens at run time. Reported with the lanelet ids and the modules that fail. |
+| undecided | It depends on what only the run can tell (weather, traffic, speed), or on a value the map does not have. At run time a missing value counts as inside, so this is "inside only by assumption". |
+
+The map decides an attribute when its probe has a lanelet form,
+`probe.on_lanelet(lanelet, lanelet_map, routing_graph)`. It returns the
+value, `None` where the run would read none, or `UNDECIDED` where only the
+run can tell (for example `speed_limit_kph` on a lanelet with no
+`speed_limit` tag, where the run falls back to CARLA's limit). The built-in
+probes listed above have one; a custom probe opts in by having an
+`on_lanelet` attribute (a function attribute, or a method of a callable
+object). An attribute whose probe has none is **open**: it could take any
+value, and the ODD's own three-valued evaluation decides, exactly as it does
+for buckets outside the ODD. An OpenODD attribute derived from others is
+worked out from their values on the lanelet, and is open while one of them
+is.
+
+What the lanelet forms read, and where that differs from the run:
+
+| Probe | On a lanelet | At run time |
+|---|---|---|
+| `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | CARLA waypoint `is_junction` |
+| `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | CARLA OpenDRIVE waypoints: driving lanes of the same sign |
+| `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a number) undecided | The tag, else CARLA's `get_speed_limit()` |
+| `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph` | The tag | The tag of the lanelet the ego is on |
+
+Route lane counts come from Lanelet2 and run-time lane counts come from
+CARLA's OpenDRIVE waypoints. The two maps are converted from each other but
+not always lane for lane, so they can disagree; so can the two junction
+criteria.
+
+The report also gives the **expected coverage**: the metres the route spends
+in each bucket of each attribute (`<undecided>` and `<missing>` collect the
+metres where the map cannot or does not say). The start lanelet counts from
+the spawn pose, the goal lanelet up to the goal pose, and a lane change
+splits the lanelets' length between the two sides. Over several scenarios
+the metres are summed, and the report lists the buckets of each map-decided
+attribute that **no planned route reaches**, leaving out buckets outside the
+ODD (they are not targets). An attribute the map decides in general but left
+undecided on some lanelet of a route (metres in `<undecided>`) is reported as
+**undetermined** instead: the run may reach any of its buckets there, so none
+is called unreached.
+
+The exit status is 0 when no route leaves the ODD, 1 when one does, and 2
+when a route could not be planned (no goal, no path, a lanelet the map does
+not have, no Lanelet2 map) or the ODD could not be read.
+
+From Python:
+
+```python
+from autoware_carla_scenario.odd import (
+    PlannedRoute, combine_route_coverage, plan_route_coverage,
+)
+from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+route = PlannedRoute(start=Lanelet2Pose(203, 25.0), goal=Lanelet2Pose(207, 10.0))
+coverage = plan_route_coverage("urban", route, lanelet_map=lanelet_map)
+coverage.leaves_odd, coverage.outside(), coverage.expected_m
+combine_route_coverage("urban", [coverage, ...]).unreached
+```
+
+`plan_route_coverage` also takes a scenario (its spawn pose, waypoints and
+goal) or a list of lanelet ids. Without `lanelet_map` it uses the map the
+runner has loaded.
+
+At start-up, once `setup()` has settled the goal, the runner plans the
+route the same way and logs a warning when it leaves the ODD. It is a
+warning only. It is skipped for an ODD with no modules, and anything that
+keeps the route from being planned is logged at debug level; the run goes
+on regardless.
 
 ## What the report says
 

@@ -157,6 +157,14 @@ def _missing(world: Any) -> None:
     return None
 
 
+def _missing_on_lanelet(lanelet: Any, lanelet_map: Any, routing_graph: Any) -> None:
+    """On a planned route too (:mod:`.route`), the value is missing."""
+    return None
+
+
+_missing.on_lanelet = _missing_on_lanelet  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
@@ -521,6 +529,8 @@ class _Reader:
         self.docs = docs
         self.name = name
         self.text = text
+        #: Module -> criteria: the modules to cover as situations.
+        self.situations: dict[str, Any] = {}
         self.units = Units()
         self.units.add_conversions(docs.conversion)
         ids = _keys(docs.taxonomy, Counter())
@@ -1037,7 +1047,7 @@ class _Reader:
                 )
             if not includes and not excludes:
                 raise OpenOddError(f"{where}: needs an INCLUDE_* or EXCLUDE_* section")
-            sections = {
+            sections: dict[str, Any] = {
                 key.lower(): self.conditions(
                     mdef[key], f"{where} {key}", op=key.rsplit("_", 1)[1]
                 )
@@ -1060,9 +1070,37 @@ class _Reader:
             )
         return modules
 
+    def mark_situations(self, modules: list[OddModule]) -> None:
+        """Cover the modules the binding names as situations."""
+        by_name = {m.name: m for m in modules}
+        for name, criteria in self.situations.items():
+            where = f"situations.{name}"
+            if name not in by_name:
+                raise OpenOddError(f"{where}: no module {name!r}")
+            criteria = criteria or {}
+            if not isinstance(criteria, Mapping):
+                raise OpenOddError(f"{where}: expected a mapping of criteria")
+            extra = sorted(
+                str(k) for k in criteria if k not in ("target", "cover_by", "min_stay")
+            )
+            if extra:
+                raise OpenOddError(f"{where}: unknown keys {extra}")
+            try:
+                kw: dict[str, Any] = {}
+                if "target" in criteria:
+                    kw["target"] = float(criteria["target"])
+                if "cover_by" in criteria:
+                    kw["cover_by"] = str(criteria["cover_by"])
+                if criteria.get("min_stay") is not None:
+                    kw["min_stay"] = float(criteria["min_stay"])
+                by_name[name].as_situation(**kw)
+            except (TypeError, ValueError) as exc:
+                raise OpenOddError(f"{where}: {exc}") from exc
+
     def build(self) -> OddDefinition:
         attributes = self.build_attributes()
         modules = self.build_modules()
+        self.mark_situations(modules)
         self.threshold_buckets(modules)
         missing = [
             c.name
@@ -1148,6 +1186,7 @@ def load_openodd(
     bindings: Optional[Mapping[str, Any]] = None,
     name: Optional[str] = None,
     text: str = "",
+    situations: Optional[Mapping[str, Any]] = None,
 ) -> OddDefinition:
     """Read an ODD from OpenODD YAML files or text.
 
@@ -1163,6 +1202,9 @@ def load_openodd(
             concept with no probe is always missing.
         name: The ODD's name; the first file's stem by default.
         text: A description for the report.
+        situations: Module -> its criteria (``{"target": ..., "cover_by":
+            ..., "min_stay": ...}``, all optional): the modules to cover as
+            situations (see :class:`OddModule`).
 
     Raises:
         OpenOddError: when the documents do not make an ODD.
@@ -1195,6 +1237,7 @@ def load_openodd(
     for item in paths:
         _read(item, docs, ())
     reader = _Reader(docs, bindings or {}, name or docs.first_stem or "openodd", text)
+    reader.situations = dict(situations or {})
     odd = reader.build()
     odd.sources = docs.provenance
     return odd
@@ -1237,7 +1280,9 @@ def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
 
 def _load_binding(path: Path, doc: Mapping[str, Any]) -> OddDefinition:
     extra = sorted(
-        str(k) for k in doc if k not in ("openodd", "name", "text", "probes")
+        str(k)
+        for k in doc
+        if k not in ("openodd", "name", "text", "probes", "situations")
     )
     if extra:
         raise OpenOddError(f"{path}: unknown keys {extra}")
@@ -1255,6 +1300,7 @@ def _load_binding(path: Path, doc: Mapping[str, Any]) -> OddDefinition:
         bindings=doc.get("probes") or {},
         name=str(doc.get("name") or path.stem),
         text=str(doc.get("text", "")),
+        situations=doc.get("situations") or {},
     )
 
 
