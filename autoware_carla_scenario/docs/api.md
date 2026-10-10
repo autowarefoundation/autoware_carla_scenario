@@ -38,6 +38,20 @@ renderer driven by the native CARLA recorder + an RGB camera sensor.
 It is used internally by `ScenarioRunner` and can also be instantiated
 directly.
 
+## Coverage (`autoware_carla_scenario.coverage`)
+
+See [Coverage](coverage.md).
+
+| Symbol | Purpose |
+|--------|---------|
+| `BaseScenario.register_cover(name, expression, *, unit, range, every, buckets, values, ignore, event, text, target)` | Declare a cover item, after `cover()` in OpenSCENARIO DSL. |
+| `BaseScenario.register_cross(name, items, *, text, target)` | Cross coverage of cover items sampled on the same event. |
+| `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
+| `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
+| `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
+| `odd_cover_items()`, `OddProbe` | The ODD items the runner samples on every run, and what reads them from the world. |
+| `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
+
 ## Conditions (`autoware_carla_scenario.conditions`)
 
 All conditions inherit from `BaseCondition` and return a
@@ -251,6 +265,7 @@ Defined in `pyproject.toml`:
 | `viewer` | `autoware_carla_scenario.ui:main` |
 | `scenario-editor` | `autoware_carla_scenario.editor:main` |
 | `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
+| `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` |
 
 The `scenario` command also exposes Python-level helpers in
 `autoware_carla_scenario.examples.run` for downstream packages:

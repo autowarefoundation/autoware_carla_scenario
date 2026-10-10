@@ -91,6 +91,7 @@ nav:
   - HD Maps: maps.md
   - External Driver Interface: driver_interface.md
   - Traffic Backends: traffic_backends.md
+  - Coverage: coverage.md
   - Static Check: typecheck.md
   - Container Image: docker.md
   - Architecture: architecture.md

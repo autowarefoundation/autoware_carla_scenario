@@ -124,6 +124,8 @@ scenario = "autoware_carla_scenario.examples.run:main"
 scenario-expand = "autoware_carla_scenario.examples.expand:main"
 # Compile scenarios with Codon (the static check the runner makes before a run).
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
+# Merge the coverage files of scenario runs into an ODD/scenario coverage report.
+scenario-coverage = "autoware_carla_scenario.coverage.report:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"
 # Download a CARLA server (the nightly build by default) for the runner to launch.
 scenario-setup = "autoware_carla_scenario.carla_install:main"

@@ -60,6 +60,7 @@ from autoware_carla_scenario import (
     GroundProjectionConfig,
     LaneChangeDirection,
     Lanelet2Pose,
+    SamplingEvent,
     ScenarioResult,
     SpeedCondition,
     StickyCondition,
@@ -222,6 +223,58 @@ def test_a_correct_scenario_compiles(tmp_path: Path) -> None:
     scenario, config, _ = _write_case(tmp_path, _VALID_SETUP)
     result = typecheck_scenario(scenario, config, {"min_speed_kmh": 5})
     assert result.ok, result.format()
+
+
+_COVER_SETUP = """
+self.register_cover(
+    "ego_speed",
+    lambda world: 3.0,
+    unit="km/h",
+    range=(0.0, 60.0),
+    every=10.0,
+    event=SamplingEvent.TICK,
+)
+self.register_cover(
+    "gap",
+    ego_gap,
+    buckets=[0.0, 5.0, 10.0, 30.0],
+    ignore=lambda v: v < 0.0,
+    event=SamplingEvent.TICK,
+)
+self.register_cover(
+    "turn",
+    lambda world: TurnDirection.LEFT,
+    values=[TurnDirection.LEFT, TurnDirection.RIGHT],
+    event=ElapsedTimeCondition(1.0, label="sample_at_1s"),
+    text="the turn taken",
+    target=2,
+)
+self.register_cover("braking", lambda world: False, values=[False, True])
+self.register_cross("speed_x_gap", ["ego_speed", "gap"], text="speed and gap")
+"""
+
+_COVER_EXTRA = """
+
+
+def ego_gap(world: carla.World) -> float | None:
+    return 4.0
+"""
+
+
+def test_cover_items_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(tmp_path, _COVER_SETUP, _COVER_EXTRA)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_cover_event_that_is_neither_an_event_nor_a_condition_is_refused(
+    tmp_path: Path,
+) -> None:
+    setup = 'self.register_cover("x", ego_gap, values=[1], event="end")\n'
+    scenario, config, path = _write_case(tmp_path, setup, _COVER_EXTRA)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "event must be a SamplingEvent or a condition" in error.message
+    assert error.line == _line_of(path, 'event="end"')
 
 
 def test_a_custom_condition_is_checked_through_its_check_method(tmp_path: Path) -> None:

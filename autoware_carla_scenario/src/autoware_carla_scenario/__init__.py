@@ -207,6 +207,7 @@ if TYPE_CHECKING:
         unregister_conf_dir as unregister_conf_dir,
         unregister_scenario as unregister_scenario,
     )
+    from .coverage import SamplingEvent as SamplingEvent
     from .scenario_base import (
         BaseScenario as BaseScenario,
         EgoConfig as EgoConfig,
@@ -291,6 +292,7 @@ __all__ = [
     "AndCondition",
     "BaseCondition",
     "BaseScenario",
+    "SamplingEvent",
     "CarlaWorldPose",
     "CollisionCondition",
     "CollisionTargetType",
@@ -522,6 +524,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "CarlaScenarioFixture": (".pytest_fixtures", "CarlaScenarioFixture"),
     # scenario base
     "BaseScenario": (".scenario_base", "BaseScenario"),
+    # coverage
+    "SamplingEvent": (".coverage", "SamplingEvent"),
     "EgoConfig": (".scenario_base", "EgoConfig"),
     # scenario package extension API (registry)
     "register_scenario": (".registry", "register_scenario"),

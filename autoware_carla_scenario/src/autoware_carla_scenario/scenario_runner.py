@@ -22,6 +22,7 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
+from .coverage import CoverageCollector, odd_cover_items
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
@@ -704,6 +705,7 @@ class ScenarioRunner:
         )
         tick_count = 0
         result: Optional[ScenarioResult] = None
+        coverage: Optional[CoverageCollector] = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -836,6 +838,13 @@ class ScenarioRunner:
             # the world from outside.
             trajectory.start(world)
             trajectory.record(world, clock.simulated)
+            # What the run covers: the ODD items every run samples, then the
+            # scenario's own, declared in setup() with register_cover().
+            coverage = CoverageCollector(
+                [*odd_cover_items(), *scenario._cover_items],
+                scenario._cross_items,
+            )
+            coverage.start(world, clock.simulated)
 
             # Tick loop
             while not scenario.is_done():
@@ -881,6 +890,9 @@ class ScenarioRunner:
                 # Post-tick callbacks
                 for cb in scenario._post_tick_callbacks:
                     cb(world)
+
+                # Coverage samples the world the hooks above have acted on.
+                coverage.tick(world, elapsed)
 
                 # Periodic ego OpenDRIVE position log
                 if tick_count % _CONDITION_LOG_INTERVAL == 0:
@@ -975,6 +987,9 @@ class ScenarioRunner:
                     elapsed_seconds=elapsed,
                 )
 
+            # Sampled before teardown, while the ego still exists.
+            coverage.end(world, clock.simulated)
+
         finally:
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _vehicle_entity_module._warmup_done = False
@@ -1038,6 +1053,12 @@ class ScenarioRunner:
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(result.to_json(indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
+            if coverage is not None:
+                coverage_path = self.output_dir / f"{scenario_name}_coverage.json"
+                coverage.write(coverage_path, scenario_name)
+                logger.info(
+                    "[%s] Coverage written to: %s", scenario_name, coverage_path
+                )
 
         # Render video from the CARLA recording after scenario cleanup
         if (

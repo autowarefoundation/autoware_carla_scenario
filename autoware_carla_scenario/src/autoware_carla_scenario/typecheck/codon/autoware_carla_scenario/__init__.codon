@@ -36,6 +36,7 @@ from .entity import (EgoVehicle, PedestrianEntity, PedestrianEntityConfig, Spawn
 from .entity_role import EntityRole
 from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
                          FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
+from .coverage import SamplingEvent
 from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,

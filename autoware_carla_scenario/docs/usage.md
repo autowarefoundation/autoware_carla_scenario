@@ -402,6 +402,7 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 |------|-------------|
 | `{ScenarioName}.log` | CARLA native recording (replay format) |
 | `{ScenarioName}_result.json` | Machine-readable result with condition statuses |
+| `{ScenarioName}_coverage.json` | ODD and scenario coverage hits of the run (merge with `scenario-coverage`, see [Coverage](coverage.md)) |
 | `{ScenarioName}.mp4` | Rendered video from recording (optional, if spectator is configured) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
