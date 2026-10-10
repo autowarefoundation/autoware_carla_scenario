@@ -486,6 +486,8 @@ def plan_route_coverage(
         ]
 
     map_attributes = _map_attributes(odd)
+    # Situations are what to drive: one that fails is no reason to be outside.
+    situations = {m.name for m in odd.situations()}
     expected: dict[str, dict[str, float]] = {
         a.name: {} for a in odd.attributes if a.item is not None
     }
@@ -506,7 +508,11 @@ def plan_route_coverage(
                     else INSIDE
                 ),
                 values=values,
-                failing_modules=[m for m, v in verdict.modules.items() if v is False],
+                failing_modules=[
+                    m
+                    for m, v in verdict.modules.items()
+                    if v is False and m not in situations
+                ],
             )
         )
         if metres <= 0.0:

@@ -91,8 +91,11 @@ class _OddMonitor:
         self.odd = odd
         self.ticks = {"inside": 0, "assumed": 0, "outside": 0}
         self.seconds = {"inside": 0.0, "assumed": 0.0, "outside": 0.0}
+        # Bounds only: a situation's ticks are its own cover item.
         self.modules = {
-            m.name: {"failed_ticks": 0, "missing_ticks": 0} for m in odd.modules
+            m.name: {"failed_ticks": 0, "missing_ticks": 0}
+            for m in odd.modules
+            if not m.situation
         }
         self.out_intervals: list[list[float]] = []
         #: Whether the excursion going on is the last interval listed.
@@ -108,6 +111,8 @@ class _OddMonitor:
         self.ticks[key] += 1
         self.seconds[key] += max(0.0, end - start)
         for name, holds in verdict.modules.items():
+            if name not in self.modules:
+                continue  # a situation
             if holds is False:
                 self.modules[name]["failed_ticks"] += 1
             elif holds is None:

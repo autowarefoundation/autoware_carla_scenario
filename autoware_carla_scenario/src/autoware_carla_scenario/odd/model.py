@@ -42,6 +42,7 @@ whatever no module rules out is inside the ODD.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Union
@@ -55,6 +56,8 @@ from ..coverage.items import (
     duplicates,
     value_label,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "OddAttribute",
@@ -627,7 +630,11 @@ class OddModule:
         cover_by: str = "hits",
         min_stay: Optional[float] = None,
     ) -> None:
-        """Cover the module as a situation, with these criteria."""
+        """Cover the module as a situation, with these criteria.
+
+        Call it before the module is given to an :class:`OddDefinition`,
+        which works its roots out when it is built.
+        """
         self.item = CoverItem(
             name=f"odd.situation.{self.name}",
             expression=_never_called,
@@ -773,9 +780,13 @@ class OddDefinition:
         for label, module_name in last.items():
             self._labels_after.setdefault(module_name, []).append(label)
 
+        # What a bound refers to is not a root.  A situation's references do
+        # not count: it is what to drive, and a bound it tests must still
+        # bound the ODD.
         referenced: set[str] = set()
         for module in self.modules:
-            referenced |= self._depends_on(module)
+            if not module.situation:
+                referenced |= self._depends_on(module)
         if roots:
             self.roots = [r for r in roots if r not in referenced] or list(roots)
         else:
@@ -786,6 +797,12 @@ class OddDefinition:
                 for m in self.modules
                 if m.name not in referenced and not m.situation
             ]
+            if self.modules and not self.roots:
+                logger.warning(
+                    "ODD %s: every module is a situation, so nothing bounds the "
+                    "ODD; refer to one from a bound, or name it in roots",
+                    name,
+                )
         self._plain = [a for a in self.attributes if not _derived(a.probe)]
         self._derived = [a for a in self.attributes if _derived(a.probe)]
         self._outside = self._outside_buckets()

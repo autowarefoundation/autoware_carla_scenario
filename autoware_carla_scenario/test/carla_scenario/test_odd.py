@@ -1351,3 +1351,32 @@ class TestSituations:
             binding.write_text("openodd: [odd.yml]\nsituations:\n" + bad)
             with pytest.raises(OpenOddError, match=message):
                 load_odd_binding(binding)
+
+    def test_a_situation_referring_to_a_bound_keeps_the_bound(self) -> None:
+        lanes = OddAttribute("lanes", lambda w: w, values=[1, 2, 3])
+        roads = OddModule("roads", include_and=[lanes.at_most(3)])
+        cruise = OddModule(
+            "cruise",
+            include_and=[lanes.equals(3), module_holds("roads")],
+            situation=True,
+        )
+        odd = OddDefinition("o", [lanes], [roads, cruise])
+        assert odd.roots == ["roads"]
+        assert odd.evaluate({"lanes": 5}).inside is False
+        explicit = OddDefinition("o", [lanes], [roads, cruise], roots=["roads"])
+        assert explicit.roots == ["roads"]
+
+    def test_an_odd_of_situations_only_is_warned_about(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        lanes = OddAttribute("lanes", lambda w: w, values=[1])
+        OddDefinition(
+            "o",
+            [lanes],
+            [OddModule("s", include_and=[lanes.equals(1)], situation=True)],
+        )
+        assert "every module is a situation" in caplog.text
+
+    def test_a_situation_is_not_a_bound_in_the_module_table(self) -> None:
+        doc = self._run(self._odd(), [(2, 30.0)])
+        assert set(doc["odd"]["module_ticks"]) == {"roads"}
