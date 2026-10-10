@@ -2192,7 +2192,7 @@ tree internally:</p>
 </tr>
 <tr>
 <td><code>FollowTrajectoryAction</code></td>
-<td>Move a vehicle or pedestrian along a <code>Trajectory</code> (OpenSCENARIO <code>FollowTrajectoryAction</code>); <code>held_vertex</code> names the vertex a waypoint condition is holding it at. See <a href="../trajectory/">Trajectories and Recorded-Scene Replay</a>.</td>
+<td>Move a vehicle or pedestrian along a <code>Trajectory</code> (OpenSCENARIO <code>FollowTrajectoryAction</code>); <code>speed</code> paces the segments no time does; <code>held_vertex</code> names the vertex a waypoint condition is holding it at. See <a href="../trajectory/">Trajectories and Recorded-Scene Replay</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -2208,7 +2208,11 @@ tree internally:</p>
 <tbody>
 <tr>
 <td><code>Trajectory</code>, <code>TrajectoryVertex</code></td>
-<td>A named polyline and its vertices: a position, an optional time, and an optional <code>advance</code> condition that holds the entity at the vertex until it is satisfied (<a href="../trajectory/#waypoint-conditions">waypoint conditions</a>; <code>Trajectory.is_gated</code>, <code>Trajectory.gated({index: condition})</code>).</td>
+<td>A named polyline and its vertices: a position and the condition the entity departs it on (<code>advance</code>) -- a time, <code>TrajectoryTimeCondition(t)</code> (read back as <code>vertex.time</code>), or any other condition (<a href="../trajectory/#waypoint-conditions">waypoint conditions</a>; <code>Trajectory.is_gated</code>, <code>Trajectory.gated({index: condition})</code>).</td>
+</tr>
+<tr>
+<td><code>TrajectoryTimeCondition</code></td>
+<td>A vertex's time: depart when the trajectory's clock reaches it.</td>
 </tr>
 <tr>
 <td><code>MapPose</code></td>
@@ -2774,7 +2778,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 14:37:29 UTC"><span class="timeago" datetime="2026-10-10T14:37:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 14:37:29 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 15:25:51 UTC"><span class="timeago" datetime="2026-10-10T15:25:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 15:25:51 UTC">2026-10-10</span>
   </span>
 
     

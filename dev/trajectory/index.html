@@ -1617,27 +1617,28 @@ carries no dataset format.</p>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">ReferenceContext</span><span class="p">,</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">Trajectory</span><span class="p">,</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">TrajectoryFollowingMode</span><span class="p">,</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">)</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">path</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="s2">"npc1_path"</span><span class="p">,</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="p">[</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">30.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">4.0</span><span class="p">),</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mf">81234.5</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mf">50123.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">7.0</span><span class="p">),</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="p">],</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="p">)</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>        <span class="s2">"npc1"</span><span class="p">,</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="n">path</span><span class="p">,</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(</span><span class="n">ReferenceContext</span><span class="o">.</span><span class="n">RELATIVE</span><span class="p">),</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="n">following_mode</span><span class="o">=</span><span class="n">TrajectoryFollowingMode</span><span class="o">.</span><span class="n">POSITION</span><span class="p">,</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_follows_path"</span><span class="p">,</span>
-<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    <span class="p">)</span>
-<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="p">)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">)</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">path</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="s2">"npc1_path"</span><span class="p">,</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="p">[</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">30.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">4.0</span><span class="p">)),</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mf">81234.5</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mf">50123.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">7.0</span><span class="p">)),</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="p">],</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="p">)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="s2">"npc1"</span><span class="p">,</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="n">path</span><span class="p">,</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(</span><span class="n">ReferenceContext</span><span class="o">.</span><span class="n">RELATIVE</span><span class="p">),</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="n">following_mode</span><span class="o">=</span><span class="n">TrajectoryFollowingMode</span><span class="o">.</span><span class="n">POSITION</span><span class="p">,</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_follows_path"</span><span class="p">,</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    <span class="p">)</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="p">)</span>
 </code></pre></div>
 <p>It has the same four parts as in OpenSCENARIO:</p>
 <table>
@@ -1656,8 +1657,8 @@ carries no dataset format.</p>
 </tr>
 <tr>
 <td><code>Vertex</code> (<code>time</code>, <code>Position</code>)</td>
-<td><code>TrajectoryVertex(position, time=None, advance=None)</code></td>
-<td>Either every vertex has a time or none has. <code>advance</code> is an extension: see <a href="#waypoint-conditions">Waypoint conditions</a>.</td>
+<td><code>TrajectoryVertex(position, advance=None)</code></td>
+<td>A vertex's time is its departure condition, <code>advance=TrajectoryTimeCondition(t)</code> (read back as <code>vertex.time</code>); any other condition can take its place -- see <a href="#waypoint-conditions">Waypoint conditions</a>. Either every vertex has a time or none has, a vertex with another condition counting as having one.</td>
 </tr>
 <tr>
 <td><code>TimeReference</code></td>
@@ -1698,11 +1699,11 @@ in ahead of the ego -- once, to be played from wherever it begins:</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">overtake</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"overtake"</span><span class="p">,</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="p">[</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(),</span> <span class="n">time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>  <span class="c1"># where npc1 is</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">5.0</span><span class="p">),</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>  <span class="c1"># where npc1 is</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)),</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">5.0</span><span class="p">)),</span>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="c1"># 10 m ahead of the ego, in its lane: a cut-in.</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">entity_ref</span><span class="o">=</span><span class="n">EGO_ROLE_NAME</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">7.0</span><span class="p">),</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">entity_ref</span><span class="o">=</span><span class="n">EGO_ROLE_NAME</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">7.0</span><span class="p">)),</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="p">],</span>
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
 <a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
@@ -1810,23 +1811,62 @@ off -- before its first vertex's time and after its last. That is what a road
 user that enters a recording late or leaves it early needs, since an entity
 cannot be spawned once a run has started.</p>
 <h2 id="waypoint-conditions">Waypoint conditions<a class="headerlink" href="#waypoint-conditions" title="Permanent link">&para;</a></h2>
-<p>What moves an entity on from one vertex to the next is a <strong>condition</strong>. For an
-ordinary vertex it is the implicit one a trajectory always had: the clock (a
-timed trajectory leaves the vertex at its time) or the entity's speed (an
-untimed one simply goes on). <code>TrajectoryVertex(..., advance=condition)</code> adds a
-gate to a vertex: the entity is <strong>held at that vertex until the condition
-holds</strong>, and then goes on, on the clock or at its speed again. A trajectory
-without gates (<code>Trajectory.is_gated</code> is <code>False</code>) moves exactly as it always
-did.</p>
-<p>Any <code>BaseCondition</code> can gate a vertex -- one the framework has now, one it
-gains later, or your own: an elapsed time, the distance to another entity, a
-speed, a traffic signal, an <code>ActionStateCondition</code> on another action, and
-<code>AndCondition</code> / <code>OrCondition</code> / <code>StickyCondition</code> / <code>PersistentCondition</code>
-compositions of them. The action asks it only what every condition answers,
-<code>check(world, elapsed)</code>, and as for an action's trigger any result other than
-<code>None</code> counts as satisfied. <code>elapsed</code> is the <strong>scenario's elapsed time</strong>, as
-for triggers, so <code>ElapsedTimeCondition(30.0, label=...)</code> reads "not before the
-scenario is 30 s old".</p>
+<p><strong>Each vertex is departed on one condition</strong>, its <code>advance</code>: when it holds,
+the entity leaves the vertex for the next one. A vertex with none is passed
+through on arrival.</p>
+<ul>
+<li><strong>Time is one kind of condition.</strong> <code>TrajectoryTimeCondition(t)</code> departs the
+  vertex when the trajectory's clock reaches <code>t</code> -- the scenario clock mapped
+  through the action's <code>TrajectoryTiming</code> (domain, <code>scale</code>, <code>offset</code>) and its
+  <code>initial_distance_offset</code>. That is what a vertex time has always meant, and
+  <code>vertex.time</code> reads it back. Without a time reference times are ignored, as
+  OpenSCENARIO's <code>&lt;None/&gt;</code> says, and such a vertex is passed through.</li>
+<li><strong>Any other condition</strong> -- one the framework has now, one it gains later, or
+  your own: an elapsed time, the distance to another entity, a speed, a
+  traffic signal, an <code>ActionStateCondition</code> on another action, and
+  <code>AndCondition</code> / <code>OrCondition</code> / <code>StickyCondition</code> / <code>PersistentCondition</code>
+  compositions of them. The action asks it only what every condition answers,
+  <code>check(world, elapsed)</code>, and as for a trigger anything but <code>None</code> counts as
+  satisfied. <code>elapsed</code> is the <strong>scenario's elapsed time</strong>, so
+  <code>ElapsedTimeCondition(30.0, label=...)</code> reads "not before the scenario is
+  30 s old". (A <code>TrajectoryTimeCondition</code> <em>inside</em> a composition has no
+  trajectory clock to read and compares the scenario's elapsed time; the
+  editor refuses it there.)</li>
+</ul>
+<p>A vertex cannot carry two: a time and another condition are combined, if
+that is what is meant, by giving the vertex an <code>AndCondition</code> of an
+<code>ElapsedTimeCondition</code> and the other.</p>
+<p><strong>Between two vertices.</strong> After vertex <em>i</em> is departed at scenario time <code>T</code>:</p>
+<ul>
+<li>if vertex <em>i + 1</em> has a time whose scenario time is not before <code>T</code>, the
+  entity arrives there exactly then, moving linearly in between. When <em>i</em> was
+  departed on its own time this is exactly the timed interpolation a
+  recording is replayed with (a zero-duration segment is a jump), so <strong>a
+  trajectory of times alone moves as it always did</strong>;</li>
+<li>otherwise -- no time on <em>i + 1</em>, or one already past because the entity
+  waited -- it goes at the <strong>action's speed</strong>: <code>speed=</code> (m/s) when given, else
+  the speed the entity had when the run started. At (near) zero that segment
+  is never finished, and the action warns when the run starts.</li>
+</ul>
+<p>So after a late departure, a next vertex whose time is at or just after the
+departure is reached at once -- a jump in <code>POSITION</code>; in <code>FOLLOW</code> the vehicle
+cannot keep up and drives as fast as its controller lets it. That is the rule
+"arrive at its time if that is not before the departure" doing what it says.</p>
+<p><strong>Waiting.</strong> In <code>POSITION</code> mode a condition is checked from the tick the
+entity <strong>reaches</strong> its vertex -- not before -- then on every tick while it
+waits there, standing
+still with zero velocity. Once it holds the vertex is departed for the rest of
+that run; it is not asked again. If it already holds on arrival the entity
+does not stop. A condition that never holds keeps the entity there until
+<code>until=</code> ends the run. On the <strong>last vertex</strong> of an open path a condition
+means "end the run when it holds" (a time: when the clock reaches it, as
+ever); arriving at a last vertex with none ends the run. On the <strong>first
+vertex</strong> it is the departure from the start (a time: wait at the start until
+then). Vertices before the point a run starts from (<code>initial_distance_offset</code>)
+are not checked. A repeating action (<code>once=False</code>) re-arms every condition at
+the start of each run, and a <strong>closed</strong> path -- which cannot carry times --
+checks its conditions again on every lap in <code>POSITION</code> mode. Whatever state a
+condition object keeps is its own: a latched <code>StickyCondition</code> stays latched.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">EGO_ROLE_NAME</span><span class="p">,</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">ComparisonRule</span><span class="p">,</span>
@@ -1835,147 +1875,144 @@ scenario is 30 s old".</p>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">MapPose</span><span class="p">,</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">Trajectory</span><span class="p">,</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="p">)</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">crossing</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="s2">"walker_crossing"</span><span class="p">,</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="p">[</span>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81200.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="c1"># At the kerb: wait until the ego is within 25 m, then step out.</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>            <span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>            <span class="n">time</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>            <span class="n">advance</span><span class="o">=</span><span class="n">EntityDistanceCondition</span><span class="p">(</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">)</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">crossing</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="s2">"walker_crossing"</span><span class="p">,</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="p">[</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81200.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="c1"># At the kerb: wait until the ego is within 25 m, then step out.</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>            <span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>            <span class="n">EntityDistanceCondition</span><span class="p">(</span>
 <a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>                <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
 <a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"ego_close"</span><span class="p">,</span>
 <a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>            <span class="p">),</span>
 <a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="p">),</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50110.0</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">11.0</span><span class="p">),</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>    <span class="p">],</span>
-<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="p">)</span>
-<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span><span class="s2">"walker1"</span><span class="p">,</span> <span class="n">crossing</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"cross"</span><span class="p">)</span>
-<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="p">)</span>
-<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>
-<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="c1"># A trajectory built elsewhere (a recording, a lanelet route) is gated by index:</span>
-<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="n">held</span> <span class="o">=</span> <span class="n">recorded</span><span class="o">.</span><span class="n">gated</span><span class="p">({</span><span class="mi">12</span><span class="p">:</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"not_before_20s"</span><span class="p">)})</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="c1"># Across by 11 s -- or, if the ego came late, at 1.4 m/s.</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50110.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">11.0</span><span class="p">)),</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>    <span class="p">],</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="p">)</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>        <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">crossing</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">speed</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"cross"</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>    <span class="p">)</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="p">)</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="c1"># A trajectory built elsewhere (a recording, a lanelet route): `gated` replaces</span>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="c1"># what the vertices named depart on, a time included.</span>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="n">held</span> <span class="o">=</span> <span class="n">recorded</span><span class="o">.</span><span class="n">gated</span><span class="p">({</span><span class="mi">12</span><span class="p">:</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"not_before_20s"</span><span class="p">)})</span>
 </code></pre></div>
-<p><strong>When a gate is checked.</strong> From the tick the entity <strong>reaches</strong> the vertex --
-not before -- then on every tick while it is held. Once the condition holds the
-gate is passed for the rest of that run; it is not asked again. If it already
-holds when the entity arrives, the entity does not stop at all. A gate on a
-vertex before the point a run starts from (<code>initial_distance_offset</code>) is not
-checked. A repeating action (<code>once=False</code>) re-arms every gate at the start of
-each run, and a <strong>closed</strong> trajectory checks its gates again on every lap.
-Whatever state the condition object keeps is its own: a <code>StickyCondition</code> that
-latched stays latched across laps and runs.</p>
-<p><strong>While held</strong>, by following mode:</p>
-<table>
-<thead>
-<tr>
-<th>Mode</th>
-<th>Timing</th>
-<th>While held</th>
-<th>After it opens</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POSITION</code></td>
-<td>a <code>TrajectoryTiming</code></td>
-<td>The trajectory's <strong>clock is paused</strong> at the vertex's time: the entity stands on the vertex with zero velocity.</td>
-<td>The clock runs again from the vertex's time: every later vertex is reached the hold later, and each segment keeps its recorded duration (and <code>scale</code>). The end -- and so the action's completion, and <code>hidden_outside_trajectory</code>'s disappearance -- comes the hold later too.</td>
-</tr>
-<tr>
-<td><code>POSITION</code></td>
-<td>none</td>
-<td>The distance stops at the vertex, at zero velocity.</td>
-<td>It goes on at the action's speed.</td>
-</tr>
-<tr>
-<td><code>FOLLOW</code> (vehicle)</td>
-<td>either</td>
-<td>A gate not yet passed is a <strong>stop line</strong>: the controller's plan ends on it, slowed so that it comes to rest there braking at 2 m/s². Within <code>ARRIVAL_TOLERANCE_M</code> (1 m) along the path the vehicle has reached it, and while held it stands on the brake.</td>
-<td>The plan runs on to the next gate or the end. With a timing the clock does not run past a gate not passed, and every stamp after it is shifted by the time held.</td>
-</tr>
-<tr>
-<td><code>FOLLOW</code> (walker)</td>
-<td>either</td>
-<td>Walked onto the gate, slowing as it gets close; within 0.3 m it has reached it and stands still.</td>
-<td>Walked on, at the speed or the shifted schedule.</td>
-</tr>
-</tbody>
-</table>
-<p>In <code>POSITION</code> mode with a timing, the vertex is reached when the trajectory's
-clock reaches its time, so a pause is exact in every time domain: an
-<code>ABSOLUTE</code> replay begun after a gate's time is held <strong>at</strong> that gate (the
-pause is honoured, not skipped), <code>RELATIVE</code> and <code>ABSOLUTE</code> shift the rest of
-the schedule alike, <code>initial_distance_offset</code> starts the clock where it would,
-and <code>hidden_outside_trajectory</code> keeps a held entity in the world even when
-the gate's time is the last vertex's. On the tick a gate that held the entity
-opens, the entity is at the vertex, moving off.</p>
-<p>In <code>FOLLOW</code> mode a vehicle cannot stop within a tick, so it has to plan for a
-gate it may have to wait at: it slows down for every gate not yet passed, and
-one whose condition holds on arrival is driven through at the speed the
-braking left it, not at full speed.</p>
-<p><code>FollowTrajectoryAction.held_vertex</code> says which vertex (0-based) the entity is
-being held at, or <code>None</code>.</p>
-<p>The last vertex of an <strong>open</strong> trajectory cannot carry a gate -- there is no
-next vertex to go to (<code>Trajectory</code> raises <code>ValueError</code>); to end the action on a
-condition, pass <code>until=</code>. On a closed trajectory the last vertex leads back to
-the first, so it can.</p>
+<p><strong>By following mode.</strong></p>
+<ul>
+<li><code>POSITION</code> places the entity where that timeline has it every tick; waiting,
+  it stands on the vertex itself.</li>
+<li><code>FOLLOW</code> (vehicle): a vertex whose condition has not held yet is a <strong>stop
+  line</strong> -- the controller's plan ends on it, slowed to come to rest there at
+  2 m/s². A car cannot stop within a tick, so here the condition is checked
+  <strong>before</strong> arrival, from as far off as stopping there takes (braking
+  distance, a second's travel and the arrival band); one that holds then is
+  passed, letting the vehicle through at speed and costing the schedule
+  nothing -- even if it would no longer hold by the time the vehicle gets
+  there, and a <code>PersistentCondition</code> starts counting from that distance. The
+  last vertex of an open path is the exception: it is checked only on
+  arrival, since departing it ends the run.
+  Otherwise it is looked at every tick; within <code>ARRIVAL_TOLERANCE_M</code> (1 m)
+  along the path the vehicle has reached the vertex and waits on the brake.
+  The plan after it is stamped from the timeline above.</li>
+<li><code>FOLLOW</code> (walker): looked at early in the same way, walked onto the vertex,
+  slowing as it gets close; within 0.3 m it has reached it and stands.</li>
+<li>On a <strong>closed</strong> path <code>FOLLOW</code> finds where the entity is by projecting it
+  near where it was, and that projection does not wrap from the end of the
+  path to its start -- so in <code>FOLLOW</code> mode a closed path's conditions are
+  reliable on the first lap only. <code>POSITION</code> has no such limit.</li>
+</ul>
+<p><code>hidden_outside_trajectory</code> keeps the entity out of the world until the first
+vertex is departed on its time, and after the run ends -- for a trajectory of
+times alone, exactly as before. <code>FollowTrajectoryAction.held_vertex</code> names the
+vertex (0-based) the entity waits at for a condition other than a time, or
+<code>None</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Breaking change</p>
+<p><code>TrajectoryVertex</code> no longer takes <code>time=</code> (or a time as its second
+argument), and the editor's vertex rows no longer have a time column:
+write <code>TrajectoryVertex(position, TrajectoryTimeCondition(t))</code>, and in a
+document a <code>trajectory_time</code> waypoint condition on the vertex. The old
+forms raise an error that says so.</p>
+</div>
 <h2 id="in-the-scenario-editor">In the Scenario Editor<a class="headerlink" href="#in-the-scenario-editor" title="Permanent link">&para;</a></h2>
 <p><strong>Follow Trajectory</strong> (category <em>Vehicle / Motion</em>) is a card like any other,
 for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
 three sources:</p>
 <ul>
 <li><strong>Vertices (map frame)</strong> -- written in the card, one vertex per line:
-  <code>x, y[, yaw][, time]</code> (metres, radians, seconds; <code>81234.5, 50123.0, , 1.5</code>
-  leaves the yaw to the path). The line above the text says how many vertices,
-  how long and how many seconds it adds up to. This is what a recording
+  <code>x, y[, yaw]</code> (metres, radians; <code>81234.5, 50123.0</code> leaves the yaw to the
+  path). The line above the text says how many vertices and how long. Their
+  times are waypoint conditions (below). This is what a recording
   transcribes to, so a replayed road user's card can be edited like any other.</li>
 <li><strong>Along lanelets</strong> -- the lanelets picked on the map, followed along their
   centrelines at a lateral offset and timed at a constant speed.</li>
 <li><strong>Relative to an entity's lane</strong> -- <a href="#lane-relative-vertices">lane-relative vertices</a>,
-  one per line: <code>ds[, offset][, d_lane][, yaw][, time]</code> (metres, metres,
-  lanes, radians, seconds; only <code>ds</code> is required, <code>d_lane</code> is a whole number),
+  one per line: <code>ds[, offset][, d_lane][, yaw]</code> (metres, metres, lanes,
+  radians; only <code>ds</code> is required, <code>d_lane</code> is a whole number),
   measured from the entity chosen in <strong>Relative to</strong> -- or, left empty, from
   the card's own actor. The document stores them as rows
-  <code>[ds, offset, d_lane, yaw, time]</code> and the reference as an entity id, which
+  <code>[ds, offset, d_lane, yaw]</code> and the reference as an entity id, which
   the compiler turns into that entity's role name. Deleting the reference
   entity clears the field, so the card is then measured from its own actor.</li>
 </ul>
-<p><strong>Waypoint conditions</strong> are under the card's fields in the inspector: <em>+
-waypoint condition</em> takes a vertex number -- counted <strong>from 1</strong>, as the lines
-of the vertex list (map-frame or relative) -- and a condition type, and adds
-an ordinary condition tree there, drawn and edited exactly as a trigger is
-(click it for its fields, add children to an <em>All</em> / <em>Any</em>). A second
-condition added to the same vertex is combined with the first in an <em>All</em>.
-The vertex number of each can be changed in place, and the bin removes it.
-The card on the canvas says how many it has. In the document they are a list
-on the action, each a vertex and a condition node:</p>
+<p><strong>Waypoint conditions</strong> -- what each vertex departs on, its time included --
+are under the card's fields in the inspector: <em>+ waypoint condition</em> takes a
+vertex number -- counted <strong>from 1</strong>: the Nth vertex of the list (map-frame or
+relative), blank and comment lines not counted -- and a condition type, and
+adds an ordinary condition tree there, drawn and edited exactly as a trigger
+is (click it for its fields, add children to an <em>All</em> / <em>Any</em>). A vertex's
+time is the type <strong>Trajectory time</strong> (<code>trajectory_time</code>, one field: <code>time</code>
+on the trajectory's clock), read "depart vertex N at". A second condition
+added to the same vertex is combined with the first in an <em>All</em> (a Trajectory
+time cannot be combined: it is only ever a vertex's whole condition). The
+vertex number of each can be changed in place, and the bin removes it; a
+recording's long list of times folds away. The card on the canvas says how
+many it has, and <strong>Speed where no time paces</strong> sets the action's <code>speed</code>. In
+the document they are a list on the action, each a vertex and a condition
+node:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">actions</span><span class="p">:</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a_walker</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker1</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vertices</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">81200.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">4.0</span><span class="p p-Indicator">],</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">               </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50110.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">11.0</span><span class="p p-Indicator">]]</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="nt">advance_conditions</span><span class="p">:</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">          </span><span class="c1"># the second line of the vertex list</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">entity_distance</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">walker1</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">less_than</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">81200.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">               </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50110.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">]]</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">relative</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.4</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="nt">advance_conditions</span><span class="p">:</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">          </span><span class="c1"># the second vertex</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">entity_distance</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">walker1</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">less_than</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">11.0</span><span class="p p-Indicator">}}</span>
 </code></pre></div>
 <p>The compiler builds each condition with the same builders as a trigger, and
-the validator checks them as it checks a trigger, plus where they sit: a
-vertex the card has, not its last one, one condition per vertex, and only for
-vertices written in the card -- a lanelet path's vertices are generated every
-2 m, nothing anyone could count, so it takes none. A condition that names an
-entity or action you delete goes with it, as a trigger does.</p>
+the validator checks them as it checks a trigger, plus where they sit and the
+timing rules: a vertex the card has, one condition per vertex, every vertex
+departing on something once any has a time, times that do not decrease, a
+time reference only with times, a Trajectory time only as a vertex's whole
+condition, no condition waiting for its own action to leave the running state
+(the action runs for as long as the entity waits), and only for vertices
+written in the card -- a lanelet path's vertices are generated every 2 m,
+nothing anyone could count, so it takes none (its speed times it). A
+condition that names an entity or action you delete goes with it, as a
+trigger does. The own-action rule is deliberately conservative: any
+reference to the card's own action but "is running" is refused, even under a
+<em>Not</em> where it could not deadlock. A row with a time cell, as documents had before, is refused
+with a message that gives the <code>trajectory_time</code> condition to write instead.</p>
 <p>The other fields are the action's: the time reference (from the action start,
 from the scenario start, or none), its scale and offset, the following mode,
 how far along to start, and whether the entity is out of the world outside the
@@ -1996,13 +2033,22 @@ above:</p>
 <ul>
 <li>the ego spawns where the recording's ego started and is sent where it went;</li>
 <li>every road user is an entity spawned on the lanelet it was first seen on,
-  with one Follow Trajectory card: map-frame vertices timed on the scenario
+  with one Follow Trajectory card: map-frame vertices, each departed at its
+  recorded time (a <code>trajectory_time</code> waypoint condition) on the scenario
   clock (<code>time_domain: absolute</code>, <code>time_offset</code> moving the recording's first
   frame to <code>t = 0</code>), in Position mode and hidden outside its trajectory;</li>
 <li>a road user first seen after the start spawns <strong>out of the world</strong>
   (<code>spawn.hidden</code>) and appears at its first vertex.</li>
 </ul>
-<p>Open it in the editor to add the conditions the test is about.</p>
+<p>Open it in the editor to add the conditions the test is about -- a road
+user can wait for the ego by replacing one of its vertex times with another
+waypoint condition.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Transcribers written for the earlier format (a time column in the vertex
+rows) have to write <code>trajectory_time</code> waypoint conditions instead; a
+document with a time column is refused with a message saying so.</p>
+</div>
 <p>T4 scenes are transcribed this way by <code>scenario-import-t4</code> of the separate
 <code>scene_to_scenario_transpiler</code> package, which depends on the framework, never
 the other way round.</p>
@@ -2034,7 +2080,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 14:37:29 UTC"><span class="timeago" datetime="2026-10-10T14:37:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 14:37:29 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 15:25:51 UTC"><span class="timeago" datetime="2026-10-10T15:25:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 15:25:51 UTC">2026-10-10</span>
   </span>
 
     
