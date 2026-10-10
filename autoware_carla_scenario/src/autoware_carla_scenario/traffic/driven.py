@@ -161,6 +161,10 @@ class BackendDriven:
         """Go *direction* at the next junction ahead."""
         self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
 
+    def release_from_traffic(self, world: "carla.World") -> None:
+        """Stop the backend driving this vehicle; the caller drives it now."""
+        self._resolve_backend().release(self, world)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

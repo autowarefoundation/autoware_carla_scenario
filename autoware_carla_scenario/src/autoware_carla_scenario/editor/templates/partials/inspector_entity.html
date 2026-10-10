@@ -165,6 +165,13 @@
         <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
                value="{{ target.spawn.heading_deg|round(1) }}">
       </div>
+      <div class="ed-field">
+        <input type="hidden" name="spawn_hidden_shown" value="1">
+        <label class="ed-check">
+          <input type="checkbox" name="spawn_hidden" value="on" {% if target.spawn.hidden %}checked{% endif %}>
+          <span>Spawn out of the world<span class="ed-help">Under the map with physics off, until a Follow Trajectory card brings it in. For a road user a recording picks up late.</span></span>
+        </label>
+      </div>
     {% endif %}
   </form>
 {% endcall %}

@@ -13,10 +13,16 @@ live server would only make the test slower.
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple
 
 import pytest
 
+from autoware_carla_scenario.entity import (
+    SpawnPointIndex,
+    VehicleEntity,
+    VehicleEntityConfig,
+)
 from autoware_carla_scenario.traffic.driven import BackendDriven
 from autoware_carla_scenario.traffic import (
     NullTrafficBackend,
@@ -191,6 +197,52 @@ class TestTrafficManagerStart:
         backend.start(_World([ego, npc]), skip_actor_ids={ego.id})
         assert ego.autopilot == []
         assert npc.autopilot == [(True, backend.port)]
+
+
+class TestTrafficManagerRelease:
+    """An action that drives a vehicle itself takes it back from the manager."""
+
+    def test_released_after_start_it_comes_off_autopilot(self) -> None:
+        npc = _Actor(2)
+        backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123), client=_Client()
+        )
+        backend.start(_World([npc]))
+        backend.release(SimpleNamespace(actor=npc, role_name="npc1"), _World())
+        assert npc.autopilot == [(True, 8123), (False, 8123)]
+
+    def test_released_before_start_it_is_never_handed_over(self) -> None:
+        npc, other = _Actor(2), _Actor(3)
+        backend = TrafficManagerBackend(client=_Client())
+        backend.release(SimpleNamespace(actor=npc, role_name="npc1"), _World())
+        backend.start(_World([npc, other]))
+        assert npc.autopilot == []
+        assert other.autopilot == [(True, backend.port)]
+
+    def test_a_new_run_forgets_what_was_released(self) -> None:
+        npc = _Actor(2)
+        backend = TrafficManagerBackend(client=_Client())
+        backend.release(SimpleNamespace(actor=npc, role_name="npc1"), _World())
+        backend.close()
+        backend.start(_World([npc]))
+        assert npc.autopilot == [(True, backend.port)]
+
+    def test_the_entity_asks_its_own_backend(self) -> None:
+        released: List[Any] = []
+
+        class _Backend(NullTrafficBackend):
+            def release(self, entity: Any, world: Any) -> None:
+                released.append(entity)
+
+        entity = VehicleEntity(
+            VehicleEntityConfig(role_name="npc1", spawn_location=SpawnPointIndex(0))
+        )
+        entity.set_traffic_backend(_Backend())
+        entity.release_from_traffic(_World())
+        assert released == [entity]
+
+    def test_the_base_backend_releases_quietly(self) -> None:
+        NullTrafficBackend().release(SimpleNamespace(actor=_Actor(1)), _World())
 
 
 class TestTrafficManagerClose:

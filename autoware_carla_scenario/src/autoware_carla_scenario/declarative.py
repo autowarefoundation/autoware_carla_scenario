@@ -37,6 +37,8 @@ from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
 from .scenario_base import BaseScenario, EgoConfig
 
 if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
+
     from .coordinate import OpenDrivePose
 
 logger = logging.getLogger(__name__)
@@ -316,12 +318,16 @@ class DeclarativeScenario(BaseScenario):
         for entity in self._compiled.npcs:
             if entity.kind == "pedestrian":
                 walker = self._build_pedestrian(entity, world)
-                walker.spawn(world)
+                actor = walker.spawn(world)
                 self.register_pedestrian(walker)
             else:
                 npc_entity = self._build_npc(entity, world)
-                npc_entity.spawn(world)
+                actor = npc_entity.spawn(world)
                 self.register_entity(npc_entity)
+            if entity.spawn.hidden:
+                # Under the map, where it would otherwise fall for as long as
+                # it waits to be brought in.
+                actor.set_simulate_physics(False)
             logger.info(
                 "Spawned %s %s (%s) on lanelet %d at s=%.1f",
                 entity.kind,
@@ -352,7 +358,9 @@ class DeclarativeScenario(BaseScenario):
             PedestrianEntityConfig(
                 role_name=self._compiled.role_of(entity.id),
                 spawn_location=SpawnTransform(
-                    to_carla_world(_spawn_pose(entity)).to_carla_transform()
+                    _hidden_if_asked(
+                        entity, to_carla_world(_spawn_pose(entity)).to_carla_transform()
+                    )
                 ),
                 walker_type=entity.vehicle_type,
             )
@@ -376,16 +384,34 @@ class DeclarativeScenario(BaseScenario):
                 # Deriving it a second time here is how a vehicle ends up
                 # spawned under a name no condition is watching.
                 role_name=self._compiled.role_of(entity.id),
-                spawn_location=SpawnTransform(snapped.to_carla_transform()),
+                spawn_location=SpawnTransform(
+                    _hidden_if_asked(entity, snapped.to_carla_transform())
+                ),
                 vehicle_type=entity.vehicle_type,
                 initial_speed_kmh=entity.initial_speed_kmh,
                 spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
                 spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
                 spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
-                od_pose=od_pose,
+                # Under the map nothing is in the way, so no retries either.
+                od_pose=None if entity.spawn.hidden else od_pose,
                 ground_projection=self._ground_projection,
             )
         )
+
+
+def _hidden_if_asked(entity: Entity, transform: "carla.Transform") -> "carla.Transform":
+    """*transform*, moved under the map when *entity* spawns out of the world."""
+    if not entity.spawn.hidden:
+        return transform
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+
+    location = transform.location
+    return carla.Transform(
+        carla.Location(x=location.x, y=location.y, z=location.z - HIDDEN_DEPTH_M),
+        transform.rotation,
+    )
 
 
 def _spawn_pose(entity: Entity) -> Lanelet2Pose:

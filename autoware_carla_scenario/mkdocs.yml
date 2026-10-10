@@ -91,6 +91,7 @@ nav:
   - HD Maps: maps.md
   - External Driver Interface: driver_interface.md
   - Traffic Backends: traffic_backends.md
+  - Trajectories and Recorded-Scene Replay: trajectory.md
   - Coverage: coverage.md
   - ODD: odd.md
   - Static Check: typecheck.md

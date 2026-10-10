@@ -421,6 +421,30 @@ def test_sumo_drives_the_npc_and_mirrors_the_ego(
 
 
 @needs_sumo
+def test_a_released_vehicle_is_published_rather_than_driven(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """Taken back by an action, the NPC stays in SUMO -- as CARLA's, like the ego."""
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    entity = backend._driven[next(iter(backend._driven))]
+    sumo_id = next(iter(backend._driven))
+    try:
+        backend.tick(world, 0.0)
+        backend.release(entity, world)
+        assert sumo_id not in backend._driven
+        assert backend._external[sumo_id] is npc
+        assert npc.constant_velocity is None
+        held = npc.transform.location.x
+        for i in range(20):
+            backend.tick(world, (i + 1) * 0.05)
+        # SUMO no longer moves it: the pose it has is CARLA's own.
+        assert npc.transform.location.x == pytest.approx(held)
+        backend.release(entity, world)  # and saying it twice is harmless
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> None:
     backend, world, npc, _ego = _prepared(crossroads, tmp_path)
     entity = backend._driven[next(iter(backend._driven))]

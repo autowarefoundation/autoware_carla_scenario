@@ -106,6 +106,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._background: dict[str, Any] = {}
         self._background_count = 0
         self._started = False
+        #: Actors taken back with :meth:`release`, never handed to autopilot.
+        self._released: set[int] = set()
 
     # ------------------------------------------------------------------
     # Properties
@@ -144,7 +146,7 @@ class TrafficManagerBackend(TrafficBackend):
         skip = set(skip_actor_ids)
         enabled = 0
         for actor in world.get_actors().filter("vehicle.*"):
-            if actor.id in skip:
+            if actor.id in skip or actor.id in self._released:
                 continue
             actor.set_autopilot(True, self.port)
             enabled += 1
@@ -171,6 +173,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._background = {}
         self._background_count = 0
         self._started = False
+        self._released = set()
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -417,6 +420,17 @@ class TrafficManagerBackend(TrafficBackend):
             direction.value,
             len(path),
         )
+
+    def release(self, entity: Any, world: Any) -> None:
+        """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
+        del world
+        actor = _require_actor(entity, "release")
+        if actor is None:
+            return
+        self._released.add(actor.id)
+        if self._started:
+            actor.set_autopilot(False, self.port)
+            logger.info("%s: autopilot released", _entity_name(entity))
 
     # ------------------------------------------------------------------
     # Internals
