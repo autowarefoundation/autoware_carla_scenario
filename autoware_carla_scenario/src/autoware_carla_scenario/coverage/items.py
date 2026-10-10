@@ -102,7 +102,7 @@ def value_label(value: Any) -> str:
 
 
 def _number_label(x: float) -> str:
-    return f"{x:g}"
+    return f"{x:.12g}"
 
 
 def event_name(event: Event) -> str:
@@ -189,6 +189,10 @@ class CoverItem:
             f"[{_number_label(a)}, {_number_label(b)}{']' if i == last else ')'}"
             for i, (a, b) in enumerate(zip(self.edges, self.edges[1:]))
         ]
+        if duplicates(self.labels):
+            raise ValueError(
+                f"cover({self.name}): bucket edges too close to tell apart"
+            )
 
     @property
     def numeric(self) -> bool:

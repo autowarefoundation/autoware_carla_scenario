@@ -695,8 +695,8 @@ class TestOpenOdd:
         # 50 km/h in the probe's m/s.
         assert attrs["environment_conditions.wind_speed"].item is not None
         assert _items(odd)["odd.environment_conditions.wind_speed"].labels == [
-            "[-inf, 13.8889)",
-            "[13.8889, inf]",
+            "[-inf, 13.8888888889)",
+            "[13.8888888889, inf]",
         ]
 
     def test_a_categorical_defined_by_ranges_is_ordered(self, tmp_path: Path) -> None:

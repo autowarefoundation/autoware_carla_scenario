@@ -741,6 +741,10 @@ class ScenarioRunner:
             # Before setup(), because setup() is where a scenario spawns and
             # registers its NPCs, and register_entity() passes the backend on.
             scenario.set_traffic_backend(backend)
+            # setup() declares the cover items again on a retry of the same
+            # scenario, so the ones from an attempt that failed are dropped.
+            scenario._cover_items.clear()
+            scenario._cross_items.clear()
             scenario.setup()
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once
@@ -1061,7 +1065,15 @@ class ScenarioRunner:
             json_path.write_text(result.to_json(indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
+                # A batch can run one scenario class more than once: each
+                # run keeps a file of its own, all matching *_coverage.json.
                 coverage_path = self.output_dir / f"{scenario_name}_coverage.json"
+                counter = 1
+                while coverage_path.exists():
+                    coverage_path = (
+                        self.output_dir / f"{scenario_name}-{counter}_coverage.json"
+                    )
+                    counter += 1
                 coverage.write(coverage_path, scenario_name)
                 logger.info(
                     "[%s] Coverage written to: %s", scenario_name, coverage_path

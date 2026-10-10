@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -70,7 +71,8 @@ class _OddMonitor:
             m.name: {"failed_ticks": 0, "missing_ticks": 0} for m in odd.modules
         }
         self.out_intervals: list[list[float]] = []
-        self._previous_out = False
+        #: Whether the excursion going on is the last interval listed.
+        self._recording = False
 
     def record(self, values: dict[str, Any], start: float, end: float) -> None:
         verdict = self.odd.evaluate(values)
@@ -86,12 +88,13 @@ class _OddMonitor:
             elif holds is None:
                 self.modules[name]["missing_ticks"] += 1
         outside = not verdict.inside
-        if outside:
-            if self._previous_out and self.out_intervals:
-                self.out_intervals[-1][1] = end
-            elif len(self.out_intervals) < MAX_OUT_INTERVALS:
-                self.out_intervals.append([start, end])
-        self._previous_out = outside
+        if outside and self._recording:
+            self.out_intervals[-1][1] = end
+        elif outside and len(self.out_intervals) < MAX_OUT_INTERVALS:
+            self.out_intervals.append([start, end])
+            self._recording = True
+        if not outside:
+            self._recording = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +147,7 @@ class _CrossHits:
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.cross.describe(),
+            "buckets": list(self.hits),
             "outside_odd": list(self.outside),
             "hits": dict(self.hits),
         }
@@ -195,6 +199,7 @@ class CoverageCollector:
             for e in self._items
             if not isinstance(e.item.event, SamplingEvent)
         }
+        self._failed_conditions: set[int] = set()
         self._last_elapsed = 0.0
 
     def start(self, world: "carla.World", elapsed: float) -> None:
@@ -216,11 +221,14 @@ class CoverageCollector:
             try:
                 satisfied = condition.check(world, elapsed) is not None
             except Exception:
-                logger.warning(
-                    "coverage: sampling condition %r raised; it stays unsatisfied",
-                    getattr(condition, "label", condition),
-                    exc_info=True,
-                )
+                if key not in self._failed_conditions:
+                    self._failed_conditions.add(key)
+                    logger.warning(
+                        "coverage: sampling condition %r raised; it stays "
+                        "unsatisfied (logged once)",
+                        getattr(condition, "label", condition),
+                        exc_info=True,
+                    )
                 satisfied = False
             entry[1] = satisfied
             if satisfied and not was_satisfied:
@@ -286,8 +294,8 @@ class CoverageCollector:
 
     def _count(self, entry: _ItemHits, value: Any) -> Optional[str]:
         """Count *value* for one item; the bucket it hit, or ``None`` when it hit none."""
-        if value is None:
-            return None
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return None  # NaN (say, 0/0) says nothing either
         item = entry.item
         try:
             if item.ignore is not None and item.ignore(value):

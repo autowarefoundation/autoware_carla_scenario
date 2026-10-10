@@ -784,6 +784,10 @@ class BaseScenario(ABC):
         )
 
     def _require_unused_coverage_name(self, name: str) -> None:
+        if name.startswith("odd."):
+            raise ValueError(
+                f"coverage: {name!r}: names starting with 'odd.' are the ODD's"
+            )
         taken = {i.name for i in self._cover_items}
         taken |= {c.name for c in self._cross_items}
         if name in taken:

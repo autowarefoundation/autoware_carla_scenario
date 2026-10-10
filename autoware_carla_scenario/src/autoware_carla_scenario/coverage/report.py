@@ -419,9 +419,14 @@ def load_and_merge(paths: Iterable[Path]) -> CoverageReport:
     documents = []
     for path in find_coverage_files(paths):
         try:
-            documents.append(json.loads(path.read_text(encoding="utf-8")))
+            doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             logger.warning("coverage: skipping unreadable %s", path, exc_info=True)
+            continue
+        if not isinstance(doc, dict) or doc.get("schema") != COVERAGE_SCHEMA:
+            logger.warning("coverage: skipping %s: not a coverage file", path)
+            continue
+        documents.append(doc)
     return merge_coverage(documents)
 
 
