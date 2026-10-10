@@ -666,6 +666,28 @@ class TestFollow:
         )
         assert min(gated[60:]) == pytest.approx(min(plain[60:]), abs=0.2)
 
+    def test_a_condition_on_the_last_vertex_is_driven_up_to(self) -> None:
+        """Holding already, it ends the run at the end, not from braking distance."""
+        path = _path((0.0, None), (25.0, None), (60.0, AlwaysTrueCondition()))
+        action, actor, _, _ = _drive(path, seconds=30.0, speed=8.0, start_speed=8.0)
+        assert action.finished
+        assert actor.x > 58.0
+
+    def test_a_walker_walks_up_to_a_last_vertex_whose_condition_holds(self) -> None:
+        walker = _Walker(speed=1.4)
+        register_entity("walker1", _Entity(walker))
+        try:
+            action = FollowTrajectoryAction(
+                "walker1",
+                _path((0.0, None), (10.0, None), (20.0, AlwaysTrueCondition())),
+                following_mode=TrajectoryFollowingMode.FOLLOW,
+            )
+            _run(action, walker, 30.0)
+        finally:
+            unregister_entity("walker1")
+        assert action.finished
+        assert walker.x > 19.0
+
     def test_a_walker_stops_at_a_waiting_vertex_and_walks_on(self) -> None:
         walker = _Walker(speed=1.4)
         register_entity("walker1", _Entity(walker))

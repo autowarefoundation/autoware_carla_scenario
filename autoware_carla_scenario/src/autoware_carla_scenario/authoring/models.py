@@ -578,10 +578,10 @@ class VertexCondition(_Node):
     (:attr:`~autoware_carla_scenario.authoring.registry.ActionSpec.vertex_conditions`,
     the *Follow Trajectory* card): the entity departs vertex :attr:`vertex` of
     its trajectory when :attr:`condition` holds -- the runtime's
-    :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  It takes the
-    place of a time: the vertex's time cell has to be empty.  The condition
-    is an ordinary condition tree, written, checked and compiled exactly as a
-    trigger is.
+    :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  A vertex
+    has one: its time (a ``trajectory_time`` condition) or any other
+    condition.  The condition is an ordinary condition tree, written, checked
+    and compiled exactly as a trigger is.
 
     Attributes:
         vertex: Which vertex, counted **from 1**: the Nth vertex of the card's

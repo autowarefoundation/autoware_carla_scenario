@@ -301,6 +301,15 @@ class TestValidation:
 # ---------------------------------------------------------------------------
 
 
+class TestSpeed:
+    def test_a_negative_speed_is_a_document_error(self) -> None:
+        document = _document([])
+        document.actions[0].params["speed_ms"] = -1.0
+        assert any("Speed must not be negative" in e for e in _errors(document))
+        document.actions[0].params["speed_ms"] = 0.0
+        assert _errors(document) == []
+
+
 class TestBuild:
     def test_times_and_conditions_become_the_vertices_advance(self) -> None:
         action = _built(

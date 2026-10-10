@@ -207,8 +207,14 @@ that is what is meant, by giving the vertex an `AndCondition` of an
   the speed the entity had when the run started. At (near) zero that segment
   is never finished, and the action warns when the run starts.
 
-**Waiting.** A condition is checked from the tick the entity **reaches** its
-vertex -- not before -- then on every tick while it waits there, standing
+So after a late departure, a next vertex whose time is at or just after the
+departure is reached at once -- a jump in `POSITION`; in `FOLLOW` the vehicle
+cannot keep up and drives as fast as its controller lets it. That is the rule
+"arrive at its time if that is not before the departure" doing what it says.
+
+**Waiting.** In `POSITION` mode a condition is checked from the tick the
+entity **reaches** its vertex -- not before -- then on every tick while it
+waits there, standing
 still with zero velocity. Once it holds the vertex is departed for the rest of
 that run; it is not asked again. If it already holds on arrival the entity
 does not stop. A condition that never holds keeps the entity there until
@@ -269,14 +275,19 @@ held = recorded.gated({12: ElapsedTimeCondition(20.0, label="not_before_20s")})
   it stands on the vertex itself.
 - `FOLLOW` (vehicle): a vertex whose condition has not held yet is a **stop
   line** -- the controller's plan ends on it, slowed to come to rest there at
-  2 m/s². The condition is first looked at from as far off as stopping there
-  takes (braking distance, a second's travel and the arrival band); one that
-  holds then lets the vehicle through at speed, costing the schedule nothing.
+  2 m/s². A car cannot stop within a tick, so here the condition is checked
+  **before** arrival, from as far off as stopping there takes (braking
+  distance, a second's travel and the arrival band); one that holds then is
+  passed, letting the vehicle through at speed and costing the schedule
+  nothing -- even if it would no longer hold by the time the vehicle gets
+  there, and a `PersistentCondition` starts counting from that distance. The
+  last vertex of an open path is the exception: it is checked only on
+  arrival, since departing it ends the run.
   Otherwise it is looked at every tick; within `ARRIVAL_TOLERANCE_M` (1 m)
   along the path the vehicle has reached the vertex and waits on the brake.
   The plan after it is stamped from the timeline above.
-- `FOLLOW` (walker): walked onto the vertex, slowing as it gets close; within
-  0.3 m it has reached it and stands.
+- `FOLLOW` (walker): looked at early in the same way, walked onto the vertex,
+  slowing as it gets close; within 0.3 m it has reached it and stands.
 - On a **closed** path `FOLLOW` finds where the entity is by projecting it
   near where it was, and that projection does not wrap from the end of the
   path to its start -- so in `FOLLOW` mode a closed path's conditions are
@@ -365,7 +376,9 @@ condition, no condition waiting for its own action to leave the running state
 written in the card -- a lanelet path's vertices are generated every 2 m,
 nothing anyone could count, so it takes none (its speed times it). A
 condition that names an entity or action you delete goes with it, as a
-trigger does. A row with a time cell, as documents had before, is refused
+trigger does. The own-action rule is deliberately conservative: any
+reference to the card's own action but "is running" is refused, even under a
+*Not* where it could not deadlock. A row with a time cell, as documents had before, is refused
 with a message that gives the `trajectory_time` condition to write instead.
 
 The other fields are the action's: the time reference (from the action start,

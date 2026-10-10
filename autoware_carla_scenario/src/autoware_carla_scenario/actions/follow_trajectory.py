@@ -110,8 +110,11 @@ class FollowTrajectoryAction(BaseAction):
     vertex carries another condition (:attr:`Trajectory.is_gated`), the
     segment from a vertex departed at scenario time ``T`` to the next one
     arrives at the next vertex's time if it has one not before ``T`` (the
-    timed interpolation), and otherwise goes at the action's *speed*.  A
-    vertex's condition is checked from the tick the entity reaches it, then
+    timed interpolation), and otherwise goes at the action's *speed* -- so
+    after a late departure, a next vertex whose time is at or just after it
+    is reached at once (a jump in ``POSITION``; ``FOLLOW`` cannot keep up and
+    drives as fast as it can).  In ``POSITION`` mode a vertex's condition is
+    checked from the tick the entity reaches it (``FOLLOW``: see below), then
     every tick while it waits there -- standing still, at zero velocity -- with
     the scenario's elapsed time, as a trigger is; once it holds it is passed
     for that run (and, on a closed path, that lap).  If it holds on arrival
@@ -120,9 +123,12 @@ class FollowTrajectoryAction(BaseAction):
 
     In ``FOLLOW`` mode a vehicle cannot stop in a tick, so a vertex with a
     condition still to hold is a stop line: the controller's plan ends on it,
-    braking at 2 m/s².  The condition is first looked at from as far off as
-    stopping there takes, and a condition that holds then lets the vehicle
-    through at speed; one that does not is looked at every tick after.  The
+    braking at 2 m/s².  So the condition is checked *before* arrival, from
+    as far off as stopping there takes, and one that holds then is passed --
+    the vehicle goes through at speed even if it would no longer hold on
+    arrival, and a ``PersistentCondition`` starts counting from there; one
+    that does not is looked at every tick after.  The last vertex of an open
+    path is the exception: it is checked only on arrival.  The
     vehicle has reached the vertex within :data:`ARRIVAL_TOLERANCE_M` of it
     along the path (a walker within 0.3 m), and waits there on the brake (a
     walker standing).  On a closed path ``FOLLOW`` finds where the entity is
@@ -834,7 +840,8 @@ class FollowTrajectoryAction(BaseAction):
         now, if later), so it costs the schedule nothing.  One that does not
         is the stop line, and is looked at again every tick; reached and still
         not holding, the entity waits (:attr:`_held_at`).  The last vertex of
-        an open path, departed, ends the run (:attr:`_finished`).
+        an open path is not looked at early: departing it ends the run
+        (:attr:`_finished`), so it is checked only once the entity is there.
 
         Returns:
             The stop line, as a distance in the frame of *here*, or ``None``.
@@ -865,8 +872,12 @@ class FollowTrajectoryAction(BaseAction):
                     if self._waiting
                     else max(timeline.end_arrival, self._elapsed)
                 )
-            elif progress >= at - _approach_m(speed, tolerance) and self._gate_opens(
-                world, condition, index, early=True
+            elif (
+                # The end is not a vertex to pass: departing it ends the run,
+                # so it is only ever checked once the entity is there.
+                (resolved.closed or index != last)
+                and progress >= at - _approach_m(speed, tolerance)
+                and self._gate_opens(world, condition, index, early=True)
             ):
                 departure = max(timeline.end_arrival, self._elapsed)
             else:

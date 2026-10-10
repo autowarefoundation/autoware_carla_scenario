@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import BaseCondition, ScenarioResult
 
@@ -41,6 +41,11 @@ class TrajectoryTimeCondition(BaseCondition):
     Raises:
         ValueError: If *time* is not finite.
     """
+
+    #: Marks the class for :class:`~autoware_carla_scenario.TrajectoryVertex`,
+    #: which recognises a time without importing this package (it pulls CARLA
+    #: in, and the editor builds trajectories without a simulator).
+    IS_TRAJECTORY_TIME: ClassVar[bool] = True
 
     def __init__(self, time: float, *, label: str = "trajectory_time") -> None:
         super().__init__(label=label)

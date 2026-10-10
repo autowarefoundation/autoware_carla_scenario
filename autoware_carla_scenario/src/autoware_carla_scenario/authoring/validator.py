@@ -488,6 +488,12 @@ def _check_advance_conditions(
         _check_condition(
             out, f"{where}.condition", gate.condition, refs, departure=True
         )
+        # Deliberately conservative: any reference to the card's own action
+        # but "is running" is refused, wherever it sits in the tree -- under
+        # a Not as well, where it could not deadlock.  Telling the two apart
+        # means reasoning about the composition, and a waypoint condition
+        # that waits on its own card is never needed: the card is running
+        # for as long as the entity waits.
         for child in gate.condition.walk():
             if node.id not in condition_refs(child, "action"):
                 continue
@@ -612,6 +618,9 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
                 "A time reference needs a speed to time the lanelet path by.",
                 node.id,
             )
+    speed = params.get("speed_ms")
+    if not _is_blank(speed) and _coercible_float(speed) and float(str(speed)) < 0.0:
+        out.error(f"{path}.speed_ms", "Speed must not be negative.", node.id)
     if not _positive(params.get("time_scale", 1.0)):
         out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
     if params.get("hidden_outside_trajectory") and (

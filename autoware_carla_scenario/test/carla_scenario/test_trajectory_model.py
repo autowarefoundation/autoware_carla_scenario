@@ -12,6 +12,7 @@ from typing import Optional
 import pytest
 
 from autoware_carla_scenario import (
+    AlwaysTrueCondition,
     CarlaWorldPose,
     MapPose,
     ReferenceContext,
@@ -55,6 +56,45 @@ class TestTrajectory:
             TrajectoryVertex(MapPose(0.0, 0.0), 1.5)  # type: ignore[arg-type]
         with pytest.raises(TypeError, match=r"advance=TrajectoryTimeCondition\(2.0\)"):
             TrajectoryVertex(MapPose(0.0, 0.0), time=2.0)  # type: ignore[call-arg]
+
+    def test_every_old_call_form_is_told_how_to_write_it_now(self) -> None:
+        gate = AlwaysTrueCondition()
+        pose = MapPose(0.0, 0.0)
+        with pytest.raises(TypeError, match="one departure condition"):
+            TrajectoryVertex(pose, 1.0, gate)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="one departure condition"):
+            TrajectoryVertex(pose, None, gate)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="one departure condition"):
+            TrajectoryVertex(pose, None, advance=gate)  # type: ignore[misc]
+        with pytest.raises(TypeError, match=r"drop time=None"):
+            TrajectoryVertex(pose, time=None, advance=gate)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match=r"drop time=None"):
+            TrajectoryVertex(pose, time=None)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match=r"advance=TrajectoryTimeCondition\(2.0\)"):
+            TrajectoryVertex(pose, 2.0, gate)  # type: ignore[call-arg]
+
+    def test_reading_a_vertex_does_not_import_carla(self) -> None:
+        """The editor builds and reads trajectories without a simulator."""
+        import subprocess
+        import sys
+
+        code = (
+            "import sys\n"
+            "from autoware_carla_scenario.trajectory.model import ("
+            "MapPose, Trajectory, TrajectoryVertex)\n"
+            # A condition of its own: anything with a check() will do.
+            "class Gate:\n"
+            "    label = 'gate'\n"
+            "    def check(self, world, elapsed):\n"
+            "        return None\n"
+            "t = Trajectory('t', [TrajectoryVertex(MapPose(0, 0), Gate()), "
+            "TrajectoryVertex(MapPose(1, 0))])\n"
+            "assert t.is_gated and t.vertices[0].time is None\n"
+            "assert t.vertices[0].gate is not None\n"
+            "assert 'typesafe_carla.carla' not in sys.modules\n"
+            "assert 'autoware_carla_scenario.conditions' not in sys.modules\n"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_its_time_is_its_time_condition(self) -> None:
         vertex = TrajectoryVertex(MapPose(0.0, 0.0), _at(1.5))

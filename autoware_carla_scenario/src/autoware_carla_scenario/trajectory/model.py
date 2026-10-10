@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import bisect
 import enum
+import inspect
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Tuple, Union
@@ -184,23 +185,12 @@ class TrajectoryVertex:
     position: TrajectoryPosition
     advance: Optional["BaseCondition"] = None
 
-    def __init__(
-        self,
-        position: TrajectoryPosition,
-        advance: Optional["BaseCondition"] = None,
-        **removed: Any,
-    ) -> None:
-        if "time" in removed or isinstance(advance, (int, float)):
-            time = removed.get("time", advance)
-            raise TypeError(
-                "TrajectoryVertex takes no time any more: a vertex's time is its "
-                "departure condition. Write TrajectoryVertex(position, "
-                f"advance=TrajectoryTimeCondition({time!r}))."
-            )
-        if removed:
-            raise TypeError(
-                f"TrajectoryVertex got unexpected arguments {sorted(removed)}"
-            )
+    def __init__(self, position: TrajectoryPosition, *args: Any, **kwargs: Any) -> None:
+        # Spelled out by hand, with the signature below for introspection, so
+        # that every call written for the vertex that had a time -- a time
+        # second, a time and a condition, ``time=`` -- is told how it is
+        # written now instead of getting Python's arity error.
+        advance = _vertex_advance(args, kwargs)
         # Duck-typed rather than an isinstance check: importing the condition
         # package here would pull its CARLA-facing modules into the editor
         # process, which builds trajectories without a simulator.
@@ -227,14 +217,70 @@ class TrajectoryVertex:
         return self.advance
 
 
-def _trajectory_time(condition: Any) -> Optional[float]:
-    """*condition*'s time if it is a ``TrajectoryTimeCondition``, else ``None``."""
-    from ..conditions.trajectory_time import (  # noqa: PLC0415
-        TrajectoryTimeCondition,
-    )
+TrajectoryVertex.__init__.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+    [
+        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter("position", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter(
+            "advance", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None
+        ),
+    ]
+)
 
-    if isinstance(condition, TrajectoryTimeCondition):
-        return condition.time
+#: How a vertex's time is written now, for the errors below.
+_HOW = "TrajectoryVertex(position, advance=TrajectoryTimeCondition({time!r}))"
+
+
+def _vertex_advance(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    """The ``advance`` a :class:`TrajectoryVertex` call gives, or why it is wrong."""
+    unknown = sorted(set(kwargs) - {"advance", "time"})
+    if unknown:
+        raise TypeError(f"TrajectoryVertex got unexpected arguments {unknown}")
+    given = list(args)
+    if "advance" in kwargs:
+        given.append(kwargs["advance"])
+    if "time" in kwargs:
+        time = kwargs["time"]
+        if time is None:
+            raise TypeError(
+                "TrajectoryVertex takes no time any more: drop time=None (a "
+                "vertex's time is its departure condition, advance=...)."
+            )
+        raise TypeError(
+            "TrajectoryVertex takes no time any more: a vertex's time is its "
+            "departure condition. Write " + _HOW.format(time=time) + "."
+        )
+    if len(given) > 1:
+        first = given[0]
+        how = (
+            " A time is written " + _HOW.format(time=first) + "."
+            if isinstance(first, (int, float)) and not isinstance(first, bool)
+            else ""
+        )
+        raise TypeError(
+            "TrajectoryVertex takes one departure condition: a vertex no longer "
+            "has a time beside its condition, so give it one advance -- its "
+            "time, or the condition (an AndCondition of an "
+            "ElapsedTimeCondition and the other, for both)." + how
+        )
+    advance = given[0] if given else None
+    if isinstance(advance, (int, float)) and not isinstance(advance, bool):
+        raise TypeError(
+            "TrajectoryVertex takes no time any more: a vertex's time is its "
+            "departure condition. Write " + _HOW.format(time=advance) + "."
+        )
+    return advance
+
+
+def _trajectory_time(condition: Any) -> Optional[float]:
+    """*condition*'s time if it is a ``TrajectoryTimeCondition``, else ``None``.
+
+    Recognised by the marker that class carries rather than by importing it:
+    the condition package's import pulls CARLA in, and the editor process,
+    which builds and reads trajectories, has no simulator.
+    """
+    if getattr(type(condition), "IS_TRAJECTORY_TIME", False):
+        return float(condition.time)
     return None
 
 
