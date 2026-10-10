@@ -434,6 +434,55 @@ class TestTheAction:
         assert action.finished
         assert npc.actor.x == pytest.approx(18.0)
 
+    def test_a_repeat_waits_for_a_reference_gone_since_the_last_run(
+        self, npc: _Entity
+    ) -> None:
+        """The last run's arrival does not end a run still waiting to start."""
+        trajectory = Trajectory(
+            "hop",
+            [
+                TrajectoryVertex(RelativeLanePose(entity_ref="lead"), 0.0),
+                TrajectoryVertex(RelativeLanePose(5.0, entity_ref="lead"), 0.5),
+            ],
+        )
+        action = FollowTrajectoryAction(
+            "npc1", trajectory, TrajectoryTiming(), once=False
+        )
+        world = _World()
+        register_entity("lead", _Entity(_Actor(x=20.0, y=0.0)))
+        elapsed = 0.0
+        try:
+            while not action.finished and elapsed < 2.0:
+                action.tick(world, elapsed)
+                npc.actor.step(0.05, driven=False)
+                elapsed += 0.05
+        finally:
+            unregister_entity("lead")
+        assert action.finished
+        stopped = npc.actor.x
+        # The lead is gone: the next runs wait, and nothing reports an end.
+        for _ in range(20):
+            action.tick(world, elapsed)
+            npc.actor.step(0.05, driven=False)
+            elapsed += 0.05
+            assert not action.finished
+        assert npc.actor.x == pytest.approx(stopped)
+
+    def test_a_missing_reference_is_warned_about_once(
+        self, npc: _Entity, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        trajectory = Trajectory(
+            "behind",
+            [
+                TrajectoryVertex(CarlaWorldPose(5.0, 0.0, 0.0), 0.0),
+                TrajectoryVertex(RelativeLanePose(-2.0, entity_ref="nobody"), 1.0),
+            ],
+        )
+        action = FollowTrajectoryAction("npc1", trajectory, TrajectoryTiming())
+        with caplog.at_level("WARNING"):
+            _run(action, npc.actor, 1.0)
+        assert sum("'nobody'" in r.getMessage() for r in caplog.records) == 1
+
     def test_a_repeated_run_is_placed_afresh(self, npc: _Entity) -> None:
         trajectory = Trajectory(
             "hop",

@@ -115,7 +115,10 @@ How a vertex is placed, on the Lanelet2 map and its routing graph:
    direction of travel. The point keeps abreast: its distance along the
    neighbour is where the point projects onto it, so the outside of a bend is
    not shortchanged. A missing neighbour is an error naming the lanelet and the
-   side.
+   side. Lanelet2 only knows a neighbour that shares the lanelet's whole side,
+   so where the two lanes are split into lanelets at different points (one
+   20 m lanelet beside two 10 m ones) there is no neighbour to step to, and
+   the vertex raises the same error.
 4. **`offset` and `yaw`** are applied on that lanelet, which gives a
    `Lanelet2Pose`, converted to CARLA coordinates like any other.
 
@@ -125,7 +128,9 @@ that tick -- and is then fixed: the vertices do not move with the reference
 entity afterwards, so the rest of the action (timing, both modes, hiding) works
 on it exactly as on absolute vertices. A repeating action (`once=False`) places
 it again at the start of every run. A reference entity that is not in the world
-yet puts the start off until it is; a lane the map does not have raises a
+yet puts the start off until it is -- for as long as it takes: the action
+neither ends nor fails meanwhile, and warns once per run; a lane the map does
+not have raises a
 `ValueError` naming the trajectory and the vertex. These lane checks can only
 be made then: they depend on where the reference entity is.
 

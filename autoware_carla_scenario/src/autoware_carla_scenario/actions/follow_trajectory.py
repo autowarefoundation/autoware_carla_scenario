@@ -180,6 +180,7 @@ class FollowTrajectoryAction(BaseAction):
         self._elapsed = 0.0
         # Per run.
         self._finished = False
+        self._warned_missing = False
         self._start_time = 0.0
         self._clock_shift = 0.0
         self._distance = 0.0
@@ -218,6 +219,10 @@ class FollowTrajectoryAction(BaseAction):
             # The trigger's call: a new run begins, on the first call that
             # finds the entity (and, for a relative trajectory, its references).
             self._begun = False
+            # Not until it has run: a run waiting for its entity or its
+            # references must not end on the last run's arrival.
+            self._finished = False
+            self._warned_missing = False
             if self._trajectory.is_relative:
                 # Placed against where the reference entities are now, at
                 # every start of a run rather than once for all of them.
@@ -293,12 +298,15 @@ class FollowTrajectoryAction(BaseAction):
                 reference=self._reference_pose,
             )
         except _ReferenceMissing as missing:
-            logger.warning(
-                "FollowTrajectoryAction: %r is placed relative to '%s', which is "
-                "not in the world yet",
-                self._trajectory.name,
-                missing.name,
-            )
+            # Once a run: the action waits for it every tick, indefinitely.
+            if not self._warned_missing:
+                self._warned_missing = True
+                logger.warning(
+                    "FollowTrajectoryAction: %r is placed relative to '%s', "
+                    "which is not in the world yet; waiting for it",
+                    self._trajectory.name,
+                    missing.name,
+                )
             return None
 
     def _reference_pose(
