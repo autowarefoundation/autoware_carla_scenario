@@ -13,6 +13,11 @@ never kept on disk; the new tree replaces the old one only once it is complete.
 A connection that drops mid-download is picked up where it stopped with a range
 request, so a flaky link costs a retry rather than the whole transfer.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
+
+CARLA publishes its server for Linux x86_64 only, so on any other machine
+(aarch64 included, where the framework and its client do run) the nightly is
+refused rather than downloaded: run the server on an x86_64 host and point
+``server.host`` at it. ``--url`` still installs a package of one's choosing.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import argparse
 import http.client
 import json
 import os
+import platform
 import shutil
 import sys
 import tarfile
@@ -37,6 +43,9 @@ NIGHTLY_URL = (
     "CARLA_UE5_Latest.tar.gz"
 )
 """CARLA's nightly Linux build, as linked from its download page."""
+
+NIGHTLY_MACHINES = frozenset({"x86_64"})
+"""The machines (``platform.machine()``) the nightly build runs on."""
 
 LAUNCHER = PurePosixPath("Linux/CarlaUnreal.sh")
 """The server's launcher, relative to the unpacked package."""
@@ -369,6 +378,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--force", action="store_true", help="download even if the install is current"
     )
     args = parser.parse_args(argv)
+    machine = platform.machine()
+    if args.url == NIGHTLY_URL and (
+        not sys.platform.startswith("linux") or machine not in NIGHTLY_MACHINES
+    ):
+        print(
+            f"scenario-setup: CARLA's nightly build is for Linux x86_64 and does not "
+            f"run on {sys.platform} {machine}. Run the CARLA server on an x86_64 host and point the "
+            f"runner at it (server.host=<address>), or pass --url to install another "
+            f"CARLA package.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         launcher = install(args.url, args.dir, args.force)
     except (OSError, RuntimeError, tarfile.TarError, http.client.HTTPException) as exc:

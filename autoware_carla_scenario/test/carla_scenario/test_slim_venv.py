@@ -70,6 +70,21 @@ def test_congruent_segments_are_loadable(slim: ModuleType, tmp_path: Path) -> No
     assert slim.is_loadable(path)
 
 
+def test_alignment_is_the_largest_page_size_that_fits(
+    slim: ModuleType, tmp_path: Path
+) -> None:
+    """aarch64 kernels may use 16 or 64 KiB pages, so the coarsest fit counts."""
+    cases = {
+        0x3AE0: 4096,  # 0x2AE0 vs 0x3AE0: congruent at 4 KiB only
+        0x12AE0: 65536,  # 0x10000 apart: every page size
+        0x6AE0: 16384,  # 0x4000 apart: 4 and 16 KiB
+    }
+    for vaddr, expected in cases.items():
+        path = tmp_path / f"{vaddr:x}.so"
+        path.write_bytes(_elf64([(_PT_LOAD, 0x0, 0x0), (_PT_LOAD, 0x2AE0, vaddr)]))
+        assert slim.page_alignment(path) == expected
+
+
 def test_misaligned_segment_is_rejected(slim: ModuleType, tmp_path: Path) -> None:
     """This is exactly what a bad strip produces, and what the loader refuses."""
     path = tmp_path / "bad.so"

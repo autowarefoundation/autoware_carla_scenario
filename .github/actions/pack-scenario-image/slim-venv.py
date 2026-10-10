@@ -48,8 +48,10 @@ PRUNE_SUFFIXES = (".pyi", ".pyx", ".pxd", ".a")
 #: that imports ``numpy.testing``, scipy among them.  The directory has no
 #: ``__init__.py``; the one file is enough for the import to resolve.
 PRUNE_KEEP = frozenset({"numpy/_core/tests/_natype.py"})
-#: x86-64 Linux maps segments at this granularity, whatever p_align claims.
-PAGE_SIZE = 4096
+#: The page sizes a Linux kernel maps segments at, smallest first: x86-64 has
+#: 4 KiB pages, while an aarch64 kernel may be built for 4, 16 or 64 KiB, and
+#: an image runs under whichever its host has.
+PAGE_SIZES = (4096, 16384, 65536)
 
 _PT_LOAD = 1
 
@@ -84,14 +86,26 @@ def load_segments(path: Path) -> list[tuple[int, int]] | None:
     return segments
 
 
-def is_loadable(path: Path) -> bool:
-    """Whether the ELF loader will accept *path*'s segment layout."""
+def page_alignment(path: Path) -> int:
+    """The largest of :data:`PAGE_SIZES` *path*'s segments are congruent at.
+
+    Each PT_LOAD segment's offset and address have to agree modulo the page
+    size for the loader to map it.  0 means not even at 4 KiB -- or not an
+    object to judge at all.
+    """
     segments = load_segments(path)
     if not segments:
-        return False
-    return all(
-        p_offset % PAGE_SIZE == p_vaddr % PAGE_SIZE for p_offset, p_vaddr in segments
-    )
+        return 0
+    aligned = 0
+    for page in PAGE_SIZES:
+        if all(offset % page == vaddr % page for offset, vaddr in segments):
+            aligned = page
+    return aligned
+
+
+def is_loadable(path: Path) -> bool:
+    """Whether the ELF loader will accept *path*'s segment layout (4 KiB pages)."""
+    return page_alignment(path) > 0
 
 
 def prune_directory(directory: Path, keep: set[Path]) -> None:
@@ -140,7 +154,12 @@ def strip_all(site: Path) -> list[Path]:
     """
     restored = []
     for path in shared_objects(site):
-        if not is_loadable(path):
+        # Stripping must keep the object loadable on every kernel it already
+        # was: an aarch64 object linked for 64 KiB pages has to stay congruent
+        # at 64 KiB, not merely at 4 KiB. Judged from the object itself, not
+        # from the machine running this script.
+        alignment = page_alignment(path)
+        if not alignment:
             continue  # not ours to judge -- leave it exactly as it came
         backup = path.with_name(path.name + ".prestrip")
         shutil.copy2(path, backup)
@@ -149,7 +168,7 @@ def strip_all(site: Path) -> list[Path]:
             capture_output=True,
             text=True,
         )
-        if result.returncode != 0 or not is_loadable(path):
+        if result.returncode != 0 or page_alignment(path) < alignment:
             backup.replace(path)
             restored.append(path)
         else:

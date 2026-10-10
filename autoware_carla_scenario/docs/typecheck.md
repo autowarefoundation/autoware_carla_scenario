@@ -65,7 +65,7 @@ how it is constructed.
 
 The check needs typesafe_carla (the `typesafe-carla` package, from PyPI) and
 the Codon compiler it pins (`typesafe-carla-toolchain`, 0.19, which
-typesafe-carla depends on). Both ship for Linux x86_64 only, and both are
+typesafe-carla depends on). Both ship for Linux x86_64 and aarch64, and both are
 run-time dependencies of the framework anyway: typesafe_carla is its CARLA
 client (see [installation](installation.md)).
 

@@ -113,6 +113,21 @@ def test_the_cli_reports_failures(home: Path, tmp_path: Path) -> None:
     assert installed_executable() is not None
 
 
+def test_the_nightly_is_refused_where_it_cannot_run(
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(carla_install.platform, "machine", lambda: "aarch64")
+    assert carla_install.main([]) == 1
+    assert "server.host" in capsys.readouterr().err
+    assert installed_executable() is None
+    # A package of one's own choosing is still installed.
+    assert carla_install.main(["--url", _carla(tmp_path / "carla.tar.gz")]) == 0
+    assert installed_executable() is not None
+
+
 def test_an_unchanged_download_is_not_fetched(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
