@@ -611,6 +611,22 @@ If you encounter false positives or need to exclude specific URLs:
 - **Professional standards**: Maintains high-quality documentation and references
 - **Early detection**: Weekly scans catch external link changes proactively
 
+## DCO Sign-off
+
+Every commit in a pull request needs a `Signed-off-by` line matching its
+author (the DCO check). Commit with `git commit -s`.
+
+If a commit was pushed without one, do not amend and force-push (forbidden
+below). Push a **remediation commit** instead, allowed by `.github/dco.yml`;
+it must be authored by the same person as the commits it covers:
+
+```bash
+git commit --allow-empty -s -m "DCO Remediation Commit for Name <email>
+
+I, Name <email>, hereby add my Signed-off-by to this commit: <sha1>
+I, Name <email>, hereby add my Signed-off-by to this commit: <sha2>"
+```
+
 ## Git Operation Restrictions
 
 **IMPORTANT**: The following dangerous git operations are STRICTLY PROHIBITED for safety:
