@@ -484,6 +484,7 @@ classDiagram
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
+    class FollowTrajectoryAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TrafficSignalControllerAction
@@ -493,6 +494,7 @@ classDiagram
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
+    BaseAction <|-- FollowTrajectoryAction
     BaseAction --> BaseCondition : trigger condition
 ```
 

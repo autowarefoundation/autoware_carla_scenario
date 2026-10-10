@@ -371,6 +371,25 @@ class TrafficBackend:
         del kwargs
         self._unavailable("turn_at_junction", entity)
 
+    def release(self, entity: Any, world: Any) -> None:
+        """Stop driving *entity*: something else has taken it over.
+
+        Called when a scenario action drives the vehicle itself -- a
+        :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` puts it
+        on a trajectory every tick, and a backend still steering it would undo
+        that on every one.  The one-authority-per-vehicle rule that
+        ``skip_actor_ids`` states at :meth:`start`, applied during the run.
+
+        Must hold whether it arrives before or after :meth:`start`, and must be
+        safe to repeat.  The base does nothing, which is right for a backend
+        that never drives the scenario's vehicles.
+
+        Args:
+            entity: The entity being taken over.
+            world: The CARLA world.
+        """
+        del entity, world
+
     # ------------------------------------------------------------------
     # Background traffic -- vehicles no scenario entity stands for
     # ------------------------------------------------------------------

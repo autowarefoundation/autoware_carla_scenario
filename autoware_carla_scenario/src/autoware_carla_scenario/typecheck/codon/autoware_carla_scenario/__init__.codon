@@ -6,7 +6,8 @@
 # here runs. test_typecheck_model.py keeps each declaration in step with the
 # Python one it models.
 
-from .actions import (BaseAction, EnvironmentAction, LaneChangeAction, RoutingAction,
+from .actions import (BaseAction, EnvironmentAction, FollowTrajectoryAction,
+                      LaneChangeAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
@@ -41,3 +42,7 @@ from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import LaneChangeDirection, TurnDirection
+from .trajectory import (MapPose, ReferenceContext, T4Category, T4ObjectTrack,
+                         T4SceneTranscription, Trajectory, TrajectoryFollowingMode,
+                         TrajectoryTiming, TrajectoryVertex, read_t4_scene)
+from .t4_replay import T4ReplayScenario, replay_t4_objects

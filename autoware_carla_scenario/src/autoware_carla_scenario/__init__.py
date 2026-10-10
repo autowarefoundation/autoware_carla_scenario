@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
         EnvironmentAction as EnvironmentAction,
+        FollowTrajectoryAction as FollowTrajectoryAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
         TickTiming as TickTiming,
@@ -94,6 +95,22 @@ if TYPE_CHECKING:
         WalkStraightAction as WalkStraightAction,
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
+    from .trajectory import (
+        MapPose as MapPose,
+        ReferenceContext as ReferenceContext,
+        Trajectory as Trajectory,
+        TrajectoryFollowingMode as TrajectoryFollowingMode,
+        TrajectoryTiming as TrajectoryTiming,
+        TrajectoryVertex as TrajectoryVertex,
+        T4Category as T4Category,
+        T4ObjectTrack as T4ObjectTrack,
+        T4SceneTranscription as T4SceneTranscription,
+        read_t4_scene as read_t4_scene,
+    )
+    from .trajectory.replay import (
+        T4ReplayScenario as T4ReplayScenario,
+        replay_t4_objects as replay_t4_objects,
+    )
     from .conditions import (
         AccelerationCondition as AccelerationCondition,
         AccelerationDirection as AccelerationDirection,
@@ -373,6 +390,7 @@ __all__ = [
     # Actions
     "BaseAction",
     "EnvironmentAction",
+    "FollowTrajectoryAction",
     "LaneChangeAction",
     "LaneChangeDirection",
     "TickTiming",
@@ -390,6 +408,19 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
+    # Trajectories and T4 scenes
+    "MapPose",
+    "ReferenceContext",
+    "Trajectory",
+    "TrajectoryFollowingMode",
+    "TrajectoryTiming",
+    "TrajectoryVertex",
+    "T4Category",
+    "T4ObjectTrack",
+    "T4SceneTranscription",
+    "read_t4_scene",
+    "T4ReplayScenario",
+    "replay_t4_objects",
     # Sensors
     "CameraRecorder",
     "CameraSensorBase",
@@ -406,6 +437,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
     "BaseAction": (".actions", "BaseAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
+    "FollowTrajectoryAction": (".actions", "FollowTrajectoryAction"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "LaneChangeDirection": (".actions", "LaneChangeDirection"),
     "TickTiming": (".actions", "TickTiming"),
@@ -422,6 +454,19 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficSourceAction": (".actions", "TrafficSourceAction"),
     "TrafficSinkAction": (".actions", "TrafficSinkAction"),
     "TurnDirection": (".actions", "TurnDirection"),
+    # trajectories / T4 scenes
+    "MapPose": (".trajectory", "MapPose"),
+    "ReferenceContext": (".trajectory", "ReferenceContext"),
+    "Trajectory": (".trajectory", "Trajectory"),
+    "TrajectoryFollowingMode": (".trajectory", "TrajectoryFollowingMode"),
+    "TrajectoryTiming": (".trajectory", "TrajectoryTiming"),
+    "TrajectoryVertex": (".trajectory", "TrajectoryVertex"),
+    "T4Category": (".trajectory", "T4Category"),
+    "T4ObjectTrack": (".trajectory", "T4ObjectTrack"),
+    "T4SceneTranscription": (".trajectory", "T4SceneTranscription"),
+    "read_t4_scene": (".trajectory", "read_t4_scene"),
+    "T4ReplayScenario": (".trajectory.replay", "T4ReplayScenario"),
+    "replay_t4_objects": (".trajectory.replay", "replay_t4_objects"),
     # camera / sensor
     "CameraRecorder": (".camera_recorder", "CameraRecorder"),
     "CameraSensorBase": (".sensor", "CameraSensorBase"),

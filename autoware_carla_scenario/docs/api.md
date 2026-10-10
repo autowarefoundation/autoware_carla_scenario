@@ -79,6 +79,20 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
+| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`). See [Trajectories and T4 Replay](trajectory.md). |
+
+## Trajectories and T4 scenes (`autoware_carla_scenario.trajectory`)
+
+See [Trajectories and T4 Replay](trajectory.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and an optional time. |
+| `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
+| `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
+| `TrajectoryFollowingMode` | `POSITION` (kinematic replay) or `FOLLOW` (a controller tracks it). |
+| `read_t4_scene`, `T4SceneTranscription`, `T4ObjectTrack`, `T4Category` | Read a T4 scene into the ego's and every road user's trajectory; save and load it as JSON. |
+| `T4ReplayScenario`, `replay_t4_objects` | Replay a transcribed scene as a scenario, or its road users inside one of your own. |
 
 ## Sensors (`autoware_carla_scenario.sensor`)
 

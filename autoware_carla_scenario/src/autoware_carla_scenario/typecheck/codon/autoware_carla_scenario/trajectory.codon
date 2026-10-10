@@ -1,0 +1,209 @@
+# Model of autoware_carla_scenario.trajectory (docs/typecheck.md).
+#
+# A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose
+# or MapPose), which Codon cannot store: TrajectoryVertex checks the position it
+# is given with _expect_trajectory_position and keeps only its time, which is
+# all the model needs -- it is compiled, never run.
+
+from ._tc import _keyword_only, _expect_optional_float
+from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+
+
+class MapPose:
+    x: float
+    y: float
+    yaw: Optional[float]
+    z: Optional[float]
+
+    def __init__(self, x: float, y: float, yaw = None, z = None):
+        self.x = x
+        self.y = y
+        self.yaw = _expect_optional_float(yaw)
+        self.z = _expect_optional_float(z)
+
+
+def _expect_trajectory_position(position):
+    """A TrajectoryPosition argument."""
+    if isinstance(position, MapPose):
+        pass
+    elif isinstance(position, Lanelet2Pose):
+        pass
+    elif isinstance(position, OpenDrivePose):
+        pass
+    elif isinstance(position, CarlaWorldPose):
+        pass
+    else:
+        compile_error("expected a trajectory position: a MapPose, a Lanelet2Pose, "
+                      "an OpenDrivePose or a CarlaWorldPose")
+
+
+class TrajectoryVertex:
+    time: Optional[float]
+
+    def __init__(self, position, time = None):
+        _expect_trajectory_position(position)
+        self.time = _expect_optional_float(time)
+
+
+class Trajectory:
+    name: str
+    closed: bool
+
+    def __init__(self, name: str, vertices, closed: bool = False):
+        for vertex in vertices:
+            _expect_vertex(vertex)
+        self.name = name
+        self.closed = closed
+
+    @property
+    def is_timed(self) -> bool:
+        raise NotImplementedError()
+
+
+def _expect_vertex(vertex: TrajectoryVertex) -> TrajectoryVertex:
+    return vertex
+
+
+@tuple
+class ReferenceContext:
+    value: str
+    ABSOLUTE: ClassVar[ReferenceContext] = ReferenceContext("absolute")
+    RELATIVE: ClassVar[ReferenceContext] = ReferenceContext("relative")
+
+
+class TrajectoryTiming:
+    domain: ReferenceContext
+    scale: float
+    offset: float
+
+    def __init__(self, domain: ReferenceContext = ReferenceContext("relative"),
+                 scale: float = 1.0, offset: float = 0.0):
+        self.domain = domain
+        self.scale = scale
+        self.offset = offset
+
+    def trajectory_time(self, scenario_time: float, action_start: float) -> float:
+        raise NotImplementedError()
+
+
+@tuple
+class TrajectoryFollowingMode:
+    value: str
+    POSITION: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("position")
+    FOLLOW: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("follow")
+
+
+def _expect_optional_timing(timing) -> Optional[TrajectoryTiming]:
+    """An Optional[TrajectoryTiming] argument."""
+    if isinstance(timing, None):
+        return None
+    elif isinstance(timing, Optional[NoneType]):
+        return None
+    elif isinstance(timing, Optional):
+        if timing is None:
+            return None
+        return _expect_timing(unwrap(timing))
+    else:
+        return _expect_timing(timing)
+
+
+def _expect_timing(timing: TrajectoryTiming) -> TrajectoryTiming:
+    return timing
+
+
+# ---------------------------------------------------------------------------
+# T4 scenes
+# ---------------------------------------------------------------------------
+
+
+@tuple
+class T4Category:
+    value: str
+    VEHICLE: ClassVar[T4Category] = T4Category("vehicle")
+    BICYCLE: ClassVar[T4Category] = T4Category("bicycle")
+    PEDESTRIAN: ClassVar[T4Category] = T4Category("pedestrian")
+
+
+class T4ObjectTrack:
+    track_id: int
+    label: int
+    category: T4Category
+    width: float
+    length: float
+    height: float
+    frames: List[int]
+    poses: List[MapPose]
+
+    def __init__(self, track_id: int, label: int, category: T4Category, width: float,
+                 length: float, height: float, frames, poses):
+        self.track_id = track_id
+        self.label = label
+        self.category = category
+        self.width = width
+        self.length = length
+        self.height = height
+        self.frames = List[int]()
+        self.poses = List[MapPose]()
+
+    @property
+    def start_time(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def end_time(self) -> float:
+        raise NotImplementedError()
+
+    def trajectory(self, name: Optional[str] = None) -> Trajectory:
+        raise NotImplementedError()
+
+
+class T4SceneTranscription:
+    scene_name: str
+    area_map_id: Optional[str]
+    ego_center_offset: float
+    goal: Optional[MapPose]
+    objects: List[T4ObjectTrack]
+    annotation_source: Optional[str]
+
+    def __init__(self, scene_name: str, area_map_id: Optional[str], ego_frames, ego_poses,
+                 ego_center_offset: float = 0.0, ego_size = None,
+                 goal: Optional[MapPose] = None, objects = None,
+                 annotation_source: Optional[str] = None):
+        self.scene_name = scene_name
+        self.area_map_id = area_map_id
+        self.ego_center_offset = ego_center_offset
+        self.goal = goal
+        self.objects = List[T4ObjectTrack]()
+        self.annotation_source = annotation_source
+
+    @property
+    def duration(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def ego_start(self) -> MapPose:
+        raise NotImplementedError()
+
+    @property
+    def ego_end(self) -> MapPose:
+        raise NotImplementedError()
+
+    def ego_trajectory(self, name: Optional[str] = None) -> Trajectory:
+        raise NotImplementedError()
+
+    def objects_of(self, *categories) -> List[T4ObjectTrack]:
+        raise NotImplementedError()
+
+    def save(self, path: str) -> str:
+        raise NotImplementedError()
+
+    @staticmethod
+    def load(path: str) -> T4SceneTranscription:
+        raise NotImplementedError()
+
+
+def read_t4_scene(scene_dir: str, *_kw, max_gap_frames: int = 5, min_track_frames: int = 5,
+                  match_distance_m: float = 2.0, ego_center_offset = None) -> T4SceneTranscription:
+    _keyword_only(_kw, "read_t4_scene(): every argument but scene_dir")
+    _expect_optional_float(ego_center_offset)
+    raise NotImplementedError()
