@@ -186,3 +186,34 @@ def test_implements_autoware_bridge_contract(
     from autoware_carla_scenario.autoware_bridge import AutowareBridge
 
     assert isinstance(bridge, AutowareBridge)
+
+
+# ---------------------------------------------------------------------------
+# Whether, and where, the interface node reaches the bridge
+# ---------------------------------------------------------------------------
+
+
+def test_client_connected_once_the_client_calls(
+    bridge: GrpcAutowareBridgeServer,
+) -> None:
+    assert not bridge.client_connected
+    with _client(bridge) as stub:
+        stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    assert bridge.client_connected
+
+
+def test_client_address_is_the_bound_port(bridge: GrpcAutowareBridgeServer) -> None:
+    assert bridge.client_address == f"localhost:{bridge.port}"
+
+
+def test_a_server_on_every_interface_is_dialed_on_localhost() -> None:
+    server = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address="0.0.0.0:0"),  # noqa: S104 - test bind
+        autostart=False,
+    )
+    try:
+        assert server.client_address is None
+        server.start()
+        assert server.client_address == f"localhost:{server.port}"
+    finally:
+        server.close()

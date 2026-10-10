@@ -10,6 +10,7 @@ the no-destroy lifecycle, and the readiness wait driven through the
 from __future__ import annotations
 
 import math
+import time
 from typing import List
 from unittest import mock
 
@@ -540,3 +541,216 @@ class TestRouteTo:
 
         # Must not raise, and must not need a map: there is nothing to convert.
         EgoVehicle().route_to(object(), Lanelet2Pose(lanelet_id=1, s=0.0))  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# A fresh Autoware per scenario (launcher)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLauncher:
+    """Records what the entity asks of it; the stack exits when told to."""
+
+    def __init__(self) -> None:
+        self.calls: List[tuple] = []
+        self.exit_code: "int | None" = None
+        self._episodes = 0
+
+    def prepare(self, log_dir=None) -> None:
+        self.calls.append(("prepare",))
+
+    def start(self, *, name: str, bridge_address: str):
+        from autoware_carla_scenario.autoware_stack import AutowareEpisode
+
+        self.calls.append(("start", name, bridge_address))
+        episode = AutowareEpisode(self._episodes, name, bridge_address)
+        self._episodes += 1
+        return episode
+
+    def poll(self):
+        return self.exit_code
+
+    def stop(self) -> None:
+        self.calls.append(("stop",))
+
+    def close(self) -> None:
+        self.calls.append(("close",))
+
+
+def _launched_entity(bridge, launcher, **config_kwargs) -> AutowareEgoEntity:
+    config_kwargs.setdefault("boot_tick_period_s", 0.0)
+    return AutowareEgoEntity(
+        AutowareBridgeConfig(**config_kwargs),
+        bridge=bridge,
+        initial_pose=_INITIAL,
+        goal_pose=_GOAL,
+        launcher=launcher,
+        episode_name="left_turn",
+    )
+
+
+class TestLaunchedStack:
+    def test_the_stack_starts_once_the_mission_is_served(self) -> None:
+        bridge = FakeAutowareBridge()
+        launcher = _FakeLauncher()
+        entity = _launched_entity(bridge, launcher, address="localhost:6000")
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+
+        entity.on_scenario_start(world)
+
+        assert bridge.calls[0] == "configure"
+        assert launcher.calls == [("start", "left_turn", "localhost:6000")]
+
+    def test_the_stack_is_stopped_before_the_bridge_closes(self) -> None:
+        order: List[str] = []
+
+        class _Bridge(FakeAutowareBridge):
+            def close(self) -> None:
+                order.append("bridge.close")
+
+        class _Launcher(_FakeLauncher):
+            def stop(self) -> None:
+                order.append("launcher.stop")
+
+        entity = _launched_entity(_Bridge(), _Launcher())
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        entity.on_scenario_start(world)
+
+        entity.on_scenario_end(world)
+
+        assert order == ["launcher.stop", "bridge.close"]
+
+    def test_booting_is_not_counted_against_the_ready_ticks(self) -> None:
+        bridge = FakeAutowareBridge(connected=False)
+        entity = _launched_entity(bridge, _FakeLauncher(), ready_timeout_ticks=3)
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        entity.on_scenario_start(world)
+
+        for _ in range(10):
+            entity.on_tick(world, 0.0)
+        assert not entity.termination_requested
+        assert "is_ready" not in bridge.calls
+
+        bridge.connected = True
+        _drive_to_ready(entity, world)
+        assert entity.is_initialized
+
+    def test_a_stack_that_never_reaches_the_bridge_ends_the_run(self) -> None:
+        bridge = FakeAutowareBridge(connected=False)
+        entity = _launched_entity(bridge, _FakeLauncher(), boot_timeout_s=0.0)
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        entity.on_scenario_start(world)
+
+        entity.on_tick(world, 0.0)
+
+        assert entity.termination_requested
+        assert entity.termination_reason is not None
+        assert "did not reach the bridge" in entity.termination_reason
+
+    def test_a_stack_that_exits_mid_run_ends_it(self) -> None:
+        launcher = _FakeLauncher()
+        entity = _launched_entity(FakeAutowareBridge(), launcher)
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        _drive_to_ready(entity, world)
+        assert entity.is_initialized
+
+        launcher.exit_code = 137
+        entity.on_tick(world, 0.0)
+
+        assert entity.termination_requested
+        assert entity.termination_reason == "The Autoware stack exited with code 137"
+
+    def test_no_launcher_leaves_autoware_alone(self) -> None:
+        bridge = FakeAutowareBridge(connected=False)
+        entity = _make_entity(bridge=bridge)
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+
+        _drive_to_ready(entity, world)
+
+        # Without a launcher there is no boot phase to wait out.
+        assert entity.is_initialized
+        assert entity.launcher is None
+
+
+_FAKE_AUTOWARE = """
+import os, sys, time
+import grpc
+from autoware_carla_scenario.autoware_bridge._proto import (
+    autoware_bridge_pb2 as pb2, autoware_bridge_pb2_grpc as pb2_grpc,
+)
+
+stub = pb2_grpc.AutowareBridgeStub(
+    grpc.insecure_channel(os.environ["AUTOWARE_BRIDGE_ADDRESS"])
+)
+while True:
+    try:
+        mission = stub.GetMission(pb2.GetMissionRequest(), timeout=1.0)
+    except grpc.RpcError:
+        time.sleep(0.05)
+        continue
+    if mission.available:
+        break
+    time.sleep(0.05)
+print("goal", mission.goal.position.x, flush=True)
+stub.ReportReadiness(pb2.ReportReadinessRequest(ready=True), timeout=5.0)
+while True:
+    time.sleep(1.0)
+"""
+
+
+def test_scenarios_run_back_to_back_each_with_a_fresh_stack(tmp_path) -> None:
+    """Two scenarios in a row, a new stack each, over the real gRPC bridge.
+
+    The stack is a process that does what ``scenario_bridge`` does -- dial the
+    bridge, pull the mission, report ready -- and runs until it is stopped,
+    which is what a scenario's end has to do to it before the next one starts.
+    """
+    import sys
+
+    from autoware_carla_scenario.autoware_bridge import GrpcAutowareBridgeServer
+    from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
+
+    launcher = CommandAutowareLauncher(
+        [sys.executable, "-c", _FAKE_AUTOWARE], stop_timeout_s=2.0
+    )
+    launcher.prepare(log_dir=tmp_path)
+
+    for _ in range(2):
+        config = AutowareBridgeConfig(
+            address="localhost:0", boot_timeout_s=60.0, boot_tick_period_s=0.01
+        )
+        bridge = GrpcAutowareBridgeServer(config, autostart=False)
+        entity = AutowareEgoEntity(
+            config,
+            bridge=bridge,
+            initial_pose=_INITIAL,
+            goal_pose=_GOAL,
+            launcher=launcher,
+            episode_name="left_turn",
+        )
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        try:
+            entity.on_scenario_start(world)
+            for _ in range(6000):
+                entity.on_tick(world, 0.0)
+                if entity.is_initialized or entity.termination_requested:
+                    break
+                if bridge.client_connected:
+                    time.sleep(0.01)
+            assert entity.is_initialized, entity.termination_reason
+            assert launcher.poll() is None
+        finally:
+            entity.on_scenario_end(world)
+        assert launcher.poll() is None  # stopped, and forgotten
+
+    logs = sorted(p.name for p in tmp_path.glob("autoware-*.log"))
+    assert logs == ["autoware-000-left_turn.log", "autoware-001-left_turn.log"]
+    for log in tmp_path.glob("autoware-*.log"):
+        assert "goal 10.0" in log.read_text()

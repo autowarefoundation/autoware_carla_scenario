@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 from tqdm import tqdm
 
@@ -19,6 +19,9 @@ from .odd import OddDefinition, resolve_odd
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
+
+if TYPE_CHECKING:
+    from .autoware_stack.launcher import AutowareLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,7 @@ class ScenarioQueue:
         projector_type: Optional[str] = None,
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Union[str, OddDefinition, None] = None,
+        autoware_launcher: Optional["AutowareLauncher"] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -130,6 +134,13 @@ class ScenarioQueue:
                 :class:`OddDefinition`, or what :func:`resolve_odd` reads (a
                 registered name, an OpenODD YAML path, ``module:function``).
                 *None* selects the built-in ``default`` ODD.
+            autoware_launcher: The launcher the queue's Autoware egos start a
+                fresh Autoware with, scenario after scenario.  The queue
+                prepares it when it starts -- building the workspace if it has
+                to, and refusing one that cannot run a scenario -- before the
+                CARLA server is started, and its stacks' logs go to
+                *output_dir*.  The egos are handed the same launcher; *None*
+                when Autoware is not the framework's to start.
         """
         if server is not None:
             self._server = server
@@ -159,6 +170,7 @@ class ScenarioQueue:
         self._traffic_backend = traffic_backend
         # Resolved now, so a misspelt ODD fails before CARLA starts.
         self._odd = resolve_odd(odd)
+        self._autoware_launcher = autoware_launcher
 
         self._scenarios: List[BaseScenario] = []
         #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
@@ -285,6 +297,11 @@ class ScenarioQueue:
         server was reused and returns immediately.  Only the queue that
         *owns* its server will stop it in :meth:`stop`.
         """
+        if self._autoware_launcher is not None:
+            # First: a workspace that has to be built takes far longer than
+            # CARLA to start, and one that cannot run a scenario at all is
+            # better refused before anything else starts.
+            self._autoware_launcher.prepare(log_dir=self._output_dir)
         self._server.start()
         self._runner = ScenarioRunner(
             self._server,
@@ -347,8 +364,10 @@ class ScenarioQueue:
         return written
 
     def stop(self) -> None:
-        """Stop the server if owned by this queue."""
+        """Stop any Autoware stack left running, and the server if owned."""
         self._runner = None
+        if self._autoware_launcher is not None:
+            self._autoware_launcher.close()
         if self._owns_server:
             self._server.stop()
 

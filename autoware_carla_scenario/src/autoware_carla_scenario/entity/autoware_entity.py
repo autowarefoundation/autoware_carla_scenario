@@ -23,6 +23,13 @@ Two entities live here:
   own spawn point whenever the pose went missing.  The interface node must
   therefore be launched to attach to this ego rather than spawn its own.
 
+Autoware's lifecycle: given an
+:class:`~autoware_carla_scenario.autoware_stack.AutowareLauncher`, the entity
+starts a fresh Autoware stack for its scenario once the mission is being served
+and removes it when the scenario ends, so scenario after scenario starts from
+an Autoware nothing has run in.  Without one, Autoware is someone else's to
+start -- and to clean up between scenarios.
+
 Tick ownership: the scenario framework remains the tick master; the interface
 node runs as a non-ticking, asynchronous I/O bridge (``sync_mode:=false``).
 
@@ -36,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
@@ -43,6 +51,7 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
     from ..autoware_bridge.base import AutowareBridge, BridgePose
+    from ..autoware_stack.launcher import AutowareLauncher
     from ..coordinate import GroundProjectionConfig, Lanelet2Pose
     from ..scenario_base import EgoConfig
 
@@ -102,10 +111,9 @@ class AutowareEgoEntity(EgoVehicle):
     ego exactly as for a TrafficManager or driver ego, via
     ``actor.get_transform()``.
 
-    The ``bridge`` is a required keyword argument: the live gRPC transport (the
-    server the interface node dials as a client, splatsim-consistent) is a
-    follow-up (see ``proto/autoware_bridge/v0/autoware_bridge.proto``), so callers
-    pass a bridge explicitly today (e.g. ``FakeAutowareBridge`` in tests).
+    The ``bridge`` is a required keyword argument: the
+    :class:`~autoware_carla_scenario.autoware_bridge.GrpcAutowareBridgeServer` the
+    interface node dials, or ``FakeAutowareBridge`` in tests.
 
     Args:
         config: Bridge connection settings.  ``None`` uses
@@ -116,6 +124,9 @@ class AutowareEgoEntity(EgoVehicle):
             Required before :meth:`on_scenario_start`.
         goal_pose: Map-frame goal pose Autoware plans the route to.  Required
             before :meth:`on_scenario_start`.
+        launcher: Starts Autoware when the scenario starts and stops it when
+            it ends.  ``None`` leaves Autoware to whoever started it.
+        episode_name: The scenario's name, for the launcher's logs.
     """
 
     #: Autoware drives; TrafficManager must keep its hands off this actor.
@@ -135,10 +146,17 @@ class AutowareEgoEntity(EgoVehicle):
         bridge: "AutowareBridge",
         initial_pose: Optional["BridgePose"] = None,
         goal_pose: Optional["BridgePose"] = None,
+        launcher: Optional["AutowareLauncher"] = None,
+        episode_name: str = "",
     ) -> None:
         super().__init__()
         self._config = config or AutowareBridgeConfig()
         self._bridge = bridge
+        self._launcher = launcher
+        self._episode_name = episode_name
+        self._stack_running: bool = False
+        self._boot_started: Optional[float] = None
+        self._termination_reason: Optional[str] = None
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
         self._waypoint_poses: tuple = ()
@@ -277,9 +295,19 @@ class AutowareEgoEntity(EgoVehicle):
         return self._bridge
 
     @property
+    def launcher(self) -> Optional["AutowareLauncher"]:
+        """The launcher that starts Autoware for this scenario, if any."""
+        return self._launcher
+
+    @property
     def termination_requested(self) -> bool:
-        """Whether Autoware failed to become ready in time and the run should end."""
+        """Whether Autoware failed to come up, or went down, and the run should end."""
         return self._termination_requested
+
+    @property
+    def termination_reason(self) -> Optional[str]:
+        """Why the run is to end, once :attr:`termination_requested`."""
+        return self._termination_reason
 
     @property
     def is_initialized(self) -> bool:
@@ -441,6 +469,29 @@ class AutowareEgoEntity(EgoVehicle):
         else:
             self._bridge.configure(initial_pose, goal_pose)
         self._configured = True
+        if self._launcher is not None:
+            self._start_stack()
+
+    def _start_stack(self) -> None:
+        """Start this scenario's Autoware, now that the mission is being served.
+
+        After the ego exists, so the interface node finds the actor it is to
+        attach to, and after :meth:`configure`, so the first ``GetMission`` the
+        stack sends is answered with the mission.
+        """
+        assert self._launcher is not None  # noqa: S101 - checked by the caller
+        address = self._bridge.client_address or self._config.address
+        episode = self._launcher.start(
+            name=self._episode_name or "scenario", bridge_address=address
+        )
+        self._stack_running = True
+        self._boot_started = time.monotonic()
+        logger.info(
+            "Started Autoware stack #%d for %s; it is to dial the bridge at %s",
+            episode.index,
+            episode.name,
+            address,
+        )
 
     def _base_link_offset(self) -> float:
         """Metres along the ego from the actor's origin to Autoware's ``base_link``."""
@@ -504,7 +555,27 @@ class AutowareEgoEntity(EgoVehicle):
         ``ready_timeout_ticks``, the entity requests early termination.
         """
         del world, elapsed
-        if self._ready or self._termination_requested or not self._configured:
+        if self._termination_requested or not self._configured:
+            return
+        if self._stack_running:
+            assert self._launcher is not None  # noqa: S101 - set when it started
+            code = self._launcher.poll()
+            if code is not None:
+                self._stack_running = False
+                self._terminate(f"The Autoware stack exited with code {code}")
+                return
+        if self._ready:
+            return
+        if self._stack_running and not self._bridge.client_connected:
+            assert self._boot_started is not None  # noqa: S101 - set when it started
+            booting_s = time.monotonic() - self._boot_started
+            if booting_s > self._config.boot_timeout_s:
+                self._terminate(
+                    f"Autoware did not reach the bridge within "
+                    f"{self._config.boot_timeout_s:.0f} s of being started"
+                )
+            elif self._config.boot_tick_period_s > 0:
+                time.sleep(self._config.boot_tick_period_s)
             return
         if self._bridge.is_ready():
             self._ready = True
@@ -512,15 +583,25 @@ class AutowareEgoEntity(EgoVehicle):
             return
         self._ready_ticks += 1
         if self._ready_ticks >= self._config.ready_timeout_ticks:
-            logger.warning(
-                "Autoware not ready after %d ticks - requesting termination",
-                self._ready_ticks,
-            )
-            self._termination_requested = True
+            self._terminate(f"Autoware not ready after {self._ready_ticks} ticks")
+
+    def _terminate(self, reason: str) -> None:
+        logger.warning("%s - requesting termination", reason)
+        self._termination_reason = reason
+        self._termination_requested = True
 
     def on_scenario_end(self, world: "carla.World") -> None:
-        """Close the bridge transport.  Never raises."""
+        """Stop this scenario's Autoware, then close the bridge.  Never raises."""
         del world
+        if self._launcher is not None:
+            try:
+                self._launcher.stop()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.warning(
+                    "AutowareEgoEntity: stopping the Autoware stack failed",
+                    exc_info=True,
+                )
+            self._stack_running = False
         try:
             self._bridge.close()
         except Exception:  # noqa: BLE001 - teardown must not raise

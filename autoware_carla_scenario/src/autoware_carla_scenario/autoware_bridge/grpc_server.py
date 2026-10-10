@@ -117,6 +117,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             Tuple[BridgePose, BridgePose, Tuple[BridgePose, ...]]
         ] = None
         self._ready: bool = False
+        self._contacted: bool = False
         self._closed: bool = False
 
         self._server = grpc.server(
@@ -165,6 +166,26 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         """The port the server is listening on, or ``None`` before :meth:`start`."""
         return self._port
 
+    @property
+    def client_connected(self) -> bool:
+        """Whether the interface node has called either RPC yet."""
+        with self._lock:
+            return self._contacted
+
+    @property
+    def client_address(self) -> Optional[str]:
+        """The address the client dials: the bound port, on this host.
+
+        A server bound to every interface (``0.0.0.0``, ``[::]``) is dialed on
+        ``localhost``, which is where a stack on this host's network finds it.
+        """
+        if self._port is None:
+            return None
+        host = self._config.address.rsplit(":", 1)[0]
+        if host in ("", "0.0.0.0", "[::]", "::"):  # noqa: S104 - a bind address, not a bind
+            host = "localhost"
+        return f"{host}:{self._port}"
+
     # ------------------------------------------------------------------
     # Servicer callbacks (run on the server thread pool)
     # ------------------------------------------------------------------
@@ -173,6 +194,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         """Build the ``GetMission`` response from the current mission state."""
         with self._lock:
             mission = self._mission
+            self._contacted = True
         if mission is None:
             return pb2.GetMissionResponse(available=False)
         initial, goal, waypoints = mission
@@ -193,6 +215,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         sides consistent and robust to report ordering.
         """
         with self._lock:
+            self._contacted = True
             if self._ready:
                 return
             self._ready = ready

@@ -473,7 +473,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 | Value | Behaviour |
 | --- | --- |
 | `autopilot` (default) | CARLA's TrafficManager drives the ego |
-| `autoware` | Nothing drives the ego; the actor is left for an external stack |
+| `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
 
 Common overrides:

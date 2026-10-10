@@ -41,6 +41,49 @@ map:
   lanelet2_path: null
   no_3d_model_lanelet_ids: []
 
+# Autoware as the ego (ego.entity=autoware; docs/autoware.md).
+autoware:
+  # The bridge server Autoware's scenario_bridge node dials for the mission.
+  address: localhost:50052
+  # Ticks Autoware has to localize, route and engage once it reached the bridge.
+  ready_timeout_ticks: 1200
+  # Wall-clock seconds a launched stack has to reach the bridge.
+  boot_timeout_s: 300.0
+  # Who starts Autoware for each scenario, and removes it after:
+  #   none    - someone else does (launched by hand, or Autoware launches the
+  #             scenario through with_scenario)
+  #   docker  - a local Autoware workspace, built and run in its dev container
+  #   command - `command` below, run on this host
+  # A fresh Autoware per scenario is what lets a batch or a sweep run scenario
+  # after scenario:
+  #   uv run scenario 'scenario=intersection_passing/*' ego.entity=autoware \
+  #     autoware.launcher.type=docker autoware.launcher.workspace=$HOME/autoware \
+  #     'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"bridge_address:={bridge_address}",...]'
+  launcher:
+    type: none
+    # docker: a clone of autowarefoundation/autoware with its sources in src/.
+    workspace: ~/autoware
+    # The .devcontainer/ variant whose image and workspace mount are used.
+    devcontainer: universe-devel-cuda
+    image: null
+    workspace_mount: null
+    # auto (when install/ is missing) | always | never
+    build: auto
+    colcon_args: [--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]
+    # ros2 launch <package> <file> <name:=value>...; {bridge_address} is the
+    # bridge's address, to be handed to scenario_bridge.
+    launch: []
+    mounts:
+      ~/autoware_data: /home/aw/autoware_data
+    env: {}
+    ros_domain_ids: []
+    gpus: all
+    user: null
+    docker_args: []
+    # command: the command line, with {bridge_address}, {index} and {name}.
+    command: []
+    stop_timeout_s: 20.0
+
 ego:
   vehicle_type: vehicle.mini.cooper
   initial_speed_kmh: 0.0
