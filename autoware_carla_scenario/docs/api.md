@@ -50,6 +50,7 @@ See [Coverage](coverage.md).
 | `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
 | `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
 | `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
+| `coverage.cod.export_cod(document, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
 
 ## ODD (`autoware_carla_scenario.odd`)
 

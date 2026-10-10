@@ -268,6 +268,37 @@ name, event and buckets agree. An item whose definition changed between runs
 is reported once per definition (`name#2`, ...), because adding up hits of
 different buckets would mean nothing.
 
+## Exporting the observed conditions as an OpenODD COD
+
+Besides the aggregates, the coverage file keeps every tick's ODD values
+(`odd.samples`): the elapsed time, the ego's latitude and longitude (from the
+map's OpenDRIVE geoReference), and each attribute's value, `null` when it was
+missing. `odd.started_at` is the run's start time in UTC. A run still writes
+one file; ten minutes at 20 Hz add about 1 MB.
+
+OpenODD's exchange format for what was observed is the **current operational
+domain** (COD) table (ASAM OpenODD 1.0, section 8.3). Write one per run with:
+
+```bash
+scenario-coverage outputs/ --export-cod cod/
+```
+
+Each run gives three files:
+
+| File | Contents |
+|---|---|
+| `<run>_cod.csv` | `TEMPORAL_EXTENT` (start time + elapsed, `"YYYY-MM-DD HH:MM:SS.mmm"`), `SPATIAL_EXTENT` (`"lat lon"`), then one column per attribute: `name;unit` for numbers, the literal for categoricals, `true`/`false` for booleans, empty when missing (OpenODD reads it as unknown) |
+| `<run>_cod_manifest.csv` | The manifest (8.3.4): which column is which taxonomy concept, in which unit |
+| `<run>_taxonomy.yml` | An OpenODD YAML taxonomy of the attributes, which a COD has to travel with (6.1.4.5) |
+
+A tick without an ego position is left out, since `SPATIAL_EXTENT` may not be
+empty. OpenODD wants every number to carry a unit: give numeric attributes a
+`unit`, or their column has none. A name such as `env.rain.duration` beside an
+attribute `env.rain` is written as OpenODD writes a measure of an element: the
+key `rain.duration` under `env`. Times are UTC. Coverage files written before samples were recorded are skipped with a
+warning. Scenario cover items are not taxonomy concepts and stay in the
+coverage file only.
+
 ## Coverage file format
 
 ```json

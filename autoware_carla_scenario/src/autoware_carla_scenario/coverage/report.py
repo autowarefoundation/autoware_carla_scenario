@@ -532,9 +532,9 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
     return report
 
 
-def load_and_merge(paths: Iterable[Path]) -> CoverageReport:
-    """Find the coverage files under *paths* and merge them."""
-    documents = []
+def load_coverage_files(paths: Iterable[Path]) -> list[tuple[Path, dict[str, Any]]]:
+    """The coverage files under *paths*, read; others are skipped with a warning."""
+    documents: list[tuple[Path, dict[str, Any]]] = []
     for path in find_coverage_files(paths):
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
@@ -544,8 +544,36 @@ def load_and_merge(paths: Iterable[Path]) -> CoverageReport:
         if not isinstance(doc, dict) or doc.get("schema") != COVERAGE_SCHEMA:
             logger.warning("coverage: skipping %s: not a coverage file", path)
             continue
-        documents.append(doc)
-    return merge_coverage(documents)
+        documents.append((path, doc))
+    return documents
+
+
+def load_and_merge(paths: Iterable[Path]) -> CoverageReport:
+    """Find the coverage files under *paths* and merge them."""
+    return merge_coverage([doc for _, doc in load_coverage_files(paths)])
+
+
+def export_cods(
+    documents: Sequence[tuple[Path, dict[str, Any]]], out_dir: Path
+) -> list[Any]:
+    """Export every run's ODD samples as an OpenODD COD under *out_dir*."""
+    from .cod import export_cod  # noqa: PLC0415
+
+    exported = []
+    used: set[str] = set()
+    for path, doc in documents:
+        stem = path.name.removesuffix(".json").removesuffix("_coverage")
+        unique, n = stem, 1
+        while unique in used:  # runs of one scenario in different directories
+            n += 1
+            unique = f"{stem}-{n}"
+        used.add(unique)
+        result = export_cod(doc, out_dir, unique)
+        if result is None:
+            logger.warning("coverage: %s has no ODD samples to export", path)
+        else:
+            exported.append(result)
+    return exported
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -572,6 +600,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="write the Markdown report here instead of standard output",
     )
     parser.add_argument(
+        "--export-cod",
+        type=Path,
+        metavar="DIR",
+        help=(
+            "also write each run's ODD samples as an ASAM OpenODD COD table, "
+            "with its manifest and taxonomy, into DIR"
+        ),
+    )
+    parser.add_argument(
         "--max-holes",
         type=int,
         default=20,
@@ -580,7 +617,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
-    report = load_and_merge(args.paths)
+    documents = load_coverage_files(args.paths)
+    report = merge_coverage([doc for _, doc in documents])
+    if args.export_cod is not None:
+        exported = export_cods(documents, args.export_cod)
+        print(  # noqa: T201
+            f"Exported {len(exported)} COD table(s) to {args.export_cod}",
+            file=sys.stderr,
+        )
+        if not exported:
+            return 1  # asked for, and nothing had samples to export
     if report.runs == 0:
         print("No coverage files found.", file=sys.stderr)
         return 1
