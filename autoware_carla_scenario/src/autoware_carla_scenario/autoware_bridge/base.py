@@ -48,7 +48,16 @@ class AutowareBridgeConfig:
             binds to and that the ``autoware_carla_interface`` client dials.
         timeout_s: Per-RPC timeout in seconds.
         ready_timeout_ticks: Maximum world ticks to wait for Autoware to become
-            ready before the scenario fails.  At 20 Hz, ``1200`` is ~60 s.
+            ready before the scenario fails.  At 20 Hz, ``1200`` is ~60 s.  When
+            the framework launches Autoware itself, they are counted from when
+            the stack reaches the bridge, not from when it was started.
+        boot_timeout_s: When the framework launches Autoware itself, the
+            wall-clock seconds the stack has to reach the bridge before the
+            scenario ends.  Launching Autoware takes as long as it takes,
+            whatever the world does meanwhile, so it is not measured in ticks.
+        boot_tick_period_s: How long each tick waits while the stack is still
+            starting, so the world advances at about real time rather than
+            hundreds of simulated seconds before Autoware is there to see them.
         base_link_offset_m: Signed offset along the ego's forward axis from the
             CARLA actor's origin to Autoware's ``base_link`` (the rear axle), in
             metres -- negative, as the axle is behind the vehicle's centre.  The
@@ -63,6 +72,8 @@ class AutowareBridgeConfig:
     timeout_s: float = 60.0
     ready_timeout_ticks: int = 1200
     base_link_offset_m: Optional[float] = None
+    boot_timeout_s: float = 300.0
+    boot_tick_period_s: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -241,6 +252,25 @@ class AutowareBridge(ABC):
 
         Must be non-blocking so it can be polled once per world tick.
         """
+
+    @property
+    def client_connected(self) -> bool:
+        """Whether the interface node has reached this bridge yet.
+
+        Tells a stack that is still starting from one that is localizing: the
+        first takes as long as Autoware takes to launch, in wall-clock time,
+        and only the second is measured in ticks.  A bridge that cannot tell
+        says ``True``.
+        """
+        return True
+
+    @property
+    def client_address(self) -> Optional[str]:
+        """``host:port`` for the interface node to dial, once :meth:`start` ran.
+
+        ``None`` for a bridge with no address of its own.
+        """
+        return None
 
     def start(self) -> None:
         """Bring the transport up.  A bridge that needs nothing does nothing.
