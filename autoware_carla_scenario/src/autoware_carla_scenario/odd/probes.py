@@ -186,18 +186,37 @@ def _ego(world: "carla.World") -> Any:
     return _RUN.ego
 
 
+def _carla_map(world: "carla.World") -> Any:
+    """The run's CARLA map, fetched once."""
+    if _RUN.carla_map is None:
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+        _RUN.carla_map = MapManager.get_instance().carla_map or world.get_map()
+    return _RUN.carla_map
+
+
 def _waypoint(world: "carla.World", cache: dict[str, Any]) -> Any:
     def read() -> Any:
         ego = _ego(world)
         if ego is None:
             return None
-        if _RUN.carla_map is None:
-            from ..coordinate.map_manager import MapManager  # noqa: PLC0415
-
-            _RUN.carla_map = MapManager.get_instance().carla_map or world.get_map()
-        return _RUN.carla_map.get_waypoint(ego.get_location())
+        return _carla_map(world).get_waypoint(ego.get_location())
 
     return _read(cache, "waypoint", read)
+
+
+def ego_geolocation(world: "carla.World") -> Optional[tuple[float, float]]:
+    """The ego's ``(latitude, longitude)``, from the map's OpenDRIVE geoReference."""
+    cache = _frame(world)
+
+    def read() -> Optional[tuple[float, float]]:
+        ego = _ego(world)
+        if ego is None:
+            return None
+        geo = _carla_map(world).transform_to_geolocation(ego.get_location())
+        return (float(geo.latitude), float(geo.longitude))
+
+    return _read(cache, "geolocation", read)
 
 
 def _weather(world: "carla.World", cache: dict[str, Any]) -> Any:

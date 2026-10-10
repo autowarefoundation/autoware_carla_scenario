@@ -21,6 +21,7 @@ entered.  ``scenario-coverage`` merges any number of them into a report.
 from __future__ import annotations
 
 import itertools
+from datetime import datetime, timezone
 import json
 import math
 import logging
@@ -37,6 +38,7 @@ from .items import (
     Event,
     SamplingEvent,
     duplicates,
+    value_label,
 )
 
 if TYPE_CHECKING:
@@ -66,6 +68,26 @@ MAX_EGO_SPEED_MPS = 100.0
 MAX_OUT_INTERVALS = 100
 
 
+def _sample_value(value: Any) -> Any:
+    """A value as the coverage file keeps it: a JSON number, bool or string."""
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return round(value, 6) if math.isfinite(value) else None
+    try:
+        number = float(value)  # numpy scalars and the like
+    except (TypeError, ValueError):
+        return value_label(value)
+    return round(number, 6) if math.isfinite(number) else None
+
+
+def _attribute_meta(attribute: Any) -> dict[str, Any]:
+    """What an exporter needs to know of an attribute: its name, unit and values."""
+    item = attribute.item
+    values = list(item.labels) if item is not None and not item.numeric else None
+    return {"name": attribute.name, "unit": attribute.unit, "values": values}
+
+
 def _situation_value(holds: Any) -> Optional[str]:
     """A situation's sample: it held, it rested on missing values, or nothing."""
     if holds is True:
@@ -89,6 +111,12 @@ class _OddMonitor:
 
     def __init__(self, odd: "OddDefinition") -> None:
         self.odd = odd
+        #: When the run started (UTC, ISO 8601), set by the collector.
+        self.started_at: Optional[str] = None
+        #: One row per tick: elapsed seconds, latitude, longitude, then every
+        #: attribute's value (``None`` when missing).  ``odd.samples`` in the
+        #: coverage file; ``scenario-coverage --export-cod`` makes a COD of it.
+        self.rows: list[list[Any]] = []
         self.ticks = {"inside": 0, "assumed": 0, "outside": 0}
         self.seconds = {"inside": 0.0, "assumed": 0.0, "outside": 0.0}
         # Bounds only: a situation's ticks are its own cover item.
@@ -101,8 +129,19 @@ class _OddMonitor:
         #: Whether the excursion going on is the last interval listed.
         self._recording = False
 
-    def record(self, values: dict[str, Any], start: float, end: float) -> "OddVerdict":
-        """Judge one tick; the verdict, for the situations."""
+    def record(
+        self,
+        values: dict[str, Any],
+        start: float,
+        end: float,
+        position: Optional[tuple[float, float]] = None,
+    ) -> "OddVerdict":
+        """Judge one tick and keep its values; the verdict, for the situations."""
+        lat, lon = position if position is not None else (None, None)
+        self.rows.append(
+            [round(end, 3), lat, lon]
+            + [_sample_value(values.get(a.name)) for a in self.odd.attributes]
+        )
         verdict = self.odd.evaluate(values)
         if not verdict.inside:
             key = "outside"
@@ -136,6 +175,11 @@ class _OddMonitor:
             "out_intervals": [
                 [round(a, 3), round(b, 3)] for a, b in self.out_intervals
             ],
+            "started_at": self.started_at,
+            "samples": {
+                "attributes": [_attribute_meta(a) for a in self.odd.attributes],
+                "rows": self.rows,
+            },
         }
 
 
@@ -349,6 +393,10 @@ class CoverageCollector:
         """Sample the items on :attr:`SamplingEvent.START`."""
         self._last_elapsed = elapsed
         self._last_position = self._ego_position(world) if self._timed else None
+        if self._odd is not None:
+            self._odd.started_at = datetime.now(timezone.utc).isoformat(
+                timespec="milliseconds"
+            )
         self._sample_event(world, SamplingEvent.START)
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
@@ -357,7 +405,9 @@ class CoverageCollector:
         if self._odd is not None:
             attributes = self._odd.odd.sample(world)
             values = {item: attributes[a] for item, a in self._odd_items.items()}
-            verdict = self._odd.record(attributes, self._last_elapsed, elapsed)
+            verdict = self._odd.record(
+                attributes, self._last_elapsed, elapsed, self._geolocation(world)
+            )
             for item, module in self._situation_items.items():
                 values[item] = _situation_value(verdict.modules.get(module))
         step = self._step(world, elapsed)
@@ -424,6 +474,15 @@ class CoverageCollector:
                 meters = 0.0
         self._last_position = position
         return _Step(seconds, meters)
+
+    @staticmethod
+    def _geolocation(world: "carla.World") -> Optional[tuple[float, float]]:
+        from ..odd.probes import ego_geolocation  # noqa: PLC0415 - odd imports coverage
+
+        try:
+            return ego_geolocation(world)
+        except Exception:
+            return None
 
     @staticmethod
     def _ego_position(world: "carla.World") -> Optional[tuple[float, float, float]]:
