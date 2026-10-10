@@ -245,7 +245,7 @@ probes:
   road_type: {probe: lanelet_subtype}
   rainfall_rate: {probe: my_package.probes:rain_rate_mm_h, unit: mm/h}
   wind_speed: {probe: my_package.probes:wind_mps, unit: m/s}
-  lane_count: {probe: lane_count, values: [1, 2, 3, 4]}
+  lane_count: {probe: lane_count, values: [1, 2, 3, 4], cover_by: meters, target: 200, min_stay: 2}
 ```
 
 Run with `odd=path/to/urban.yaml`. An OpenODD file on its own can be named

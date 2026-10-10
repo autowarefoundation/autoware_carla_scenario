@@ -15,7 +15,9 @@ recognises the arguments:
 * ``ignore`` -- samples for which it returns true are left out.
 * ``event`` -- when the item is sampled.  The DSL samples at the end of the
   scenario unless told otherwise, and so does this.
-* ``target`` -- how many hits make a bucket covered.
+* ``target`` -- how many hits make a bucket covered.  Beyond the DSL, an
+  item sampled every tick can count its target in seconds, metres or entries
+  instead (``cover_by``), and leave out stays shorter than ``min_stay``.
 * cross coverage -- the Cartesian product of items sampled on the same event
   (``cover(name, items: [a, b])`` in the DSL).
 
@@ -112,6 +114,39 @@ def event_name(event: Event) -> str:
     return f"condition:{getattr(event, 'label', type(event).__name__)}"
 
 
+#: What an item's ``target`` counts (``cover_by``): ticks or samples, seconds
+#: spent in a bucket, metres the ego drove in it, or times it was entered.
+COVER_MEASURES = ("hits", "seconds", "meters", "entries")
+
+
+def _check_criteria(
+    what: str,
+    target: float,
+    cover_by: str,
+    min_stay: Optional[float],
+    event: "Event",
+) -> None:
+    """Refuse a coverage criterion that cannot be met or measured."""
+    if cover_by not in COVER_MEASURES:
+        raise ValueError(f"{what}: cover_by must be one of {list(COVER_MEASURES)}")
+    if cover_by in ("hits", "entries") and (
+        target < 1 or not float(target).is_integer()
+    ):
+        raise ValueError(f"{what}: target must be a whole number, at least 1")
+    if not target > 0:
+        raise ValueError(f"{what}: target must be positive")
+    if min_stay is not None and not min_stay >= 0:
+        raise ValueError(f"{what}: min_stay must not be negative")
+    timed = cover_by in ("seconds", "meters") or min_stay is not None
+    if timed and event is not SamplingEvent.TICK:
+        raise ValueError(
+            f"{what}: cover_by={cover_by!r}"
+            + (" and min_stay" if min_stay is not None else "")
+            + " need an item sampled on SamplingEvent.TICK: a one-shot sample "
+            "has no duration or distance"
+        )
+
+
 @dataclass
 class CoverItem:
     """One cover item.  Built by :meth:`BaseScenario.register_cover`.
@@ -130,8 +165,12 @@ class CoverItem:
     ignore: Optional[Callable[[Any], bool]] = None
     event: Event = SamplingEvent.END
     text: str = ""
-    target: int = 1
+    target: float = 1
     group: CoverGroup = CoverGroup.SCENARIO
+    #: What *target* counts: one of :data:`COVER_MEASURES`.
+    cover_by: str = "hits"
+    #: Stays in a bucket shorter than this many seconds do not count.
+    min_stay: Optional[float] = None
 
     #: Bucket edges of a numeric item, ascending; empty for a categorical one.
     edges: list[float] = field(init=False, default_factory=list)
@@ -141,8 +180,9 @@ class CoverItem:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("cover: name must not be empty")
-        if self.target < 1:
-            raise ValueError(f"cover({self.name}): target must be at least 1")
+        _check_criteria(
+            f"cover({self.name})", self.target, self.cover_by, self.min_stay, self.event
+        )
         given = [
             k
             for k, v in (
@@ -229,6 +269,8 @@ class CoverItem:
             "kind": "numeric" if self.numeric else "categorical",
             "buckets": list(self.labels),
             "target": self.target,
+            "cover_by": self.cover_by,
+            "min_stay": self.min_stay,
         }
 
 
@@ -239,15 +281,15 @@ class CrossItem:
     name: str
     items: list[CoverItem]
     text: str = ""
-    target: int = 1
+    target: float = 1
+    cover_by: str = "hits"
+    min_stay: Optional[float] = None
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("cross: name must not be empty")
         if len(self.items) < 2:
             raise ValueError(f"cross({self.name}): cross at least two items")
-        if self.target < 1:
-            raise ValueError(f"cross({self.name}): target must be at least 1")
         first = self.items[0]
         for item in self.items[1:]:
             if item.event is not first.event:
@@ -259,6 +301,9 @@ class CrossItem:
                 )
         if len({i.group for i in self.items}) != 1:
             raise ValueError(f"cross({self.name}): items are in different groups")
+        _check_criteria(
+            f"cross({self.name})", self.target, self.cover_by, self.min_stay, self.event
+        )
 
     @property
     def event(self) -> Event:
@@ -277,4 +322,6 @@ class CrossItem:
             "event": event_name(self.event),
             "items": [i.name for i in self.items],
             "target": self.target,
+            "cover_by": self.cover_by,
+            "min_stay": self.min_stay,
         }

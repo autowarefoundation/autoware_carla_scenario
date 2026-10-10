@@ -57,15 +57,22 @@ from autoware_carla_scenario import (
     ComparisonRule,
     EgoConfig,
     ElapsedTimeCondition,
+    FollowTrajectoryAction,
     GroundProjectionConfig,
     LaneChangeDirection,
     Lanelet2Pose,
+    MapPose,
+    ReferenceContext,
     SamplingEvent,
     ScenarioResult,
     SpeedCondition,
     StickyCondition,
     TickTiming,
     TimeoutCondition,
+    Trajectory,
+    TrajectoryFollowingMode,
+    TrajectoryTiming,
+    TrajectoryVertex,
     TurnAction,
     TurnDirection,
     snap_to_carla_road,
@@ -240,6 +247,9 @@ self.register_cover(
     buckets=[0.0, 5.0, 10.0, 30.0],
     ignore=lambda v: v < 0.0,
     event=SamplingEvent.TICK,
+    cover_by="meters",
+    target=50,
+    min_stay=1.0,
 )
 self.register_cover(
     "turn",
@@ -250,7 +260,9 @@ self.register_cover(
     target=2,
 )
 self.register_cover("braking", lambda world: False, values=[False, True])
-self.register_cross("speed_x_gap", ["ego_speed", "gap"], text="speed and gap")
+self.register_cross(
+    "speed_x_gap", ["ego_speed", "gap"], text="speed and gap", cover_by="seconds", target=2.5
+)
 """
 
 _COVER_EXTRA = """
@@ -298,7 +310,14 @@ def yaw_rate(world: carla.World) -> float | None:
 
 
 def build() -> OddDefinition:
-    location = OddAttribute("scenery.location", lanelet_location, values=["urban", "nonurban"])
+    location = OddAttribute(
+        "scenery.location",
+        lanelet_location,
+        values=["urban", "nonurban"],
+        cover_by="meters",
+        target=200,
+        min_stay=2.0,
+    )
     speed_limit = OddAttribute(
         "scenery.speed_limit", speed_limit_kph, unit="km/h", buckets=[0, 30, 60, 100]
     )
@@ -422,6 +441,39 @@ def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
+    """Vertices in every frame, a timing, both modes and the T4 replay."""
+    setup = """
+        self._setup_ego_spawn()
+        path = Trajectory(
+            "npc_path",
+            [
+                TrajectoryVertex(MapPose(100.0, 200.0, yaw=0.5), 0.0),
+                TrajectoryVertex(Lanelet2Pose(10, 5.0), 2.0),
+                TrajectoryVertex(snap_to_carla_road(Lanelet2Pose(10, 9.0), self.world), 4.0),
+            ],
+        )
+        self.register_pre_tick(
+            FollowTrajectoryAction(
+                "npc1",
+                path,
+                TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
+                TrajectoryFollowingMode.FOLLOW,
+                condition=ElapsedTimeCondition(1.0, label="go"),
+                label="npc1_follow",
+            )
+        )
+        self.register_pre_tick(
+            FollowTrajectoryAction(
+                "npc2", path, hidden_outside_trajectory=True, label="npc2_follow"
+            )
+        )
+        """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 # ---------------------------------------------------------------------------
 # What is refused, and where it is reported
 # ---------------------------------------------------------------------------
@@ -475,6 +527,17 @@ def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
             "find(3)",
             "'int' does not match expected type 'str'",
         ),
+        (
+            'Trajectory("t", [TrajectoryVertex("here", 0.0), TrajectoryVertex(MapPose(1.0, 2.0), 1.0)])\n',
+            'TrajectoryVertex("here"',
+            "expected a trajectory position",
+        ),
+        (
+            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
+            "TrajectoryVertex(MapPose(3.0, 4.0))]), TrajectoryFollowingMode.FOLLOW)\n",
+            "FollowTrajectoryAction(",
+            "TrajectoryTiming",
+        ),
     ],
     ids=[
         "missing-label",
@@ -486,6 +549,8 @@ def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
         "config-field-typo",
         "carla-wrong-argument",
         "carla-int-for-str",
+        "trajectory-str-position",
+        "trajectory-mode-for-timing",
     ],
 )
 def test_a_wrong_scenario_is_refused_at_its_line(

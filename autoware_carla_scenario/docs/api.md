@@ -44,8 +44,8 @@ See [Coverage](coverage.md).
 
 | Symbol | Purpose |
 |--------|---------|
-| `BaseScenario.register_cover(name, expression, *, unit, range, every, buckets, values, ignore, event, text, target)` | Declare a cover item, after `cover()` in OpenSCENARIO DSL. |
-| `BaseScenario.register_cross(name, items, *, text, target)` | Cross coverage of cover items sampled on the same event. |
+| `BaseScenario.register_cover(name, expression, *, unit, range, every, buckets, values, ignore, event, text, target, cover_by, min_stay)` | Declare a cover item, after `cover()` in OpenSCENARIO DSL. |
+| `BaseScenario.register_cross(name, items, *, text, target, cover_by, min_stay)` | Cross coverage of cover items sampled on the same event. |
 | `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
 | `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
 | `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
@@ -57,7 +57,7 @@ See [ODD](odd.md).
 
 | Symbol | Purpose |
 |--------|---------|
-| `OddAttribute(name, probe, *, unit, range, every, buckets, values, text)` | A measured taxonomy concept. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`, `is_unknown`. |
+| `OddAttribute(name, probe, *, unit, range, every, buckets, values, text, target, cover_by, min_stay)` | A measured taxonomy concept. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`, `is_unknown`. |
 | `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text)` | A named rule. |
 | `OddDefinition(name, attributes, modules, *, roots, text)` | The ODD: judges values with OpenODD's semantics (roots, labels, inactive modules, missing values), and marks buckets outside it. |
 | `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
@@ -113,6 +113,21 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
+| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`). See [Trajectories and Recorded-Scene Replay](trajectory.md). |
+
+## Trajectories (`autoware_carla_scenario.trajectory`)
+
+See [Trajectories and Recorded-Scene Replay](trajectory.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and an optional time. |
+| `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
+| `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
+| `TrajectoryFollowingMode` | `POSITION` (kinematic replay) or `FOLLOW` (a controller tracks it). |
+
+Recorded scenes (T4) are transcribed into documents outside the framework, by
+the separate `scene_to_scenario_transpiler` package (`scenario-import-t4`).
 
 ## Sensors (`autoware_carla_scenario.sensor`)
 

@@ -379,6 +379,20 @@ def _as_list(value: Any) -> list[Any]:
 # Taxonomy
 # ---------------------------------------------------------------------------
 
+#: What a binding file may say about how a concept is measured.
+_BINDING_KEYS = {
+    "probe",
+    "unit",
+    "values",
+    "buckets",
+    "range",
+    "every",
+    "text",
+    "target",
+    "cover_by",
+    "min_stay",
+}
+
 _PRIMITIVES = {"integer", "long", "float", "double"}
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
@@ -762,12 +776,28 @@ class _Reader:
                 buckets["values"] = list(concept.literals)
             elif concept.kind == "boolean":
                 buckets["values"] = [False, True]
+        extra = sorted(str(k) for k in binding if k not in _BINDING_KEYS)
+        if extra:
+            raise OpenOddError(f"probes.{concept.name}: unknown keys {extra}")
+        criteria: dict[str, Any] = {}
+        try:
+            if "target" in binding:
+                criteria["target"] = float(binding["target"])
+            if "cover_by" in binding:
+                criteria["cover_by"] = str(binding["cover_by"])
+            if binding.get("min_stay") is not None:
+                criteria["min_stay"] = float(binding["min_stay"])
+        except (TypeError, ValueError) as exc:
+            raise OpenOddError(
+                f"probes.{concept.name}: target and min_stay must be numbers ({exc})"
+            ) from exc
         try:
             return OddAttribute(
                 concept.name,
                 probe,
                 unit=self.unit_of(concept),
                 text=str(binding.get("text", "")),
+                **criteria,
                 **buckets,
             )
         except ValueError as exc:
@@ -1136,7 +1166,8 @@ def load_openodd(
             relative to it, or else from the other sources' directories.
         bindings: Concept -> how to measure it:
             ``{"probe": ..., "unit": ..., "values" | "buckets" | "range" +
-            "every": ..., "text": ...}`` (see :func:`load_odd_binding`).  A
+            "every": ..., "text": ..., "target": ..., "cover_by": ...,
+            "min_stay": ...}`` (see :func:`load_odd_binding`).  A
             concept with no probe is always missing.
         name: The ODD's name; the first file's stem by default.
         text: A description for the report.
@@ -1194,6 +1225,9 @@ def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
             probe: speed_limit_kph           # built-in, or package.module:function
             unit: km/h                       # what the probe returns
             buckets: [0, 30, 60, 90]         # or values, or range + every
+            cover_by: meters                 # optional: hits, seconds, meters, entries
+            target: 200                      # optional: 200 m in each bucket
+            min_stay: 2                      # optional: stays under 2 s do not count
           rainfall_level: {probe: rain}
 
     A numeric concept with a probe but no buckets gets buckets at the

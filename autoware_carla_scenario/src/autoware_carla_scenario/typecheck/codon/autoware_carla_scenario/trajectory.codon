@@ -1,0 +1,111 @@
+# Model of autoware_carla_scenario.trajectory (docs/typecheck.md).
+#
+# A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose
+# or MapPose), which Codon cannot store: TrajectoryVertex checks the position it
+# is given with _expect_trajectory_position and keeps only its time, which is
+# all the model needs -- it is compiled, never run.
+
+from ._tc import _expect_optional_float
+from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+
+
+class MapPose:
+    x: float
+    y: float
+    yaw: Optional[float]
+    z: Optional[float]
+
+    def __init__(self, x: float, y: float, yaw = None, z = None):
+        self.x = x
+        self.y = y
+        self.yaw = _expect_optional_float(yaw)
+        self.z = _expect_optional_float(z)
+
+
+def _expect_trajectory_position(position):
+    """A TrajectoryPosition argument."""
+    if isinstance(position, MapPose):
+        pass
+    elif isinstance(position, Lanelet2Pose):
+        pass
+    elif isinstance(position, OpenDrivePose):
+        pass
+    elif isinstance(position, CarlaWorldPose):
+        pass
+    else:
+        compile_error("expected a trajectory position: a MapPose, a Lanelet2Pose, "
+                      "an OpenDrivePose or a CarlaWorldPose")
+
+
+class TrajectoryVertex:
+    time: Optional[float]
+
+    def __init__(self, position, time = None):
+        _expect_trajectory_position(position)
+        self.time = _expect_optional_float(time)
+
+
+class Trajectory:
+    name: str
+    closed: bool
+
+    def __init__(self, name: str, vertices, closed: bool = False):
+        for vertex in vertices:
+            _expect_vertex(vertex)
+        self.name = name
+        self.closed = closed
+
+    @property
+    def is_timed(self) -> bool:
+        raise NotImplementedError()
+
+
+def _expect_vertex(vertex: TrajectoryVertex) -> TrajectoryVertex:
+    return vertex
+
+
+@tuple
+class ReferenceContext:
+    value: str
+    ABSOLUTE: ClassVar[ReferenceContext] = ReferenceContext("absolute")
+    RELATIVE: ClassVar[ReferenceContext] = ReferenceContext("relative")
+
+
+class TrajectoryTiming:
+    domain: ReferenceContext
+    scale: float
+    offset: float
+
+    def __init__(self, domain: ReferenceContext = ReferenceContext("relative"),
+                 scale: float = 1.0, offset: float = 0.0):
+        self.domain = domain
+        self.scale = scale
+        self.offset = offset
+
+    def trajectory_time(self, scenario_time: float, action_start: float) -> float:
+        raise NotImplementedError()
+
+
+@tuple
+class TrajectoryFollowingMode:
+    value: str
+    POSITION: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("position")
+    FOLLOW: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("follow")
+
+
+def _expect_optional_timing(timing) -> Optional[TrajectoryTiming]:
+    """An Optional[TrajectoryTiming] argument."""
+    if isinstance(timing, None):
+        return None
+    elif isinstance(timing, Optional[NoneType]):
+        return None
+    elif isinstance(timing, Optional):
+        if timing is None:
+            return None
+        return _expect_timing(unwrap(timing))
+    else:
+        return _expect_timing(timing)
+
+
+def _expect_timing(timing: TrajectoryTiming) -> TrajectoryTiming:
+    return timing

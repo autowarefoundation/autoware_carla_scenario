@@ -349,6 +349,12 @@ class SpawnSpec(LaneletChoice):
     #: Yaw relative to the lanelet's direction of travel, in radians, positive
     #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
     heading: float = 0.0
+    #: Spawn out of the world -- under the map, physics off -- and let an
+    #: action bring the entity in: a *Follow Trajectory* card that keeps it out
+    #: until its first vertex.  What a road user a recording picks up late
+    #: needs: placed where it first appears, it could collide at spawn with
+    #: whatever stood there when the run began.
+    hidden: bool = False
 
     @property
     def heading_deg(self) -> float:

@@ -24,6 +24,7 @@ from .models import (
     ScenarioDocument,
     condition_refs,
 )
+from ..trajectory.authoring import parse_vertices, vertex_problems
 from .registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -202,6 +203,11 @@ def _check_field(
                 f"{spec.label} must be a list of whole numbers.",
                 object_id,
             )
+    elif spec.kind == "trajectory":
+        try:
+            parse_vertices(value)
+        except ValueError as exc:
+            out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
     elif spec.kind == "int_list_or_ref":
         if value != MAP_EXCLUSION_REF and not _is_int_list(value):
             out.error(
@@ -396,9 +402,67 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
     _check_init_is_not_asked_to_wait(out, path, node)
+    if node.type == "follow_trajectory":
+        _check_follow_trajectory(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
+
+
+def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> None:
+    """Check what the *Follow Trajectory* card's fields only mean together.
+
+    Each field is checked on its own by its kind; this is the part no single
+    field can say: which source needs what, and which time reference and mode
+    the hiding needs.  Stated here, a card that would raise at scenario setup
+    is a document error the editor shows instead.
+    """
+    params = node.params
+    source = params.get("path_source", "vertices")
+    domain = params.get("time_domain", "relative")
+    timed = domain != "none"
+    if source == "vertices":
+        try:
+            rows = parse_vertices(params.get("vertices"))
+        except ValueError:
+            return  # already reported against the field
+        for problem in vertex_problems(rows):
+            out.error(f"{path}.vertices", f"Vertices: {problem}.", node.id)
+        if timed and rows and rows[0][3] is None:
+            out.error(
+                f"{path}.time_domain",
+                "A time reference needs a time on every vertex; give them "
+                "times or choose None.",
+                node.id,
+            )
+    elif source == "lanelets":
+        if not params.get("lanelet_ids"):
+            out.error(
+                f"{path}.lanelet_ids",
+                "A lanelet path needs at least one lanelet.",
+                node.id,
+            )
+        if timed and not _positive(params.get("speed_kmh")):
+            out.error(
+                f"{path}.speed_kmh",
+                "A time reference needs a speed to time the lanelet path by.",
+                node.id,
+            )
+    if not _positive(params.get("time_scale", 1.0)):
+        out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
+    if params.get("hidden_outside_trajectory") and (
+        not timed or params.get("following_mode", "position") != "position"
+    ):
+        out.error(
+            f"{path}.hidden_outside_trajectory",
+            "Keeping the entity out of the world needs the Position mode and a "
+            "time reference.",
+            node.id,
+        )
+
+
+def _positive(value: Any) -> bool:
+    return _coercible_float(value) and float(str(value).strip()) > 0.0
 
 
 def _check_init_is_not_asked_to_wait(
@@ -656,6 +720,35 @@ def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
             )
 
 
+def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
+    """An entity spawned out of the world needs something to bring it in.
+
+    Only a *Follow Trajectory* card that keeps its entity out of the world
+    until its first vertex does that; without one the entity stays under the
+    map for the whole run -- allowed, but surely not what was meant.  The ego
+    is never hidden: the run is measured on it from the first tick.
+    """
+    brought_in = {
+        str(action.actor)
+        for action in document.actions
+        if action.type == "follow_trajectory"
+        and action.params.get("hidden_outside_trajectory")
+    }
+    for index, entity in enumerate(document.entities):
+        if not entity.spawn.hidden:
+            continue
+        path = f"entities[{index}].spawn.hidden"
+        if entity.kind == "ego":
+            out.error(path, "The ego cannot spawn out of the world.", entity.id)
+        elif entity.id not in brought_in:
+            out.warn(
+                path,
+                f"{entity.display_name} spawns out of the world and no Follow "
+                "Trajectory card brings it in, so it stays there for the run.",
+                entity.id,
+            )
+
+
 def validate_document(document: ScenarioDocument) -> ValidationReport:
     """Return every problem found in *document*.
 
@@ -702,6 +795,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_untriggered_actions(out, document)
     _check_init_triggers(out, document)
     _check_duplicate_ego_routing(out, document)
+    _check_hidden_spawns(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)

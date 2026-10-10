@@ -3,7 +3,9 @@
 OpenSCENARIO DSL says what to collect, not how runs are merged or graded, so
 this follows the convention coverage tools inherit from hardware verification:
 
-* a bucket is covered when its hits reach the item's ``target``;
+* a bucket is covered when its hits reach the item's ``target`` -- or, for an
+  item with ``cover_by``, its seconds, metres or entries do, counting only
+  stays of at least ``min_stay`` when it has one;
 * an item's grade is its covered buckets over all its buckets;
 * a cross's grade is its covered cells over all its cells;
 * a group's grade is the mean of its items' and crosses' grades.
@@ -15,7 +17,9 @@ adding hits from different buckets would be meaningless.
 
 Besides hits, a merged bucket counts the runs that hit it: on an item sampled
 every tick, hits are ticks, and a bucket hit for many ticks in one run is
-still only one situation.
+still only one situation.  Its exposure is summed too: seconds spent in it,
+metres the ego drove in it, and times it was entered.  A coverage file from
+before exposure was recorded leaves those unknown (``None``) for the item.
 """
 
 from __future__ import annotations
@@ -43,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 COVERAGE_FILE_GLOB = "*_coverage.json"
 
+#: How long, how far and how often a bucket was in, besides its hits.
+EXPOSURE_MEASURES = ("seconds", "meters", "entries")
+
 
 @dataclass
 class MergedEntry:
@@ -53,7 +60,7 @@ class MergedEntry:
     kind: str  # "numeric", "categorical" or "cross"
     event: str
     text: str
-    target: int
+    target: float
     buckets: list[str]
     unit: str = ""
     items: list[str] = field(default_factory=list)  # a cross's items
@@ -64,6 +71,54 @@ class MergedEntry:
     ignored: int = 0
     #: Buckets outside the ODD: reported, but not coverage targets.
     outside: list[str] = field(default_factory=list)
+    #: Exposure per bucket, summed over runs; ``None`` once a run did not
+    #: record it.
+    seconds: Optional[dict[str, float]] = field(default_factory=dict)
+    meters: Optional[dict[str, float]] = field(default_factory=dict)
+    entries: Optional[dict[str, int]] = field(default_factory=dict)
+    #: What *target* counts, and the shortest stay that counts.
+    cover_by: str = "hits"
+    min_stay: Optional[float] = None
+    #: With a minimum stay: per measure, the sums over the stays that counted.
+    counted: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    def amount(self, bucket: str) -> float:
+        """What the bucket has of the measure *target* counts."""
+        if self.min_stay is not None:
+            return self.counted.get(self.cover_by, {}).get(bucket, 0)
+        if self.cover_by == "hits":
+            return self.hits.get(bucket, 0)
+        sums = getattr(self, self.cover_by)
+        return 0 if sums is None else sums.get(bucket, 0)
+
+    def is_covered(self, bucket: str) -> bool:
+        return self.amount(bucket) >= self.target - 1e-9
+
+    def add_exposure(self, raw: dict[str, Any]) -> None:
+        """Add one run's exposure; a run without it makes the sums unknown."""
+        for measure, counted in (raw.get("counted") or {}).items():
+            mine = self.counted.setdefault(measure, {})
+            for bucket, amount in counted.items():
+                mine[bucket] = mine.get(bucket, 0) + amount
+        for measure in EXPOSURE_MEASURES:
+            sums = getattr(self, measure)
+            counts = raw.get(measure)
+            if sums is None:
+                continue
+            if not isinstance(counts, dict):
+                setattr(self, measure, None)
+                continue
+            for bucket, amount in counts.items():
+                sums[bucket] = sums.get(bucket, 0) + amount
+
+    def exposure_of(self, bucket: str) -> dict[str, Any]:
+        """The bucket's exposure, ``None`` where unknown."""
+        out: dict[str, Any] = {}
+        for measure in EXPOSURE_MEASURES:
+            sums = getattr(self, measure)
+            value = None if sums is None else sums.get(bucket, 0)
+            out[measure] = round(value, 3) if isinstance(value, float) else value
+        return out
 
     @property
     def targets(self) -> list[str]:
@@ -73,11 +128,11 @@ class MergedEntry:
 
     @property
     def covered(self) -> list[str]:
-        return [b for b in self.targets if self.hits.get(b, 0) >= self.target]
+        return [b for b in self.targets if self.is_covered(b)]
 
     @property
     def holes(self) -> list[str]:
-        return [b for b in self.targets if self.hits.get(b, 0) < self.target]
+        return [b for b in self.targets if not self.is_covered(b)]
 
     @property
     def grade(self) -> float:
@@ -93,13 +148,17 @@ class MergedEntry:
             "event": self.event,
             "text": self.text,
             "target": self.target,
+            "cover_by": self.cover_by,
+            "min_stay": self.min_stay,
             "grade": self.grade,
             "buckets": [
                 {
                     "bucket": b,
                     "hits": self.hits.get(b, 0),
                     "runs": self.runs.get(b, 0),
-                    "covered": self.hits.get(b, 0) >= self.target,
+                    **self.exposure_of(b),
+                    "amount": self.amount(b),
+                    "covered": self.is_covered(b),
                     "outside_odd": b in self.outside,
                 }
                 for b in self.buckets
@@ -263,19 +322,45 @@ class CoverageReport:
                 ]
                 if e.text:
                     lines += [e.text, ""]
-                lines += ["| Bucket | Hits | Runs |", "|---|---|---|"]
+                if e.cover_by != "hits" or e.min_stay is not None:
+                    rule = f"Covered at {e.target:g} {_UNITS[e.cover_by]} per bucket"
+                    if e.min_stay is not None:
+                        rule += f", counting stays of {e.min_stay:g} s or more"
+                    lines += [rule + ".", ""]
+                timed = e.event == "tick"
+                if timed:
+                    lines += [
+                        "| Bucket | Hits | Runs | Seconds | Meters | Entries |",
+                        "|---|---|---|---|---|---|",
+                    ]
+                else:
+                    lines += ["| Bucket | Hits | Runs |", "|---|---|---|"]
                 for b in e.buckets:
                     if b in e.outside:
                         mark = " (outside ODD" + (
                             ", reached)" if e.hits.get(b) else ")"
                         )
+                    elif e.is_covered(b):
+                        mark = ""
+                    elif e.cover_by == "hits" and e.min_stay is None:
+                        mark = " (hole)"
                     else:
-                        mark = "" if e.hits.get(b, 0) >= e.target else " (hole)"
-                    lines.append(
-                        f"| {b}{mark} | {e.hits.get(b, 0)} | {e.runs.get(b, 0)} |"
-                    )
+                        mark = (
+                            f" (hole: {e.amount(b):g}/{e.target:g}"
+                            f" {_UNITS[e.cover_by]})"
+                        )
+                    row = f"| {b}{mark} | {e.hits.get(b, 0)} | {e.runs.get(b, 0)} |"
+                    if timed:
+                        x = e.exposure_of(b)
+                        row += (
+                            f" {_amount(x['seconds'], '.1f')} |"
+                            f" {_amount(x['meters'], '.0f')} |"
+                            f" {_amount(x['entries'], 'd')} |"
+                        )
+                    lines.append(row)
                 for b, n in sorted(e.out_of_range.items()):
-                    lines.append(f"| {b} (outside the buckets) | {n} | - |")
+                    extra = " - | - | - |" if timed else ""
+                    lines.append(f"| {b} (outside the buckets) | {n} | - |{extra}")
                 if e.samples == 0:
                     lines += ["", "_No samples: the value was never available._"]
         return "\n".join(lines) + "\n"
@@ -347,6 +432,14 @@ class CoverageReport:
         return lines
 
 
+#: How a measure's amounts are written in the report.
+_UNITS = {"hits": "hits", "seconds": "s", "meters": "m", "entries": "entries"}
+
+
+def _amount(value: Any, spec: str) -> str:
+    return "?" if value is None else format(value, spec)
+
+
 def find_coverage_files(paths: Iterable[Path]) -> list[Path]:
     """Coverage files named by *paths*: files as given, directories searched."""
     found: list[Path] = []
@@ -368,6 +461,9 @@ def _key(entry: dict[str, Any], kind: str) -> tuple[Any, ...]:
         tuple(entry.get("buckets", ())),
         tuple(entry.get("items", ())),
         tuple(entry.get("outside_odd", ())),
+        entry.get("cover_by", "hits"),
+        entry.get("min_stay"),
+        float(entry.get("target", 1)),
     )
 
 
@@ -410,7 +506,9 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
                     kind=kind,
                     event=raw.get("event", ""),
                     text=raw.get("text", ""),
-                    target=int(raw.get("target", 1)),
+                    target=float(raw.get("target", 1)),
+                    cover_by=str(raw.get("cover_by", "hits")),
+                    min_stay=raw.get("min_stay"),
                     buckets=list(raw.get("buckets") or raw.get("hits", {}).keys()),
                     unit=raw.get("unit", ""),
                     items=list(raw.get("items", ())),
@@ -426,6 +524,7 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
                 entry.out_of_range[bucket] = entry.out_of_range.get(bucket, 0) + int(
                     hits
                 )
+            entry.add_exposure(raw)
             entry.samples += int(raw.get("samples", 0))
             entry.ignored += int(raw.get("ignored", 0))
     if report.runs == 0:

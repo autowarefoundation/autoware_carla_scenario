@@ -1378,7 +1378,13 @@ class TestEnvironmentTrack:
             actor = re.search(r'name="actor" value="([^"]*)"', form)
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
-        assert offers["ego"] == {"lane_change", "routing", "set_speed", "turn"}
+        assert offers["ego"] == {
+            "follow_trajectory",
+            "lane_change",
+            "routing",
+            "set_speed",
+            "turn",
+        }
         assert offers[""] == {
             "environment",
             "traffic_signal",
@@ -1387,10 +1393,14 @@ class TestEnvironmentTrack:
             "traffic_source",
         }
 
-    def test_a_pedestrian_track_offers_walking_and_nothing_else(
+    def test_a_pedestrian_track_offers_walking_and_following_a_path(
         self, client: TestClient, draft_id: str
     ) -> None:
-        """The other half of the rule above, for the kind that has its own."""
+        """The other half of the rule above, for the kind that has its own.
+
+        A pedestrian walks, or follows a trajectory -- a recorded one, say --
+        and is offered nothing a vehicle does to its lane.
+        """
         client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
         body = client.get(f"/draft/{draft_id}").text
 
@@ -1401,7 +1411,7 @@ class TestEnvironmentTrack:
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
 
-        assert offers["walker1"] == {"walk_straight"}
+        assert offers["walker1"] == {"follow_trajectory", "walk_straight"}
         assert "walk_straight" not in offers["ego"]
 
     def test_an_environment_action_needs_no_actor(

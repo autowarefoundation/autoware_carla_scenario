@@ -278,6 +278,15 @@ def _nearby(world: "carla.World") -> Optional[tuple[int, int]]:
 # ---------------------------------------------------------------------------
 
 
+def ego_position(world: "carla.World") -> Optional[tuple[float, float, float]]:
+    """Where the ego is, in CARLA world coordinates (m); used to measure distance."""
+    ego = _ego(world)
+    if ego is None:
+        return None
+    location = ego.get_location()
+    return (float(location.x), float(location.y), float(location.z))
+
+
 def ego_speed_kph(world: "carla.World") -> Optional[float]:
     """The ego's speed, in km/h."""
     ego = _ego(world)

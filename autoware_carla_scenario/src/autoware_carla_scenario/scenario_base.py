@@ -689,7 +689,9 @@ class BaseScenario(ABC):
         ignore: Optional[Callable[[Any], bool]] = None,
         event: Union[SamplingEvent, BaseCondition] = SamplingEvent.END,
         text: str = "",
-        target: int = 1,
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
     ) -> None:
         """Declare a cover item: a value sampled during the run, in buckets.
 
@@ -727,7 +729,13 @@ class BaseScenario(ABC):
                 satisfied.  A condition is checked once per tick for this, so
                 pass one that is not also a pass or fail condition.
             text: A description for the report.
-            target: Hits a bucket needs to count as covered.
+            target: What a bucket needs to count as covered, in *cover_by*.
+            cover_by: What *target* counts: ``"hits"`` (samples, the
+                default), or for a ``TICK`` item ``"seconds"`` spent in the
+                bucket, ``"meters"`` the ego drove in it, or ``"entries"``
+                into it.
+            min_stay: For a ``TICK`` item: stays in a bucket shorter than
+                this many seconds do not count towards *target*.
         """
         self._require_unused_coverage_name(name)
         self._cover_items.append(
@@ -743,6 +751,8 @@ class BaseScenario(ABC):
                 event=event,
                 text=text,
                 target=target,
+                cover_by=cover_by,
+                min_stay=min_stay,
             )
         )
 
@@ -752,7 +762,9 @@ class BaseScenario(ABC):
         items: Sequence[str],
         *,
         text: str = "",
-        target: int = 1,
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
     ) -> None:
         """Declare cross coverage of cover items already registered.
 
@@ -764,7 +776,9 @@ class BaseScenario(ABC):
             name: The cross's name, unique within the scenario.
             items: Names of cover items registered with :meth:`register_cover`.
             text: A description for the report.
-            target: Hits a cell needs to count as covered.
+            target: What a cell needs to count as covered, in *cover_by*.
+            cover_by: As for :meth:`register_cover`.
+            min_stay: As for :meth:`register_cover`.
         """
         self._require_unused_coverage_name(name)
         by_name = {i.name: i for i in self._cover_items}
@@ -780,6 +794,8 @@ class BaseScenario(ABC):
                 items=[by_name[n] for n in items],
                 text=text,
                 target=target,
+                cover_by=cover_by,
+                min_stay=min_stay,
             )
         )
 

@@ -105,6 +105,8 @@ def _import_localns() -> dict[str, Any]:
         "autoware_carla_scenario.actions",
         "autoware_carla_scenario.conditions",
         "autoware_carla_scenario.coordinate",
+        "autoware_carla_scenario.trajectory",
+        "autoware_carla_scenario.driver.control",
     ):
         module = importlib.import_module(module_name)
         namespace.update(
