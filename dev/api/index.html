@@ -473,6 +473,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../coverage/" class="md-tabs__link">
         
   
@@ -1206,6 +1225,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../coverage/" class="md-nav__link">
         
   
@@ -1572,6 +1618,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#logical-scenarios-autoware_carla_scenarioroute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logical scenarios (autoware_carla_scenario.route)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#result-viewer-autoware_carla_scenarioui" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1863,6 +1920,17 @@
     <span class="md-ellipsis">
       
         Lanelet constraint sweeper (autoware_carla_scenario.sweeper)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logical-scenarios-autoware_carla_scenarioroute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logical scenarios (autoware_carla_scenario.route)
       
     </span>
   </a>
@@ -2188,6 +2256,10 @@ directly.</p>
 <td>Traffic-light state check.</td>
 </tr>
 <tr>
+<td><code>RouteProgressCondition</code></td>
+<td>An entity's (default: the ego's) distance along the scenario's route, from an anchor (<code>junction:0:entry</code>, ...), compared with a rule; robust to lane changes. See <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</td>
+</tr>
+<tr>
 <td><code>ComparisonRule</code>, <code>ScalarComparisonRule</code>, <code>compare</code></td>
 <td>Numeric comparison primitives. <code>compare(actual, rule, value, tolerance)</code> is the underlying helper.</td>
 </tr>
@@ -2238,7 +2310,7 @@ tree internally:</p>
 </tr>
 <tr>
 <td><code>FollowTrajectoryAction</code></td>
-<td>Move a vehicle or pedestrian along a <code>Trajectory</code> (OpenSCENARIO <code>FollowTrajectoryAction</code>); <code>speed</code> paces the segments no time does; <code>held_vertex</code> names the vertex a waypoint condition is holding it at. See <a href="../trajectory/">Trajectories and Recorded-Scene Replay</a>.</td>
+<td>Move a vehicle or pedestrian along a <code>Trajectory</code> (OpenSCENARIO <code>FollowTrajectoryAction</code>); <code>speed</code> paces the segments no time does; <code>held_vertex</code> names the vertex a waypoint condition is holding it at; <code>appear_on_start=True</code> brings a hidden entity in on its first vertex, moving at <code>speed</code>, when a run starts. See <a href="../trajectory/">Trajectories and Recorded-Scene Replay</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -2267,6 +2339,10 @@ tree internally:</p>
 <tr>
 <td><code>RelativeLanePose</code></td>
 <td>A pose relative to an entity in lane coordinates (<code>ds</code>, <code>offset</code>, <code>d_lane</code>, <code>yaw</code>, <code>entity_ref</code>; OpenSCENARIO <code>RelativeLanePosition</code>), placed when the action starts.</td>
+</tr>
+<tr>
+<td><code>RouteLanePose</code>, <code>RouteOppositePose</code>, <code>RouteCrossingPose</code>, <code>RouteCrosswalkPose</code>, <code>RouteRoadsidePose</code></td>
+<td>Poses placed against the scenario's route (a <a href="../logical_scenarios/">logical scenario</a>) when the action starts: along the route and across lanes, on the opposite road, on a lanelet entering a route junction from the left / right / opposite, on a junction's crosswalk, at the roadside.</td>
 </tr>
 <tr>
 <td><code>TrajectoryTiming</code>, <code>ReferenceContext</code></td>
@@ -2533,6 +2609,53 @@ directly from Python:</p>
 </tr>
 </tbody>
 </table>
+<p>A scenario whose <code>sweep</code> holds a <code>route</code> search instead of <code>constraints</code> is
+expanded over the routes of the map that match it (<code>expand_route</code>, one case per
+match); see <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</p>
+<h2 id="logical-scenarios-autoware_carla_scenarioroute">Logical scenarios (<code>autoware_carla_scenario.route</code>)<a class="headerlink" href="#logical-scenarios-autoware_carla_scenarioroute" title="Permanent link">&para;</a></h2>
+<p>See <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parse_route_search</code> -&gt; <code>RouteSearchSpec</code></td>
+<td>Read a route search (<code>LaneSegmentSpec</code> / <code>JunctionSegmentSpec</code> segments, <code>Range</code> bounds, ego placement, <code>max_matches</code>, <code>seed</code>). No map needed.</td>
+</tr>
+<tr>
+<td><code>RouteMatch</code>, <code>RouteSegmentMatch</code></td>
+<td>A concrete route: lanelet ids, start / end s, each segment's route-s span and lanelets; <code>anchor_s(anchor)</code>, <code>to_config()</code> / <code>from_config()</code> (the <code>scenario.route.*</code> keys).</td>
+</tr>
+<tr>
+<td><code>parse_anchor</code></td>
+<td><code>start</code>, <code>end</code>, <code>segment:K:start|end</code>, <code>junction:K:entry|exit</code>.</td>
+</tr>
+<tr>
+<td><code>route.search.find_route_matches</code></td>
+<td>Every route of a Lanelet2 map matching a search, sorted (or shuffled by <code>seed</code>).</td>
+</tr>
+<tr>
+<td><code>route.frame.RouteFrame</code>, <code>ego_placement</code></td>
+<td>A match on its map: <code>locate(s)</code>, <code>point(s)</code>, <code>project(x, y)</code>; where the ego spawns and its goal is.</td>
+</tr>
+<tr>
+<td><code>route.positions.resolve_route_pose</code></td>
+<td>Place a route pose against a frame and the ego's route s.</td>
+</tr>
+<tr>
+<td><code>set_scenario_route</code>, <code>scenario_route</code>, <code>scenario_route_frame</code>, <code>clear_scenario_route</code></td>
+<td>The route the running scenario is about.</td>
+</tr>
+<tr>
+<td><code>route.geometry.MapFeatures</code></td>
+<td>The per-lanelet questions a search asks (lanes beside, opposite lane, junction members and approaches, crosswalks), cached.</td>
+</tr>
+</tbody>
+</table>
 <p>The plugin is registered with Hydra under
 <code>hydra/sweeper=lanelet_constraint</code>; see
 <code>src/hydra_plugins/autoware_scenario_sweeper/</code>.</p>
@@ -2583,7 +2706,11 @@ compiled and exported anywhere.</p>
 <tbody>
 <tr>
 <td><code>ScenarioDocument</code></td>
-<td>The Scenario IR: entities, actions, assertions, and a <code>ui</code> block that is presentation only.</td>
+<td>The Scenario IR: entities, actions, assertions, an optional <code>route</code> search (a <a href="../logical_scenarios/">logical scenario</a>), and a <code>ui</code> block that is presentation only.</td>
+</tr>
+<tr>
+<td><code>RouteSearch</code>, <code>LaneSegment</code>, <code>JunctionSegment</code>, <code>LengthRange</code>, <code>CountRange</code></td>
+<td>The route search as the IR states it; <code>RouteSearch.to_sweep_dict()</code> is what the route search reads.</td>
 </tr>
 <tr>
 <td><code>Entity</code>, <code>SpawnSpec</code>, <code>SValue</code>, <code>BindingRef</code>, <code>GoalSpec</code>, <code>EgoDriver</code></td>
@@ -2654,7 +2781,7 @@ compiled and exported anywhere.</p>
 </tr>
 <tr>
 <td><code>DeclarativeScenarioConfig</code></td>
-<td>Hydra config group: <code>document_path</code>, <code>timeout_seconds</code>, and <code>spawn_overrides</code> (the addressable per-entity spawn keys a sweep drives).</td>
+<td>Hydra config group: <code>document_path</code>, <code>timeout_seconds</code>, <code>spawn_overrides</code> (the addressable per-entity spawn keys a sweep drives), <code>param_overrides</code>, and <code>route</code> (a logical scenario's route match, as <code>scenario-expand</code> writes it).</td>
 </tr>
 </tbody>
 </table>
@@ -2824,7 +2951,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 15:25:51 UTC"><span class="timeago" datetime="2026-10-10T15:25:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 15:25:51 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
   </span>
 
     

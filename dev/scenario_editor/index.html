@@ -475,6 +475,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../coverage/" class="md-tabs__link">
         
   
@@ -1032,6 +1051,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-logical-scenario-the-route-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A logical scenario: the route search
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ego-who-drives-and-where-to" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1569,6 +1599,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../coverage/" class="md-nav__link">
         
   
@@ -1957,6 +2014,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-logical-scenario-the-route-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A logical scenario: the route search
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2667,6 +2735,18 @@ searched per scenario; the editor warns when a document asks for more.</p>
 <code>ego.spawn_s</code> keys. Other entities get a declared
 <code>scenario.spawn_overrides.&lt;entity&gt;</code> sub-tree so they are addressable by exactly
 the same plain <code>key=value</code> overrides.</p>
+<h2 id="a-logical-scenario-the-route-search">A logical scenario: the route search<a class="headerlink" href="#a-logical-scenario-the-route-search" title="Permanent link">&para;</a></h2>
+<p>A document may describe the ego's drive as a pattern of road instead of
+lanelets -- a <a href="../logical_scenarios/">logical scenario</a>. The scenario inspector's
+<strong>Route search</strong> section lists the pattern one segment per line ("lane 30-60 m,
+opposite lane: yes", "junction, turn left, traffic light: yes") with where the
+ego spawns and is sent, and edits it as the YAML the document stores (an empty
+box removes it; a malformed one is refused with the reason). A <em>Follow
+Trajectory</em> card's <strong>Path</strong> then offers <em>Along the scenario's route</em>, whose
+<strong>Route vertices</strong> are edited as text, one <code>kind key=value ...</code> per line, and
+the <strong>Route progress</strong> condition is offered for triggers, assertions and
+waypoint conditions. <strong>Appear at the first vertex when the action starts</strong>
+(<code>appear_on_start</code>) brings a hidden entity in.</p>
 <h2 id="ego-who-drives-and-where-to">Ego: who drives, and where to<a class="headerlink" href="#ego-who-drives-and-where-to" title="Permanent link">&para;</a></h2>
 <p>The ego's inspector opens with <strong>Driven by</strong> — the stack that drives it, exported
 as <code>ego.entity</code>:</p>
@@ -2993,7 +3073,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 14:37:29 UTC"><span class="timeago" datetime="2026-10-10T14:37:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 14:37:29 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
   </span>
 
     

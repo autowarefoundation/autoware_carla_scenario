@@ -16,7 +16,7 @@
         <link rel="prev" href="../traffic_backends/">
       
       
-        <link rel="next" href="../coverage/">
+        <link rel="next" href="../logical_scenarios/">
       
       
         
@@ -463,6 +463,25 @@
     
   
   Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
 
       </a>
     </li>
@@ -1336,6 +1355,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../coverage/" class="md-nav__link">
         
   
@@ -1856,6 +1902,16 @@ only) keeps the entity out of the world -- parked under the map with its physics
 off -- before its first vertex's time and after its last. That is what a road
 user that enters a recording late or leaves it early needs, since an entity
 cannot be spawned once a run has started.</p>
+<p><code>appear_on_start=True</code> (an extension, either mode) is the other way in: when a
+run of the action starts, the entity -- spawned hidden -- is put on the first
+vertex facing along the path, physics on, moving at <code>speed</code> (standing if
+unset), and then follows the trajectory. Triggered by a <code>RouteProgressCondition</code>
+it enters when the ego has come as far as it had when the road user was first
+seen; it cannot be combined with <code>hidden_outside_trajectory</code>.</p>
+<p>Vertices may also be placed against a logical scenario's <em>route</em>
+(<code>RouteLanePose</code>, <code>RouteOppositePose</code>, <code>RouteCrossingPose</code>,
+<code>RouteCrosswalkPose</code>, <code>RouteRoadsidePose</code>; <code>path_source: route</code> in a
+document) -- see <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</p>
 <h2 id="waypoint-conditions">Waypoint conditions<a class="headerlink" href="#waypoint-conditions" title="Permanent link">&para;</a></h2>
 <p><strong>Each vertex is departed on one condition</strong>, its <code>advance</code>: when it holds,
 the entity leaves the vertex for the next one. A vertex with none is passed
@@ -2126,7 +2182,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 15:25:51 UTC"><span class="timeago" datetime="2026-10-10T15:25:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 15:25:51 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
   </span>
 
     
