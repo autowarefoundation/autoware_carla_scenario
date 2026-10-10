@@ -21,7 +21,7 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 
 ## Installation
 
-Python 3.10 to 3.14 (`>=3.10,<3.15`, the interpreters CI tests), Linux x86_64. Install via the workspace root:
+Python 3.10 to 3.14 (`>=3.10,<3.15`, the interpreters CI tests), Linux x86_64 or aarch64 (CARLA's server itself is x86_64 only; see [installation](docs/installation.md#operating-system)). Install via the workspace root:
 
 ```bash
 # From the repository root

@@ -57,6 +57,35 @@ jobs:
     - name: Run the slow tests
       run: uv run pytest -v --tb=short -o addopts= -m slow
 
+  test-arm64:
+    # Linux aarch64, natively. Every runtime dependency ships an aarch64 wheel
+    # (typesafe-carla and its Codon toolchain since 0.4.0), so this is the same
+    # suite as on x86_64, fast and slow tests both -- a wheelhouse is built for
+    # the exporting machine's platform. The floor and the ceiling of the range
+    # stand in for the interpreters between them.
+    name: test (${{ matrix.python-version }}, arm64)
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup environment
+      uses: ./.github/actions/setup-env
+      with:
+        python-version: ${{ matrix.python-version }}
+        install-dev-deps: "true"
+        run-precommit: "false"
+
+    - name: Run tests
+      run: uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+
+    - name: Run the slow tests
+      run: uv run pytest -v --tb=short -o addopts= -m slow
+
   build:
     # The package builds to 'py3-none-any' with uv_build, so the artifact
     # does not depend on the interpreter. Building it in every matrix leg
@@ -157,8 +186,19 @@ jobs:
     # Proves the packing action end-to-end: scaffold a scenario package the way
     # a user would, pack it, and let the action's smoke test confirm that the
     # image really carries the prebuilt CARLA client and a registered scenario.
-    name: scenario image
-    runs-on: ubuntu-latest
+    #
+    # Once per architecture, each natively: the action builds for the runner's
+    # own platform. The x86_64 leg keeps the job's original name.
+    name: scenario image${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
 
     steps:
     - uses: actions/checkout@v4

@@ -80,10 +80,21 @@ inputs:
     description: "Use the GitHub Actions build cache"
     required: false
     default: "true"
+  platforms:
+    description: >
+      Comma-separated target platforms (e.g. linux/arm64). Empty builds for the
+      runner's own platform: linux/amd64 on an x86_64 runner, linux/arm64 on an
+      arm64 one (e.g. ubuntu-24.04-arm). typesafe-carla and its Codon
+      toolchain ship wheels for both. Naming a platform other than the runner's
+      cross-builds under QEMU, which has to be set up first
+      (docker/setup-qemu-action), and a multi-platform build cannot be loaded,
+      so it needs load=false and smoke-test=false.
+    required: false
+    default: ""
   cache-scope:
     description: >
-      Cache key namespace. Defaults to one scope per image, so several images
-      built in the same workflow do not evict each other. Give two images the
+      Cache key namespace. Defaults to one scope per image and platform, so
+      several images built in the same workflow do not evict each other. Give two images the
       same scope to share it instead: everything behind their scenario layer
       is the same build when the lock and framework are, client and
       dependency layers included.
@@ -116,6 +127,7 @@ runs:
         IMAGE: ${{ inputs.image }}
         TAGS_IN: ${{ inputs.tags }}
         CACHE_SCOPE_IN: ${{ inputs.cache-scope }}
+        PLATFORMS: ${{ inputs.platforms }}
         LOAD: ${{ inputs.load }}
         PUSH: ${{ inputs.push }}
         SMOKE_TEST: ${{ inputs.smoke-test }}
@@ -138,7 +150,10 @@ runs:
         scope="${CACHE_SCOPE_IN}"
         if [ -z "${scope}" ]; then
           # Anything but [A-Za-z0-9_-] is not usable in a cache scope.
-          scope="pack-scenario-$(printf '%s' "${IMAGE}" | tr -c 'A-Za-z0-9_-' '-')"
+          # Per platform as well: an amd64 and an arm64 build of one image
+          # share no layer, and in one scope each would evict the other.
+          platform="${PLATFORMS:-${RUNNER_ARCH}}"
+          scope="pack-scenario-$(printf '%s-%s' "${IMAGE}" "${platform}" | tr -c 'A-Za-z0-9_-' '-')"
         fi
 
         {
@@ -182,9 +197,9 @@ runs:
         context: ${{ runner.temp }}/scenario-image-context
         file: ${{ github.action_path }}/Dockerfile
         tags: ${{ steps.plan.outputs.tags }}
-        # typesafe-carla and its Codon toolchain ship x86_64 wheels only, so
-        # there is no second platform to build for.
-        platforms: linux/amd64
+        # Empty is the runner's own platform. typesafe-carla and its Codon
+        # toolchain ship x86_64 and aarch64 wheels, so either works.
+        platforms: ${{ inputs.platforms }}
         push: ${{ inputs.push }}
         load: ${{ inputs.load }}
         provenance: false

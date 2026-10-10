@@ -6,10 +6,15 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### Operating System
 
-- **Linux x86_64** (Ubuntu 22.04 is the reference; CI runs on
-  `ubuntu-latest`). Every dependency resolves to a wheel, the CARLA client's
-  CPython package included (see [CARLA client](#carla-client)), so nothing
-  is compiled on install.
+- **Linux x86_64 or aarch64** (Ubuntu 22.04 is the reference; CI runs on
+  `ubuntu-latest` and `ubuntu-24.04-arm`). Every runtime dependency resolves
+  to a wheel on both, the CARLA client's CPython package included (see
+  [CARLA client](#carla-client)), so nothing is compiled on install.
+- On aarch64 the framework, its CARLA client and the static check all run,
+  but CARLA itself does not: its server is built for x86_64 only. Run the
+  server on an x86_64 host and point the runner at it with
+  `server.host=<address>` (a server already listening is used rather than
+  launched); `scenario-setup` refuses to download the nightly there.
 
 ### Python Version
 
@@ -30,8 +35,8 @@ way is used through `CARLA_EXECUTABLE`.
 
 The Python client is
 [typesafe_carla](https://github.com/hakuturu583/typesafe_carla), a plain
-dependency of the package (`typesafe-carla>=0.3.0,<0.4`, from PyPI, Linux
-x86_64 only), imported as `import typesafe_carla.carla as carla`. It also
+dependency of the package (`typesafe-carla>=0.4.0,<0.5`, from PyPI, Linux
+x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
 `carla` wheels are not used, and no extra has to be requested.
@@ -139,7 +144,7 @@ requires a CARLA server: a live one, or one to launch (`scenario-setup`, or
 
 The package's runtime dependencies (declared in `pyproject.toml`):
 
-- `typesafe-carla>=0.3.0,<0.4` (Linux x86_64) — the CARLA client and its Codon
+- `typesafe-carla>=0.4.0,<0.5` (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
 - `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)

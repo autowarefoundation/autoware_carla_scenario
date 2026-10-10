@@ -1,7 +1,7 @@
 """The static check with Codon: correct scenarios compile, wrong ones are refused.
 
 Skipped where no Codon compiler is installed (typesafe-carla's toolchain, a
-dependency on Linux x86_64).
+dependency on Linux x86_64 and aarch64).
 """
 
 from __future__ import annotations

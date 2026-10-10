@@ -5,7 +5,10 @@ The framework downloads CARLA, launches it, serves the driving policy in its own
 process and runs the scenario: after the setup it is one command.
 
 You need Linux x86_64, [uv](https://docs.astral.sh/uv/), `git`, an NVIDIA GPU
-that runs CARLA UE5, and about 30 GB of free disk for the simulator.
+that runs CARLA UE5, and about 30 GB of free disk for the simulator. (The
+framework also runs on Linux aarch64, but CARLA's server does not: there, run
+CARLA on an x86_64 host and add `server.host=<address>` to the commands below;
+see [installation](installation.md#operating-system).)
 
 ## 1. Add the framework to your project
 

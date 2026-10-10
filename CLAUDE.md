@@ -224,8 +224,8 @@ If pre-commit hooks fail:
 
 - **simple-lanelet2** (>=1.1.2) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
-- **typesafe-carla** (>=0.3.0) - The CARLA client (CARLA UE5 only; Linux
-  x86_64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel
+- **typesafe-carla** (>=0.4.0) - The CARLA client (CARLA UE5 only; Linux
+  x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel
   carries the CPython package prebuilt (`typesafe_carla/carla/_prebuilt`, one
   build for every Python 3.10+), so installing it compiles nothing and needs
   no `cc`. Only where no matching prebuilt package exists (a source checkout
@@ -260,7 +260,7 @@ against the typed model in `typecheck/codon/`, not the Python package, so:
 - A scenario class declares the attributes it assigns on `self` at class level
   (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
 - Codon is the `typesafe-carla-toolchain` that `typesafe-carla` depends on (a
-  run-time dependency, Linux x86_64), found by typesafe_carla's own
+  run-time dependency, Linux x86_64 and aarch64), found by typesafe_carla's own
   lookup (`typecheck/toolchain.py` wraps `typesafe_carla.toolchain` and
   `typesafe_carla.paths`).
 

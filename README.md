@@ -55,7 +55,7 @@ uv sync --dev
 ```
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla)
-(CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64), imported as
+(CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64 and aarch64), imported as
 `import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython
 package prebuilt, so the sync above is the whole install; see
 [installation](autoware_carla_scenario/docs/installation.md) for the cases that

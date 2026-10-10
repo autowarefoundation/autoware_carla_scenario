@@ -266,9 +266,32 @@ explaining further:
 | `framework-path` | uv workspace root supplying the framework. Defaults to the action's own checkout, which is what makes the pinned ref the framework version. Its members are read from `[tool.uv.workspace] members`, globs included. |
 | `with-ffmpeg` | Installs ffmpeg for `CameraRecorder`. The only input that adds an apt layer. |
 | `slim` | Strips the virtualenv (see above). On by default. |
-| `cache-scope` | Cache key namespace. Defaults to one scope per image, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. |
+| `platforms` | Target platforms. Empty (the default) builds for the runner's own: `linux/amd64` on an x86_64 runner, `linux/arm64` on an arm64 one such as `ubuntu-24.04-arm` — see [Architectures](#architectures). |
+| `cache-scope` | Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. |
 
 Outputs: `image-ref`, `tags`, `digest` (pushed images only), `cache-scope`.
+
+### Architectures
+
+typesafe-carla and its Codon toolchain ship wheels for Linux x86_64 and
+aarch64, and so does every other native dependency of the image, so the action
+packs for either. Run it on an arm64 runner to get an arm64 image:
+
+```yaml
+jobs:
+  pack:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+```
+
+Each leg builds, loads and smoke-tests its own image natively. To publish one
+multi-architecture tag, push each leg under its own tag and join them with
+`docker buildx imagetools create`. Cross-building on one runner
+(`platforms: linux/amd64,linux/arm64` after `docker/setup-qemu-action`) also
+works, but emulated, and a multi-platform build cannot be loaded, so it needs
+`load: "false"` and `smoke-test: "false"`.
 
 ### The smoke test
 

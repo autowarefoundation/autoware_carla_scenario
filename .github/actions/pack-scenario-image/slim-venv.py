@@ -31,6 +31,7 @@ Usage: slim-venv.py <venv-dir>
 
 from __future__ import annotations
 
+import platform
 import shutil
 import struct
 import subprocess
@@ -48,8 +49,11 @@ PRUNE_SUFFIXES = (".pyi", ".pyx", ".pxd", ".a")
 #: that imports ``numpy.testing``, scipy among them.  The directory has no
 #: ``__init__.py``; the one file is enough for the import to resolve.
 PRUNE_KEEP = frozenset({"numpy/_core/tests/_natype.py"})
-#: x86-64 Linux maps segments at this granularity, whatever p_align claims.
-PAGE_SIZE = 4096
+#: The granularity the ELF loader maps segments at, whatever p_align claims.
+#: x86-64 Linux has 4 KiB pages. An aarch64 kernel may be built for 4, 16 or
+#: 64 KiB pages, and an image runs on whichever its host has, so hold aarch64
+#: objects to the largest: one aligned to 64 KiB loads under every page size.
+PAGE_SIZE = 65536 if platform.machine() in ("aarch64", "arm64") else 4096
 
 _PT_LOAD = 1
 
