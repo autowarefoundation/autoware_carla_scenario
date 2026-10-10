@@ -1,33 +1,44 @@
 """An ODD: the attributes it is described in, and the modules that bound it.
 
-The model follows ASAM OpenODD 1.0, and the names come from there:
+The model follows ASAM OpenODD 1.0 (its chapters 6 and 7), and so do the
+names:
 
-* An **attribute** is a leaf of the taxonomy that the world can be measured
-  on, such as the speed limit or the rain level.  Here it has a **probe**,
-  which reads its value from the world, and buckets, which make it a cover
+* An **attribute** is a taxonomy concept the world can be measured on, such
+  as the speed limit or the rain level.  Here it also has a **probe**, which
+  reads its value from the world, and **buckets**, which make it a cover
   item: the conditions it can be in, so coverage can say which of them the
   runs reached.
-* A **module** is a named rule.  It holds when its ``include`` conditions hold
-  and its ``exclude`` conditions do not.  A condition tests one attribute
+* A **module** is a named rule.  It holds when its ``INCLUDE`` section holds
+  and its ``EXCLUDE`` section does not (OpenODD: ``MODULE === INCLUDE AND
+  (NOT EXCLUDE)``).  A module has at most one include section (``AND`` or
+  ``OR``) and at most one exclude section.  A condition tests one attribute
   (``speed_limit.between(0, 60)``), groups others (:func:`all_of`,
   :func:`any_of`), or refers to another module or a label
-  (:func:`module_holds`).
-* The **ODD** holds when its ``root`` module holds.  With no root, it holds
-  when every active module does.
+  (:func:`module_holds`).  A label holds when any module declaring it holds.
+* An **inactive** module is ignored: every condition referring to it is
+  satisfied.
+* The **root** modules are the entry points.  They are the one given as
+  ``root``, otherwise every active module no other module refers to, either
+  by name or through a label it declares.  The ODD holds when its roots
+  hold.
 
-Evaluation is three-valued.  An attribute whose probe has nothing to say (no
-ego, a simulator without weather) is *unknown*, not false.  A tick on which
-the ODD is unknown is neither inside nor outside the ODD.
+Missing values follow OpenODD's *missing-value semantics*: a value the probe
+could not read (``None``) does not by itself put a situation outside the ODD.
+This is open-world semantics.  A condition that needs the value says so with
+:meth:`OddAttribute.is_unknown` (``x: unknown`` in YAML), for example in an
+exclude section.  Internally, conditions are evaluated three-valued.  A
+verdict that is unknown only because values are missing counts as inside, and
+is flagged as resting on missing values.
 
-OpenODD 1.0 leaves permissive and restrictive definitions unstandardised.
-This model is permissive: whatever no module rules out is inside the ODD.
+Modules follow ISO 34503's "default" definition mode, as OpenODD requires:
+whatever no module rules out is inside the ODD.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Union
 
 from ..coverage.items import CoverGroup, CoverItem, SamplingEvent, value_label
 
@@ -44,9 +55,15 @@ __all__ = [
 
 Probe = Callable[[Any], Any]
 
+#: What a module's or label's entry in the evaluation's truth table holds.
+#: ``INACTIVE`` marks an inactive module, which conditions referring to it
+#: take as satisfied.
+INACTIVE = "inactive"
+Truth = Mapping[str, Union[Optional[bool], str]]
+
 
 # ---------------------------------------------------------------------------
-# Three-valued logic
+# Three-valued logic, used internally
 # ---------------------------------------------------------------------------
 
 
@@ -135,15 +152,13 @@ class _Equal:
                 return float(value) == float(self.value)
             except (TypeError, ValueError):
                 return False
-        return bool(value == self.value) or value_label(value) == value_label(
-            self.value
-        )
+        return value_label(value) == value_label(self.value)
 
     def describe(self) -> str:
         return f"== {value_label(self.value)}"
 
 
-_Predicate = _InSet | _Interval | _Equal
+_Predicate = Union[_InSet, _Interval, _Equal]
 
 
 # ---------------------------------------------------------------------------
@@ -154,12 +169,11 @@ _Predicate = _InSet | _Interval | _Equal
 class OddCondition:
     """A condition of a module.  Build one from an :class:`OddAttribute`."""
 
-    def evaluate(
-        self, values: Mapping[str, Any], truth: Mapping[str, Optional[bool]]
-    ) -> Optional[bool]:
-        """Whether the condition holds for *values*, by attribute name.
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
+        """Whether the condition holds for *values* (by attribute name).
 
         *truth* holds the verdict on every module and label evaluated so far.
+        ``None`` is unknown: a value it needs is missing.
         """
         raise NotImplementedError
 
@@ -182,9 +196,7 @@ class _Leaf(OddCondition):
         self.attribute = attribute
         self.predicate = predicate
 
-    def evaluate(
-        self, values: Mapping[str, Any], truth: Mapping[str, Optional[bool]]
-    ) -> Optional[bool]:
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         value = values.get(self.attribute.name)
         if value is None:
             return None
@@ -216,6 +228,22 @@ class _Leaf(OddCondition):
             return False
 
 
+class _Missing(OddCondition):
+    """OpenODD's ``x: unknown``: true exactly when the value is missing."""
+
+    def __init__(self, attribute: "OddAttribute") -> None:
+        self.attribute = attribute
+
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
+        return values.get(self.attribute.name) is None
+
+    def describe(self) -> str:
+        return f"{self.attribute.name} is unknown"
+
+    def _attributes(self) -> list["OddAttribute"]:
+        return [self.attribute]
+
+
 class _Group(OddCondition):
     def __init__(self, op: str, children: Sequence[OddCondition]) -> None:
         if not children:
@@ -223,9 +251,7 @@ class _Group(OddCondition):
         self.op = op
         self.children = list(children)
 
-    def evaluate(
-        self, values: Mapping[str, Any], truth: Mapping[str, Optional[bool]]
-    ) -> Optional[bool]:
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         results = (c.evaluate(values, truth) for c in self.children)
         return _and(results) if self.op == "all" else _or(results)
 
@@ -245,10 +271,10 @@ class _ModuleRef(OddCondition):
         self.name = name
         self.holds = holds
 
-    def evaluate(
-        self, values: Mapping[str, Any], truth: Mapping[str, Optional[bool]]
-    ) -> Optional[bool]:
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         verdict = truth.get(self.name)
+        if verdict == INACTIVE:
+            return True  # OpenODD: a condition on an inactive module is satisfied
         if verdict is None:
             return None
         return verdict == self.holds
@@ -273,7 +299,8 @@ def any_of(conditions: Sequence[OddCondition]) -> OddCondition:
 def module_holds(name: str, holds: bool = True) -> OddCondition:
     """A condition on another module or a label: that it holds (or not).
 
-    A label holds when any module that declares it holds.
+    A label holds when any active module that declares it holds.  A condition
+    on an inactive module is satisfied whatever *holds* says.
     """
     if not name:
         raise ValueError("module_holds(): name must not be empty")
@@ -286,13 +313,13 @@ def module_holds(name: str, holds: bool = True) -> OddCondition:
 
 
 class OddAttribute:
-    """A measurable leaf of the taxonomy.
+    """A measurable taxonomy concept.
 
     Args:
-        name: Dotted taxonomy path, e.g. ``"scenery.speed_limit"``.  Its cover
-            item is named ``"odd." + name``.
+        name: Its name, e.g. ``"scenery.speed_limit"``.  Its cover item is
+            named ``"odd." + name``.
         probe: Reads the value from the world on every tick.  ``None`` means
-            unknown.
+            the value is missing.
         unit: The unit the probe returns.  OpenODD conditions written in
             another unit are converted into it.
         range: With *every*, equal buckets (see
@@ -344,14 +371,14 @@ class OddAttribute:
     # -- conditions ------------------------------------------------------
 
     def is_in(self, values: Iterable[Any]) -> OddCondition:
-        """The value is one of *values* (an OpenODD list of literals)."""
+        """The value is one of *values* (an OpenODD list expression)."""
         labels = frozenset(value_label(v) for v in values)
         if not labels:
             raise ValueError(f"{self.name}.is_in(): no values")
         return _Leaf(self, _InSet(labels))
 
     def equals(self, value: Any) -> OddCondition:
-        """The value equals *value*."""
+        """The value equals *value* (an OpenODD equal expression)."""
         return _Leaf(self, _Equal(value))
 
     def between(self, low: float, high: float) -> OddCondition:
@@ -376,6 +403,14 @@ class OddAttribute:
         """``value < bound``."""
         return _Leaf(self, _Interval(high=float(bound), include_high=False))
 
+    def is_unknown(self) -> OddCondition:
+        """The value is missing (OpenODD's ``unknown`` keyword).
+
+        In an exclude section, this makes the value required.  Without it, a
+        missing value does not put a situation outside the ODD.
+        """
+        return _Missing(self)
+
     def __repr__(self) -> str:
         return f"OddAttribute({self.name!r})"
 
@@ -386,7 +421,7 @@ class OddAttribute:
 
 
 class OddModule:
-    """A named rule: it holds when its includes hold and its excludes do not.
+    """A named rule: it holds when its include section holds and its exclude does not.
 
     Args:
         name: Unique within the ODD.
@@ -394,10 +429,14 @@ class OddModule:
         include_or: One of these must hold (``INCLUDE_OR``).
         exclude_and: The module fails when all of these hold (``EXCLUDE_AND``).
         exclude_or: The module fails when one of these holds (``EXCLUDE_OR``).
-        labels: Labels the module declares; a label holds when any module
-            declaring it holds.
-        active: An inactive module is evaluated, but the ODD does not need it.
+        labels: Labels the module declares.  A label holds when any active
+            module declaring it holds.
+        active: An inactive module is ignored: conditions referring to it are
+            satisfied.
         text: A description for the report (OpenODD's ``TITLE``).
+
+    As in OpenODD, a module has at most one include section and at most one
+    exclude section.
     """
 
     def __init__(
@@ -414,6 +453,14 @@ class OddModule:
     ) -> None:
         if not name:
             raise ValueError("OddModule: name must not be empty")
+        if include_and and include_or:
+            raise ValueError(
+                f"OddModule({name}): one include section, INCLUDE_AND or INCLUDE_OR"
+            )
+        if exclude_and and exclude_or:
+            raise ValueError(
+                f"OddModule({name}): one exclude section, EXCLUDE_AND or EXCLUDE_OR"
+            )
         self.name = name
         self.include_and = list(include_and or ())
         self.include_or = list(include_or or ())
@@ -431,26 +478,16 @@ class OddModule:
             *self.exclude_or,
         ]
 
-    def evaluate(
-        self, values: Mapping[str, Any], truth: Mapping[str, Optional[bool]]
-    ) -> Optional[bool]:
+    def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         """Whether the module holds for *values*, given *truth* of the others."""
-        include = _and(
-            [
-                _and(c.evaluate(values, truth) for c in self.include_and),
-                _or(c.evaluate(values, truth) for c in self.include_or)
-                if self.include_or
-                else True,
-            ]
-        )
-        exclude = _or(
-            [
-                _and(c.evaluate(values, truth) for c in self.exclude_and)
-                if self.exclude_and
-                else False,
-                _or(c.evaluate(values, truth) for c in self.exclude_or),
-            ]
-        )
+        if self.include_or:
+            include = _or(c.evaluate(values, truth) for c in self.include_or)
+        else:
+            include = _and(c.evaluate(values, truth) for c in self.include_and)
+        if self.exclude_and:
+            exclude = _and(c.evaluate(values, truth) for c in self.exclude_and)
+        else:
+            exclude = _or(c.evaluate(values, truth) for c in self.exclude_or)
         return _and([include, _not(exclude)])
 
     def describe(self) -> dict[str, Any]:
@@ -477,10 +514,14 @@ class OddModule:
 class OddVerdict:
     """The ODD's verdict on one set of values."""
 
-    #: ``True`` inside, ``False`` outside, ``None`` unknown.
-    inside: Optional[bool]
-    #: Every module's verdict, by name.
-    modules: dict[str, Optional[bool]] = field(default_factory=dict)
+    #: Whether the values are inside the ODD (missing values do not put them out).
+    inside: bool
+    #: Inside only because values were missing: the known values alone could
+    #: not settle it.
+    assumed: bool = False
+    #: Every module's verdict, by name: ``True``, ``False``, ``None`` when it
+    #: rests on missing values, or ``"inactive"``.
+    modules: dict[str, Union[Optional[bool], str]] = field(default_factory=dict)
 
 
 class OddDefinition:
@@ -489,9 +530,9 @@ class OddDefinition:
     Args:
         name: The ODD's name, written to coverage files and reports.
         attributes: The attributes, measured on every tick.
-        modules: The rules.  With none, every condition is inside the ODD.
-        root: The module whose verdict is the ODD's.  ``None`` requires every
-            active module to hold.
+        modules: The rules.  With none, every situation is inside the ODD.
+        root: The module whose verdict is the ODD's.  ``None`` takes every
+            active module that no other module refers to.
         text: A description for the report.
     """
 
@@ -510,7 +551,6 @@ class OddDefinition:
         self.text = text
         self.attributes = list(attributes)
         self.modules = list(modules or ())
-        self.root = root
 
         names = [a.name for a in self.attributes]
         duplicates = sorted({n for n in names if names.count(n) > 1})
@@ -526,9 +566,10 @@ class OddDefinition:
         self._label_modules: dict[str, list[str]] = {}
         for m in self.modules:
             for label in m.labels:
-                if label in self._by_module:
+                if label in self._by_module or label in names:
                     raise ValueError(
-                        f"ODD {name}: label {label!r} is also a module's name"
+                        f"ODD {name}: label {label!r} is also a module's or an "
+                        "attribute's name"
                     )
                 self._label_modules.setdefault(label, []).append(m.name)
         if root is not None and root not in self._by_module:
@@ -550,12 +591,13 @@ class OddDefinition:
                             "which is neither a module nor a label"
                         )
         self._order = self._evaluation_order()
+        self.roots = [root] if root is not None else self._unreferenced()
         self._outside = self._outside_buckets()
 
-    # -- evaluation ------------------------------------------------------
+    # -- structure -------------------------------------------------------
 
     def _depends_on(self, module: OddModule) -> set[str]:
-        """The modules *module* needs evaluated first."""
+        """The modules *module* refers to, by name or through a label."""
         out: set[str] = set()
         for condition in module._conditions():
             for ref in condition._references():
@@ -585,21 +627,46 @@ class OddDefinition:
             visit(m.name, [])
         return order
 
+    def _unreferenced(self) -> list[str]:
+        """Active modules no other module refers to: the roots, by default."""
+        referenced: set[str] = set()
+        for module in self.modules:
+            referenced |= self._depends_on(module)
+        return [m.name for m in self.modules if m.active and m.name not in referenced]
+
+    def _use_roots(self, roots: Sequence[str]) -> None:
+        """Make *roots* the entry points (an OpenODD document's ``ODD`` modules)."""
+        unknown = [r for r in roots if r not in self._by_module]
+        if unknown:
+            raise ValueError(f"ODD {self.name}: no root module {unknown}")
+        self.roots = list(roots)
+        self._outside = self._outside_buckets()
+
+    # -- evaluation ------------------------------------------------------
+
     def evaluate(self, values: Mapping[str, Any]) -> OddVerdict:
-        """The ODD's verdict on *values*, by attribute name (``None``: unknown)."""
-        truth: dict[str, Optional[bool]] = {}
+        """The ODD's verdict on *values*, by attribute name (``None``: missing)."""
+        truth: dict[str, Union[Optional[bool], str]] = {}
+        # The order is topological over labels too (a reference to a label
+        # depends on every module declaring it), so each label is complete
+        # before any module that refers to it is evaluated.
         for module in self._order:
-            truth[module.name] = module.evaluate(values, truth)
+            truth[module.name] = (
+                module.evaluate(values, truth) if module.active else INACTIVE
+            )
             for label in module.labels:
-                truth[label] = _or(
-                    truth.get(m) for m in self._label_modules[label] if m in truth
-                )
-        modules = {m.name: truth[m.name] for m in self.modules}
-        if self.root is not None:
-            inside = truth[self.root]
-        else:
-            inside = _and(truth[m.name] for m in self.modules if m.active)
-        return OddVerdict(inside=inside, modules=modules)
+                verdicts = [
+                    truth[m]
+                    for m in self._label_modules[label]
+                    if m in truth and truth[m] != INACTIVE
+                ]
+                truth[label] = _or(verdicts) if verdicts else INACTIVE  # type: ignore[arg-type]
+        verdict = _and(truth[r] for r in self.roots)  # type: ignore[misc]
+        return OddVerdict(
+            inside=verdict is not False,
+            assumed=verdict is None,
+            modules={m.name: truth[m.name] for m in self.modules},
+        )
 
     def sample(self, world: Any) -> dict[str, Any]:
         """Every attribute's value in *world*; a probe that raises gives ``None``."""
@@ -613,65 +680,84 @@ class OddDefinition:
 
     # -- buckets inside and outside the ODD --------------------------------
 
-    def _required_modules(self) -> list[OddModule]:
-        """The modules that must hold for the ODD to hold."""
-        if self.root is None:
-            return [m for m in self.modules if m.active]
-        required: list[OddModule] = []
-        pending = [self.root]
+    def _members(self, name: str) -> list[str]:
+        """The modules a module or label name stands for."""
+        return self._label_modules.get(name, [name] if name in self._by_module else [])
+
+    def _requirements(self) -> tuple[list[_Leaf], list[_Leaf]]:
+        """Single-attribute conditions that must hold, and that must not.
+
+        Walks from the roots through module references: a module the ODD
+        needs to hold contributes its include-AND leaves (and a lone
+        include-OR leaf) as conditions that must hold, and its exclude leaves
+        as ones that must not.  A module it needs *not* to hold contributes
+        the leaves that alone make it hold.
+        """
+        must_hold: list[_Leaf] = []
+        must_not: list[_Leaf] = []
+        seen: set[tuple[str, bool]] = set()
+        pending = [(r, True) for r in self.roots]
         while pending:
-            name = pending.pop()
-            module = self._by_module[name]
-            if module in required:
+            name, holds = pending.pop()
+            if (name, holds) in seen:
                 continue
-            required.append(module)
-            for condition in module.include_and:
-                if isinstance(condition, _ModuleRef) and condition.holds:
-                    if condition.name in self._by_module:
-                        pending.append(condition.name)
-                    elif len(self._label_modules.get(condition.name, ())) == 1:
-                        # A label only one module declares holds when it does.
-                        pending.append(self._label_modules[condition.name][0])
-        return required
+            seen.add((name, holds))
+            module = self._by_module[name]
+            if not module.active:
+                continue
+            include = module.include_and or module.include_or
+            single_include = len(module.include_or) == 1 or bool(module.include_and)
+            if holds:
+                if single_include:
+                    must_hold += [c for c in include if isinstance(c, _Leaf)]
+                excludes = module.exclude_or or (
+                    module.exclude_and if len(module.exclude_and) == 1 else []
+                )
+                must_not += [c for c in excludes if isinstance(c, _Leaf)]
+                for c in module.include_and:
+                    if isinstance(c, _ModuleRef):
+                        pending += [(m, c.holds) for m in self._members(c.name)]
+                for c in module.exclude_or:
+                    if isinstance(c, _ModuleRef):
+                        pending += [(m, not c.holds) for m in self._members(c.name)]
+            elif not module.exclude_and and not module.exclude_or:
+                # Without an exclude section the module holds whenever its
+                # include section does, so what makes that hold must not.
+                if module.include_or:
+                    must_not += [c for c in module.include_or if isinstance(c, _Leaf)]
+                elif len(module.include_and) == 1 and isinstance(
+                    module.include_and[0], _Leaf
+                ):
+                    must_not.append(module.include_and[0])
+        return must_hold, must_not
 
     def _outside_buckets(self) -> dict[str, list[str]]:
         """Attribute name -> the labels of its buckets the ODD rules out.
 
         A bucket is ruled out when every value in it fails a condition that
-        must hold, or meets one that must not.  Only conditions on a single
-        attribute are read: one that ties attributes together (``any_of``
-        across two of them, another module's verdict) can rule out a
-        combination, never a bucket on its own, so it leaves the bucket in.
+        must hold, or meets one that must not (:meth:`_requirements`).  A
+        condition that ties attributes together can rule out a combination,
+        never a bucket on its own, so it leaves the bucket in.
         """
-        must_hold: list[_Leaf] = []
-        must_not_hold: list[_Leaf] = []
-        for module in self._required_modules():
-            must_hold += [c for c in module.include_and if isinstance(c, _Leaf)]
-            if len(module.include_or) == 1 and isinstance(module.include_or[0], _Leaf):
-                must_hold.append(module.include_or[0])
-            must_not_hold += [c for c in module.exclude_or if isinstance(c, _Leaf)]
-            if len(module.exclude_and) == 1 and isinstance(
-                module.exclude_and[0], _Leaf
-            ):
-                must_not_hold.append(module.exclude_and[0])
-
+        must_hold, must_not = self._requirements()
         outside: dict[str, list[str]] = {}
         for attribute in self.attributes:
             item = attribute.item
             if item is None:
                 continue
-            labels = []
-            for index, label in enumerate(item.labels):
-                ruled_out = any(
+            labels = [
+                label
+                for index, label in enumerate(item.labels)
+                if any(
                     leaf.attribute is attribute
                     and not leaf.contains_bucket(item, index)
                     for leaf in must_hold
-                ) or any(
-                    leaf.attribute is attribute and leaf.contains_bucket(item, index)
-                    for leaf in must_not_hold
                 )
-                if ruled_out:
-                    labels.append(label)
+                or any(
+                    leaf.attribute is attribute and leaf.contains_bucket(item, index)
+                    for leaf in must_not
+                )
+            ]
             if labels:
                 outside[attribute.name] = labels
         return outside
@@ -698,7 +784,7 @@ class OddDefinition:
         return {
             "name": self.name,
             "text": self.text,
-            "root": self.root,
+            "roots": list(self.roots),
             "modules": [m.describe() for m in self.modules],
             "unmeasured": self.unmeasured(),
         }

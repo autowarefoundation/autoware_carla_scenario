@@ -1,64 +1,69 @@
-"""Read an ODD written in ASAM OpenODD YAML.
+"""Read an ODD written in ASAM OpenODD 1.0 YAML (chapter 10 of the standard).
 
 The reader builds the same :class:`OddDefinition` a Python ODD builds, so a
 YAML ODD is measured, reported and judged exactly like one written in code.
 
+An OpenODD document holds what an ODD *is*.  How this framework *measures*
+it lives in a separate **binding file** (:func:`load_odd_binding`): which
+probe reads each concept, and its buckets.  The standard does not allow
+constructs of its own in an OpenODD document, so they are kept apart.
+
 What is read
 ============
 
-``TAXONOMY``: the attribute tree.  A leaf is one of:
+``IMPORT``: other OpenODD files, relative to the importing one (a cycle is
+refused).
 
-* ``float <unit type>`` / ``int <unit type>``: a number;
+``TAXONOMY``: the concepts.  Nested mappings are records and containers.  A
+leaf is one of:
+
+* ``<primitive> <unit type>``, with primitive ``integer``, ``long``,
+  ``float`` or ``double``: a numeric concept;
 * ``boolean``;
-* ``string``;
-* a list: an enumeration of literals;
-* a mapping of literals, each to the conditions under which it holds (a
-  derived enumeration, e.g. a fog severity defined by visibility ranges).  Its
-  value is the first literal whose conditions all hold.
+* a list: a categorical;
+* a mapping of literals to expressions on other concepts: a categorical
+  defined by them (``rainfall_level: {no_rain: {rainfall_rate: "< 0.1
+  mm/h"}, ...}``).  Its value is the literal whose expressions hold;
+* the id of a categorical: a categorical with the same literals.
 
-A string that names another record (``"vehicle/pose"``) is a reference, which
-this reader does not follow.
+A reference to a record (a user-defined type), and a ``shapefile``, are not
+followed.
 
-``MODULES``: named rules.  Each has ``INCLUDE_AND`` / ``INCLUDE_OR`` /
-``EXCLUDE_AND`` / ``EXCLUDE_OR`` sections, ``TITLE``, ``DESCRIPTION``,
-``LABEL`` / ``LABELS`` and ``ACTIVE``.  A section maps a taxonomy path to an
-expression, or a module or label name to ``true`` / ``false``, or ``AND`` /
-``OR`` to a nested section.  The expressions are:
+``MODULES`` and ``ODD``: the modules.  Those under ``ODD`` are the root
+candidates, the entry points.  When there is no ``ODD`` section, every module
+no other module refers to is a root.  The ODD holds when all its roots hold.
 
-* ``[low .. high] unit``: inclusive range;
-* ``>= x unit``, ``> x``, ``<= x``, ``< x``, ``== x``;
-* a list of literals: one of them;
-* a bare literal, number or boolean: equal to it.
+A module has the following keys:
 
-Two sections extend OpenODD with what measuring needs:
+* ``TITLE`` and ``DESCRIPTION``;
+* ``ACTIVE``;
+* ``LABEL`` / ``LABELS`` (a name or a list of names);
+* ``METADATA`` (ignored);
+* at most one of ``INCLUDE_AND`` / ``INCLUDE_OR``;
+* at most one of ``EXCLUDE_AND`` / ``EXCLUDE_OR``.
 
-``COVERAGE`` binds a taxonomy path to a probe and gives its buckets::
+A section may nest one level of the other operator (``AND`` in an ``OR``
+section, ``OR`` in an ``AND`` one).
 
-    COVERAGE:
-      road.speed_limit:
-        probe: speed_limit_kph   # a built-in probe, or package.module:function
-        unit: km/h               # the probe's unit (built-in probes know theirs)
-        buckets: [0, 30, 60, 90] # or range: [0, 120] + every: 10, or values: [...]
+A section maps either a concept to an expression, or a module or label to
+``true`` / ``false``.  Concepts are named by their id (``rainfall_rate``),
+or with as much of their path as makes them unique
+(``wind.speed``).  The expressions are:
 
-A numeric attribute with a probe but no buckets gets buckets at the
-thresholds the modules test it against.  Then every side of every boundary
-the ODD draws is a coverage target.  An attribute with no probe is monitored
-as unknown.  It never decides a tick, and the report lists it as
-unmeasured.
+* ``value``: equal, for example ``low``, ``3``, ``true``, ``"0 mm/h"``;
+* ``[a, b]``: one of the literals;
+* ``"> x unit"``, ``">="``, ``"<"``, ``"<="``: a bound;
+* ``"[low .. high] unit"`` (or ``[low, high]``): an inclusive range;
+* ``"< heavy_rain"`` / ``"[light .. heavy]"`` on a categorical whose
+  literals are defined by ranges: a bound or range in their order;
+* ``unknown`` (or ``none``, ``null``, ``undefined``): the value is missing.
 
-``ODD`` names the ODD and its root module::
+A number's unit is checked against the concept's unit type and converted into
+the probe's unit.  Units come from :mod:`.units`, plus those a document adds
+with ``conversion:``.
 
-    ODD:
-      name: urban_l4
-      root: root_odd
-      text: Urban driving up to 60 km/h
-
-Without a ``root``, the ODD holds when every active module does.
-
-OpenODD 1.0's normative YAML mapping was not available while this was
-written.  The format follows the public examples of the standard's YAML
-mapping.  Comparisons are strict: ``>`` excludes its bound and ``>=``
-includes it.
+Not read: ``COD`` / ``OD`` records, numeric terms (``1.75*ego_width``),
+``$`` parameters and condition-level metadata.
 """
 
 from __future__ import annotations
@@ -67,8 +72,10 @@ import importlib
 import logging
 import math
 import re
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Union
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 import yaml
 
@@ -82,11 +89,13 @@ from .model import (
     any_of,
     module_holds,
 )
-from .units import UnitError, convert, normalize_unit
+from .units import Units, UnitError, normalize_unit
 
 __all__ = [
     "BUILTIN_PROBES",
     "OpenOddError",
+    "is_binding_file",
+    "load_odd_binding",
     "load_openodd",
     "register_odd_probe",
 ]
@@ -118,7 +127,7 @@ _PROBES: dict[str, tuple[Callable[[Any], Any], str]] = dict(BUILTIN_PROBES)
 
 
 def register_odd_probe(name: str, probe: Callable[[Any], Any], unit: str = "") -> None:
-    """Make *probe* (returning values in *unit*) bindable by *name* in ``COVERAGE``."""
+    """Make *probe* (returning values in *unit*) bindable by *name*."""
     if not name:
         raise ValueError("register_odd_probe(): name must not be empty")
     _PROBES[name] = (probe, unit)
@@ -139,200 +148,421 @@ def _probe(spec: str) -> tuple[Callable[[Any], Any], str]:
     )
 
 
-def _unknown(world: Any) -> None:
-    """The probe of an attribute nothing measures: always unknown."""
+def _missing(world: Any) -> None:
+    """The probe of a concept nothing measures: always missing."""
     return None
 
 
 # ---------------------------------------------------------------------------
-# Expressions
+# Documents
 # ---------------------------------------------------------------------------
 
+_KNOWN_KEYS = {"IMPORT", "TAXONOMY", "MODULES", "ODD", "COD", "OD", "conversion"}
+
+
+@dataclass
+class _Documents:
+    taxonomy: dict[str, Any] = field(default_factory=dict)
+    modules: dict[str, Any] = field(default_factory=dict)
+    roots: list[str] = field(default_factory=list)
+    conversion: dict[str, Any] = field(default_factory=dict)
+    first_stem: Optional[str] = None
+
+
+def _merge(into: dict[str, Any], doc: Mapping[str, Any], where: str) -> None:
+    for key, value in doc.items():
+        if isinstance(value, Mapping) and isinstance(into.get(key), dict):
+            _merge(into[key], value, f"{where}.{key}")
+        elif key in into and into[key] != value:
+            raise OpenOddError(f"{where}.{key} is defined twice, differently")
+        else:
+            into[key] = dict(value) if isinstance(value, Mapping) else value
+
+
+def _read(source: Union[str, Path], docs: _Documents, stack: tuple[Path, ...]) -> None:
+    if isinstance(source, Path) or (
+        "\n" not in source and source.strip().endswith((".yaml", ".yml"))
+    ):
+        path = Path(source).resolve()
+        if path in stack:
+            chain = " -> ".join(p.name for p in (*stack, path))
+            raise OpenOddError(f"IMPORT cycle: {chain}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise OpenOddError(f"cannot read {source}: {exc}") from exc
+        base, stack = path.parent, (*stack, path)
+        docs.first_stem = docs.first_stem or path.stem
+    else:
+        text, base = str(source), Path.cwd()
+    try:
+        loaded = [d for d in yaml.safe_load_all(text) if d is not None]
+    except yaml.YAMLError as exc:
+        raise OpenOddError(f"not YAML: {exc}") from exc
+    for doc in loaded:
+        if not isinstance(doc, Mapping):
+            raise OpenOddError("an OpenODD document must be a mapping")
+        unknown = sorted(str(k) for k in doc if k not in _KNOWN_KEYS)
+        if unknown:
+            hint = (
+                "; probes and buckets belong in a binding file (load_odd_binding)"
+                if "COVERAGE" in unknown
+                else ""
+            )
+            raise OpenOddError(f"not OpenODD YAML keys: {unknown}{hint}")
+        for imported in _as_list(doc.get("IMPORT")):
+            _read(base / str(imported), docs, stack)
+        _merge(docs.taxonomy, doc.get("TAXONOMY") or {}, "TAXONOMY")
+        _merge(docs.conversion, doc.get("conversion") or {}, "conversion")
+        for section in ("MODULES", "ODD"):
+            for name, mdef in (doc.get(section) or {}).items():
+                name = str(name)
+                if name in docs.modules:
+                    raise OpenOddError(f"module {name} is defined twice")
+                docs.modules[name] = mdef
+                if section == "ODD":
+                    docs.roots.append(name)
+        if doc.get("COD") or doc.get("OD"):
+            logger.info("OpenODD: COD/OD records are not read")
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return list(value) if isinstance(value, (list, tuple)) else [value]
+
+
+# ---------------------------------------------------------------------------
+# Taxonomy
+# ---------------------------------------------------------------------------
+
+_PRIMITIVES = {"integer", "long", "float", "double"}
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
-_RANGE_RE = re.compile(
-    rf"^\[\s*(?P<low>{_NUMBER})\s*\.\.\s*(?P<high>{_NUMBER})\s*\]\s*(?P<unit>\S+)?$"
-)
-_COMPARE_RE = re.compile(
-    rf"^(?P<op><=|>=|==|=|<|>)\s*(?P<value>{_NUMBER})\s*(?P<unit>\S+)?$"
-)
+_UNKNOWN = {"unknown", "none", "null", "undefined"}
 
 
-class _Leaf:
-    """A taxonomy leaf being built: what it is, and what tests it."""
+@dataclass
+class _Concept:
+    path: tuple[str, ...]
+    kind: str  # "number", "boolean", "categorical" ("reference" until resolved)
+    unit_type: str = ""
+    literals: list[str] = field(default_factory=list)
+    #: literal -> the expressions defining it (a derived categorical)
+    definitions: dict[str, Mapping[str, Any]] = field(default_factory=dict)
+    attribute: Optional[OddAttribute] = None
+    thresholds: set[float] = field(default_factory=set)
 
-    def __init__(self, path: str, kind: str, unit_type: str = "") -> None:
-        self.path = path
-        self.kind = kind  # "number", "boolean", "string", "enum", "derived"
-        self.unit_type = unit_type
-        self.literals: list[str] = []
-        self.derived: dict[str, Mapping[str, Any]] = {}
-        self.thresholds: set[float] = set()
-        self.attribute: Optional[OddAttribute] = None
+    @property
+    def name(self) -> str:
+        return ".".join(self.path)
+
+    @property
+    def ordered(self) -> bool:
+        """Literals defined by ranges are ordered (in the order written)."""
+        return bool(self.definitions)
 
 
-def _flatten(node: Any, prefix: tuple[str, ...], out: dict[str, _Leaf]) -> None:
+def _literal(key: Any) -> str:
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    return str(key)
+
+
+def _is_type_spec(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    return value.strip().split()[0] in _PRIMITIVES | {"boolean", "shapefile"}
+
+
+def _is_expression(value: Any) -> bool:
+    """A value a literal's definition may map a concept to."""
+    return not isinstance(value, Mapping) and not _is_type_spec(value)
+
+
+def _keys(node: Any, out: Counter[str]) -> Counter[str]:
+    if isinstance(node, Mapping):
+        for key, child in node.items():
+            out[str(key)] += 1
+            _keys(child, out)
+    return out
+
+
+def _defines_literals(node: Mapping[str, Any], ids: Counter[str]) -> bool:
+    """Whether *node* maps literals to expressions on concepts defined elsewhere.
+
+    A record whose fields are all categoricals looks the same, except that
+    its keys name its own fields: a literal's expressions name concepts
+    outside it.
+    """
+    own = _keys(node, Counter())
+    return bool(node) and all(
+        isinstance(v, Mapping)
+        and v
+        and all(ids[str(k)] > own[str(k)] for k in v)
+        and all(_is_expression(x) for x in v.values())
+        for v in node.values()
+    )
+
+
+def _flatten(
+    node: Any, prefix: tuple[str, ...], ids: Counter[str], out: dict[str, _Concept]
+) -> None:
+    path = ".".join(prefix)
     if isinstance(node, list):
-        leaf = _Leaf(".".join(prefix), "enum")
-        leaf.literals = [str(v) for v in node]
-        out[leaf.path] = leaf
+        out[path] = _Concept(
+            prefix, "categorical", literals=[_literal(v) for v in node]
+        )
         return
     if isinstance(node, Mapping):
-        if node and all(
-            isinstance(v, Mapping) and v and all("." in str(k) for k in v)
-            for v in node.values()
-        ):
-            leaf = _Leaf(".".join(prefix), "derived")
-            leaf.literals = [str(k) for k in node]
-            leaf.derived = {str(k): v for k, v in node.items()}
-            out[leaf.path] = leaf
+        if _defines_literals(node, ids):
+            concept = _Concept(prefix, "categorical")
+            concept.literals = [_literal(k) for k in node]
+            concept.definitions = {_literal(k): v for k, v in node.items()}
+            out[path] = concept
             return
         for key, child in node.items():
-            _flatten(child, (*prefix, str(key)), out)
+            _flatten(child, (*prefix, str(key)), ids, out)
         return
-    if node is None:
-        return
-    spec = str(node).strip().split()
-    head = spec[0].lower() if spec else ""
-    path = ".".join(prefix)
-    if head in ("float", "double", "int", "integer"):
-        out[path] = _Leaf(path, "number", spec[1] if len(spec) > 1 else "")
-    elif head in ("bool", "boolean"):
-        out[path] = _Leaf(path, "boolean")
-    elif head in ("string", "str"):
-        out[path] = _Leaf(path, "string")
-    elif re.match(r"^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z0-9_]+)+$", str(node).strip()):
-        logger.info("OpenODD: %s refers to %s; references are not followed", path, node)
+    if not isinstance(node, str):
+        raise OpenOddError(f"TAXONOMY {path}: cannot read {node!r}")
+    tokens = node.strip().split()
+    head = tokens[0] if tokens else ""
+    if head in _PRIMITIVES:
+        out[path] = _Concept(prefix, "number", unit_type=" ".join(tokens[1:]))
+    elif head == "boolean" and len(tokens) == 1:
+        out[path] = _Concept(prefix, "boolean")
+    elif head == "shapefile":
+        logger.info("OpenODD: %s is a shapefile; not read", path)
+    elif len(tokens) == 1 and _IDENTIFIER.match(head):
+        out[path] = _Concept(prefix, "reference", unit_type=head)
     else:
-        raise OpenOddError(f"TAXONOMY {path}: cannot read the type {node!r}")
+        raise OpenOddError(
+            f"TAXONOMY {path}: cannot read the type {node!r} (OpenODD types: "
+            "boolean, integer, long, float, double, a list, or a type's id)"
+        )
 
 
 # ---------------------------------------------------------------------------
 # The reader
 # ---------------------------------------------------------------------------
 
+_RANGE_RE = re.compile(
+    r"^\[\s*(?P<low>[^\],]+?)\s*(?:\.\.|,)\s*(?P<high>[^\]]+?)\s*\]\s*(?P<unit>\S+)?$"
+)
+_BOUND_RE = re.compile(r"^(?P<op><=|>=|<|>)\s*(?P<rest>.+)$")
+_QUANTITY_RE = re.compile(rf"^(?P<value>{_NUMBER})\s*(?P<unit>\S+)?$")
+
 
 class _Reader:
-    def __init__(self, doc: Mapping[str, Any], name: str) -> None:
-        self.doc = doc
-        self.leaves: dict[str, _Leaf] = {}
-        _flatten(doc.get("TAXONOMY") or {}, (), self.leaves)
-        self.coverage: Mapping[str, Any] = doc.get("COVERAGE") or {}
-        self.modules_doc: Mapping[str, Any] = doc.get("MODULES") or {}
-        meta = doc.get("ODD") or {}
-        self.name = str(meta.get("name") or name)
-        self.root = meta.get("root")
-        self.text = str(meta.get("text", ""))
-        self.module_names = {str(k) for k in self.modules_doc}
+    def __init__(
+        self,
+        docs: _Documents,
+        bindings: Mapping[str, Any],
+        name: str,
+        text: str,
+    ) -> None:
+        self.docs = docs
+        self.name = name
+        self.text = text
+        self.units = Units()
+        self.units.add_conversions(docs.conversion)
+        ids = _keys(docs.taxonomy, Counter())
+        self.concepts: dict[str, _Concept] = {}
+        _flatten(docs.taxonomy, (), ids, self.concepts)
+        self._resolve_references()
+        self.module_names = set(docs.modules)
         self.labels: set[str] = set()
-        for mdef in self.modules_doc.values():
+        for mdef in docs.modules.values():
             if isinstance(mdef, Mapping):
                 self.labels.update(_labels_of(mdef))
-        unknown = sorted(set(self.coverage) - set(self.leaves))
-        if unknown:
-            raise OpenOddError(f"COVERAGE names paths not in TAXONOMY: {unknown}")
+        self.bindings = {
+            self.concept(str(k), "binding").name: dict(v or {})
+            for k, v in bindings.items()
+        }
 
-    # -- pass 1: thresholds, so numeric leaves without buckets get some ----
+    # -- names -----------------------------------------------------------
 
-    def collect_thresholds(self) -> None:
-        def walk(section: Any) -> None:
-            if not isinstance(section, Mapping):
-                return
-            for key, value in section.items():
-                key = str(key)
-                if key in ("AND", "OR"):
-                    walk(value)
-                    continue
-                leaf = self.leaves.get(key)
-                if leaf is None or leaf.kind != "number" or isinstance(value, bool):
-                    continue
-                for number, unit in _numbers_in(value):
-                    try:
-                        leaf.thresholds.add(convert(number, unit, self.unit_of(leaf)))
-                    except UnitError:
-                        pass  # reported when the condition is built
+    def concept(self, ref: str, where: str) -> _Concept:
+        """The concept *ref* names: its id, or a dotted tail of its path."""
+        found = [
+            c
+            for c in self.concepts.values()
+            if c.name == ref or c.name.endswith("." + ref)
+        ]
+        if not found:
+            raise OpenOddError(
+                f"{where}: {ref} is neither a concept nor a module or label"
+            )
+        if len(found) > 1:
+            names = ", ".join(sorted(c.name for c in found))
+            raise OpenOddError(
+                f"{where}: {ref} is ambiguous ({names}); give more of its path"
+            )
+        return found[0]
 
-        for mdef in self.modules_doc.values():
-            if isinstance(mdef, Mapping):
-                for key in ("INCLUDE_AND", "INCLUDE_OR", "EXCLUDE_AND", "EXCLUDE_OR"):
-                    walk(mdef.get(key))
-        for leaf in self.leaves.values():
-            for conditions in leaf.derived.values():
-                walk(conditions)
+    def _resolve_references(self) -> None:
+        """A concept typed by a categorical's id takes its literals."""
+        for concept in list(self.concepts.values()):
+            if concept.kind != "reference":
+                continue
+            target = next(
+                (
+                    c
+                    for c in self.concepts.values()
+                    if c.path[-1] == concept.unit_type and c.kind == "categorical"
+                ),
+                None,
+            )
+            if target is None:
+                logger.info(
+                    "OpenODD: %s is of type %s, which is not followed",
+                    concept.name,
+                    concept.unit_type,
+                )
+                del self.concepts[concept.name]
+                continue
+            concept.kind = "categorical"
+            concept.literals = list(target.literals)
+            concept.unit_type = ""
 
-    def unit_of(self, leaf: _Leaf) -> str:
-        binding = self.coverage.get(leaf.path) or {}
+    # -- units -----------------------------------------------------------
+
+    def unit_of(self, concept: _Concept) -> str:
+        binding = self.bindings.get(concept.name, {})
         if "unit" in binding:
             return normalize_unit(str(binding["unit"]))
         if "probe" in binding:
             return normalize_unit(_probe(str(binding["probe"]))[1])
         return ""
 
-    # -- pass 2: attributes ------------------------------------------------
+    def number(
+        self, token: str, unit: Optional[str], concept: _Concept, where: str
+    ) -> float:
+        try:
+            value = float(token)
+        except ValueError as exc:
+            raise OpenOddError(
+                f"{where}: {concept.name}: {token!r} is not a number "
+                "(numeric terms and $parameters are not read)"
+            ) from exc
+        if (
+            unit
+            and self.units.unit_type(unit) is None
+            and unit != self.unit_of(concept)
+        ):
+            raise OpenOddError(
+                f"{where}: {concept.name}: unknown unit {unit!r} "
+                "(numeric terms and $parameters are not read)"
+            )
+        try:
+            if unit and concept.unit_type:
+                self.units.check_type(unit, concept.unit_type)
+            return self.units.convert(value, unit or "", self.unit_of(concept))
+        except UnitError as exc:
+            raise OpenOddError(f"{where}: {concept.name}: {exc}") from exc
+
+    # -- thresholds, so a numeric concept without buckets gets some -------
+
+    def collect_thresholds(self) -> None:
+        def walk(section: Any, where: str) -> None:
+            if not isinstance(section, Mapping):
+                return
+            for key, value in section.items():
+                key = str(key)
+                if key in ("AND", "OR"):
+                    walk(value, where)
+                    continue
+                if key in self.module_names or key in self.labels:
+                    continue
+                try:
+                    concept = self.concept(key, where)
+                except OpenOddError:
+                    continue  # reported when the condition is built
+                if concept.kind != "number" or isinstance(value, bool):
+                    continue
+                for token, unit in _numbers_in(value):
+                    try:
+                        concept.thresholds.add(self.number(token, unit, concept, where))
+                    except OpenOddError:
+                        pass  # reported when the condition is built
+
+        for name, mdef in self.docs.modules.items():
+            if isinstance(mdef, Mapping):
+                for key in ("INCLUDE_AND", "INCLUDE_OR", "EXCLUDE_AND", "EXCLUDE_OR"):
+                    walk(mdef.get(key), f"module {name}")
+        for concept in self.concepts.values():
+            for definition in concept.definitions.values():
+                walk(definition, f"TAXONOMY {concept.name}")
+
+    # -- attributes --------------------------------------------------------
 
     def build_attributes(self) -> list[OddAttribute]:
-        # Plain leaves first: a derived leaf's probe reads them.
-        ordered = [leaf for leaf in self.leaves.values() if leaf.kind != "derived"]
-        ordered += [leaf for leaf in self.leaves.values() if leaf.kind == "derived"]
-        for leaf in ordered:
-            leaf.attribute = self.attribute_of(leaf)
-        return [leaf.attribute for leaf in ordered if leaf.attribute is not None]
+        # Plain concepts first: a derived categorical's probe reads them.
+        ordered = sorted(self.concepts.values(), key=lambda c: bool(c.definitions))
+        for concept in ordered:
+            concept.attribute = self.attribute_of(concept)
+        return [c.attribute for c in ordered if c.attribute is not None]
 
-    def attribute_of(self, leaf: _Leaf) -> OddAttribute:
-        binding = dict(self.coverage.get(leaf.path) or {})
-        unit = self.unit_of(leaf)
+    def attribute_of(self, concept: _Concept) -> OddAttribute:
+        binding = self.bindings.get(concept.name, {})
         probe: Callable[[Any], Any]
         if "probe" in binding:
             probe = _probe(str(binding["probe"]))[0]
-        elif leaf.kind == "derived":
-            probe = self.derived_probe(leaf)
+        elif concept.definitions:
+            probe = self.derived_probe(concept) or _missing
         else:
-            probe = _unknown
-        bucket_args: dict[str, Any] = {}
+            probe = _missing
+        buckets: dict[str, Any] = {}
         if "values" in binding:
-            bucket_args["values"] = list(binding["values"])
+            buckets["values"] = list(binding["values"])
         elif "buckets" in binding:
-            bucket_args["buckets"] = [float(x) for x in binding["buckets"]]
+            buckets["buckets"] = [float(x) for x in binding["buckets"]]
         elif "range" in binding:
             low, high = binding["range"]
-            bucket_args["range"] = (float(low), float(high))
-            bucket_args["every"] = float(binding.get("every", 0)) or None
-        elif probe is not _unknown:
-            if leaf.kind in ("enum", "derived"):
-                bucket_args["values"] = list(leaf.literals)
-            elif leaf.kind == "boolean":
-                bucket_args["values"] = [False, True]
-            elif leaf.kind == "number" and leaf.thresholds:
-                bucket_args["buckets"] = [-math.inf, *sorted(leaf.thresholds), math.inf]
+            buckets["range"] = (float(low), float(high))
+            buckets["every"] = float(binding.get("every", 0)) or None
+        elif probe is not _missing:
+            if concept.kind == "categorical":
+                buckets["values"] = list(concept.literals)
+            elif concept.kind == "boolean":
+                buckets["values"] = [False, True]
+            elif concept.kind == "number" and concept.thresholds:
+                buckets["buckets"] = [-math.inf, *sorted(concept.thresholds), math.inf]
         try:
             return OddAttribute(
-                leaf.path,
+                concept.name,
                 probe,
-                unit=unit,
+                unit=self.unit_of(concept),
                 text=str(binding.get("text", "")),
-                **bucket_args,
+                **buckets,
             )
         except ValueError as exc:
-            raise OpenOddError(f"COVERAGE {leaf.path}: {exc}") from exc
+            raise OpenOddError(f"binding {concept.name}: {exc}") from exc
 
-    def derived_probe(self, leaf: _Leaf) -> Callable[[Any], Any]:
-        """The probe of a derived enumeration: its first literal that holds."""
+    def derived_probe(self, concept: _Concept) -> Optional[Callable[[Any], Any]]:
+        """A categorical defined by expressions: its literal whose expressions hold.
+
+        Where two literals' ranges share an endpoint, the one written first
+        takes it.  ``None`` when nothing the expressions read is measured.
+        """
         rules: list[tuple[str, OddCondition]] = []
-        for literal, conditions in leaf.derived.items():
+        for literal, definition in concept.definitions.items():
+            where = f"TAXONOMY {concept.name}.{literal}"
             rules.append(
-                (literal, all_of(self.conditions(conditions, where=leaf.path)))
+                (literal, all_of(self.conditions(definition, where, nested=True)))
             )
-        sources = sorted(
-            {a.name: a for _, c in rules for a in c._attributes()}.values(),
-            key=lambda a: a.name,
-        )
+        sources = {a.name: a for _, c in rules for a in c._attributes()}
+        if all(a.probe is _missing for a in sources.values()):
+            return None
 
         def probe(world: Any) -> Optional[str]:
             values = {}
-            for attribute in sources:
+            for name, attribute in sources.items():
                 try:
-                    values[attribute.name] = attribute.probe(world)
+                    values[name] = attribute.probe(world)
                 except Exception:
-                    values[attribute.name] = None
+                    values[name] = None
             for literal, condition in rules:
                 verdict = condition.evaluate(values, {})
                 if verdict is None:
@@ -343,89 +573,178 @@ class _Reader:
 
         return probe
 
-    # -- pass 3: modules ---------------------------------------------------
+    # -- conditions --------------------------------------------------------
 
-    def attribute(self, path: str, where: str) -> OddAttribute:
-        leaf = self.leaves.get(path)
-        if leaf is None:
-            raise OpenOddError(f"{where}: {path} is not in TAXONOMY")
-        if leaf.attribute is None:
-            raise OpenOddError(f"{where}: {path} refers to itself")
-        return leaf.attribute
-
-    def conditions(self, section: Any, *, where: str) -> list[OddCondition]:
-        if not isinstance(section, Mapping):
-            raise OpenOddError(f"{where}: a section must map paths to expressions")
+    def conditions(
+        self, section: Any, where: str, *, op: str = "", nested: bool = False
+    ) -> list[OddCondition]:
+        if not isinstance(section, Mapping) or not section:
+            raise OpenOddError(f"{where}: a section maps concepts to expressions")
         out: list[OddCondition] = []
         for key, value in section.items():
             key = str(key)
             if key in ("AND", "OR"):
-                children = self.conditions(value, where=where)
+                if nested:
+                    raise OpenOddError(f"{where}: sections nest one level only")
+                if key == op:
+                    other = "OR" if op == "AND" else "AND"
+                    raise OpenOddError(
+                        f"{where}: an {op} section nests {other}, not {key}"
+                    )
+                children = self.conditions(value, where, op=key, nested=True)
                 out.append(all_of(children) if key == "AND" else any_of(children))
-            elif isinstance(value, bool) and (
-                key in self.module_names or key in self.labels
-            ):
+            elif key in self.module_names or key in self.labels:
+                if not isinstance(value, bool):
+                    raise OpenOddError(
+                        f"{where}: {key} is a module or label: true or false"
+                    )
                 out.append(module_holds(key, value))
             else:
-                out.append(self.leaf_condition(key, value, where=where))
+                out.append(self.leaf(key, value, where))
         return out
 
-    def leaf_condition(self, path: str, value: Any, *, where: str) -> OddCondition:
-        leaf = self.leaves.get(path)
-        if leaf is None:
-            raise OpenOddError(
-                f"{where}: {path} is neither in TAXONOMY nor a module or label"
-            )
-        attribute = self.attribute(path, where)
+    def leaf(self, key: str, value: Any, where: str) -> OddCondition:
+        concept = self.concept(key, where)
+        attribute = concept.attribute
+        if attribute is None:
+            raise OpenOddError(f"{where}: {concept.name} is defined by itself")
+        if value is None or (
+            isinstance(value, str) and value.strip().lower() in _UNKNOWN
+        ):
+            return attribute.is_unknown()
         if isinstance(value, list):
-            return attribute.is_in([str(v) for v in value])
-        if isinstance(value, bool) or not isinstance(value, str):
+            literals = [_literal(v) for v in value]
+            self.require_literals(concept, literals, where)
+            return attribute.is_in(literals)
+        if isinstance(value, bool):
+            if concept.kind == "categorical":
+                self.require_literals(concept, [_literal(value)], where)
+                return attribute.is_in([_literal(value)])
             return attribute.equals(value)
-        text = value.strip()
-        unit = self.unit_of(leaf)
+        if isinstance(value, (int, float)):
+            return attribute.equals(self.number(str(value), None, concept, where))
+        text = str(value).strip()
+        if concept.kind == "number":
+            return self.numeric(concept, attribute, text, where)
+        return self.categorical(concept, attribute, text, where)
+
+    def numeric(
+        self, concept: _Concept, attribute: OddAttribute, text: str, where: str
+    ) -> OddCondition:
         m = _RANGE_RE.match(text)
         if m:
-            low = self.number(m["low"], m["unit"], unit, where, path)
-            high = self.number(m["high"], m["unit"], unit, where, path)
+            low = self.number(m["low"], m["unit"], concept, where)
+            high = self.number(m["high"], m["unit"], concept, where)
             return attribute.between(low, high)
-        m = _COMPARE_RE.match(text)
+        m = _BOUND_RE.match(text)
         if m:
-            x = self.number(m["value"], m["unit"], unit, where, path)
-            op = m["op"]
-            if op == ">=":
-                return attribute.at_least(x)
-            if op == ">":
-                return attribute.greater_than(x)
-            if op == "<=":
-                return attribute.at_most(x)
-            if op == "<":
-                return attribute.less_than(x)
-            return attribute.equals(x)
-        if leaf.kind == "number":
-            raise OpenOddError(f"{where}: {path}: cannot read {value!r}")
+            q = _QUANTITY_RE.match(m["rest"].strip())
+            if q is None:
+                raise OpenOddError(f"{where}: {concept.name}: cannot read {text!r}")
+            x = self.number(q["value"], q["unit"], concept, where)
+            bound = {
+                ">=": attribute.at_least,
+                ">": attribute.greater_than,
+                "<=": attribute.at_most,
+                "<": attribute.less_than,
+            }[m["op"]]
+            return bound(x)
+        q = _QUANTITY_RE.match(text)
+        if q:
+            return attribute.equals(self.number(q["value"], q["unit"], concept, where))
+        raise OpenOddError(f"{where}: {concept.name}: cannot read {text!r}")
+
+    def categorical(
+        self, concept: _Concept, attribute: OddAttribute, text: str, where: str
+    ) -> OddCondition:
+        m = _RANGE_RE.match(text)
+        b = _BOUND_RE.match(text)
+        if m or b:
+            if not concept.ordered:
+                raise OpenOddError(
+                    f"{where}: {concept.name}: {text!r} needs literals defined by ranges"
+                )
+            order = concept.literals
+            if m:
+                low, high = m["low"].strip(), m["high"].strip()
+                self.require_literals(concept, [low, high], where)
+                i, j = sorted((order.index(low), order.index(high)))
+                return attribute.is_in(order[i : j + 1])
+            assert b is not None
+            ref = b["rest"].strip()
+            self.require_literals(concept, [ref], where)
+            i = order.index(ref)
+            chosen = {
+                "<": order[:i],
+                "<=": order[: i + 1],
+                ">": order[i + 1 :],
+                ">=": order[i:],
+            }[b["op"]]
+            if not chosen:
+                raise OpenOddError(
+                    f"{where}: {concept.name} {text!r} holds for no literal"
+                )
+            return attribute.is_in(chosen)
+        if concept.kind == "categorical":
+            self.require_literals(concept, [text], where)
         return attribute.equals(text)
 
     @staticmethod
-    def number(
-        token: str, unit: Optional[str], to: str, where: str, path: str
-    ) -> float:
-        try:
-            return convert(float(token), unit or "", to)
-        except UnitError as exc:
-            raise OpenOddError(f"{where}: {path}: {exc}") from exc
+    def require_literals(
+        concept: _Concept, literals: Sequence[str], where: str
+    ) -> None:
+        if concept.kind != "categorical":
+            return
+        unknown = [x for x in literals if x not in concept.literals]
+        if unknown:
+            raise OpenOddError(
+                f"{where}: {concept.name} has no literal {', '.join(unknown)} "
+                f"(literals: {', '.join(concept.literals)})"
+            )
+
+    # -- modules ---------------------------------------------------------
+
+    _MODULE_KEYS = {
+        "TITLE",
+        "DESCRIPTION",
+        "ACTIVE",
+        "LABEL",
+        "LABELS",
+        "METADATA",
+        "INCLUDE_AND",
+        "INCLUDE_OR",
+        "EXCLUDE_AND",
+        "EXCLUDE_OR",
+    }
 
     def build_modules(self) -> list[OddModule]:
         modules = []
-        for name, mdef in self.modules_doc.items():
-            name = str(name)
+        for name, mdef in self.docs.modules.items():
+            where = f"module {name}"
             if not isinstance(mdef, Mapping):
-                raise OpenOddError(f"MODULES {name}: expected a mapping")
-            where = f"MODULES {name}"
+                raise OpenOddError(f"{where}: expected a mapping")
+            if "unknown" in name.lower():
+                raise OpenOddError(f"{where}: a module's id must not contain 'unknown'")
+            extra = sorted(str(k) for k in mdef if k not in self._MODULE_KEYS)
+            if extra:
+                raise OpenOddError(f"{where}: unknown keys {extra}")
+            includes = [k for k in ("INCLUDE_AND", "INCLUDE_OR") if k in mdef]
+            excludes = [k for k in ("EXCLUDE_AND", "EXCLUDE_OR") if k in mdef]
+            if len(includes) > 1 or len(excludes) > 1:
+                raise OpenOddError(
+                    f"{where}: at most one INCLUDE_* and one EXCLUDE_* section"
+                )
+            if not includes and not excludes:
+                raise OpenOddError(f"{where}: needs an INCLUDE_* or EXCLUDE_* section")
             sections = {
-                key.lower(): self.conditions(mdef[key], where=f"{where} {key}")
-                for key in ("INCLUDE_AND", "INCLUDE_OR", "EXCLUDE_AND", "EXCLUDE_OR")
-                if key in mdef
+                key.lower(): self.conditions(
+                    mdef[key], f"{where} {key}", op=key.rsplit("_", 1)[1]
+                )
+                for key in (*includes, *excludes)
             }
+            labels = _labels_of(mdef)
+            if any("unknown" in label.lower() for label in labels):
+                raise OpenOddError(f"{where}: a label must not contain 'unknown'")
             text = " -- ".join(
                 str(mdef[k]) for k in ("TITLE", "DESCRIPTION") if mdef.get(k)
             )
@@ -433,8 +752,8 @@ class _Reader:
                 OddModule(
                     name,
                     **sections,
-                    labels=_labels_of(mdef),
-                    active=bool(mdef.get("ACTIVE", True)),
+                    labels=labels,
+                    active=_flag(mdef.get("ACTIVE", True), f"{where} ACTIVE"),
                     text=text,
                 )
             )
@@ -444,91 +763,147 @@ class _Reader:
         self.collect_thresholds()
         attributes = self.build_attributes()
         modules = self.build_modules()
-        unbound = [
-            leaf.path
-            for leaf in self.leaves.values()
-            if leaf.attribute is not None and leaf.attribute.probe is _unknown
+        missing = [
+            c.name
+            for c in self.concepts.values()
+            if c.attribute is not None and c.attribute.probe is _missing
         ]
-        if unbound:
-            logger.info("OpenODD %s: no probe for %s (unknown)", self.name, unbound)
-        try:
-            return OddDefinition(
-                self.name,
-                attributes,
-                modules,
-                root=str(self.root) if self.root is not None else None,
-                text=self.text,
+        if missing:
+            logger.info(
+                "OpenODD %s: no probe for %s (always missing)", self.name, missing
             )
+        clash = sorted(self.labels & {c.path[-1] for c in self.concepts.values()})
+        if clash:
+            raise OpenOddError(f"labels named like concepts: {clash}")
+        try:
+            odd = OddDefinition(self.name, attributes, modules, text=self.text)
+            if self.docs.roots:
+                # Modules under ODD are the entry points, but the standard's
+                # own examples put the modules they refer to there too: the
+                # roots are those no other module refers to.
+                referenced: set[str] = set()
+                for module in odd.modules:
+                    referenced |= odd._depends_on(module)
+                roots = [r for r in self.docs.roots if r not in referenced]
+                odd._use_roots(roots or self.docs.roots)
+            return odd
         except ValueError as exc:
             raise OpenOddError(str(exc)) from exc
 
 
 def _labels_of(mdef: Mapping[str, Any]) -> list[str]:
-    labels = [str(x) for x in mdef.get("LABELS") or ()]
-    if mdef.get("LABEL"):
-        labels.insert(0, str(mdef["LABEL"]))
+    labels: list[str] = []
+    for key in ("LABEL", "LABELS"):
+        labels += [str(x) for x in _as_list(mdef.get(key))]
     return labels
 
 
-def _numbers_in(value: Any) -> list[tuple[float, str]]:
+def _flag(value: Any, where: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "yes"):
+        return True
+    if text in ("false", "no"):
+        return False
+    raise OpenOddError(f"{where}: expected true or false, not {value!r}")
+
+
+def _numbers_in(value: Any) -> list[tuple[str, Optional[str]]]:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return [(float(value), "")]
+        return [(str(value), None)]
     if not isinstance(value, str):
         return []
     text = value.strip()
     m = _RANGE_RE.match(text)
     if m:
-        return [(float(m["low"]), m["unit"] or ""), (float(m["high"]), m["unit"] or "")]
-    m = _COMPARE_RE.match(text)
-    if m:
-        return [(float(m["value"]), m["unit"] or "")]
-    return []
+        return [(m["low"], m["unit"]), (m["high"], m["unit"])]
+    b = _BOUND_RE.match(text)
+    q = _QUANTITY_RE.match(b["rest"].strip() if b else text)
+    return [(q["value"], q["unit"])] if q else []
 
 
-def _merge(into: dict[str, Any], doc: Mapping[str, Any]) -> None:
-    for key, value in doc.items():
-        if isinstance(value, Mapping) and isinstance(into.get(key), dict):
-            _merge(into[key], value)
-        else:
-            into[key] = dict(value) if isinstance(value, Mapping) else value
+# ---------------------------------------------------------------------------
+# Entry points
+# ---------------------------------------------------------------------------
 
 
 def load_openodd(
-    *sources: Union[str, Path], name: Optional[str] = None
+    *sources: Union[str, Path],
+    bindings: Optional[Mapping[str, Any]] = None,
+    name: Optional[str] = None,
+    text: str = "",
 ) -> OddDefinition:
     """Read an ODD from OpenODD YAML files or text.
 
     Args:
-        sources: Paths, or YAML text.  Several are merged in order, so a
-            taxonomy, the modules and the ``COVERAGE`` bindings may each live
-            in a file of their own; a file may also hold several documents.
-        name: The ODD's name when no ``ODD: name`` gives one; else the first
-            file's stem.
+        sources: Paths, or YAML text.  Several are read together, as if one
+            imported the others.  A file's ``IMPORT`` entries are read
+            relative to it.
+        bindings: Concept -> how to measure it:
+            ``{"probe": ..., "unit": ..., "values" | "buckets" | "range" +
+            "every": ..., "text": ...}`` (see :func:`load_odd_binding`).  A
+            concept with no probe is always missing.
+        name: The ODD's name; the first file's stem by default.
+        text: A description for the report.
 
     Raises:
         OpenOddError: when the documents do not make an ODD.
     """
     if not sources:
         raise OpenOddError("load_openodd(): no sources")
-    merged: dict[str, Any] = {}
-    default_name = name
+    docs = _Documents()
     for source in sources:
-        if isinstance(source, Path) or (
-            isinstance(source, str)
-            and "\n" not in source
-            and source.endswith((".yaml", ".yml"))
-        ):
-            path = Path(source)
-            text = path.read_text(encoding="utf-8")
-            default_name = default_name or path.stem
-        else:
-            text = str(source)
-        try:
-            docs = [d for d in yaml.safe_load_all(text) if d is not None]
-        except yaml.YAMLError as exc:
-            raise OpenOddError(f"not YAML: {exc}") from exc
-        for doc in docs:
-            if not isinstance(doc, Mapping):
-                raise OpenOddError("an OpenODD document must be a mapping")
-            _merge(merged, doc)
-    return _Reader(merged, default_name or "openodd").build()
+        _read(source, docs, ())
+    reader = _Reader(docs, bindings or {}, name or docs.first_stem or "openodd", text)
+    return reader.build()
+
+
+def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
+    """Read an ODD from a binding file: OpenODD files, and how to measure them.
+
+    A binding file is this framework's, not OpenODD's::
+
+        openodd: [taxonomy.yaml, odd.yaml]   # relative to this file
+        name: urban                          # default: this file's stem
+        text: Urban roads, fair weather
+        probes:
+          speed_limit:                       # a concept, as conditions name it
+            probe: speed_limit_kph           # built-in, or package.module:function
+            unit: km/h                       # what the probe returns
+            buckets: [0, 30, 60, 90]         # or values, or range + every
+          rainfall_level: {probe: rain}
+
+    A numeric concept with a probe but no buckets gets buckets at the
+    thresholds the ODD tests it against; a categorical gets one per literal.
+    """
+    path = Path(path)
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise OpenOddError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(doc, Mapping) or "openodd" not in doc:
+        raise OpenOddError(
+            f"{path}: a binding file names its OpenODD files under 'openodd'"
+        )
+    extra = sorted(
+        str(k) for k in doc if k not in ("openodd", "name", "text", "probes")
+    )
+    if extra:
+        raise OpenOddError(f"{path}: unknown keys {extra}")
+    sources = [path.parent / str(p) for p in _as_list(doc["openodd"])]
+    return load_openodd(
+        *sources,
+        bindings=doc.get("probes") or {},
+        name=str(doc.get("name") or path.stem),
+        text=str(doc.get("text", "")),
+    )
+
+
+def is_binding_file(path: Union[str, Path]) -> bool:
+    """Whether *path* is a binding file rather than an OpenODD document."""
+    try:
+        doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(doc, Mapping) and "openodd" in doc

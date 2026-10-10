@@ -181,7 +181,8 @@ scenario-coverage outputs/ --json coverage.json --markdown coverage.md
 ```
 
 For each ODD the runs were measured against, the Markdown report first says
-how long they spent inside it, outside it, and with the verdict unknown. It
+how long they spent inside it, inside only because values were missing, and
+outside it. It
 then lists the modules that ruled ticks out, and the runs that left the ODD,
 with when. After that comes a summary table per group: item, event, grade,
 covered buckets (of those inside the ODD) and holes. Below it, each item gets its buckets with hits and
@@ -227,12 +228,12 @@ different buckets would mean nothing.
   "odd": {
     "name": "urban",
     "text": "Urban roads up to 60 km/h",
-    "root": "root",
+    "roots": ["root"],
     "modules": [{"name": "roads", "include_and": ["scenery.location in [urban]"], "...": "..."}],
     "unmeasured": [],
-    "ticks": {"inside": 512, "outside": 40, "unknown": 8},
-    "seconds": {"inside": 25.6, "outside": 2.0, "unknown": 0.4},
-    "module_ticks": {"roads": {"failed_ticks": 40, "unknown_ticks": 8}},
+    "ticks": {"inside": 512, "assumed": 8, "outside": 40},
+    "seconds": {"inside": 25.6, "assumed": 0.4, "outside": 2.0},
+    "module_ticks": {"roads": {"failed_ticks": 40, "missing_ticks": 8}},
     "out_intervals": [[12.3, 14.3]]
   }
 }

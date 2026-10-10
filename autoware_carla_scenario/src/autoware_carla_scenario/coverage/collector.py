@@ -52,29 +52,37 @@ MAX_OUT_INTERVALS = 100
 
 
 class _OddMonitor:
-    """Whether each tick was inside the ODD, and which modules ruled it out."""
+    """Whether each tick was inside the ODD, and which modules ruled it out.
+
+    A tick is ``inside``, ``outside``, or ``assumed``: inside only because
+    values were missing, which OpenODD's missing-value semantics count as
+    inside.
+    """
 
     def __init__(self, odd: "OddDefinition") -> None:
         self.odd = odd
-        self.ticks = {"inside": 0, "outside": 0, "unknown": 0}
-        self.seconds = {"inside": 0.0, "outside": 0.0, "unknown": 0.0}
+        self.ticks = {"inside": 0, "assumed": 0, "outside": 0}
+        self.seconds = {"inside": 0.0, "assumed": 0.0, "outside": 0.0}
         self.modules = {
-            m.name: {"failed_ticks": 0, "unknown_ticks": 0} for m in odd.modules
+            m.name: {"failed_ticks": 0, "missing_ticks": 0} for m in odd.modules
         }
         self.out_intervals: list[list[float]] = []
         self._previous_out = False
 
     def record(self, values: dict[str, Any], start: float, end: float) -> None:
         verdict = self.odd.evaluate(values)
-        key = {True: "inside", False: "outside", None: "unknown"}[verdict.inside]
+        if not verdict.inside:
+            key = "outside"
+        else:
+            key = "assumed" if verdict.assumed else "inside"
         self.ticks[key] += 1
         self.seconds[key] += max(0.0, end - start)
         for name, holds in verdict.modules.items():
             if holds is False:
                 self.modules[name]["failed_ticks"] += 1
             elif holds is None:
-                self.modules[name]["unknown_ticks"] += 1
-        outside = verdict.inside is False
+                self.modules[name]["missing_ticks"] += 1
+        outside = not verdict.inside
         if outside:
             if self._previous_out and self.out_intervals:
                 self.out_intervals[-1][1] = end

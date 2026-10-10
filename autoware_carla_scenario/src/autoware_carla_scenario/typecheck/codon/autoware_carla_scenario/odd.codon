@@ -94,6 +94,9 @@ class OddAttribute:
         _expect_float(bound)
         raise NotImplementedError()
 
+    def is_unknown(self) -> OddCondition:
+        raise NotImplementedError()
+
 
 def all_of(conditions: List[OddCondition]) -> OddCondition:
     raise NotImplementedError()

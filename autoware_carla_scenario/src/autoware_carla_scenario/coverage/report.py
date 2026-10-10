@@ -126,13 +126,14 @@ class OddExposure:
     runs: int = 0
     #: Runs that left the ODD at least once.
     runs_outside: int = 0
+    #: Ticks inside, inside only because values were missing, and outside.
     ticks: dict[str, int] = field(
-        default_factory=lambda: {"inside": 0, "outside": 0, "unknown": 0}
+        default_factory=lambda: {"inside": 0, "assumed": 0, "outside": 0}
     )
     seconds: dict[str, float] = field(
-        default_factory=lambda: {"inside": 0.0, "outside": 0.0, "unknown": 0.0}
+        default_factory=lambda: {"inside": 0.0, "assumed": 0.0, "outside": 0.0}
     )
-    #: Module -> ticks it failed (ruled the ODD out) and ticks it was unknown.
+    #: Module -> ticks it failed, and ticks its verdict rested on missing values.
     module_ticks: dict[str, dict[str, int]] = field(default_factory=dict)
     #: Attributes the ODD monitors but has no buckets for.
     unmeasured: list[str] = field(default_factory=list)
@@ -147,7 +148,7 @@ class OddExposure:
             self.seconds[key] += float(raw.get("seconds", {}).get(key, 0.0))
         for module, counts in raw.get("module_ticks", {}).items():
             mine = self.module_ticks.setdefault(
-                module, {"failed_ticks": 0, "unknown_ticks": 0}
+                module, {"failed_ticks": 0, "missing_ticks": 0}
             )
             for key in mine:
                 mine[key] += int(counts.get(key, 0))
@@ -291,8 +292,8 @@ class CoverageReport:
         lines += [
             f"- Runs: {exposure.runs}, of which left the ODD: {exposure.runs_outside}",
             f"- Inside: {share('inside')}",
+            f"- Inside only because values were missing: {share('assumed')}",
             f"- Outside: {share('outside')}",
-            f"- Unknown: {share('unknown')}",
         ]
         if exposure.unmeasured:
             lines.append(
@@ -302,13 +303,17 @@ class CoverageReport:
         failing = [
             (name, counts)
             for name, counts in exposure.module_ticks.items()
-            if counts["failed_ticks"] or counts["unknown_ticks"]
+            if counts["failed_ticks"] or counts["missing_ticks"]
         ]
         if failing:
-            lines += ["", "| Module | Failed ticks | Unknown ticks |", "|---|---|---|"]
+            lines += [
+                "",
+                "| Module | Failed ticks | Ticks on missing values |",
+                "|---|---|---|",
+            ]
             for name, counts in failing:
                 lines.append(
-                    f"| {name} | {counts['failed_ticks']} | {counts['unknown_ticks']} |"
+                    f"| {name} | {counts['failed_ticks']} | {counts['missing_ticks']} |"
                 )
         if exposure.excursions:
             lines += [

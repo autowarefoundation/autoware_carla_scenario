@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import math
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -30,7 +29,11 @@ from autoware_carla_scenario.odd import (
 )
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd.cli import main as odd_main
-from autoware_carla_scenario.odd.openodd import OpenOddError, load_openodd
+from autoware_carla_scenario.odd.openodd import (
+    OpenOddError,
+    load_odd_binding,
+    load_openodd,
+)
 from autoware_carla_scenario.odd.probes import (
     illumination_level,
     intensity_level,
@@ -126,15 +129,31 @@ class TestModulesAndOdd:
         ]
         return OddDefinition("t", list(a.values()), modules, **kw), a
 
-    def test_inside_when_every_active_module_holds(self) -> None:
+    def test_unreferenced_active_modules_are_the_roots(self) -> None:
         odd, _ = self._odd()
+        assert odd.roots == ["roads", "weather"]
         inside = {"speed": 40, "loc": "urban", "rain": "none"}
         assert odd.evaluate(inside).inside is True
         assert odd.evaluate({**inside, "rain": "heavy"}).inside is False
         assert odd.evaluate({**inside, "speed": 70}).inside is False
-        verdict = odd.evaluate({**inside, "rain": None})
-        assert verdict.inside is None
-        assert verdict.modules == {"roads": True, "weather": None, "never": False}
+
+    def test_a_missing_value_does_not_put_a_situation_outside(self) -> None:
+        # OpenODD's missing-value semantics: open world unless required.
+        odd, _ = self._odd()
+        verdict = odd.evaluate({"speed": 40, "loc": "urban", "rain": None})
+        assert verdict.inside is True
+        assert verdict.assumed is True
+        assert verdict.modules == {"roads": True, "weather": None, "never": "inactive"}
+        settled = odd.evaluate({"speed": 70, "loc": "urban", "rain": None})
+        assert settled.inside is False and settled.assumed is False
+
+    def test_unknown_makes_a_value_required(self) -> None:
+        rain = _attr("rain", values=["none", "heavy"])
+        odd = OddDefinition(
+            "t", [rain], [OddModule("m", exclude_or=[rain.is_unknown()])]
+        )
+        assert odd.evaluate({"rain": None}).inside is False
+        assert odd.evaluate({"rain": "none"}).inside is True
 
     def test_a_root_module_decides_and_labels_refer_to_modules(self) -> None:
         odd, a = self._odd()
@@ -142,9 +161,25 @@ class TestModulesAndOdd:
             "root", include_and=[module_holds("roads"), module_holds("ok")]
         )
         odd = OddDefinition("t", odd.attributes, [*odd.modules, root], root="root")
+        assert odd.roots == ["root"]
         inside = {"speed": 40, "loc": "urban", "rain": "none"}
         assert odd.evaluate(inside).inside is True
         assert odd.evaluate({**inside, "rain": "heavy"}).inside is False
+
+    def test_a_reference_counts_a_module_out_of_the_roots(self) -> None:
+        odd, a = self._odd()
+        root = OddModule("root", exclude_or=[module_holds("ok", False)])
+        odd = OddDefinition("t", odd.attributes, [*odd.modules, root])
+        assert odd.roots == ["roads", "root"]  # weather is referenced via its label
+
+    def test_a_condition_on_an_inactive_module_is_satisfied(self) -> None:
+        odd, a = self._odd()
+        for holds in (True, False):
+            root = OddModule("root", include_and=[module_holds("never", holds)])
+            with_root = OddDefinition(
+                "t", odd.attributes, [*odd.modules, root], root="root"
+            )
+            assert with_root.evaluate({"speed": 5}).inside is True
 
     def test_without_modules_everything_is_inside(self) -> None:
         odd = OddDefinition("t", [_attr(values=[1])])
@@ -158,6 +193,19 @@ class TestModulesAndOdd:
         items = {i.name: i for i in odd.cover_items()}
         assert items["odd.loc"].outside == ["nonurban"]
 
+    def test_a_module_the_odd_excludes_rules_its_leaves_out(self) -> None:
+        rain = _attr("rain", values=["none", "light", "heavy"])
+        odd = OddDefinition(
+            "t",
+            [rain],
+            [
+                OddModule("bad_weather", include_or=[rain.is_in(["heavy"])]),
+                OddModule("root", exclude_or=[module_holds("bad_weather")]),
+            ],
+        )
+        assert odd.roots == ["root"]
+        assert odd.outside_buckets(rain) == ["heavy"]
+
     def test_a_condition_across_attributes_rules_out_no_bucket(self) -> None:
         a = _attr("a", values=[1, 2])
         b = _attr("b", values=[1, 2])
@@ -168,9 +216,16 @@ class TestModulesAndOdd:
         )
         assert odd.outside_buckets(a) == [] and odd.outside_buckets(b) == []
 
-    def test_an_inactive_or_unrequired_module_rules_out_no_bucket(self) -> None:
+    def test_an_unrequired_module_rules_out_no_bucket(self) -> None:
         odd, a = self._odd(root="roads")
         assert odd.outside_buckets(a["rain"]) == []
+
+    def test_a_module_has_one_include_and_one_exclude_section(self) -> None:
+        x = _attr(values=[1])
+        with pytest.raises(ValueError, match="one include section"):
+            OddModule("m", include_and=[x.equals(1)], include_or=[x.equals(1)])
+        with pytest.raises(ValueError, match="one exclude section"):
+            OddModule("m", exclude_and=[x.equals(1)], exclude_or=[x.equals(1)])
 
     @pytest.mark.parametrize(
         ("build", "message"),
@@ -195,6 +250,10 @@ class TestModulesAndOdd:
                     OddModule("m", include_and=[_attr("other", values=[1]).equals(1)])
                 ],
                 "not one of the ODD's attributes",
+            ),
+            (
+                lambda a: [OddModule("m", labels=["x"])],
+                "also a module's or an attribute's name",
             ),
         ],
     )
@@ -236,13 +295,14 @@ def _drive(speeds: list[Any], hidden: Any = False) -> dict[str, Any]:
 
 
 class TestCollectorWithOdd:
-    def test_each_tick_is_judged_inside_outside_or_unknown(self) -> None:
+    def test_each_tick_is_judged_inside_assumed_or_outside(self) -> None:
         doc = _drive([10, 70, 80, 20, None, 75])
         odd = doc["odd"]
         assert odd["name"] == "speed_odd"
-        assert odd["ticks"] == {"inside": 2, "outside": 3, "unknown": 1}
-        assert odd["seconds"] == {"inside": 1.0, "outside": 1.5, "unknown": 0.5}
-        assert odd["module_ticks"]["slow"] == {"failed_ticks": 3, "unknown_ticks": 1}
+        assert odd["roots"] == ["slow", "visible"]
+        assert odd["ticks"] == {"inside": 2, "assumed": 1, "outside": 3}
+        assert odd["seconds"] == {"inside": 1.0, "assumed": 0.5, "outside": 1.5}
+        assert odd["module_ticks"]["slow"] == {"failed_ticks": 3, "missing_ticks": 1}
         assert odd["out_intervals"] == [[0.5, 1.5], [2.5, 3.0]]
         assert odd["unmeasured"] == ["hidden"]
 
@@ -266,14 +326,15 @@ class TestReportWithOdd:
         assert entry.holes == []
 
     def test_exposure_is_merged_per_odd(self) -> None:
-        report = merge_coverage([_drive([10, 70]), _drive([10])])
+        report = merge_coverage([_drive([10, 70]), _drive([10, None])])
         exposure = report.odds["speed_odd"]
         assert exposure.runs == 2
         assert exposure.runs_outside == 1
-        assert exposure.ticks == {"inside": 2, "outside": 1, "unknown": 0}
+        assert exposure.ticks == {"inside": 2, "assumed": 1, "outside": 1}
         markdown = report.to_markdown()
         assert "## ODD: speed_odd" in markdown
         assert "Runs: 2, of which left the ODD: 1" in markdown
+        assert "Inside only because values were missing: 0.5 s" in markdown
         assert "(outside ODD, reached)" in markdown
         assert "Monitored but not covered (no buckets): hidden" in markdown
         assert report.to_dict()["odds"]["speed_odd"]["runs_outside"] == 1
@@ -474,205 +535,308 @@ class TestProbes:
 # OpenODD YAML
 # ---------------------------------------------------------------------------
 
-_OPENODD = """
-ODD:
-  name: urban_test
-  root: root_odd
-  text: Urban roads, fair weather
+# A taxonomy and modules in the shape of the standard's own examples
+# (ASAM OpenODD 1.0, chapter 10: Code 170, 171, 189, 192).
+_TAXONOMY = """
 TAXONOMY:
-  env:
-    visibility: float distance
-    weather:
-      rain: [none, light, moderate, heavy]
-      fog:
-        severity:
-          none:
-            env.visibility: ">= 500 m"
-          light:
-            env.visibility: "[200 .. 500] m"
-          dense:
-            env.visibility: "< 200 m"
-  road:
-    location: [urban, nonurban, private]
-    speed_limit: int speed
-    junction: boolean
-  ego:
-    speed: float velocity
-  scene:
-    ego_pose: "vehicle/pose"
-COVERAGE:
-  road.location: {probe: lanelet_location}
-  road.speed_limit: {probe: speed_limit_kph}
-  road.junction: {probe: in_junction}
-  env.weather.rain: {probe: rain}
-  env.visibility: {probe: "%(module)s:visibility_m", unit: m}
-  ego.speed: {probe: ego_speed_kph, range: [0, 120], every: 10}
-MODULES:
-  urban_only:
-    TITLE: Urban roads
-    INCLUDE_AND:
-      road.location: [urban]
-      road.speed_limit: "<= 16.7 m/s"
-  weather:
-    LABEL: good_weather
-    EXCLUDE_OR:
-      env.weather.rain: [heavy]
-      env.weather.fog.severity: [dense]
-  slow_at_junctions:
-    INCLUDE_OR:
-      road.junction: false
-      AND:
-        road.junction: true
-        ego.speed: "<= 30 km/h"
-  dusk:
-    ACTIVE: false
-    INCLUDE_AND:
-      ego.speed: "< 30 km/h"
-  root_odd:
-    INCLUDE_AND:
-      urban_only: true
-      good_weather: true
-      slow_at_junctions: true
+    environment_conditions:
+        rainfall_rate: float precipitation_rate
+        rainfall_level:
+            no_rain:
+                rainfall_rate: "< 0.1 mm/h"
+            light_rain:
+                rainfall_rate: "[0.1 .. 2.5] mm/h"
+            moderate_rain:
+                rainfall_rate: "[2.5 .. 7.6] mm/h"
+            heavy_rain:
+                rainfall_rate: "> 7.6 mm/h"
+        wind_speed: float velocity
+        is_dangerous_wind:
+            true:
+                wind_speed: "> 50 km/h"
+            false:
+                wind_speed: "<= 50 km/h"
+    scenery:
+        road_type: [town_local, dead_end, town_expressway, expressway]
+        current_road: road_type
+        lane_count: integer count
+        is_mixed_zone: boolean
+        record_of_categoricals:
+            surface: [dry, wet]
+            marking: [solid, dashed]
+    connectivity:
+        downlink_latency: float time
+        downlink_throughput: float bandwidth
+    vehicle: reusable_pose
 """
 
-VISIBILITY = {"value": 1000.0}
+_MODULES = """
+IMPORT:
+    - taxonomy.yml
+ODD:
+    odd1:
+        TITLE: The baseline ODD
+        INCLUDE_AND:
+            low_speed_roads: true
+            good_connectivity: true
+        EXCLUDE_OR:
+            bad_weather: true
+MODULES:
+    low_speed_roads:
+        TITLE: Low speed traffic conditions
+        INCLUDE_AND:
+            road_type:
+                - town_local
+                - dead_end
+            lane_count: "< 3"
+            OR:
+                rainfall_rate: "<= 2 mm/h"
+                is_mixed_zone: false
+    bad_weather_1:
+        LABEL: bad_weather
+        INCLUDE_OR:
+            rainfall_level: ">= heavy_rain"
+            is_dangerous_wind: true
+    bad_weather_2:
+        LABELS: bad_weather
+        ACTIVE: "false"
+        INCLUDE_AND:
+            road_type: expressway
+    good_connectivity:
+        INCLUDE_AND:
+            downlink_latency: "< 10 msec"
+            downlink_throughput: "> 1 Mbps"
+    required_data:
+        EXCLUDE_OR:
+            wind_speed: unknown
+"""
+
+RAIN = {"value": 0.0}
+WIND = {"value": 1.0}
 
 
-def visibility_m(world: Any) -> float:
-    return VISIBILITY["value"]
+def rain_rate(world: Any) -> float:
+    return RAIN["value"]
 
 
-def _load(text: str = _OPENODD, **kw: Any) -> OddDefinition:
-    return load_openodd(text % {"module": __name__}, **kw)
+def wind_mps(world: Any) -> float:
+    return WIND["value"]
+
+
+def _write(tmp_path: Path, bindings: str = "") -> Path:
+    (tmp_path / "taxonomy.yml").write_text(_TAXONOMY)
+    (tmp_path / "odd.yml").write_text(_MODULES)
+    binding = tmp_path / "urban.binding.yaml"
+    binding.write_text(
+        "openodd: [odd.yml]\n"
+        "name: spec_example\n"
+        "text: The standard's example\n"
+        "probes:\n"
+        "  road_type: {probe: lanelet_location}\n"
+        f"  rainfall_rate: {{probe: '{__name__}:rain_rate', unit: mm/h}}\n"
+        f"  wind_speed: {{probe: '{__name__}:wind_mps', unit: m/s}}\n"
+        "  lane_count: {probe: lane_count, values: [1, 2, 3]}\n" + bindings
+    )
+    return binding
+
+
+def _items(odd: OddDefinition) -> dict[str, Any]:
+    return {i.name: i for i in odd.cover_items()}
 
 
 class TestOpenOdd:
-    def test_it_reads_the_odd(self) -> None:
-        odd = _load()
-        assert odd.name == "urban_test"
-        assert odd.root == "root_odd"
-        assert [m.name for m in odd.modules] == [
-            "urban_only",
-            "weather",
-            "slow_at_junctions",
-            "dusk",
-            "root_odd",
-        ]
-        assert next(m for m in odd.modules if m.name == "dusk").active is False
+    def test_it_reads_the_standards_shape(self, tmp_path: Path) -> None:
+        odd = load_odd_binding(_write(tmp_path))
+        assert odd.name == "spec_example"
+        assert odd.text == "The standard's example"
+        # Modules under ODD are root candidates; one no module refers to is a root.
+        assert odd.roots == ["odd1"]
+        modules = {m.name: m for m in odd.modules}
+        assert modules["bad_weather_2"].active is False
+        assert modules["bad_weather_1"].labels == ["bad_weather"]
+        assert modules["bad_weather_2"].labels == ["bad_weather"]
 
-    def test_conditions_are_converted_into_the_probes_unit(self) -> None:
-        odd = _load()
-        urban = next(m for m in odd.modules if m.name == "urban_only")
-        assert urban.describe()["include_and"] == [
-            "road.location in [urban]",
-            "road.speed_limit <= 60.12",
+    def test_concepts_are_named_by_id_and_units_are_converted(
+        self, tmp_path: Path
+    ) -> None:
+        odd = load_odd_binding(_write(tmp_path))
+        roads = next(m for m in odd.modules if m.name == "low_speed_roads")
+        assert roads.describe()["include_and"] == [
+            "scenery.road_type in [dead_end, town_local]",
+            "scenery.lane_count < 3",
+            "(environment_conditions.rainfall_rate <= 2 or "
+            "scenery.is_mixed_zone == false)",
         ]
-
-    def test_buckets_come_from_coverage_the_taxonomy_or_the_thresholds(self) -> None:
-        items = {i.name: i for i in _load().cover_items()}
-        assert items["odd.road.location"].labels == ["urban", "nonurban", "private"]
-        assert items["odd.road.junction"].labels == ["false", "true"]
-        assert len(items["odd.ego.speed"].labels) == 12
-        # No buckets given: one each side of every threshold the modules test.
-        assert items["odd.road.speed_limit"].labels == ["[-inf, 60.12)", "[60.12, inf]"]
-        assert items["odd.env.visibility"].labels == [
-            "[-inf, 200)",
-            "[200, 500)",
-            "[500, inf]",
-        ]
-        # A derived enumeration has one bucket per literal.
-        assert items["odd.env.weather.fog.severity"].labels == [
-            "none",
-            "light",
-            "dense",
+        attrs = {a.name: a for a in odd.attributes}
+        dangerous = next(m for m in odd.modules if m.name == "bad_weather_1")
+        assert "is_dangerous_wind in [true]" in dangerous.describe()["include_or"][1]
+        # 50 km/h in the probe's m/s.
+        assert attrs["environment_conditions.wind_speed"].item is not None
+        assert _items(odd)["odd.environment_conditions.wind_speed"].labels == [
+            "[-inf, 13.8889)",
+            "[13.8889, inf]",
         ]
 
-    def test_the_root_and_its_labels_rule_buckets_out(self) -> None:
-        items = {i.name: i for i in _load().cover_items()}
-        assert items["odd.road.location"].outside == ["nonurban", "private"]
-        assert items["odd.road.speed_limit"].outside == ["[60.12, inf]"]
-        assert items["odd.env.weather.rain"].outside == ["heavy"]
-        assert items["odd.env.weather.fog.severity"].outside == ["dense"]
-        assert items["odd.ego.speed"].outside == []  # only in an OR
-
-    def test_a_derived_enumeration_is_its_first_literal_that_holds(self) -> None:
-        odd = _load()
-        fog = next(a for a in odd.attributes if a.name == "env.weather.fog.severity")
-        for visibility, level in ((1000.0, "none"), (300.0, "light"), (100.0, "dense")):
-            VISIBILITY["value"] = visibility
-            assert fog.probe(None) == level
-        VISIBILITY["value"] = 1000.0
-
-    def test_the_odd_is_judged_like_a_python_one(self) -> None:
-        odd = _load()
-        inside = {
-            "road.location": "urban",
-            "road.speed_limit": 50.0,
-            "road.junction": True,
-            "ego.speed": 20.0,
-            "env.weather.rain": "none",
-            "env.visibility": 800.0,
-            "env.weather.fog.severity": "none",
-        }
-        assert odd.evaluate(inside).inside is True
-        assert odd.evaluate({**inside, "ego.speed": 40.0}).inside is False
-        assert odd.evaluate(
-            {**inside, "road.junction": False, "ego.speed": 40.0}
-        ).inside
-        assert odd.evaluate({**inside, "env.weather.rain": None}).inside is None
-
-    def test_an_attribute_with_no_probe_is_unknown_and_unmeasured(self) -> None:
-        text = """
-TAXONOMY:
-  road:
-    type: [motorway, residential]
-MODULES:
-  m:
-    INCLUDE_AND:
-      road.type: [motorway]
-"""
-        odd = load_openodd(text, name="n")
-        assert odd.name == "n"
-        assert odd.unmeasured() == ["road.type"]
-        assert odd.evaluate(odd.sample(None)).inside is None
-
-    def test_several_files_merge(self, tmp_path: Path) -> None:
-        taxonomy = tmp_path / "taxonomy.yaml"
-        taxonomy.write_text("TAXONOMY:\n  road:\n    location: [urban, nonurban]\n")
-        modules = tmp_path / "odd.yaml"
-        modules.write_text(
-            "COVERAGE:\n  road.location: {probe: lanelet_location}\n"
-            "MODULES:\n  m:\n    INCLUDE_AND:\n      road.location: [urban]\n"
+    def test_a_categorical_defined_by_ranges_is_ordered(self, tmp_path: Path) -> None:
+        odd = load_odd_binding(_write(tmp_path))
+        bad = next(m for m in odd.modules if m.name == "bad_weather_1")
+        assert bad.describe()["include_or"][0] == (
+            "environment_conditions.rainfall_level in [heavy_rain]"
         )
-        odd = load_openodd(taxonomy, modules)
-        assert odd.name == "taxonomy"
-        assert odd.cover_items()[0].outside == ["nonurban"]
+        level = next(a for a in odd.attributes if a.name.endswith("rainfall_level"))
+        for rate, literal in (
+            (0.0, "no_rain"),
+            (2.5, "light_rain"),
+            (9.0, "heavy_rain"),
+        ):
+            RAIN["value"] = rate
+            assert level.probe(None) == literal
+        RAIN["value"] = 0.0
+
+    def test_buckets_and_what_the_odd_rules_out(self, tmp_path: Path) -> None:
+        items = _items(load_odd_binding(_write(tmp_path)))
+        assert items["odd.scenery.road_type"].labels == [
+            "town_local",
+            "dead_end",
+            "town_expressway",
+            "expressway",
+        ]
+        assert items["odd.scenery.road_type"].outside == [
+            "town_expressway",
+            "expressway",
+        ]
+        assert items["odd.scenery.lane_count"].outside == ["3"]
+        # bad_weather (a label, one active module) must not hold.
+        assert items["odd.environment_conditions.rainfall_level"].outside == [
+            "heavy_rain"
+        ]
+        assert items["odd.environment_conditions.is_dangerous_wind"].outside == ["true"]
+        # No probe, no buckets.
+        assert "odd.connectivity.downlink_latency" not in items
+
+    def test_the_odd_is_judged_with_missing_value_semantics(
+        self, tmp_path: Path
+    ) -> None:
+        odd = load_odd_binding(_write(tmp_path))
+        values = odd.sample(None)
+        values.update({"scenery.road_type": "town_local", "scenery.lane_count": 2})
+        verdict = odd.evaluate(values)
+        # Connectivity is never measured: open world, so inside, but assumed.
+        assert verdict.inside is True and verdict.assumed is True
+        assert odd.evaluate({**values, "scenery.lane_count": 3}).inside is False
+        RAIN["value"] = 9.0
+        assert (
+            odd.evaluate(odd.sample(None) | {"scenery.road_type": "town_local"}).inside
+            is False
+        )
+        RAIN["value"] = 0.0
+        # required_data is a second root: a missing wind speed is outside.
+        assert "required_data" not in odd.roots  # odd1 is the only ODD root
+
+    def test_a_document_on_its_own_measures_nothing(self, tmp_path: Path) -> None:
+        _write(tmp_path)
+        odd = resolve_odd(str(tmp_path / "odd.yml"))
+        assert odd.name == "odd"
+        assert odd.cover_items() == []
+        assert "scenery.road_type" in odd.unmeasured()
+
+    def test_without_an_odd_section_unreferenced_modules_are_roots(self) -> None:
+        modules = """
+MODULES:
+    roads:
+        INCLUDE_AND:
+            lane_count: "< 3"
+    weather:
+        LABEL: fair
+        EXCLUDE_OR:
+            rainfall_level: [heavy_rain]
+    main:
+        INCLUDE_AND:
+            fair: true
+"""
+        odd = load_openodd(_TAXONOMY + modules, name="n")
+        assert odd.roots == ["roads", "main"]
+
+    def test_an_import_cycle_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "a.yml").write_text("IMPORT: [b.yml]\n")
+        (tmp_path / "b.yml").write_text("IMPORT: [a.yml]\n")
+        with pytest.raises(OpenOddError, match="IMPORT cycle"):
+            load_openodd(tmp_path / "a.yml")
+
+    @pytest.mark.parametrize(
+        ("modules", "message"),
+        [
+            ("m: {INCLUDE_AND: {nope: [x]}}", "neither a concept"),
+            ("m: {INCLUDE_AND: {lane_count: fast}}", "cannot read"),
+            (
+                "m: {INCLUDE_AND: {wind_speed: '< 3 m'}}",
+                "measures length, not velocity",
+            ),
+            ("m: {INCLUDE_AND: {road_type: [motorway]}}", "has no literal motorway"),
+            (
+                "m: {INCLUDE_AND: {road_type: '< dead_end'}}",
+                "literals defined by ranges",
+            ),
+            ("m: {INCLUDE_AND: {lane_count: '< 1.75*ego_width'}}", "unknown unit"),
+            ("m: {INCLUDE_AND: {AND: {lane_count: 1}}}", "nests OR, not AND"),
+            ("m: {INCLUDE_AND: {OR: {AND: {lane_count: 1}}}}", "nest one level only"),
+            (
+                "m: {INCLUDE_AND: {lane_count: 1}, INCLUDE_OR: {lane_count: 2}}",
+                "at most one INCLUDE",
+            ),
+            ("m: {TITLE: empty}", "needs an INCLUDE"),
+            ("m: {INCLUDE_AND: {lane_count: 1}, COLOR: red}", "unknown keys"),
+            (
+                "unknown_module: {INCLUDE_AND: {lane_count: 1}}",
+                "must not contain 'unknown'",
+            ),
+            (
+                "m: {LABEL: road_type, INCLUDE_AND: {lane_count: 1}}",
+                "labels named like",
+            ),
+            (
+                "m: {ACTIVE: maybe, INCLUDE_AND: {lane_count: 1}}",
+                "expected true or false",
+            ),
+        ],
+    )
+    def test_a_bad_module_is_refused(self, modules: str, message: str) -> None:
+        text = _TAXONOMY + "MODULES:\n    " + modules + "\n"
+        with pytest.raises(OpenOddError, match=message):
+            load_openodd(text, name="n")
 
     @pytest.mark.parametrize(
         ("text", "message"),
         [
-            (
-                "TAXONOMY:\n  a: [x]\nMODULES:\n  m:\n    INCLUDE_AND:\n      b: [x]\n",
-                "neither",
-            ),
-            (
-                "TAXONOMY:\n  a: float length\nMODULES:\n  m:\n    INCLUDE_AND:\n      a: fast\n",
-                "cannot read",
-            ),
-            (
-                "TAXONOMY:\n  a: float length\nCOVERAGE:\n  a: {probe: ego_speed_kph}\n"
-                "MODULES:\n  m:\n    INCLUDE_AND:\n      a: '< 3 m'\n",
-                "cannot convert",
-            ),
-            ("TAXONOMY:\n  a: [x]\nCOVERAGE:\n  b: {probe: rain}\n", "not in TAXONOMY"),
-            ("TAXONOMY:\n  a: [x]\nCOVERAGE:\n  a: {probe: nope}\n", "unknown probe"),
             ("TAXONOMY:\n  a: complex number\n", "cannot read the type"),
+            ("TAXONOMY:\n  a: [x]\nCOVERAGE:\n  a: {probe: rain}\n", "binding file"),
             ("- not a mapping\n", "must be a mapping"),
         ],
     )
     def test_a_bad_document_is_refused(self, text: str, message: str) -> None:
         with pytest.raises(OpenOddError, match=message):
             load_openodd(text)
+
+    def test_a_bad_binding_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(OpenOddError, match="unknown probe"):
+            load_odd_binding(_write(tmp_path, "  is_mixed_zone: {probe: nope}\n"))
+        with pytest.raises(OpenOddError, match="neither a concept"):
+            load_odd_binding(_write(tmp_path, "  nope: {probe: rain}\n"))
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("probes: {}\n")
+        with pytest.raises(OpenOddError, match="under 'openodd'"):
+            load_odd_binding(bad)
+
+    def test_a_record_of_categoricals_is_not_a_derived_categorical(self) -> None:
+        odd = load_openodd(_TAXONOMY, name="n")
+        names = {a.name for a in odd.attributes}
+        assert {
+            "scenery.record_of_categoricals.surface",
+            "scenery.record_of_categoricals.marking",
+        } <= names
+        # A concept typed by a categorical takes its literals; a record type is not followed.
+        assert "scenery.current_road" in names
+        assert "vehicle" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -690,8 +854,13 @@ class TestRegistry:
         assert resolve_odd("default").name == "default"
         assert resolve_odd(f"{__name__}:small_odd").name == "small"
         path = tmp_path / "x.yaml"
-        path.write_text("ODD: {name: from_yaml}\nTAXONOMY:\n  a: [x]\n")
-        assert resolve_odd(str(path)).name == "from_yaml"
+        path.write_text("TAXONOMY:\n  a: [x]\n")
+        assert resolve_odd(str(path)).name == "x"
+        binding = tmp_path / "b.yaml"
+        binding.write_text(
+            "openodd: [x.yaml]\nname: bound\nprobes: {a: {probe: rain}}\n"
+        )
+        assert resolve_odd(str(binding)).name == "bound"
         odd = small_odd()
         assert resolve_odd(odd) is odd
 
@@ -782,10 +951,3 @@ def test_the_model_declares_the_probes_as_python_does() -> None:
         "traffic_density_level",
     }
     assert probe_functions <= set(functions), probe_functions - set(functions)
-
-
-def test_threshold_buckets_are_open_ended() -> None:
-    # Guards the label format the report relies on for open-ended buckets.
-    items = {i.name: i for i in _load().cover_items()}
-    edges = items["odd.road.speed_limit"].edges
-    assert edges[0] == -math.inf and edges[-1] == math.inf

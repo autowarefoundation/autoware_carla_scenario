@@ -1,7 +1,8 @@
 """Operational Design Domains: what the runs are measured against.
 
 An ODD is written in Python (:class:`OddDefinition`, checked with Codon like a
-scenario: ``scenario-odd check``) or in OpenODD YAML (:func:`load_openodd`),
+scenario: ``scenario-odd check``) or in ASAM OpenODD 1.0 YAML with a binding
+file naming its probes (:func:`load_odd_binding`, :func:`load_openodd`),
 which builds the same objects.  The runner samples the ODD's attributes on
 every tick: their buckets are the ODD coverage, and the ODD's modules decide
 which ticks were outside it.  See ``docs/odd.md``.
@@ -69,6 +70,7 @@ __all__ = [
     "lanelet_location",
     "lanelet_speed_limit_kph",
     "lanelet_subtype",
+    "load_odd_binding",
     "load_openodd",
     "module_holds",
     "odd_names",
@@ -85,8 +87,8 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     # The OpenODD reader needs PyYAML; import it only when asked for.
-    if name == "load_openodd":
-        from .openodd import load_openodd  # noqa: PLC0415
+    if name in ("load_openodd", "load_odd_binding"):
+        from . import openodd  # noqa: PLC0415
 
-        return load_openodd
+        return getattr(openodd, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

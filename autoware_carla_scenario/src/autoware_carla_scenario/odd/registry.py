@@ -9,8 +9,10 @@ A run's ODD is named by a string (the ``odd`` key of the CLI config, or
   the ``autoware_carla_scenario.odds`` entry point group (the entry point
   names the builder: a function that takes nothing and returns an
   :class:`OddDefinition`);
-* a path to an OpenODD YAML file (``.yaml`` / ``.yml``), read with
-  :func:`~autoware_carla_scenario.odd.load_openodd`;
+* a path to a ``.yaml`` / ``.yml`` file: a binding file (OpenODD files and
+  the probes that measure them, :func:`~autoware_carla_scenario.odd.load_odd_binding`),
+  or an OpenODD document on its own
+  (:func:`~autoware_carla_scenario.odd.load_openodd`; nothing is measured);
 * ``"package.module:function"``: a builder to import and call.
 """
 
@@ -198,8 +200,10 @@ def resolve_odd(spec: Union[str, Path, OddDefinition, None] = None) -> OddDefini
     if not text or text == DEFAULT_ODD:
         return default_odd()
     if text.endswith((".yaml", ".yml")):
-        from .openodd import load_openodd  # noqa: PLC0415
+        from .openodd import is_binding_file, load_odd_binding, load_openodd  # noqa: PLC0415
 
+        if is_binding_file(text):
+            return load_odd_binding(text)
         return load_openodd(Path(text))
     builder = odd_builder(text)
     assert builder is not None
