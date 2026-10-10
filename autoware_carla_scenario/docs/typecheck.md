@@ -100,6 +100,12 @@ scenario's own helpers, and, through `register_pass_condition()` and the
 other `register_*` methods, the `check()` of a custom condition and the
 `execute()` of a custom action.
 
+An ODD written in Python ([ODD](odd.md)) is checked the same way: the program
+calls its builder (`odd: OddDefinition = urban_odd()`). Every attribute's
+probe is then called with a world, and every condition must come from an
+attribute. The runner checks the ODD named by the `odd` key under the same
+`typecheck` mode, and `scenario-odd check` does it without running anything.
+
 ### The model
 
 `autoware_carla_scenario/typecheck/codon/` holds Codon declarations of

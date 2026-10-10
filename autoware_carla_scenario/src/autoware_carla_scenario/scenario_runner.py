@@ -22,6 +22,8 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
+from .coverage.collector import CoverageCollector
+from .odd import OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
@@ -299,6 +301,7 @@ class ScenarioRunner:
         output_dir: Path = Path("scenario_outputs"),
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
+        odd: Optional[OddDefinition] = None,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -321,7 +324,11 @@ class ScenarioRunner:
                 author.  *None* selects CARLA's TrafficManager on *tm_port*,
                 which is what every scenario written before the backend seam
                 existed expects.
+            odd: The ODD every run is measured against: its attributes are
+                the ODD coverage, its modules say which ticks were outside it
+                (docs/odd.md).  *None* selects the built-in ``default`` ODD.
         """
+        self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
         self._tm_port = tm_port
@@ -704,6 +711,7 @@ class ScenarioRunner:
         )
         tick_count = 0
         result: Optional[ScenarioResult] = None
+        coverage: Optional[CoverageCollector] = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -733,6 +741,10 @@ class ScenarioRunner:
             # Before setup(), because setup() is where a scenario spawns and
             # registers its NPCs, and register_entity() passes the backend on.
             scenario.set_traffic_backend(backend)
+            # setup() declares the cover items again on a retry of the same
+            # scenario, so the ones from an attempt that failed are dropped.
+            scenario._cover_items.clear()
+            scenario._cross_items.clear()
             scenario.setup()
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once
@@ -836,6 +848,14 @@ class ScenarioRunner:
             # the world from outside.
             trajectory.start(world)
             trajectory.record(world, clock.simulated)
+            # What the run covers: the attributes of the run's ODD, sampled
+            # on every tick and judged against its modules, then the
+            # scenario's own items, declared in setup() with register_cover().
+            reset_probes()
+            coverage = CoverageCollector(
+                scenario._cover_items, scenario._cross_items, odd=self.odd
+            )
+            coverage.start(world, clock.simulated)
 
             # Tick loop
             while not scenario.is_done():
@@ -881,6 +901,9 @@ class ScenarioRunner:
                 # Post-tick callbacks
                 for cb in scenario._post_tick_callbacks:
                     cb(world)
+
+                # Coverage samples the world the hooks above have acted on.
+                coverage.tick(world, elapsed)
 
                 # Periodic ego OpenDRIVE position log
                 if tick_count % _CONDITION_LOG_INTERVAL == 0:
@@ -975,6 +998,9 @@ class ScenarioRunner:
                     elapsed_seconds=elapsed,
                 )
 
+            # Sampled before teardown, while the ego still exists.
+            coverage.end(world, clock.simulated)
+
         finally:
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _vehicle_entity_module._warmup_done = False
@@ -1038,6 +1064,20 @@ class ScenarioRunner:
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(result.to_json(indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
+            if coverage is not None:
+                # A batch can run one scenario class more than once: each
+                # run keeps a file of its own, all matching *_coverage.json.
+                coverage_path = self.output_dir / f"{scenario_name}_coverage.json"
+                counter = 1
+                while coverage_path.exists():
+                    coverage_path = (
+                        self.output_dir / f"{scenario_name}-{counter}_coverage.json"
+                    )
+                    counter += 1
+                coverage.write(coverage_path, scenario_name)
+                logger.info(
+                    "[%s] Coverage written to: %s", scenario_name, coverage_path
+                )
 
         # Render video from the CARLA recording after scenario cleanup
         if (

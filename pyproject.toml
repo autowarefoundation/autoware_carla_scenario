@@ -37,6 +37,7 @@ dev = [
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",
     "weasyprint>=68.0",
+    "hypothesis>=6.100",
 ]
 
 [tool.ruff]

@@ -6,10 +6,12 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only, _expect_int_sequence
+from ._tc import _keyword_only, _expect_int_sequence, _expect_optional_float
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
+from .coverage import (SamplingEvent, _expect_sampling_event, _expect_cover_expression,
+                       _expect_optional_range, _expect_optional_edges)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_optional_ground_projection)
 from .entity import (EgoConfig, EgoVehicle, VehicleEntity, PedestrianEntity,
@@ -138,6 +140,24 @@ class BaseScenario:
 
     def register_fail_condition(self, condition: BaseCondition) -> None:
         _expect_condition(condition)
+        raise NotImplementedError()
+
+    def register_cover(self, name: str, expression, *_kw, unit: str = "", range = None,
+                       every = None, buckets = None, values = None, ignore = None,
+                       event = SamplingEvent("end"), text: str = "", target: int = 1) -> None:
+        _keyword_only(_kw, "BaseScenario.register_cover(): every argument but name and expression")
+        _expect_cover_expression(expression)
+        _expect_optional_range(range)
+        _expect_optional_float(every)
+        _expect_optional_edges(buckets)
+        _expect_sampling_event(event)
+        raise NotImplementedError()
+
+    def register_cross(self, name: str, items, *_kw, text: str = "",
+                       target: int = 1) -> None:
+        _keyword_only(_kw, "BaseScenario.register_cross(): text and target")
+        for item in items:
+            n: str = item
         raise NotImplementedError()
 
     def follow_with_spectator(self, actor_getter, *_kw, offset_back: float = 8.0,
