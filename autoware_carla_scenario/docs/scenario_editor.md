@@ -541,6 +541,20 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
+## A logical scenario: the route search
+
+A document may describe the ego's drive as a pattern of road instead of
+lanelets -- a [logical scenario](logical_scenarios.md). The scenario inspector's
+**Route search** section lists the pattern one segment per line ("lane 30-60 m,
+opposite lane: yes", "junction, turn left, traffic light: yes") with where the
+ego spawns and is sent, and edits it as the YAML the document stores (an empty
+box removes it; a malformed one is refused with the reason). A *Follow
+Trajectory* card's **Path** then offers *Along the scenario's route*, whose
+**Route vertices** are edited as text, one `kind key=value ...` per line, and
+the **Route progress** condition is offered for triggers, assertions and
+waypoint conditions. **Appear at the first vertex when the action starts**
+(`appear_on_start`) brings a hidden entity in.
+
 ## Ego: who drives, and where to
 
 The ego's inspector opens with **Driven by** — the stack that drives it, exported

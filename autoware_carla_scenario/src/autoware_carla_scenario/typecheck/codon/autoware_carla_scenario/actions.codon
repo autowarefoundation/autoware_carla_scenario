@@ -162,9 +162,9 @@ class FollowTrajectoryAction(BaseAction):
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  label: str = "follow_trajectory", once: bool = True, until = None,
                  control_config = None, hidden_outside_trajectory: bool = False,
-                 speed = None):
+                 speed = None, appear_on_start: bool = False):
         _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config, "
-                           "hidden_outside_trajectory and speed")
+                           "hidden_outside_trajectory, speed and appear_on_start")
         _expect_role(entity_name)
         _expect_optional_timing(time_reference)
         _expect_optional_float(speed)

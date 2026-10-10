@@ -142,6 +142,12 @@ uv run scenario-expand scenario=traffic_light_compliance/traffic_light_complianc
 A scenario without a `sweep:` section is already concrete, so it expands to a
 single empty case. Only the Lanelet2 map is needed, not a CARLA server.
 
+A *logical* scenario -- a document with a route search, whose `sweep:` holds
+`route:` instead of `constraints:` -- expands to one case per route of the map
+that matches its pattern, each with the ego's spawn and goal and the match
+itself (`scenario.route.*`); see
+[Logical Scenarios from Routes](logical_scenarios.md).
+
 ### Resume from a Specific Scenario
 
 When running large batches, you can skip already-completed scenarios:

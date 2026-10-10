@@ -26,6 +26,15 @@ channel.  The goal keys are emitted only when the document has a goal: an ego
 the TrafficManager drives may have no destination, and a document being edited
 into shape should leave the ``ego`` group's own ``null`` in place rather than a
 lanelet nobody chose.
+
+Route keys
+----------
+A logical scenario -- one with a route search (:attr:`ScenarioDocument.route`)
+-- renders its search as ``sweep.route`` and declares the ``scenario.route``
+keys a concrete match is carried in (:data:`ROUTE_CONFIG_DEFAULTS`).
+``scenario-expand`` (and the sweeper) find the matches and write those keys,
+and the ego's spawn and goal, per match; a run that was not expanded leaves
+them empty and the scenario searches the map it runs on itself.
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ from .persistence import dump_yaml
 
 __all__ = [
     "PACKAGE_GLOBAL_HEADER",
+    "ROUTE_CONFIG_DEFAULTS",
     "build_scenario_config",
     "dump_scenario_config",
     "param_override_key",
@@ -49,6 +59,20 @@ __all__ = [
 
 #: Hydra needs this on the first line for a config that writes into the root.
 PACKAGE_GLOBAL_HEADER = "# @package _global_"
+
+#: The ``scenario.route`` keys a route match is carried in, empty: declared so
+#: Hydra's struct mode accepts the overrides an expansion writes (see
+#: :meth:`autoware_carla_scenario.route.model.RouteMatch.to_config`).
+ROUTE_CONFIG_DEFAULTS: dict[str, Any] = {
+    "index": 0,
+    "lanelet_ids": [],
+    "start_s": 0.0,
+    "end_s": 0.0,
+    "segment_kinds": [],
+    "segment_ends": [],
+    "segment_lanelet_counts": [],
+    "junction_turns": [],
+}
 
 
 def spawn_lanelet_key(entity: Entity) -> str:
@@ -227,6 +251,16 @@ def build_scenario_config(
     param_defaults = _param_override_defaults(document)
     if param_defaults:
         scenario["param_overrides"] = param_defaults
+
+    if document.route is not None:
+        # A logical scenario: the route search drives the expansion, and the
+        # match it picks reaches the run through these keys.
+        scenario["route"] = {
+            key: list(value) if isinstance(value, list) else value
+            for key, value in ROUTE_CONFIG_DEFAULTS.items()
+        }
+        config["sweep"] = {"route": document.route.to_sweep_dict()}
+        return config
 
     slot = swept_slot(document)
     if slot is not None:

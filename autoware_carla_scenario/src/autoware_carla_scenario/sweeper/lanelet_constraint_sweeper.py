@@ -231,7 +231,8 @@ class LaneletConstraintSweeper(Sweeper):
         if sweep_cfg is None:
             raise ValueError(
                 "No 'sweep' section found in config. "
-                "LaneletConstraintSweeper requires sweep.constraints or sweep.odd_sample."
+                "LaneletConstraintSweeper requires sweep.constraints, sweep.route "
+                "or sweep.odd_sample."
             )
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)

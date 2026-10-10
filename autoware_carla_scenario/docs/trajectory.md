@@ -167,6 +167,18 @@ off -- before its first vertex's time and after its last. That is what a road
 user that enters a recording late or leaves it early needs, since an entity
 cannot be spawned once a run has started.
 
+`appear_on_start=True` (an extension, either mode) is the other way in: when a
+run of the action starts, the entity -- spawned hidden -- is put on the first
+vertex facing along the path, physics on, moving at `speed` (standing if
+unset), and then follows the trajectory. Triggered by a `RouteProgressCondition`
+it enters when the ego has come as far as it had when the road user was first
+seen; it cannot be combined with `hidden_outside_trajectory`.
+
+Vertices may also be placed against a logical scenario's *route*
+(`RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`,
+`RouteCrosswalkPose`, `RouteRoadsidePose`; `path_source: route` in a
+document) -- see [Logical Scenarios from Routes](logical_scenarios.md).
+
 ## Waypoint conditions
 
 **Each vertex is departed on one condition**, its `advance`: when it holds,

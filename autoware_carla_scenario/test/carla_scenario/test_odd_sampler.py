@@ -812,3 +812,19 @@ def test_a_scenarios_controls_are_drawn_without_naming_them_in_the_sweep() -> No
     for case in expand_config(cfg):
         npc_speed = _value(case, "scenario.npc_initial_speed_kmh")
         assert 15.0 <= npc_speed <= 45.0
+
+
+def test_drawn_cases_take_route_matches_in_turn(monkeypatch) -> None:
+    from autoware_carla_scenario.sweeper import expand as expand_module
+
+    monkeypatch.setattr(
+        expand_module,
+        "expand_route",
+        lambda route, lanelet_map, arguments=(): [["route=a"], ["route=b"]],
+    )
+    sweep = {"route": {"pattern": "x"}, "odd_sample": {"count": 3}}
+
+    cases = expand_sweep(sweep, None, ["x=1"], odd="default")
+
+    assert [c[0] for c in cases] == ["route=a", "route=b", "route=a"]
+    assert all(c[-1] == "x=1" for c in cases)
