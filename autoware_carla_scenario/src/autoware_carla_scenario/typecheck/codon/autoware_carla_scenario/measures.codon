@@ -1,0 +1,13 @@
+# Model of autoware_carla_scenario.measures (docs/odd.md, "Scenario measures"):
+# the keys a scenario's measures are read under, which a scenario passes to
+# BaseScenario.register_measure() and an ODD to odd.scenario_measure().
+
+VEHICLE_AHEAD_GAP_M: str = "vehicle_ahead_gap_m"
+VEHICLE_AHEAD_RELATIVE_SPEED_KPH: str = "vehicle_ahead_relative_speed_kph"
+CROSSING_PEDESTRIAN_GAP_M: str = "crossing_pedestrian_gap_m"
+CROSSING_PEDESTRIAN_SPEED_MS: str = "crossing_pedestrian_speed_ms"
+
+AHEAD_RANGE_M: float = 100.0
+LANE_HALF_WIDTH_M: float = 1.75
+PEDESTRIAN_LATERAL_M: float = 10.0
+PEDESTRIAN_MOVING_MS: float = 0.5

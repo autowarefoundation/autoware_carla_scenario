@@ -194,6 +194,19 @@ These live in `autoware_carla_scenario.odd`:
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
+The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
+Without one they return nothing.
+
+The probes whose value the map alone decides (`speed_limit_kph`,
+`lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
+`in_junction`, `lane_count`) can also read it off a lanelet, which is how a
+planned route is checked before a run
+([Checking a planned route](#checking-a-planned-route)).
+
+Import them from `autoware_carla_scenario.odd` itself
+(`from autoware_carla_scenario.odd import rain`). The Codon model that checks
+an ODD has no `probes` submodule.
+
 ### Scenario measures
 
 The road users a scenario stages -- a vehicle ahead in the next lane, a
@@ -206,7 +219,7 @@ generically in the ego's frame:
 |---|---|---|
 | `vehicle_ahead_gap_m` | m | The nearest vehicle ahead in the ego's lane or a lane beside it, centre to centre along the ego's heading (up to `AHEAD_RANGE_M`); a vehicle about to cut in is measured from before it changes lanes |
 | `vehicle_ahead_relative_speed_kph` | km/h | That vehicle's speed along the ego's heading less the ego's |
-| `crossing_pedestrian_gap_m` | m | The nearest pedestrian ahead that is moving: how far ahead it was when it set off, and from then on |
+| `crossing_pedestrian_gap_m` | m | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
 | `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
 
 Each reads nothing (missing) while there is no such road user. A scenario
@@ -239,24 +252,17 @@ probes:
 ```
 
 The attribute then reads the running scenario's measure, its replacement
-included. The ODD names a measure key, never a scenario; the scenario names
+included, in the measure's unit: an attribute mapped onto a built-in measure
+takes its unit, and one given that is not it is refused.  The keys are in the
+Codon model (`from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M`),
+so a scenario or a Python ODD naming them is checked like any other. The ODD names a measure key, never a scenario; the scenario names
 its measures, never the ODD. The default ODD maps
 `dynamic.vehicle_ahead_gap`, `dynamic.vehicle_ahead_relative_speed`,
 `dynamic.crossing_pedestrian_gap` and `dynamic.crossing_pedestrian_speed`
-onto the four built-in measures.
+onto the four built-in measures; the two of the vehicle ahead count stays of
+1 s or more (`min_stay`), so a gap the ego only closes through is not
+covered.
 
-The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
-Without one they return nothing.
-
-The probes whose value the map alone decides (`speed_limit_kph`,
-`lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
-`in_junction`, `lane_count`) can also read it off a lanelet, which is how a
-planned route is checked before a run
-([Checking a planned route](#checking-a-planned-route)).
-
-Import them from `autoware_carla_scenario.odd` itself
-(`from autoware_carla_scenario.odd import rain`). The Codon model that checks
-an ODD has no `probes` submodule.
 
 
 ## Writing an ODD in OpenODD YAML
@@ -638,7 +644,9 @@ The example scenarios declare these:
 | `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `walk_speed_ms`, 0.8-3 m/s |
 
 `sweep.odd_sample.knobs` takes the same fields keyed by the ODD's attributes,
-and replaces anything above for that sweep. Controls set where a run starts;
+and replaces anything above, attribute by attribute, for that sweep. It is for
+the command line -- one sweep against one ODD -- not for a scenario's config,
+which would then name the ODD's taxonomy: a scenario says `controls`. Controls set where a run starts;
 the measures read what it then drives, which is what coverage counts.
 
 ### How a case is drawn

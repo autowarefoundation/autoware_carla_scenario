@@ -446,6 +446,7 @@ class OddAttribute:
     ) -> None:
         if not name:
             raise ValueError("OddAttribute: name must not be empty")
+        unit = _measure_unit(name, probe, unit)
         self.name = name
         self.probe = probe
         self.unit = unit
@@ -529,6 +530,26 @@ class OddAttribute:
 # ---------------------------------------------------------------------------
 # Modules
 # ---------------------------------------------------------------------------
+
+
+def _measure_unit(name: str, probe: Any, unit: str) -> str:
+    """The unit of an attribute mapped onto a built-in scenario measure: its.
+
+    A measure is read in its own unit, so the attribute's conditions and
+    buckets are in it too; a unit given that is not the measure's would put
+    every value in the wrong bucket.
+    """
+    from .scenario_measure import ScenarioMeasure  # noqa: PLC0415
+    from .units import normalize_unit  # noqa: PLC0415
+
+    if not isinstance(probe, ScenarioMeasure) or not probe.unit:
+        return unit
+    if unit and normalize_unit(unit) != normalize_unit(probe.unit):
+        raise ValueError(
+            f"OddAttribute({name}): measure {probe.key} is in {probe.unit!r}, "
+            f"not {unit!r}"
+        )
+    return probe.unit
 
 
 def _never_called(world: Any) -> Any:

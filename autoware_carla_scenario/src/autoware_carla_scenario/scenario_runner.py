@@ -784,6 +784,7 @@ class ScenarioRunner:
             # scenario, so the ones from an attempt that failed are dropped.
             scenario._cover_items.clear()
             scenario._cross_items.clear()
+            scenario._restore_measures()
             # A logical scenario's route is process-wide, like the signal
             # controllers: one left by the previous scenario of a batch must
             # not be read as this one's.  A scenario with a route sets its own

@@ -264,7 +264,7 @@ def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
         return {}
     controls = OmegaConf.to_container(node, resolve=True)
     if not isinstance(controls, dict):
-        raise ValueError("controls: expected a mapping of measure -> knob")
+        raise ValueError("controls: expected a mapping of measure -> control")
     return {str(k): v for k, v in controls.items()}
 
 

@@ -688,12 +688,22 @@ class _Reader:
 
     def unit_of(self, concept: _Concept) -> str:
         binding = self.bindings.get(concept.name, {})
+        if "measure" in binding:
+            # A measure is read in its own unit; one given must be it.
+            measured = normalize_unit(scenario_measure(str(binding["measure"])).unit)
+            if "unit" in binding and measured:
+                given = normalize_unit(str(binding["unit"]))
+                if given != measured:
+                    raise OpenOddError(
+                        f"{concept.name}: measure {binding['measure']} is in "
+                        f"{measured!r}, not {given!r}"
+                    )
+            if measured:
+                return measured
         if "unit" in binding:
             return normalize_unit(str(binding["unit"]))
         if "probe" in binding:
             return normalize_unit(_probe(str(binding["probe"]))[1])
-        if "measure" in binding:
-            return normalize_unit(scenario_measure(str(binding["measure"])).unit)
         return ""
 
     def number(

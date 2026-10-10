@@ -710,15 +710,35 @@ class BaseScenario(ABC):
         """
         if not key:
             raise ValueError("register_measure(): key must not be empty")
+        from .odd.units import normalize_unit  # noqa: PLC0415
+
         built_in = BUILT_IN_MEASURES.get(key)
-        if built_in is not None and unit and unit != built_in.unit:
+        if (
+            built_in is not None
+            and unit
+            and normalize_unit(unit) != normalize_unit(built_in.unit)
+        ):
             raise ValueError(
                 f"register_measure({key}): the built-in measure is in "
                 f"{built_in.unit!r}, not {unit!r}"
             )
-        if built_in is not None and not unit:
+        if built_in is not None:
             unit = built_in.unit
         self._measures[key] = Measure(key, read, unit, text)
+
+    def _restore_measures(self) -> None:
+        """Back to the measures the scenario had before its first attempt.
+
+        Called by the runner before every attempt: the first remembers them,
+        so a measure ``setup()`` registered -- one reading that attempt's NPC,
+        say -- does not outlive it into a retry, while those registered in
+        ``__init__`` stay.
+        """
+        initial = getattr(self, "_initial_measures", None)
+        if initial is None:
+            self._initial_measures = dict(self._measures)
+        else:
+            self._measures = dict(initial)
 
     def measure(self, key: str, world: "carla.World") -> Any:
         """This scenario's measure *key* in *world*.

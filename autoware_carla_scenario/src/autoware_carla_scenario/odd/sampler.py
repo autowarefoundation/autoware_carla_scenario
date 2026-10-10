@@ -24,8 +24,9 @@ say which, none of them knowing the others:
   :func:`~.probes.fog` and :func:`~.probes.illumination` have knobs on
   (:data:`DEFAULT_KNOBS`).
 
-A sweep's ``knobs``, keyed by the ODD's attributes, replace all of them for
-one sweep.  Attributes nothing sets -- what the map or the drive decides --
+A sweep's ``knobs``, keyed by the ODD's attributes, replace them attribute by
+attribute, for one sweep run against one ODD -- the command line's, not a
+scenario's (a scenario's config says ``controls``).  Attributes nothing sets -- what the map or the drive decides --
 are left open: the sampler admits a combination when the ODD can hold for
 *some* value of them.
 

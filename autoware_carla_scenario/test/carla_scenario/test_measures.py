@@ -236,3 +236,109 @@ def test_a_binding_file_maps_a_taxonomy_concept_onto_a_measure(tmp_path: Path) -
     assert isinstance(attribute, OddAttribute)
     assert attribute.probe == scenario_measure(VEHICLE_AHEAD_GAP_M)
     assert attribute.unit == "m"
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+
+def test_an_attribute_takes_its_measures_unit_and_refuses_another() -> None:
+    attribute = OddAttribute("a", scenario_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH))
+    assert attribute.unit == "km/h"
+    assert OddAttribute(
+        "b", scenario_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH), unit="kph"
+    )
+    with pytest.raises(ValueError, match="'km/h', not 'm/s'"):
+        OddAttribute(
+            "c", scenario_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH), unit="m/s"
+        )
+    # A scenario's own measure has no unit of the framework's: the ODD says.
+    assert OddAttribute("d", scenario_measure("its_own"), unit="s").unit == "s"
+
+
+def test_a_binding_cannot_give_a_measure_another_unit(tmp_path: Path) -> None:
+    from autoware_carla_scenario.odd import OpenOddError
+
+    (tmp_path / "taxonomy.yml").write_text(
+        "TAXONOMY:\n  dynamic_elements:\n    closing: float velocity\n"
+    )
+    binding = tmp_path / "b.binding.yaml"
+    binding.write_text(
+        "openodd: [taxonomy.yml]\nname: b\nprobes:\n"
+        "  closing: {measure: vehicle_ahead_relative_speed_kph, unit: m/s, "
+        "buckets: [-5, 0, 5]}\n"
+    )
+
+    with pytest.raises(OpenOddError, match="not 'm/s'"):
+        load_odd_binding(binding)
+
+
+def test_a_replacement_may_spell_the_unit_another_way() -> None:
+    scenario = _scenario()
+    scenario.register_measure(
+        VEHICLE_AHEAD_RELATIVE_SPEED_KPH, lambda w: 1.0, unit="kph"
+    )
+
+    assert scenario.measures[VEHICLE_AHEAD_RELATIVE_SPEED_KPH].unit == "km/h"
+
+
+def test_a_retry_starts_from_the_measures_before_the_first_attempt() -> None:
+    scenario = _scenario()
+    scenario.register_measure("from_init", lambda w: 1.0)
+    scenario._restore_measures()  # first attempt: remembered
+    scenario.register_measure("from_setup", lambda w: 2.0)
+    scenario.register_measure(VEHICLE_AHEAD_GAP_M, lambda w: 3.0)
+
+    scenario._restore_measures()  # the retry
+
+    assert "from_init" in scenario.measures
+    assert "from_setup" not in scenario.measures
+    assert (
+        scenario.measures[VEHICLE_AHEAD_GAP_M] == BUILT_IN_MEASURES[VEHICLE_AHEAD_GAP_M]
+    )
+
+
+def test_the_crossing_gap_is_the_gap_it_set_off_at() -> None:
+    set_off = _world_of(_Placed(2, "walker.pedestrian.1", (20.0, -3.0), (0.0, 2.0)))
+    closer = _world_of(_Placed(2, "walker.pedestrian.1", (8.0, -1.0), (0.0, 2.0)))
+
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, set_off) == pytest.approx(20.0)
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, closer) == pytest.approx(20.0)
+    set_measured_scenario(None)  # a new run forgets it
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, closer) == pytest.approx(8.0)
+
+
+def test_two_worlds_at_the_same_frame_are_read_apart() -> None:
+    near = _World(
+        [*_world_of()._actors, _Placed(2, "vehicle.npc", (5.0, 0.0))], frame=7
+    )
+    far = _World(
+        [*_world_of()._actors, _Placed(2, "vehicle.npc", (40.0, 0.0))], frame=7
+    )
+
+    assert read_measure(VEHICLE_AHEAD_GAP_M, near) == pytest.approx(5.0)
+    assert read_measure(VEHICLE_AHEAD_GAP_M, far) == pytest.approx(40.0)
+
+
+def test_the_codon_model_has_every_measure_key() -> None:
+    """Scenarios and Python ODDs import the keys; the static check compiles them."""
+    import ast
+
+    from autoware_carla_scenario import measures
+    from autoware_carla_scenario.typecheck import model_dir
+
+    tree = ast.parse(
+        (model_dir() / "autoware_carla_scenario" / "measures.codon").read_text()
+    )
+    modelled = {
+        node.target.id: ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.value is not None
+    }
+    for name in measures.__all__:
+        value = getattr(measures, name)
+        if isinstance(value, (str, float)):
+            assert modelled.get(name) == value, name

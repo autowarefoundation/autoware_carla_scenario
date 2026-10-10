@@ -47,7 +47,6 @@ __all__ = [
     "PEDESTRIAN_MOVING_MS",
     "VEHICLE_AHEAD_GAP_M",
     "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
-    "in_ego_frame",
     "measured_scenario",
     "read_measure",
     "set_measured_scenario",
@@ -111,7 +110,11 @@ class _Around:
     speed: float
 
 
-_CACHE: dict[str, Any] = {"frame": None, "around": None}
+#: What was read for which world at which frame: (id(world), frame), and the
+#: road users around the ego then.
+_CACHE: dict[str, Any] = {"at": None, "around": None}
+#: Pedestrian actor id -> how far ahead of the ego it was when it set off.
+_SET_OFF: dict[int, float] = {}
 
 
 def _frame_of(world: "carla.World") -> Optional[int]:
@@ -121,28 +124,11 @@ def _frame_of(world: "carla.World") -> Optional[int]:
         return None
 
 
-def in_ego_frame(world: "carla.World", actor: Any, ego: Any) -> tuple[float, float]:
-    """(metres ahead of *ego*, metres to its side) of *actor*.
-
-    Along the ego's heading and across it; the side's sign is CARLA's (right
-    positive), which no measure here depends on.
-    """
-    del world
-    transform = ego.get_transform()
-    here = transform.location
-    yaw = math.radians(transform.rotation.yaw)
-    at = actor.get_location()
-    dx, dy = at.x - here.x, at.y - here.y
-    return (
-        dx * math.cos(yaw) + dy * math.sin(yaw),
-        -dx * math.sin(yaw) + dy * math.cos(yaw),
-    )
-
-
 def _around(world: "carla.World") -> Optional[list[_Around]]:
     """Every other vehicle and pedestrian, in the ego's frame; once per frame."""
     frame = _frame_of(world)
-    if frame is not None and frame == _CACHE["frame"]:
+    at = None if frame is None else (id(world), frame)
+    if at is not None and at == _CACHE["at"]:
         return _CACHE["around"]
     found: Optional[list[_Around]]
     try:
@@ -151,7 +137,7 @@ def _around(world: "carla.World") -> Optional[list[_Around]]:
         found = None if ego is None else _relative_to(ego, actors)
     except Exception:
         found = None
-    _CACHE["frame"], _CACHE["around"] = frame, found
+    _CACHE["at"], _CACHE["around"] = at, found
     return found
 
 
@@ -229,7 +215,11 @@ def _vehicle_ahead_relative_speed_kph(world: "carla.World") -> Optional[float]:
 
 def _crossing_pedestrian_gap_m(world: "carla.World") -> Optional[float]:
     pedestrian = _crossing_pedestrian(world)
-    return None if pedestrian is None else pedestrian.ahead
+    if pedestrian is None:
+        return None
+    # The gap it set off at, held while it crosses: that is what a scenario
+    # stages, not every gap the ego then closes through.
+    return _SET_OFF.setdefault(pedestrian.actor_id, pedestrian.ahead)
 
 
 def _crossing_pedestrian_speed_ms(world: "carla.World") -> Optional[float]:
@@ -260,9 +250,9 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
             CROSSING_PEDESTRIAN_GAP_M,
             _crossing_pedestrian_gap_m,
             "m",
-            "To the nearest pedestrian ahead that is moving: one standing at "
-            "the kerb is not measured until it sets off, so the first value is "
-            "how far ahead it was when it did",
+            "How far ahead the nearest pedestrian ahead that is moving was "
+            "when it set off, held while it crosses: one standing at the kerb "
+            "is not measured until it sets off",
         ),
         Measure(
             CROSSING_PEDESTRIAN_SPEED_MS,
@@ -287,7 +277,8 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     The runner sets the scenario it runs, and clears it when the run ends.
     """
     _MEASURED["scenario"] = scenario
-    _CACHE["frame"], _CACHE["around"] = None, None
+    _CACHE["at"], _CACHE["around"] = None, None
+    _SET_OFF.clear()
 
 
 def measured_scenario() -> Optional["BaseScenario"]:

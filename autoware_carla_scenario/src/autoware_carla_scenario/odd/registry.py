@@ -68,6 +68,12 @@ SPEED_MIN_STAY = 3.0
 ROAD_MIN_STAY = 2.0
 
 
+#: Stays shorter than this many seconds at a gap to, or a speed relative to,
+#: the vehicle ahead do not cover it: an ego closing in passes through gaps it
+#: never drove at.
+VEHICLE_AHEAD_MIN_STAY: float = 1.0
+
+
 def default_odd() -> OddDefinition:
     """Every attribute the framework measures, after ISO 34503, and no modules.
 
@@ -175,6 +181,8 @@ def default_odd() -> OddDefinition:
                 scenario_measure(VEHICLE_AHEAD_GAP_M),
                 unit="m",
                 buckets=[0, 10, 20, 30, 50, 100],
+                # A gap the ego only closes through is not one it drove at.
+                min_stay=VEHICLE_AHEAD_MIN_STAY,
                 text="Gap to the nearest vehicle ahead in the ego's lane or one beside it",
             ),
             OddAttribute(
@@ -182,6 +190,7 @@ def default_odd() -> OddDefinition:
                 scenario_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH),
                 unit="km/h",
                 buckets=[-30, -15, -5, 5, 15, 30],
+                min_stay=VEHICLE_AHEAD_MIN_STAY,
                 text="That vehicle's speed less the ego's",
             ),
             OddAttribute(
@@ -189,7 +198,7 @@ def default_odd() -> OddDefinition:
                 scenario_measure(CROSSING_PEDESTRIAN_GAP_M),
                 unit="m",
                 buckets=[0, 10, 20, 30, 50],
-                text="Gap to the nearest pedestrian ahead that is moving",
+                text="How far ahead a pedestrian crossing ahead set off",
             ),
             OddAttribute(
                 "dynamic.crossing_pedestrian_speed",

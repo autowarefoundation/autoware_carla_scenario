@@ -147,6 +147,9 @@ class BaseScenario:
         _expect_cover_expression(read)
         raise NotImplementedError()
 
+    def measure(self, key: str, world: carla.World) -> Optional[float]:
+        raise NotImplementedError()
+
     def register_cover(self, name: str, expression, *_kw, unit: str = "", range = None,
                        every = None, buckets = None, values = None, ignore = None,
                        event = SamplingEvent("end"), text: str = "", target = 1.0,
