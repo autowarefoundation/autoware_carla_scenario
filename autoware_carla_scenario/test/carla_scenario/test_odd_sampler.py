@@ -26,6 +26,8 @@ from autoware_carla_scenario.odd import (
     knobs_from_mapping,
     rain,
 )
+from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M
+from autoware_carla_scenario.odd import scenario_measure
 from autoware_carla_scenario.odd.probes import illumination_level, intensity_level
 from autoware_carla_scenario.odd.sampler import sampler_from_config
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
@@ -686,72 +688,82 @@ def test_coverage_counted_another_way_is_not_read() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A scenario's own controls
+# A scenario's own controls, joined to the ODD through measures
 # ---------------------------------------------------------------------------
 
 
-def _gap_odd() -> OddDefinition:
+def _gap_odd(name: str = "dynamic.lead_gap") -> OddDefinition:
+    """An ODD whose own taxonomy maps a gap attribute onto the gap measure."""
     gap = OddAttribute(
-        "dynamic.vehicle_ahead_gap",
-        lambda world: None,
+        name,
+        scenario_measure(VEHICLE_AHEAD_GAP_M),
         unit="m",
         buckets=[0, 10, 20, 30, 50],
     )
     return OddDefinition("gap", [gap])
 
 
+_GAP_CONTROL = {VEHICLE_AHEAD_GAP_M: OddKnob("scenario.npc_ahead_m", range=(6.0, 30.0))}
+
+
+def test_a_control_is_joined_to_the_attribute_mapped_onto_its_measure() -> None:
+    """The scenario names a measure, the ODD maps its own name onto it."""
+    for name in ("dynamic.lead_gap", "my_taxonomy.headway"):
+        sampler = OddSampler(_gap_odd(name), controls=_GAP_CONTROL, seed=0)
+        (case,) = sampler.sample(1)
+        assert sampler.attributes == [name]
+        assert case.overrides[0].startswith("scenario.npc_ahead_m=")
+
+
 def test_a_range_keeps_draws_to_what_the_scenario_can_stage() -> None:
-    sampler = OddSampler(
-        _gap_odd(),
-        {
-            "dynamic.vehicle_ahead_gap": OddKnob(
-                "scenario.npc_ahead_m", range=(6.0, 30.0)
-            )
-        },
-        seed=0,
-    )
+    sampler = OddSampler(_gap_odd(), controls=_GAP_CONTROL, seed=0)
 
     cases = sampler.sample(60)
 
     # [30, 50) meets the range only at 30: not a bucket the scenario drives in.
-    assert {c.buckets["dynamic.vehicle_ahead_gap"] for c in cases} == {
+    assert {c.buckets["dynamic.lead_gap"] for c in cases} == {
         "[0, 10)",
         "[10, 20)",
         "[20, 30)",
     }
-    assert all(6.0 <= c.values["dynamic.vehicle_ahead_gap"] <= 30.0 for c in cases)
+    assert all(6.0 <= c.values["dynamic.lead_gap"] <= 30.0 for c in cases)
 
 
 def test_a_point_range_is_that_point() -> None:
     sampler = OddSampler(
-        _gap_odd(), {"dynamic.vehicle_ahead_gap": OddKnob("k", range=(12.0, 12.0))}
+        _gap_odd(), controls={VEHICLE_AHEAD_GAP_M: OddKnob("k", range=(12.0, 12.0))}
     )
 
     assert sampler.sample(1)[0].overrides == ["k=12.0"]
 
 
-def test_controls_the_odd_has_no_attribute_for_are_ignored() -> None:
-    """A scenario's controls do not have to match the ODD it is run against."""
+def test_controls_of_measures_the_odd_does_not_map_are_unused() -> None:
     sampler, _ = sampler_from_config(
         {"count": 1},
         odd=_gap_odd(),
         controls={
-            "dynamic.vehicle_ahead_gap": {
-                "key": "scenario.npc_ahead_m",
-                "range": [6, 30],
-            },
-            "dynamic.crossing_pedestrian_gap": {"key": "scenario.trigger_distance_m"},
+            VEHICLE_AHEAD_GAP_M: {"key": "scenario.npc_ahead_m", "range": [6, 30]},
+            "crossing_pedestrian_gap_m": {"key": "scenario.trigger_distance_m"},
+            "a_measure_of_its_own": "scenario.x",
         },
     )
 
-    assert sampler.attributes == ["dynamic.vehicle_ahead_gap"]
+    assert sampler.attributes == ["dynamic.lead_gap"]
+
+
+def test_an_attribute_not_mapped_onto_a_measure_is_not_controlled() -> None:
+    probe_odd = OddDefinition(
+        "probe", [OddAttribute("dynamic.lead_gap", lambda w: None, buckets=[0, 10, 20])]
+    )
+    with pytest.raises(ValueError, match="nothing of ODD"):
+        OddSampler(probe_odd, controls=_GAP_CONTROL)
 
 
 def test_sweep_knobs_replace_a_scenarios_controls() -> None:
     sampler, _ = sampler_from_config(
-        {"count": 1, "knobs": {"dynamic.vehicle_ahead_gap": "sweep.key"}},
+        {"count": 1, "knobs": {"dynamic.lead_gap": "sweep.key"}},
         odd=_gap_odd(),
-        controls={"dynamic.vehicle_ahead_gap": "scenario.npc_ahead_m"},
+        controls={VEHICLE_AHEAD_GAP_M: "scenario.npc_ahead_m"},
     )
 
     (case,) = sampler.sample(1)
@@ -761,21 +773,22 @@ def test_sweep_knobs_replace_a_scenarios_controls() -> None:
         sampler_from_config({"count": 1, "knobs": {"no.such": "k"}}, odd=_gap_odd())
 
 
-def test_the_example_scenarios_declare_their_controls() -> None:
+def test_the_example_scenarios_declare_their_controls_by_measure() -> None:
     from autoware_carla_scenario.examples.run import _compose_config
     from autoware_carla_scenario.sweeper.expand import scenario_controls
 
     cut_in = scenario_controls(_compose_config("cut_in/left", []))
-    assert cut_in["dynamic.vehicle_ahead_gap"]["key"] == "scenario.npc_ahead_m"
+    assert set(cut_in) == {VEHICLE_AHEAD_GAP_M, "vehicle_ahead_relative_speed_kph"}
+    assert cut_in[VEHICLE_AHEAD_GAP_M]["key"] == "scenario.npc_ahead_m"
     # The relative speed is written on top of the ego's own, resolved.
-    assert cut_in["dynamic.vehicle_ahead_relative_speed"]["offset"] == 30.0
+    assert cut_in["vehicle_ahead_relative_speed_kph"]["offset"] == 30.0
 
     dart_out = scenario_controls(
         _compose_config("pedestrian_dart_out/pedestrian_dart_out", [])
     )
     assert set(dart_out) == {
-        "dynamic.crossing_pedestrian_gap",
-        "dynamic.crossing_pedestrian_speed",
+        "crossing_pedestrian_gap_m",
+        "crossing_pedestrian_speed_ms",
     }
     assert scenario_controls(_compose_config("lane_change/left", [])) == {}
 
@@ -786,7 +799,7 @@ def test_a_scenarios_controls_are_drawn_without_naming_them_in_the_sweep() -> No
             "odd": "default",
             "ego": {"initial_speed_kmh": 30.0},
             "controls": {
-                "dynamic.vehicle_ahead_relative_speed": {
+                "vehicle_ahead_relative_speed_kph": {
                     "key": "scenario.npc_initial_speed_kmh",
                     "offset": "${ego.initial_speed_kmh}",
                     "range": [-15, 15],

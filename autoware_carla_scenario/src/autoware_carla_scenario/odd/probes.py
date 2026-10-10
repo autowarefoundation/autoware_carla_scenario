@@ -23,12 +23,6 @@ The scenery attributes come from two maps:
 Weather values are CARLA's 0-100 intensities, not physical units such as mm/h,
 so rain and fog are named levels.
 
-The dynamic elements around the ego are measured in its own frame: along its
-heading (ahead, behind) and across it (its lane, the lanes beside it).  They
-are what a scenario sets up -- a vehicle ahead in the next lane, a pedestrian
-running out -- read off the world rather than off the scenario, so the same
-attribute measures every scenario that puts such a road user there.
-
 The probes whose value the Lanelet2 map alone decides also read it off a
 lanelet, without a world: ``probe.on_lanelet(lanelet, lanelet_map,
 routing_graph)``.  That is what checks a scenario's planned route against an
@@ -40,7 +34,6 @@ it.  The others (speed, weather, traffic) have no ``on_lanelet``.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -53,16 +46,10 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 __all__ = [
-    "AHEAD_RANGE_M",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
-    "LANE_HALF_WIDTH_M",
     "NEARBY_RADIUS_M",
-    "PEDESTRIAN_LATERAL_M",
-    "PEDESTRIAN_MOVING_MS",
     "TRAFFIC_DENSITY_LEVELS",
-    "crossing_pedestrian_gap_m",
-    "crossing_pedestrian_speed_ms",
     "ego_speed_kph",
     "fog",
     "illumination",
@@ -79,8 +66,6 @@ __all__ = [
     "speed_limit_kph",
     "traffic_density",
     "traffic_density_level",
-    "vehicle_ahead_gap_m",
-    "vehicle_ahead_relative_speed_kph",
 ]
 
 #: Radius around the ego in which other road users count as near it, in metres.
@@ -96,20 +81,6 @@ INTENSITY_LEVELS = ["none", "light", "moderate", "heavy"]
 TRAFFIC_DENSITY_LEVELS = ["none", "low", "medium", "high"]
 
 _KMH_PER_MS = 3.6
-
-#: How far ahead a road user counts as ahead of the ego, in metres.
-AHEAD_RANGE_M = 100.0
-
-#: Half a lane's width, in metres: a vehicle within this of the ego's centre
-#: line is in its lane, and within three times this, in a lane beside it.
-LANE_HALF_WIDTH_M = 1.75
-
-#: How far to either side of the ego's centre line a pedestrian ahead counts,
-#: in metres: the road beside it and the kerb.
-PEDESTRIAN_LATERAL_M = 10.0
-
-#: The speed above which a pedestrian is moving rather than standing, in m/s.
-PEDESTRIAN_MOVING_MS = 0.5
 
 
 def illumination_level(sun_altitude_deg: float) -> str:
@@ -321,87 +292,6 @@ def _nearby(world: "carla.World") -> Optional[tuple[int, int]]:
     return _read(_frame(world), "nearby", read)
 
 
-@dataclass(frozen=True)
-class _Around:
-    """A road user, seen from the ego: metres ahead and to the side, speeds."""
-
-    vehicle: bool
-    ahead: float
-    lateral: float
-    #: Its velocity along the ego's heading less the ego's, in m/s.
-    closing: float
-    #: Its own speed, in m/s.
-    speed: float
-
-
-def _around(world: "carla.World") -> Optional[list[_Around]]:
-    """Every other vehicle and pedestrian, in the ego's frame; ``None`` without an ego."""
-
-    def read() -> Optional[list[_Around]]:
-        ego = _ego(world)
-        if ego is None:
-            return None
-        transform = ego.get_transform()
-        here = transform.location
-        yaw = math.radians(transform.rotation.yaw)
-        forward = (math.cos(yaw), math.sin(yaw))
-        ego_velocity = ego.get_velocity()
-        ego_along = ego_velocity.x * forward[0] + ego_velocity.y * forward[1]
-        found: list[_Around] = []
-        for actor in world.get_actors():
-            kind = actor.type_id
-            if actor.id == ego.id or not kind.startswith(("vehicle.", "walker.")):
-                continue
-            at = actor.get_location()
-            dx, dy = at.x - here.x, at.y - here.y
-            velocity = actor.get_velocity()
-            found.append(
-                _Around(
-                    vehicle=kind.startswith("vehicle."),
-                    ahead=dx * forward[0] + dy * forward[1],
-                    lateral=-dx * forward[1] + dy * forward[0],
-                    closing=velocity.x * forward[0]
-                    + velocity.y * forward[1]
-                    - ego_along,
-                    speed=math.hypot(velocity.x, velocity.y),
-                )
-            )
-        return found
-
-    return _read(_frame(world), "around", read)
-
-
-def _vehicle_ahead(world: "carla.World") -> Optional[_Around]:
-    """The nearest vehicle ahead in the ego's lane or a lane beside it."""
-    around = _around(world)
-    if around is None:
-        return None
-    candidates = [
-        a
-        for a in around
-        if a.vehicle
-        and 0.0 < a.ahead <= AHEAD_RANGE_M
-        and abs(a.lateral) <= 3 * LANE_HALF_WIDTH_M
-    ]
-    return min(candidates, key=lambda a: a.ahead, default=None)
-
-
-def _crossing_pedestrian(world: "carla.World") -> Optional[_Around]:
-    """The nearest pedestrian ahead that is moving, on the road or its kerb."""
-    around = _around(world)
-    if around is None:
-        return None
-    candidates = [
-        a
-        for a in around
-        if not a.vehicle
-        and 0.0 < a.ahead <= AHEAD_RANGE_M
-        and abs(a.lateral) <= PEDESTRIAN_LATERAL_M
-        and a.speed > PEDESTRIAN_MOVING_MS
-    ]
-    return min(candidates, key=lambda a: a.ahead, default=None)
-
-
 # ---------------------------------------------------------------------------
 # Probes
 # ---------------------------------------------------------------------------
@@ -532,44 +422,6 @@ def pedestrian_nearby(world: "carla.World") -> Optional[bool]:
     """Whether a pedestrian is within :data:`NEARBY_RADIUS_M` of the ego."""
     nearby = _nearby(world)
     return None if nearby is None else nearby[1] > 0
-
-
-def vehicle_ahead_gap_m(world: "carla.World") -> Optional[float]:
-    """Metres to the nearest vehicle ahead in the ego's lane or a lane beside it.
-
-    Centre to centre, along the ego's heading, up to :data:`AHEAD_RANGE_M`.
-    A vehicle about to cut in is measured from before it changes lanes.
-    ``None`` with no such vehicle.
-    """
-    ahead = _vehicle_ahead(world)
-    return None if ahead is None else ahead.ahead
-
-
-def vehicle_ahead_relative_speed_kph(world: "carla.World") -> Optional[float]:
-    """That vehicle's speed along the ego's heading less the ego's, in km/h.
-
-    Negative when the ego closes in on it.  ``None`` with no such vehicle.
-    """
-    ahead = _vehicle_ahead(world)
-    return None if ahead is None else ahead.closing * _KMH_PER_MS
-
-
-def crossing_pedestrian_gap_m(world: "carla.World") -> Optional[float]:
-    """Metres to the nearest pedestrian ahead that is moving.
-
-    Within :data:`PEDESTRIAN_LATERAL_M` of the ego's centre line and moving
-    faster than :data:`PEDESTRIAN_MOVING_MS`: a pedestrian standing at the kerb
-    is not measured until it sets off, so the first value is how far ahead it
-    was when it did.  ``None`` with no such pedestrian.
-    """
-    pedestrian = _crossing_pedestrian(world)
-    return None if pedestrian is None else pedestrian.ahead
-
-
-def crossing_pedestrian_speed_ms(world: "carla.World") -> Optional[float]:
-    """That pedestrian's speed, in m/s.  ``None`` with no such pedestrian."""
-    pedestrian = _crossing_pedestrian(world)
-    return None if pedestrian is None else pedestrian.speed
 
 
 # ---------------------------------------------------------------------------

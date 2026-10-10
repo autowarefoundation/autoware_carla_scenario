@@ -26,13 +26,10 @@ from .model import (
     read_probe,
 )
 from .probes import (
-    AHEAD_RANGE_M,
     ILLUMINATION_LEVELS,
     INTENSITY_LEVELS,
     NEARBY_RADIUS_M,
     TRAFFIC_DENSITY_LEVELS,
-    crossing_pedestrian_gap_m,
-    crossing_pedestrian_speed_ms,
     ego_speed_kph,
     fog,
     illumination,
@@ -46,9 +43,8 @@ from .probes import (
     reset_probes,
     speed_limit_kph,
     traffic_density,
-    vehicle_ahead_gap_m,
-    vehicle_ahead_relative_speed_kph,
 )
+from .scenario_measure import ScenarioMeasure, scenario_measure
 from .route import (
     PlannedRoute,
     RouteCoverage,
@@ -71,7 +67,6 @@ from .registry import (
 )
 
 __all__ = [
-    "AHEAD_RANGE_M",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",
@@ -98,8 +93,6 @@ __all__ = [
     "plan_route_coverage",
     "all_of",
     "any_of",
-    "crossing_pedestrian_gap_m",
-    "crossing_pedestrian_speed_ms",
     "default_odd",
     "ego_speed_kph",
     "fog",
@@ -128,6 +121,6 @@ __all__ = [
     "resolve_odd",
     "speed_limit_kph",
     "traffic_density",
-    "vehicle_ahead_gap_m",
-    "vehicle_ahead_relative_speed_kph",
+    "ScenarioMeasure",
+    "scenario_measure",
 ]

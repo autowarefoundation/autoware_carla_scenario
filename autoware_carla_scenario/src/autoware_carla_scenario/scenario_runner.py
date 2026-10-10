@@ -23,6 +23,7 @@ from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector
+from .measures import set_measured_scenario
 from .odd import OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
@@ -891,6 +892,9 @@ class ScenarioRunner:
             # on every tick and judged against its modules, then the
             # scenario's own items, declared in setup() with register_cover().
             reset_probes()
+            # An ODD that maps its taxonomy onto scenario measures reads this
+            # scenario's, its own replacements included.
+            set_measured_scenario(scenario)
             coverage = CoverageCollector(
                 scenario._cover_items, scenario._cross_items, odd=self.odd
             )
@@ -1043,6 +1047,7 @@ class ScenarioRunner:
             coverage.end(world, clock.simulated)
 
         finally:
+            set_measured_scenario(None)
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _vehicle_entity_module._warmup_done = False
 

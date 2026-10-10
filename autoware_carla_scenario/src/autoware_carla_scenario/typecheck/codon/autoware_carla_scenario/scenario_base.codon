@@ -142,6 +142,11 @@ class BaseScenario:
         _expect_condition(condition)
         raise NotImplementedError()
 
+    def register_measure(self, key: str, read, *_kw, unit: str = "", text: str = "") -> None:
+        _keyword_only(_kw, "BaseScenario.register_measure(): every argument but key and read")
+        _expect_cover_expression(read)
+        raise NotImplementedError()
+
     def register_cover(self, name: str, expression, *_kw, unit: str = "", range = None,
                        every = None, buckets = None, values = None, ignore = None,
                        event = SamplingEvent("end"), text: str = "", target = 1.0,

@@ -140,14 +140,14 @@ background_traffic:
               value: 0.0
     stop_after_seconds: null
 
-# What the scenario's parameters set, by ODD attribute: how a sweep's
-# odd_sample (docs/odd.md) draws them from the ODD. A scenario declares its
-# own; the ODD never names a scenario, and a control the ODD has no attribute
-# for is left alone. The weather and the sun (`environment` below) are
-# controlled for every scenario already.
+# What the scenario's parameters set, by scenario measure (measures.py: the
+# framework's fixed keys, which an ODD maps its taxonomy onto). A sweep's
+# odd_sample (docs/odd.md) draws them from the ODD through that mapping. A
+# scenario declares its own; it names no ODD, and the ODD names no scenario.
+# The weather and the sun (`environment` below) are set for every scenario.
 #
 #   controls:
-#     dynamic.vehicle_ahead_gap: {key: scenario.npc_ahead_m, range: [6, 30]}
+#     vehicle_ahead_gap_m: {key: scenario.npc_ahead_m, range: [6, 30]}
 controls: {}
 
 # The weather and the sun every run starts in (EnvironmentAction, during

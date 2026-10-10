@@ -98,6 +98,7 @@ from .model import (
     module_holds,
     read_probe,
 )
+from .scenario_measure import scenario_measure
 from .registry import import_callable
 from .units import Units, UnitError, normalize_unit
 
@@ -120,13 +121,6 @@ _PROBES: dict[str, tuple[Callable[[Any], Any], str]] = {
     "ego_speed_kph": (probes.ego_speed_kph, "km/h"),
     "speed_limit_kph": (probes.speed_limit_kph, "km/h"),
     "lanelet_speed_limit_kph": (probes.lanelet_speed_limit_kph, "km/h"),
-    "vehicle_ahead_gap_m": (probes.vehicle_ahead_gap_m, "m"),
-    "vehicle_ahead_relative_speed_kph": (
-        probes.vehicle_ahead_relative_speed_kph,
-        "km/h",
-    ),
-    "crossing_pedestrian_gap_m": (probes.crossing_pedestrian_gap_m, "m"),
-    "crossing_pedestrian_speed_ms": (probes.crossing_pedestrian_speed_ms, "m/s"),
     **{
         name: (getattr(probes, name), "")
         for name in (
@@ -389,6 +383,7 @@ def _as_list(value: Any) -> list[Any]:
 #: What a binding file may say about how a concept is measured.
 _BINDING_KEYS = {
     "probe",
+    "measure",
     "unit",
     "values",
     "buckets",
@@ -697,6 +692,8 @@ class _Reader:
             return normalize_unit(str(binding["unit"]))
         if "probe" in binding:
             return normalize_unit(_probe(str(binding["probe"]))[1])
+        if "measure" in binding:
+            return normalize_unit(scenario_measure(str(binding["measure"])).unit)
         return ""
 
     def number(
@@ -765,7 +762,13 @@ class _Reader:
     def attribute_of(self, concept: _Concept) -> OddAttribute:
         binding = self.bindings.get(concept.name, {})
         probe: Callable[[Any], Any]
-        if "probe" in binding:
+        if "probe" in binding and "measure" in binding:
+            raise OpenOddError(f"{concept.name}: give a probe or a measure, not both")
+        if "measure" in binding:
+            # The taxonomy mapped onto a scenario measure: the running
+            # scenario says how it is read.
+            probe = scenario_measure(str(binding["measure"]))
+        elif "probe" in binding:
             probe = _probe(str(binding["probe"]))[0]
         elif concept.definitions:
             probe = self.derived_probe(concept) or _missing

@@ -194,14 +194,56 @@ These live in `autoware_carla_scenario.odd`:
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
-| `vehicle_ahead_gap_m` | float, m | The nearest vehicle ahead in the ego's lane or a lane beside it, along the ego's heading (`AHEAD_RANGE_M`) |
-| `vehicle_ahead_relative_speed_kph` | float, km/h | That vehicle's speed along the ego's heading less the ego's |
-| `crossing_pedestrian_gap_m` | float, m | The nearest pedestrian ahead that is moving: how far ahead it was when it set off, and from then on |
-| `crossing_pedestrian_speed_ms` | float, m/s | That pedestrian's speed |
+### Scenario measures
 
-The last four measure the road users a scenario stages, in the ego's frame,
-whichever scenario staged them. Each reads nothing (missing) while there is
-no such road user.
+The road users a scenario stages -- a vehicle ahead in the next lane, a
+pedestrian running out -- are not read by ODD probes: they are **measures**
+of the scenario, under keys the framework fixes
+(`autoware_carla_scenario.measures`). Every `BaseScenario` has these, read
+generically in the ego's frame:
+
+| Key | Unit | Reads |
+|---|---|---|
+| `vehicle_ahead_gap_m` | m | The nearest vehicle ahead in the ego's lane or a lane beside it, centre to centre along the ego's heading (up to `AHEAD_RANGE_M`); a vehicle about to cut in is measured from before it changes lanes |
+| `vehicle_ahead_relative_speed_kph` | km/h | That vehicle's speed along the ego's heading less the ego's |
+| `crossing_pedestrian_gap_m` | m | The nearest pedestrian ahead that is moving: how far ahead it was when it set off, and from then on |
+| `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
+
+Each reads nothing (missing) while there is no such road user. A scenario
+that knows better replaces one -- it knows which actor *is* its cut-in
+vehicle -- or adds one of its own:
+
+```python
+class MyCutIn(BaseScenario):
+    def setup(self) -> None:
+        ...
+        self.register_measure(VEHICLE_AHEAD_GAP_M, self._gap_to_my_npc)
+```
+
+An ODD **maps** its taxonomy onto measures: in Python with
+`scenario_measure(key)` as the attribute's probe, in a binding file with
+`measure:` in place of `probe:`:
+
+```python
+OddAttribute(
+    "dynamic.vehicle_ahead_gap",
+    scenario_measure(VEHICLE_AHEAD_GAP_M),
+    unit="m",
+    buckets=[0, 10, 20, 30, 50, 100],
+)
+```
+
+```yaml
+probes:
+  headway: {measure: vehicle_ahead_gap_m, buckets: [0, 10, 20, 30]}
+```
+
+The attribute then reads the running scenario's measure, its replacement
+included. The ODD names a measure key, never a scenario; the scenario names
+its measures, never the ODD. The default ODD maps
+`dynamic.vehicle_ahead_gap`, `dynamic.vehicle_ahead_relative_speed`,
+`dynamic.crossing_pedestrian_gap` and `dynamic.crossing_pedestrian_speed`
+onto the four built-in measures.
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing.
@@ -432,7 +474,7 @@ parameters, and condition-level metadata.
 |---|---|
 | `openodd` | The OpenODD files, relative to the binding file |
 | `name`, `text` | The ODD's name and description |
-| `probes` | Concept → `probe` (built-in name or `package.module:function`), `unit` (built-in probes know theirs), buckets (`values`, `buckets`, or `range` + `every`), `text`, and the coverage criteria `target`, `cover_by`, `min_stay` |
+| `probes` | Concept → `probe` (built-in name or `package.module:function`) or `measure` (a scenario measure's key, see [Scenario measures](#scenario-measures)), `unit` (built-in probes and measures know theirs), buckets (`values`, `buckets`, or `range` + `every`), `text`, and the coverage criteria `target`, `cover_by`, `min_stay` |
 | `situations` | Module → its criteria (`target`, `cover_by`, `min_stay`, all optional): the modules to cover as situations (see Situations above) |
 
 ```yaml
@@ -518,7 +560,7 @@ sweep:
     strategy: coverage     # uniform | coverage
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
     odd: null              # the ODD to draw from; the run's (`odd`) by default
-    knobs: {}              # replaces the scenario's controls for this sweep; see below
+    knobs: {}              # by ODD attribute, replacing the scenario's controls; see below
 ```
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
@@ -531,31 +573,31 @@ Three things meet in a sampled case, and none of them knows the others:
 
 | | Says | Knows |
 |---|---|---|
-| **The ODD** | which conditions the system is for: its attributes, by taxonomy name, and its modules | the taxonomy; no scenario |
-| **Probes** | how an attribute is measured from the world | the world; no scenario, no ODD bound |
-| **A scenario's controls** | which of its parameters sets which attribute, and what it can stage | the taxonomy; not the ODD's bounds |
+| **The ODD** | which conditions the system is for, and which scenario measure each of its attributes is (its mapping) | its taxonomy and the measure keys; no scenario |
+| **A scenario** | its measures (`BaseScenario`'s, or its own replacements) and its **controls**: which of its parameters sets which measure, and what it can stage | the measure keys; not the ODD's taxonomy or bounds |
+| **The framework** | the measure keys, and the weather and sun every scenario can be given | neither |
 
-They meet on attribute names alone. An ODD tightened or loosened needs no
-scenario changed; a scenario added needs no ODD changed. The sampler draws
-the attributes both the ODD has and something controls -- the weather for
-every scenario, a scenario's own parameters for that scenario -- and leaves
-the rest open: a combination is admitted when the ODD can hold for some
-value of them. A control the ODD has no attribute for is ignored: what the
-ODD does not speak of, it does not bound.
+An ODD tightened, loosened or written in another taxonomy needs no scenario
+changed; a scenario added needs no ODD changed. The sampler joins them on the
+measure key: an attribute the ODD maps onto measure *k* is drawn with the
+running scenario's control of *k*. Attributes nothing sets are left open: a
+combination is admitted when the ODD can hold for some value of them.
+Controls of measures the ODD does not map are unused -- what the ODD does not
+speak of, it does not bound.
 
 ### Controls
 
-A **control** (an `OddKnob`) ties an attribute to the config key that sets
-it. A scenario declares its own in its config, next to the parameters they
-set:
+A **control** (an `OddKnob`) ties a measure to the config key that sets it.
+A scenario declares its own in its config, next to the parameters they set,
+keyed by measure:
 
 ```yaml
 # scenario/cut_in/left.yaml
 controls:
-  dynamic.vehicle_ahead_gap:
+  vehicle_ahead_gap_m:
     key: scenario.npc_ahead_m
-    range: [6.0, 30.0]          # what the scenario can stage
-  dynamic.vehicle_ahead_relative_speed:
+    range: [6.0, 30.0]                 # what the scenario can stage
+  vehicle_ahead_relative_speed_kph:
     key: scenario.npc_initial_speed_kmh
     offset: ${ego.initial_speed_kmh}   # its speed less the ego's
     range: [-15.0, 15.0]
@@ -564,16 +606,18 @@ controls:
 | Field | Meaning |
 |---|---|
 | `key` | The config key the value is written to |
-| `range` | Numeric: `[low, high]` in the attribute's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it |
-| `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range in the attribute's unit to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
-| `scale`, `offset` | A numeric value drawn in the attribute's unit is written as `value * scale + offset` (`scale` not zero) |
+| `range` | Numeric: `[low, high]` in the measure's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it |
+| `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
+| `scale`, `offset` | A numeric value drawn in the unit is written as `value * scale + offset` (`scale` not zero) |
 | `integer` | Write an integer. A rounded numeric value that falls in another bucket is drawn again |
 
-`{attribute: key}` is short for `{attribute: {key: key}}`.
+`{measure: key}` is short for `{measure: {key: key}}`. The ODD's attribute
+and the measure share a unit: the binding takes the measure's.
 
-The weather and the sun are controlled for every scenario, through the
+The weather and the sun are set for every scenario, through the
 `environment` config, which sets them before the run starts
-(`EnvironmentAction`):
+(`EnvironmentAction`); the built-in probes reading them have controls of
+their own:
 
 | Probe | Key | Ranges |
 |---|---|---|
@@ -586,16 +630,16 @@ the last word over the config.
 
 The example scenarios declare these:
 
-| Scenario | Attribute | Parameter |
+| Scenario | Measure | Parameter |
 |---|---|---|
-| `cut_in/*` | `dynamic.vehicle_ahead_gap` | `npc_ahead_m`, 6-30 m |
-| `cut_in/*` | `dynamic.vehicle_ahead_relative_speed` | `npc_initial_speed_kmh` less the ego's, -15 to 15 km/h |
-| `pedestrian_dart_out` | `dynamic.crossing_pedestrian_gap` | `trigger_distance_m`, 8-30 m |
-| `pedestrian_dart_out` | `dynamic.crossing_pedestrian_speed` | `walk_speed_ms`, 0.8-3 m/s |
+| `cut_in/*` | `vehicle_ahead_gap_m` | `npc_ahead_m`, 6-30 m |
+| `cut_in/*` | `vehicle_ahead_relative_speed_kph` | `npc_initial_speed_kmh` less the ego's, -15 to 15 km/h |
+| `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `trigger_distance_m`, 8-30 m |
+| `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `walk_speed_ms`, 0.8-3 m/s |
 
-`sweep.odd_sample.knobs` takes the same fields, and replaces a control for
-that sweep, attribute by attribute. Controls set where a run starts; the
-probes measure what it then drives, which is what coverage counts.
+`sweep.odd_sample.knobs` takes the same fields keyed by the ODD's attributes,
+and replaces anything above for that sweep. Controls set where a run starts;
+the measures read what it then drives, which is what coverage counts.
 
 ### How a case is drawn
 
@@ -638,7 +682,7 @@ from autoware_carla_scenario.odd import OddKnob, OddSampler, resolve_odd
 
 sampler = OddSampler(
     resolve_odd("path/to/urban.yaml"),
-    {"dynamic.vehicle_ahead_gap": OddKnob("scenario.npc_ahead_m", range=(6.0, 30.0))},
+    controls={"vehicle_ahead_gap_m": OddKnob("scenario.npc_ahead_m", range=(6.0, 30.0))},
     seed=0,
     strategy="coverage",
     coverage=load_and_merge([Path("outputs")]),

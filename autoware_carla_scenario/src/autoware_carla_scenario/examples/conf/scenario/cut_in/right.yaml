@@ -22,17 +22,18 @@ ego:
   spawn_lanelet_id: 19
   spawn_s: 5.0
 
-# What this scenario's parameters set, by ODD attribute, for a sweep that
-# draws them from the ODD (sweep.odd_sample, docs/odd.md). The cut-in vehicle
-# starts npc_ahead_m ahead in the next lane, which is the gap the ODD's
-# dynamic.vehicle_ahead_gap measures until it cuts in; its speed less the
-# ego's is the relative speed. The ranges are what the scenario can stage: a
-# vehicle closer than 6 m overlaps the ego's at spawn.
+# What this scenario's parameters set, by scenario measure (measures.py), for
+# a sweep that draws them from an ODD (sweep.odd_sample, docs/odd.md). The
+# cut-in vehicle starts npc_ahead_m ahead in the next lane -- the gap the
+# built-in vehicle_ahead_gap_m measures until it cuts in -- and its speed less
+# the ego's is the relative speed. The ranges are what the scenario can stage:
+# a vehicle closer than 6 m overlaps the ego's at spawn. Which ODD attribute
+# these are is the ODD's to say, by mapping its taxonomy onto the measures.
 controls:
-  dynamic.vehicle_ahead_gap:
+  vehicle_ahead_gap_m:
     key: scenario.npc_ahead_m
     range: [6.0, 30.0]
-  dynamic.vehicle_ahead_relative_speed:
+  vehicle_ahead_relative_speed_kph:
     key: scenario.npc_initial_speed_kmh
     offset: ${ego.initial_speed_kmh}
     range: [-15.0, 15.0]

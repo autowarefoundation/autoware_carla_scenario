@@ -11,7 +11,6 @@ from .coverage import _expect_cover_expression, _expect_optional_range, _expect_
 
 
 NEARBY_RADIUS_M: float = 50.0
-AHEAD_RANGE_M: float = 100.0
 ILLUMINATION_LEVELS: List[str] = ["day", "low_sun", "twilight", "night"]
 INTENSITY_LEVELS: List[str] = ["none", "light", "moderate", "heavy"]
 TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
@@ -234,17 +233,11 @@ def pedestrian_nearby(world: carla.World) -> Optional[bool]:
     raise NotImplementedError()
 
 
-def vehicle_ahead_gap_m(world: carla.World) -> Optional[float]:
-    raise NotImplementedError()
 
-
-def vehicle_ahead_relative_speed_kph(world: carla.World) -> Optional[float]:
-    raise NotImplementedError()
-
-
-def crossing_pedestrian_gap_m(world: carla.World) -> Optional[float]:
-    raise NotImplementedError()
-
-
-def crossing_pedestrian_speed_ms(world: carla.World) -> Optional[float]:
-    raise NotImplementedError()
+def scenario_measure(key: str):
+    """The probe reading the running scenario's measure *key* (Python's returns
+    a ScenarioMeasure; its values are the measure's, numbers for the built-in
+    ones)."""
+    def probe(world: carla.World) -> Optional[float]:
+        raise NotImplementedError()
+    return probe

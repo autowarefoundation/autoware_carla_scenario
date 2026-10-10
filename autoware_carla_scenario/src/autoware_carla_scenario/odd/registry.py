@@ -24,7 +24,14 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 from . import probes
+from ..measures import (
+    CROSSING_PEDESTRIAN_GAP_M,
+    CROSSING_PEDESTRIAN_SPEED_MS,
+    VEHICLE_AHEAD_GAP_M,
+    VEHICLE_AHEAD_RELATIVE_SPEED_KPH,
+)
 from .model import OddAttribute, OddDefinition
+from .scenario_measure import scenario_measure
 
 __all__ = [
     "DEFAULT_ODD",
@@ -66,8 +73,9 @@ def default_odd() -> OddDefinition:
 
     Scenery (junction, speed limit, lane count, and the Lanelet2 ``location``
     and ``subtype`` tags), environmental conditions (illumination, rain, fog)
-    and dynamic elements (ego speed, traffic density, pedestrians nearby, the
-    vehicle ahead and a pedestrian crossing ahead).
+    and dynamic elements (ego speed, traffic density, pedestrians nearby, and
+    -- mapped onto the running scenario's measures -- the vehicle ahead and a
+    pedestrian crossing ahead).
 
     A bucket a run only passes through is not covered.  Ego speed counts a
     bucket once the ego held it for :data:`SPEED_MIN_STAY` seconds: an ego
@@ -164,28 +172,28 @@ def default_odd() -> OddDefinition:
             ),
             OddAttribute(
                 "dynamic.vehicle_ahead_gap",
-                probes.vehicle_ahead_gap_m,
+                scenario_measure(VEHICLE_AHEAD_GAP_M),
                 unit="m",
                 buckets=[0, 10, 20, 30, 50, 100],
                 text="Gap to the nearest vehicle ahead in the ego's lane or one beside it",
             ),
             OddAttribute(
                 "dynamic.vehicle_ahead_relative_speed",
-                probes.vehicle_ahead_relative_speed_kph,
+                scenario_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH),
                 unit="km/h",
                 buckets=[-30, -15, -5, 5, 15, 30],
                 text="That vehicle's speed less the ego's",
             ),
             OddAttribute(
                 "dynamic.crossing_pedestrian_gap",
-                probes.crossing_pedestrian_gap_m,
+                scenario_measure(CROSSING_PEDESTRIAN_GAP_M),
                 unit="m",
                 buckets=[0, 10, 20, 30, 50],
                 text="Gap to the nearest pedestrian ahead that is moving",
             ),
             OddAttribute(
                 "dynamic.crossing_pedestrian_speed",
-                probes.crossing_pedestrian_speed_ms,
+                scenario_measure(CROSSING_PEDESTRIAN_SPEED_MS),
                 unit="m/s",
                 buckets=[0.5, 1.0, 1.5, 2.5, 4.0],
                 text="That pedestrian's speed",

@@ -6,20 +6,28 @@ the settings of the next runs from the ODD -- only combinations the ODD
 admits -- and, given the coverage of earlier runs, aims them at what is still
 uncovered.
 
-What the sampler can draw are the attributes a run *sets*: the weather, the
-sun, a speed a scenario parameter decides.  Each is tied to the Hydra override
-that sets it by a :class:`OddKnob`::
+What the sampler can draw are the attributes a run *sets*, and three things
+say which, none of them knowing the others:
 
-    knobs:
-      environment.rain: {key: environment.precipitation,
-                         values: {none: 0, light: [1, 30], moderate: [30, 70], heavy: [70, 100]}}
-      dynamic.lead_speed: {key: scenario.lead_speed_kmh}
+* the ODD maps an attribute onto a scenario measure
+  (:func:`~.scenario_measure.scenario_measure`, ``measure:`` in a binding
+  file) -- its taxonomy onto the framework's fixed measure keys;
+* the scenario says which of its parameters sets a measure, and what it can
+  stage, under ``controls`` in its config -- keyed by measure, not by the
+  ODD's taxonomy::
 
-An attribute read by a built-in probe that a run can set (:func:`~.probes.rain`,
-:func:`~.probes.fog`, :func:`~.probes.illumination`) has a knob without being
-given one (:data:`DEFAULT_KNOBS`).  Attributes with no knob -- what the map or
-the drive decides -- are left open: the sampler admits a combination when the
-ODD can hold for *some* value of them.
+      controls:
+        vehicle_ahead_gap_m: {key: scenario.npc_ahead_m, range: [6, 30]}
+
+* the weather and the sun are set for every scenario through the
+  ``environment`` config, which the built-in probes :func:`~.probes.rain`,
+  :func:`~.probes.fog` and :func:`~.probes.illumination` have knobs on
+  (:data:`DEFAULT_KNOBS`).
+
+A sweep's ``knobs``, keyed by the ODD's attributes, replace all of them for
+one sweep.  Attributes nothing sets -- what the map or the drive decides --
+are left open: the sampler admits a combination when the ODD can hold for
+*some* value of them.
 
 For each case, every knob's attribute gets a bucket -- one of its cover
 item's buckets, the ones outside the ODD left out -- and the combination is
@@ -51,6 +59,7 @@ from typing import Any, Optional, Union
 from ..coverage.items import CoverItem, value_label
 from .model import _OPEN, OddAttribute, OddDefinition, _Bucket
 from .probes import fog, illumination, rain
+from .scenario_measure import ScenarioMeasure
 
 logger = logging.getLogger(__name__)
 
@@ -237,9 +246,14 @@ class OddSampler:
 
     Args:
         odd: The ODD to draw from.
-        knobs: Attribute name -> how a run sets it.  Attributes read by a
-            built-in probe in :data:`DEFAULT_KNOBS` need none; a knob given
-            here replaces the default.
+        knobs: ODD attribute name -> how a run sets it, for this ODD alone
+            (a sweep's ``knobs``).  Replaces anything below.
+        controls: Scenario measure key -> how the scenario sets it (its
+            config's ``controls``).  An attribute the ODD maps onto that
+            measure (:func:`~.scenario_measure.scenario_measure`) is drawn
+            with it; controls of measures the ODD does not map are unused.
+            Attributes read by a built-in probe in :data:`DEFAULT_KNOBS` (the
+            weather, the sun) need neither.
         seed: The random seed: the same seed, ODD, knobs and coverage give
             the same cases.
         strategy: ``"uniform"`` draws every admitted bucket alike;
@@ -261,6 +275,7 @@ class OddSampler:
         odd: OddDefinition,
         knobs: Optional[Mapping[str, OddKnob]] = None,
         *,
+        controls: Optional[Mapping[str, OddKnob]] = None,
         seed: int = 0,
         strategy: str = "uniform",
         coverage: Any = None,
@@ -281,8 +296,13 @@ class OddSampler:
             raise ValueError(f"OddSampler: ODD {odd.name} has no attributes {unknown}")
 
         self._axes: list[_Axis] = []
+        controls = dict(controls or {})
         for attribute in odd.attributes:
             knob = knobs.get(attribute.name)
+            if knob is None and isinstance(attribute.probe, ScenarioMeasure):
+                # The ODD maps the attribute onto a scenario measure; the
+                # scenario says which of its parameters sets that measure.
+                knob = controls.get(attribute.probe.key)
             if knob is None and callable(attribute.probe):
                 knob = DEFAULT_KNOBS.get(attribute.probe)
             if knob is None:
@@ -305,8 +325,9 @@ class OddSampler:
             self._axes.append(_Axis(attribute, attribute.item, knob, labels))
         if not self._axes:
             raise ValueError(
-                f"OddSampler: nothing of ODD {odd.name} can be drawn; give knobs "
-                "for the attributes a run sets"
+                f"OddSampler: nothing of ODD {odd.name} can be drawn: no attribute "
+                "is set by the environment, mapped onto a measure the scenario "
+                "controls, or given a knob"
             )
 
         drawn = {axis.attribute.name for axis in self._axes}
@@ -604,11 +625,10 @@ def sampler_from_config(
     ``odd`` (else *odd*, the run's), ``coverage_from`` (paths to earlier runs'
     coverage files or directories, for ``strategy: coverage``), ``knobs``.
 
-    *controls* are the scenario's own (its config's ``controls``): what its
-    parameters set, which the ODD does not need to know.  Those naming an
-    attribute the ODD does not have are left out -- the ODD does not bound
-    them.  ``knobs`` in the sweep replace them for that sweep, attribute by
-    attribute (and must name the ODD's attributes).
+    *controls* are the scenario's own (its config's ``controls``), keyed by
+    the scenario measures its parameters set; the ODD's mapping of its
+    attributes onto measures joins the two.  ``knobs`` in the sweep are keyed
+    by the ODD's attributes and replace both for that sweep.
 
     Raises:
         ValueError: On an unknown field.
@@ -631,18 +651,10 @@ def sampler_from_config(
     ]
     if resolved:
         coverage = load_and_merge(resolved)
-    # A scenario controls what it controls whatever the ODD; what the ODD
-    # does not speak of, it does not bound, so it is not drawn from it.
-    attributes = {a.name for a in definition.attributes}
-    scenario_controls = {
-        name: knob
-        for name, knob in knobs_from_mapping(controls).items()
-        if name in attributes
-    }
-    knobs = {**scenario_controls, **knobs_from_mapping(raw.get("knobs"))}
     sampler = OddSampler(
         definition,
-        knobs,
+        knobs_from_mapping(raw.get("knobs")),
+        controls=knobs_from_mapping(controls),
         seed=int(raw.get("seed", 0)),
         strategy=strategy,
         coverage=coverage,
