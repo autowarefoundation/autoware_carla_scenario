@@ -66,12 +66,14 @@ See [ODD](odd.md).
 | `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
 | `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
-| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
+| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby`, `vehicle_ahead_gap_m`, `vehicle_ahead_relative_speed_kph`, `crossing_pedestrian_gap_m`, `crossing_pedestrian_speed_ms` | Built-in probes. |
 | `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |
 | `plan_route_coverage(odd, scenario_or_route, *, lanelet_map, routing_graph, name)` | Check a planned route against the ODD on the Lanelet2 map: the verdict per lanelet (inside, outside, undecided) and the expected metres per bucket. Takes a scenario, a `PlannedRoute(start, goal, via, name)` or lanelet ids. Raises `RouteError` when the route cannot be planned. See [Checking a planned route](odd.md#checking-a-planned-route). |
 | `combine_route_coverage(odd, routes)` | The expected coverage of several routes, and the buckets no route reaches. |
 | `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
 | `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
+| `OddSampler(odd, knobs, *, seed, strategy, coverage, max_tries)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
+| `OddKnob(key, *, values, scale, offset, integer, range)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets an attribute, and what it can stage. Scenarios declare theirs under `controls` in their config. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
 

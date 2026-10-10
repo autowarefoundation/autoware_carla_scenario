@@ -22,6 +22,21 @@ ego:
   spawn_lanelet_id: 20
   spawn_s: 5.0
 
+# What this scenario's parameters set, by ODD attribute, for a sweep that
+# draws them from the ODD (sweep.odd_sample, docs/odd.md). The pedestrian
+# sets off when the ego is trigger_distance_m away -- the gap the ODD's
+# dynamic.crossing_pedestrian_gap first reads (a little less, as it stands
+# off to the side) -- and runs at walk_speed_ms. The ranges are what the
+# scenario can stage: it stands pedestrian_ahead_m ahead, so it cannot set
+# off further away than that.
+controls:
+  dynamic.crossing_pedestrian_gap:
+    key: scenario.trigger_distance_m
+    range: [8.0, 30.0]
+  dynamic.crossing_pedestrian_speed:
+    key: scenario.walk_speed_ms
+    range: [0.8, 3.0]
+
 sweep:
   constraints:
     ego.spawn_lanelet_id:

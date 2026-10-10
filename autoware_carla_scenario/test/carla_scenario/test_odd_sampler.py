@@ -683,3 +683,119 @@ def test_coverage_counted_another_way_is_not_read() -> None:
 
     # The ODD counts hits; seconds say nothing about them.
     assert sampler._amount == {}
+
+
+# ---------------------------------------------------------------------------
+# A scenario's own controls
+# ---------------------------------------------------------------------------
+
+
+def _gap_odd() -> OddDefinition:
+    gap = OddAttribute(
+        "dynamic.vehicle_ahead_gap",
+        lambda world: None,
+        unit="m",
+        buckets=[0, 10, 20, 30, 50],
+    )
+    return OddDefinition("gap", [gap])
+
+
+def test_a_range_keeps_draws_to_what_the_scenario_can_stage() -> None:
+    sampler = OddSampler(
+        _gap_odd(),
+        {
+            "dynamic.vehicle_ahead_gap": OddKnob(
+                "scenario.npc_ahead_m", range=(6.0, 30.0)
+            )
+        },
+        seed=0,
+    )
+
+    cases = sampler.sample(60)
+
+    # [30, 50) meets the range only at 30: not a bucket the scenario drives in.
+    assert {c.buckets["dynamic.vehicle_ahead_gap"] for c in cases} == {
+        "[0, 10)",
+        "[10, 20)",
+        "[20, 30)",
+    }
+    assert all(6.0 <= c.values["dynamic.vehicle_ahead_gap"] <= 30.0 for c in cases)
+
+
+def test_a_point_range_is_that_point() -> None:
+    sampler = OddSampler(
+        _gap_odd(), {"dynamic.vehicle_ahead_gap": OddKnob("k", range=(12.0, 12.0))}
+    )
+
+    assert sampler.sample(1)[0].overrides == ["k=12.0"]
+
+
+def test_controls_the_odd_has_no_attribute_for_are_ignored() -> None:
+    """A scenario's controls do not have to match the ODD it is run against."""
+    sampler, _ = sampler_from_config(
+        {"count": 1},
+        odd=_gap_odd(),
+        controls={
+            "dynamic.vehicle_ahead_gap": {
+                "key": "scenario.npc_ahead_m",
+                "range": [6, 30],
+            },
+            "dynamic.crossing_pedestrian_gap": {"key": "scenario.trigger_distance_m"},
+        },
+    )
+
+    assert sampler.attributes == ["dynamic.vehicle_ahead_gap"]
+
+
+def test_sweep_knobs_replace_a_scenarios_controls() -> None:
+    sampler, _ = sampler_from_config(
+        {"count": 1, "knobs": {"dynamic.vehicle_ahead_gap": "sweep.key"}},
+        odd=_gap_odd(),
+        controls={"dynamic.vehicle_ahead_gap": "scenario.npc_ahead_m"},
+    )
+
+    (case,) = sampler.sample(1)
+    assert case.overrides[0].startswith("sweep.key=")
+    # Knobs the sweep gives are for this ODD: a stray one is an error.
+    with pytest.raises(ValueError, match="no attributes"):
+        sampler_from_config({"count": 1, "knobs": {"no.such": "k"}}, odd=_gap_odd())
+
+
+def test_the_example_scenarios_declare_their_controls() -> None:
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    cut_in = scenario_controls(_compose_config("cut_in/left", []))
+    assert cut_in["dynamic.vehicle_ahead_gap"]["key"] == "scenario.npc_ahead_m"
+    # The relative speed is written on top of the ego's own, resolved.
+    assert cut_in["dynamic.vehicle_ahead_relative_speed"]["offset"] == 30.0
+
+    dart_out = scenario_controls(
+        _compose_config("pedestrian_dart_out/pedestrian_dart_out", [])
+    )
+    assert set(dart_out) == {
+        "dynamic.crossing_pedestrian_gap",
+        "dynamic.crossing_pedestrian_speed",
+    }
+    assert scenario_controls(_compose_config("lane_change/left", [])) == {}
+
+
+def test_a_scenarios_controls_are_drawn_without_naming_them_in_the_sweep() -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "ego": {"initial_speed_kmh": 30.0},
+            "controls": {
+                "dynamic.vehicle_ahead_relative_speed": {
+                    "key": "scenario.npc_initial_speed_kmh",
+                    "offset": "${ego.initial_speed_kmh}",
+                    "range": [-15, 15],
+                }
+            },
+            "sweep": {"odd_sample": {"count": 20, "seed": 3}},
+        }
+    )
+
+    for case in expand_config(cfg):
+        npc_speed = _value(case, "scenario.npc_initial_speed_kmh")
+        assert 15.0 <= npc_speed <= 45.0

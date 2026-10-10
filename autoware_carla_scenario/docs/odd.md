@@ -194,6 +194,14 @@ These live in `autoware_carla_scenario.odd`:
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
+| `vehicle_ahead_gap_m` | float, m | The nearest vehicle ahead in the ego's lane or a lane beside it, along the ego's heading (`AHEAD_RANGE_M`) |
+| `vehicle_ahead_relative_speed_kph` | float, km/h | That vehicle's speed along the ego's heading less the ego's |
+| `crossing_pedestrian_gap_m` | float, m | The nearest pedestrian ahead that is moving: how far ahead it was when it set off, and from then on |
+| `crossing_pedestrian_speed_ms` | float, m/s | That pedestrian's speed |
+
+The last four measure the road users a scenario stages, in the ego's frame,
+whichever scenario staged them. Each reads nothing (missing) while there is
+no such road user.
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing.
@@ -510,30 +518,61 @@ sweep:
     strategy: coverage     # uniform | coverage
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
     odd: null              # the ODD to draw from; the run's (`odd`) by default
-    knobs:                 # how a run sets an attribute; see below
-      dynamic.lead_speed: {key: scenario.lead_speed_kmh}
+    knobs: {}              # replaces the scenario's controls for this sweep; see below
 ```
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
 gives each drawn case the next lanelet case in turn; one without draws from
 the ODD alone, and needs no map to expand.
 
-### Knobs
+### Who knows what
 
-The sampler can only draw what a run *sets*. A **knob** ties an attribute
-to the config key that sets it:
+Three things meet in a sampled case, and none of them knows the others:
+
+| | Says | Knows |
+|---|---|---|
+| **The ODD** | which conditions the system is for: its attributes, by taxonomy name, and its modules | the taxonomy; no scenario |
+| **Probes** | how an attribute is measured from the world | the world; no scenario, no ODD bound |
+| **A scenario's controls** | which of its parameters sets which attribute, and what it can stage | the taxonomy; not the ODD's bounds |
+
+They meet on attribute names alone. An ODD tightened or loosened needs no
+scenario changed; a scenario added needs no ODD changed. The sampler draws
+the attributes both the ODD has and something controls -- the weather for
+every scenario, a scenario's own parameters for that scenario -- and leaves
+the rest open: a combination is admitted when the ODD can hold for some
+value of them. A control the ODD has no attribute for is ignored: what the
+ODD does not speak of, it does not bound.
+
+### Controls
+
+A **control** (an `OddKnob`) ties an attribute to the config key that sets
+it. A scenario declares its own in its config, next to the parameters they
+set:
+
+```yaml
+# scenario/cut_in/left.yaml
+controls:
+  dynamic.vehicle_ahead_gap:
+    key: scenario.npc_ahead_m
+    range: [6.0, 30.0]          # what the scenario can stage
+  dynamic.vehicle_ahead_relative_speed:
+    key: scenario.npc_initial_speed_kmh
+    offset: ${ego.initial_speed_kmh}   # its speed less the ego's
+    range: [-15.0, 15.0]
+```
 
 | Field | Meaning |
 |---|---|
 | `key` | The config key the value is written to |
+| `range` | Numeric: `[low, high]` in the attribute's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it |
 | `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range in the attribute's unit to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
 | `scale`, `offset` | A numeric value drawn in the attribute's unit is written as `value * scale + offset` (`scale` not zero) |
 | `integer` | Write an integer. A rounded numeric value that falls in another bucket is drawn again |
 
 `{attribute: key}` is short for `{attribute: {key: key}}`.
 
-The built-in probes a run can set have knobs already, on the `environment`
-config, which sets the weather and the sun before the run starts
+The weather and the sun are controlled for every scenario, through the
+`environment` config, which sets them before the run starts
 (`EnvironmentAction`):
 
 | Probe | Key | Ranges |
@@ -545,9 +584,18 @@ config, which sets the weather and the sun before the run starts
 A scenario that sets the weather itself (its own `EnvironmentAction`) has
 the last word over the config.
 
-Attributes with no knob -- the map's, the drive's -- are left open: a
-combination is admitted when the ODD can hold for some value of them. The
-map's attributes are what `constraints` pick lanelets for.
+The example scenarios declare these:
+
+| Scenario | Attribute | Parameter |
+|---|---|---|
+| `cut_in/*` | `dynamic.vehicle_ahead_gap` | `npc_ahead_m`, 6-30 m |
+| `cut_in/*` | `dynamic.vehicle_ahead_relative_speed` | `npc_initial_speed_kmh` less the ego's, -15 to 15 km/h |
+| `pedestrian_dart_out` | `dynamic.crossing_pedestrian_gap` | `trigger_distance_m`, 8-30 m |
+| `pedestrian_dart_out` | `dynamic.crossing_pedestrian_speed` | `walk_speed_ms`, 0.8-3 m/s |
+
+`sweep.odd_sample.knobs` takes the same fields, and replaces a control for
+that sweep, attribute by attribute. Controls set where a run starts; the
+probes measure what it then drives, which is what coverage counts.
 
 ### How a case is drawn
 
@@ -590,7 +638,7 @@ from autoware_carla_scenario.odd import OddKnob, OddSampler, resolve_odd
 
 sampler = OddSampler(
     resolve_odd("path/to/urban.yaml"),
-    {"dynamic.lead_speed": OddKnob("scenario.lead_speed_kmh")},
+    {"dynamic.vehicle_ahead_gap": OddKnob("scenario.npc_ahead_m", range=(6.0, 30.0))},
     seed=0,
     strategy="coverage",
     coverage=load_and_merge([Path("outputs")]),

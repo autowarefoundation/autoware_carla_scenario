@@ -28,7 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from ..maps import resolve_map_paths
-from .expand import expand_sweep
+from .expand import expand_sweep, scenario_controls
 from .map_loader import load_map
 
 logger = logging.getLogger(__name__)
@@ -240,7 +240,11 @@ class LaneletConstraintSweeper(Sweeper):
         batches: list[tuple[str, ...]] = [
             tuple(case)
             for case in expand_sweep(
-                sweep_dict, lanelet_map, arguments, odd=OmegaConf.select(cfg, "odd")
+                sweep_dict,
+                lanelet_map,
+                arguments,
+                odd=OmegaConf.select(cfg, "odd"),
+                controls=scenario_controls(cfg),
             )
         ]
         if not batches:

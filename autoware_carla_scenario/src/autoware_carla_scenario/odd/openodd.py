@@ -120,6 +120,13 @@ _PROBES: dict[str, tuple[Callable[[Any], Any], str]] = {
     "ego_speed_kph": (probes.ego_speed_kph, "km/h"),
     "speed_limit_kph": (probes.speed_limit_kph, "km/h"),
     "lanelet_speed_limit_kph": (probes.lanelet_speed_limit_kph, "km/h"),
+    "vehicle_ahead_gap_m": (probes.vehicle_ahead_gap_m, "m"),
+    "vehicle_ahead_relative_speed_kph": (
+        probes.vehicle_ahead_relative_speed_kph,
+        "km/h",
+    ),
+    "crossing_pedestrian_gap_m": (probes.crossing_pedestrian_gap_m, "m"),
+    "crossing_pedestrian_speed_ms": (probes.crossing_pedestrian_speed_ms, "m/s"),
     **{
         name: (getattr(probes, name), "")
         for name in (

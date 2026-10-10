@@ -140,6 +140,16 @@ background_traffic:
               value: 0.0
     stop_after_seconds: null
 
+# What the scenario's parameters set, by ODD attribute: how a sweep's
+# odd_sample (docs/odd.md) draws them from the ODD. A scenario declares its
+# own; the ODD never names a scenario, and a control the ODD has no attribute
+# for is left alone. The weather and the sun (`environment` below) are
+# controlled for every scenario already.
+#
+#   controls:
+#     dynamic.vehicle_ahead_gap: {key: scenario.npc_ahead_m, range: [6, 30]}
+controls: {}
+
 # The weather and the sun every run starts in (EnvironmentAction, during
 # initialization); null leaves the world's own. A sweep's odd_sample draws
 # these from the ODD (docs/odd.md), as can a single run:

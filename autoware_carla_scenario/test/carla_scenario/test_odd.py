@@ -515,6 +515,12 @@ class TestProbes:
             "odd.dynamic.ego_speed": ["[35, 45)"],
             "odd.dynamic.traffic_density": ["low"],
             "odd.dynamic.pedestrian_nearby": ["true"],
+            # Measured in the ego's frame, which this world's ego cannot give
+            # (see TestDynamicElements).
+            "odd.dynamic.vehicle_ahead_gap": [],
+            "odd.dynamic.vehicle_ahead_relative_speed": [],
+            "odd.dynamic.crossing_pedestrian_gap": [],
+            "odd.dynamic.crossing_pedestrian_speed": [],
         }
 
     def test_lanelet_tags_come_first_when_a_map_is_loaded(
@@ -1380,3 +1386,99 @@ class TestSituations:
     def test_a_situation_is_not_a_bound_in_the_module_table(self) -> None:
         doc = self._run(self._odd(), [(2, 30.0)])
         assert set(doc["odd"]["module_ticks"]) == {"roads"}
+
+
+class _Placed:
+    """A road user with a heading: where it is, which way it faces, how fast."""
+
+    def __init__(
+        self,
+        actor_id: int,
+        type_id: str,
+        at: tuple[float, float],
+        velocity: tuple[float, float] = (0.0, 0.0),
+        yaw: float = 0.0,
+        role: str = "",
+    ) -> None:
+        self.id = actor_id
+        self.type_id = type_id
+        self.attributes = {"role_name": role}
+        self._at = _Vec(x=at[0], y=at[1], z=0.0)
+        self._v = _Vec(x=velocity[0], y=velocity[1], z=0.0)
+        self._yaw = yaw
+
+    def get_location(self) -> _Vec:
+        return self._at
+
+    def get_velocity(self) -> _Vec:
+        return self._v
+
+    def get_transform(self) -> Any:
+        return SimpleNamespace(
+            location=self._at, rotation=SimpleNamespace(yaw=self._yaw)
+        )
+
+
+def _world_of(*others: _Placed, yaw: float = 0.0, ego_speed: float = 10.0) -> _OddWorld:
+    import math
+
+    heading = math.radians(yaw)
+    ego = _Placed(
+        1,
+        "vehicle.ego",
+        (0.0, 0.0),
+        (ego_speed * math.cos(heading), ego_speed * math.sin(heading)),
+        yaw=yaw,
+        role=str(EGO_ROLE_NAME),
+    )
+    return _OddWorld([ego, *others], None, None)  # type: ignore[list-item]
+
+
+class TestDynamicElements:
+    """The road users a scenario sets up, measured in the ego's frame."""
+
+    def test_the_vehicle_ahead_in_the_next_lane_is_measured(self) -> None:
+        world = _world_of(
+            _Placed(
+                2, "vehicle.npc", (12.0, 3.5), (12.0, 0.0)
+            ),  # next lane, 12 m ahead
+            _Placed(3, "vehicle.far", (40.0, 0.0)),  # own lane, further
+            _Placed(4, "vehicle.behind", (-5.0, 0.0)),
+            _Placed(5, "vehicle.two_lanes_over", (8.0, 7.5)),
+        )
+
+        assert probes.vehicle_ahead_gap_m(world) == pytest.approx(12.0)  # type: ignore[arg-type]
+        # 12 m/s against the ego's 10: 2 m/s faster.
+        assert probes.vehicle_ahead_relative_speed_kph(world) == pytest.approx(7.2)  # type: ignore[arg-type]
+
+    def test_ahead_follows_the_ego_heading(self) -> None:
+        # Facing +y: a vehicle at (0, 20) is ahead, one at (20, 0) is beside.
+        world = _world_of(
+            _Placed(2, "vehicle.ahead", (0.0, 20.0)),
+            _Placed(3, "vehicle.beside", (20.0, 0.0)),
+            yaw=90.0,
+        )
+
+        assert probes.vehicle_ahead_gap_m(world) == pytest.approx(20.0)  # type: ignore[arg-type]
+
+    def test_a_pedestrian_counts_once_it_sets_off(self) -> None:
+        standing = _world_of(_Placed(2, "walker.pedestrian.1", (20.0, -3.0)))
+        running = _world_of(_Placed(2, "walker.pedestrian.1", (20.0, -3.0), (0.0, 2.0)))
+
+        assert probes.crossing_pedestrian_gap_m(standing) is None  # type: ignore[arg-type]
+        reset_probes()
+        assert probes.crossing_pedestrian_gap_m(running) == pytest.approx(20.0)  # type: ignore[arg-type]
+        assert probes.crossing_pedestrian_speed_ms(running) == pytest.approx(2.0)  # type: ignore[arg-type]
+
+    def test_nothing_there_is_missing(self) -> None:
+        world = _world_of()
+
+        assert probes.vehicle_ahead_gap_m(world) is None  # type: ignore[arg-type]
+        assert probes.vehicle_ahead_relative_speed_kph(world) is None  # type: ignore[arg-type]
+        assert probes.crossing_pedestrian_gap_m(world) is None  # type: ignore[arg-type]
+
+    def test_openodd_bindings_can_name_them(self) -> None:
+        from autoware_carla_scenario.odd.openodd import _PROBES
+
+        assert _PROBES["vehicle_ahead_gap_m"] == (probes.vehicle_ahead_gap_m, "m")
+        assert _PROBES["crossing_pedestrian_speed_ms"][1] == "m/s"

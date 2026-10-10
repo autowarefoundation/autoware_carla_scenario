@@ -97,6 +97,10 @@ class OddKnob:
         integer: Write an integer: a numeric value rounded (a case whose
             rounded value falls in another bucket is drawn again), a
             categorical range drawn as an integer.
+        range: For a numeric attribute, ``[low, high]`` in its unit: the
+            values the scenario can bring about.  Buckets are drawn only
+            where they meet it, and only the part that does -- a cut-in
+            closer than its vehicles allow, say, is not drawn.
     """
 
     key: str
@@ -104,12 +108,18 @@ class OddKnob:
     scale: float = 1.0
     offset: float = 0.0
     integer: bool = False
+    range: Optional[tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         if not self.key:
             raise ValueError("OddKnob: key must not be empty")
         if self.scale == 0:
             raise ValueError(f"OddKnob({self.key}): scale must not be zero")
+        if self.range is not None:
+            low, high = _range(self.range)
+            if not low <= high:
+                raise ValueError(f"OddKnob({self.key}): range must be [low, high]")
+            object.__setattr__(self, "range", (low, high))
         for label, value in self.values.items():
             if _is_range(value):
                 low, high = _range(value)
@@ -183,19 +193,20 @@ def _render(value: Any) -> str:
 _VARIANT = re.compile(r"#\d+$")
 
 
-def knobs_from_mapping(raw: Mapping[str, Any]) -> dict[str, OddKnob]:
+def knobs_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob]:
     """Knobs by attribute name, from config (``{attribute: {key: ..., ...}}``).
 
     A bare string is a key: ``{dynamic.lead_speed: scenario.lead_speed_kmh}``.
+    The fields are :class:`OddKnob`'s.  ``None`` is no knobs.
     """
     knobs: dict[str, OddKnob] = {}
-    for name, spec in raw.items():
+    for name, spec in (raw or {}).items():
         if isinstance(spec, str):
             knobs[str(name)] = OddKnob(spec)
             continue
         if not isinstance(spec, Mapping):
             raise ValueError(f"knob {name}: expected a key or a mapping, got {spec!r}")
-        unknown = set(spec) - {"key", "values", "scale", "offset", "integer"}
+        unknown = set(spec) - {"key", "values", "scale", "offset", "integer", "range"}
         if unknown:
             raise ValueError(f"knob {name}: unknown fields {sorted(unknown)}")
         if "key" not in spec:
@@ -206,6 +217,7 @@ def knobs_from_mapping(raw: Mapping[str, Any]) -> dict[str, OddKnob]:
             scale=float(spec.get("scale", 1.0)),
             offset=float(spec.get("offset", 0.0)),
             integer=bool(spec.get("integer", False)),
+            range=None if spec.get("range") is None else _range(spec["range"]),
         )
     return knobs
 
@@ -324,9 +336,37 @@ class OddSampler:
             return label in knob.values
         if label in knob.values:
             return True
-        index = item.labels.index(label)
+        interval = OddSampler._interval(item, knob, label)
         # An unbounded bucket has no interval to draw from.
-        return math.isfinite(item.edges[index]) and math.isfinite(item.edges[index + 1])
+        return (
+            interval is not None
+            and math.isfinite(interval[0])
+            and math.isfinite(interval[1])
+        )
+
+    @staticmethod
+    def _interval(
+        item: CoverItem, knob: OddKnob, label: str
+    ) -> Optional[tuple[float, float, bool]]:
+        """(low, high, closed): the part of a numeric bucket the knob can reach.
+
+        ``None`` when the knob's range misses the bucket.
+        """
+        index = item.labels.index(label)
+        low, high = item.edges[index], item.edges[index + 1]
+        closed = index == len(item.labels) - 1
+        if knob.range is not None:
+            if knob.range[1] < high:
+                high, closed = knob.range[1], True
+            low = max(low, knob.range[0])
+            # A bucket the range only touches at an edge is not one the
+            # scenario can drive in; a range that is one point is that point.
+            single = knob.range[0] == knob.range[1]
+            if low > high or (low == high and not single):
+                return None
+            if low == high and item.bucket_of(low) != label:
+                return None
+        return low, high, closed
 
     def _read_coverage(self, coverage: Any) -> None:
         """Remember how covered each bucket is, and which situations are holes.
@@ -461,8 +501,10 @@ class OddSampler:
                 low = high = float(given)  # type: ignore[arg-type]
             closed = True
         else:
-            low, high = item.edges[index], item.edges[index + 1]
-            closed = index == len(item.labels) - 1
+            interval = self._interval(item, knob, label)
+            if interval is None:
+                return None
+            low, high, closed = interval
         drawn = self._uniform(low, high, closed=closed, integer=False)
         if drawn is None or not math.isfinite(drawn):
             return None
@@ -553,6 +595,7 @@ def sampler_from_config(
     raw: Mapping[str, Any],
     *,
     odd: Union[str, OddDefinition, None] = None,
+    controls: Optional[Mapping[str, Any]] = None,
     base_dir: Optional[Path] = None,
 ) -> tuple[OddSampler, Optional[int]]:
     """An :class:`OddSampler` and the case count, from a ``sweep.odd_sample`` mapping.
@@ -560,6 +603,12 @@ def sampler_from_config(
     Fields: ``count`` (``None`` when not given), ``seed``, ``strategy``,
     ``odd`` (else *odd*, the run's), ``coverage_from`` (paths to earlier runs'
     coverage files or directories, for ``strategy: coverage``), ``knobs``.
+
+    *controls* are the scenario's own (its config's ``controls``): what its
+    parameters set, which the ODD does not need to know.  Those naming an
+    attribute the ODD does not have are left out -- the ODD does not bound
+    them.  ``knobs`` in the sweep replace them for that sweep, attribute by
+    attribute (and must name the ODD's attributes).
 
     Raises:
         ValueError: On an unknown field.
@@ -582,9 +631,18 @@ def sampler_from_config(
     ]
     if resolved:
         coverage = load_and_merge(resolved)
+    # A scenario controls what it controls whatever the ODD; what the ODD
+    # does not speak of, it does not bound, so it is not drawn from it.
+    attributes = {a.name for a in definition.attributes}
+    scenario_controls = {
+        name: knob
+        for name, knob in knobs_from_mapping(controls).items()
+        if name in attributes
+    }
+    knobs = {**scenario_controls, **knobs_from_mapping(raw.get("knobs"))}
     sampler = OddSampler(
         definition,
-        knobs_from_mapping(raw.get("knobs") or {}),
+        knobs,
         seed=int(raw.get("seed", 0)),
         strategy=strategy,
         coverage=coverage,
