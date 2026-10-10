@@ -406,6 +406,7 @@ class SweepConfig:
     ``constraints`` maps a target key (e.g. ``ego.spawn_lanelet_id``) to a
     list of constraint dicts.  ``bindings`` maps a target key
     (e.g. ``ego.spawn_s``) to a binding dict that auto-derives the value.
+    ``odd_sample`` draws the settings of each case from the ODD.
     """
 
     constraints: dict[str, Any] = field(default_factory=dict)
@@ -419,3 +420,9 @@ class SweepConfig:
     #: 1-indexed job number to resume from.  Jobs before this index are
     #: skipped.  0 (default) means execute all jobs from the beginning.
     resume_from: int = 0
+
+    #: Concrete cases drawn from the ODD (``docs/odd.md``, "Sampling
+    #: scenarios from the ODD"): ``count``, ``seed``, ``strategy``
+    #: (``uniform`` or ``coverage``), ``odd``, ``coverage_from``, ``knobs``.
+    #: Empty draws nothing.
+    odd_sample: dict[str, Any] = field(default_factory=dict)

@@ -484,6 +484,112 @@ def register() -> None:
     register_odd("urban", urban_odd)
 ```
 
+## Sampling scenarios from the ODD
+
+Coverage says which situations of the ODD the runs so far have driven. The
+sampler draws the settings of the next runs from the ODD: only combinations
+the ODD admits, and, if asked, aimed at what is still uncovered. It is a
+sweep, so it is run by `scenario-expand` and by the lanelet sweeper, and with
+`autoware.launcher` each case gets a fresh Autoware ([Autoware as the
+Ego](autoware.md)):
+
+```bash
+uv run scenario --multirun hydra/sweeper=lanelet_constraint \
+  scenario=intersection_passing/left_turn map=town10hd_opt \
+  +sweep.odd_sample.count=20 +sweep.odd_sample.strategy=coverage \
+  '+sweep.odd_sample.coverage_from=[outputs]'
+```
+
+or in the scenario's YAML:
+
+```yaml
+sweep:
+  odd_sample:
+    count: 20              # cases; one per lanelet case when left out
+    seed: 0                # same seed, ODD, knobs and coverage: same cases
+    strategy: coverage     # uniform | coverage
+    coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
+    odd: null              # the ODD to draw from; the run's (`odd`) by default
+    knobs:                 # how a run sets an attribute; see below
+      dynamic.lead_speed: {key: scenario.lead_speed_kmh}
+```
+
+Each case is a list of Hydra overrides. A sweep that also has `constraints`
+gives each drawn case the next lanelet case in turn; one without draws from
+the ODD alone, and needs no map to expand.
+
+### Knobs
+
+The sampler can only draw what a run *sets*. A **knob** ties an attribute
+to the config key that sets it:
+
+| Field | Meaning |
+|---|---|
+| `key` | The config key the value is written to |
+| `values` | Per bucket label, the value (or `[low, high]` to draw from) to write. Required for every categorical bucket that is to be drawn; a numeric attribute may give it to replace a bucket's interval |
+| `scale`, `offset` | A numeric value drawn in the attribute's unit is written as `value * scale + offset` |
+| `integer` | Write the value rounded to an integer |
+
+`{attribute: key}` is short for `{attribute: {key: key}}`.
+
+The built-in probes a run can set have knobs already, on the `environment`
+config, which sets the weather and the sun before the run starts
+(`EnvironmentAction`):
+
+| Probe | Key | Ranges |
+|---|---|---|
+| `rain` | `environment.precipitation` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
+| `fog` | `environment.fog_density` | as `rain` |
+| `illumination` | `environment.sun_altitude_angle` | `day` 15-90, `low_sun` 0-15, `twilight` -6-0, `night` -90 to -6 |
+
+A scenario that sets the weather itself (its own `EnvironmentAction`) has
+the last word over the config.
+
+Attributes with no knob -- the map's, the drive's -- are left open: a
+combination is admitted when the ODD can hold for some value of them. The
+map's attributes are what `constraints` pick lanelets for.
+
+### How a case is drawn
+
+1. Each knob's attribute gets one of its buckets, leaving out the buckets
+   outside the ODD (the ones `scenario-odd show` lists as out).
+2. The combination is kept only if the ODD's verdict on those buckets is not
+   *outside* -- so modules that rule out a combination (no heavy rain at
+   night, say) are honoured, not just single buckets.
+3. A value is drawn inside each bucket (a numeric bucket's interval, or the
+   knob's range for a categorical one) and checked against the ODD again, as
+   a value: a condition finer than a bucket (`between(0, 45)` across a
+   `[30, 60)` bucket) holds for what is drawn.
+
+`strategy: uniform` draws every admitted bucket alike. `strategy: coverage`
+reads `coverage_from` and draws each attribute from its **least covered**
+buckets first, counting the cases already drawn in the batch as covered, so
+a batch works through the holes before it repeats one; it falls back to any
+bucket (the less covered the likelier) only when the ODD admits no
+combination of the least covered. **Situations** that are still holes are
+aimed at first, one case each: such a case only takes combinations under
+which the situation can hold. A situation no knob can bring about -- one that
+needs a speed or a road no knob sets -- is given up on, with a warning.
+
+From Python:
+
+```python
+from pathlib import Path
+
+from autoware_carla_scenario.coverage.report import load_and_merge
+from autoware_carla_scenario.odd import OddKnob, OddSampler, resolve_odd
+
+sampler = OddSampler(
+    resolve_odd("path/to/urban.yaml"),
+    {"dynamic.lead_speed": OddKnob("scenario.lead_speed_kmh")},
+    seed=0,
+    strategy="coverage",
+    coverage=load_and_merge([Path("outputs")]),
+)
+for case in sampler.sample(20):
+    print(case.overrides, case.buckets, case.situation)
+```
+
 ## Checking an ODD
 
 ```bash

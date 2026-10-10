@@ -34,6 +34,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import typesafe_carla.carla as carla
 import hydra
@@ -878,6 +879,7 @@ def build_scenario(
         ego, scenario = build_scenario_fn(cfg)
         _apply_ego_config(cfg, scenario)
         add_background_traffic(cfg, scenario)
+        add_environment(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -904,7 +906,32 @@ def build_scenario(
     if ego_entity is not None:
         scenario.ego_entity = ego_entity
     add_background_traffic(cfg, scenario)
+    add_environment(cfg, scenario)
     return ego, scenario
+
+
+def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Set the weather and the sun the config's ``environment`` names, if any.
+
+    An :class:`~autoware_carla_scenario.EnvironmentAction` registered for
+    initialization, so the world is in it before the run starts.  It is
+    registered before the scenario's own ``setup()`` runs, so a scenario that
+    sets the weather itself has the last word.  Nothing is registered when
+    every field is ``null`` (the default).
+    """
+    env_cfg = cfg.get("environment")
+    if env_cfg is None:
+        return
+    settings: dict[str, Any] = {
+        str(key): float(value)
+        for key, value in _to_dict(env_cfg).items()
+        if value is not None
+    }
+    if not settings:
+        return
+    from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
+
+    scenario.register_init(EnvironmentAction(**settings, label="config.environment"))
 
 
 def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:

@@ -30,7 +30,7 @@ _MODEL = model_dir() / "autoware_carla_scenario"
 #: Python members the model leaves out on purpose, by class.  Each is a
 #: free-form mapping (dict[str, Any]), which has no Codon type.
 _OMITTED_PARAMETERS: dict[str, set[str]] = {
-    "SweepConfig": {"constraints", "bindings"},
+    "SweepConfig": {"constraints", "bindings", "odd_sample"},
 }
 
 #: (kind, name, has default): kind is "pos", "kw", "*args" or "**kwargs".

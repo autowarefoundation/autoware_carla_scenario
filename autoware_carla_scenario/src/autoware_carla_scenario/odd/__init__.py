@@ -54,6 +54,7 @@ from .route import (
     plan_route,
     plan_route_coverage,
 )
+from .sampler import DEFAULT_KNOBS, OddKnob, OddSample, OddSampler, knobs_from_mapping
 from .registry import (
     DEFAULT_ODD,
     ENTRY_POINT_GROUP,
@@ -69,12 +70,16 @@ __all__ = [
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",
     "TRAFFIC_DENSITY_LEVELS",
+    "DEFAULT_KNOBS",
     "DEFAULT_ODD",
     "ENTRY_POINT_GROUP",
     "OddAttribute",
     "OddCondition",
     "OddDefinition",
+    "OddKnob",
     "OddModule",
+    "OddSample",
+    "OddSampler",
     "OddVerdict",
     "PlannedRoute",
     "RouteCoverage",
@@ -92,6 +97,7 @@ __all__ = [
     "fog",
     "illumination",
     "in_junction",
+    "knobs_from_mapping",
     "lane_count",
     "lanelet_location",
     "lanelet_speed_limit_kph",

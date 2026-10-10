@@ -140,6 +140,22 @@ background_traffic:
               value: 0.0
     stop_after_seconds: null
 
+# The weather and the sun every run starts in (EnvironmentAction, during
+# initialization); null leaves the world's own. A sweep's odd_sample draws
+# these from the ODD (docs/odd.md), as can a single run:
+#
+#   uv run scenario ... environment.precipitation=80 environment.sun_altitude_angle=-10
+environment:
+  cloudiness: null
+  precipitation: null
+  precipitation_deposits: null
+  wetness: null
+  wind_intensity: null
+  fog_density: null
+  fog_distance: null
+  sun_altitude_angle: null
+  sun_azimuth_angle: null
+
 entity:
   ground_projection_ray_distance_upper: 5.0
   ground_projection_ray_distance_lower: 10.0

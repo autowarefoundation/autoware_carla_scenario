@@ -231,23 +231,26 @@ class LaneletConstraintSweeper(Sweeper):
         if sweep_cfg is None:
             raise ValueError(
                 "No 'sweep' section found in config. "
-                "LaneletConstraintSweeper requires sweep.constraints."
+                "LaneletConstraintSweeper requires sweep.constraints or sweep.odd_sample."
             )
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
         batches: list[tuple[str, ...]] = [
-            tuple(case) for case in expand_sweep(sweep_dict, lanelet_map, arguments)
+            tuple(case)
+            for case in expand_sweep(
+                sweep_dict, lanelet_map, arguments, odd=OmegaConf.select(cfg, "odd")
+            )
         ]
         if not batches:
             logger.warning("Nothing to sweep.")
             return []
 
         logger.info(
-            "Sweeping %d lanelet(s): %s",
+            "Sweeping %d case(s): %s",
             len(batches),
-            [b[0] for b in batches],
+            [b[0] if b else "" for b in batches],
         )
 
         # -- 7. Resolve per-job timeout, cooldown, retry count, and resume ---
