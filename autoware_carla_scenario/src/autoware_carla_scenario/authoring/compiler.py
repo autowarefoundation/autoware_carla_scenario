@@ -38,6 +38,7 @@ from .registry import (
     get_action_spec,
     get_condition_spec,
 )
+from ..trajectory.authoring import parse_vertices
 from .validator import Issue, validate_document
 
 __all__ = [
@@ -94,6 +95,9 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
             # untouched; the sweep YAML resolves it.
             return value
         return [int(str(v).strip()) for v in value]
+    if spec.kind == "trajectory":
+        # Text or rows, as a hand-edited document may hold either: rows here.
+        return [list(row) for row in parse_vertices(value)]
     return value
 
 

@@ -40,6 +40,7 @@ from ..authoring.models import (
 from ..authoring.persistence import Draft, DraftStore
 from ..authoring.registry import (
     default_params,
+    TRUTHY_VALUES,
     get_action_spec,
     get_binding_spec,
     get_condition_spec,
@@ -831,6 +832,10 @@ class EditorService:
             spawn.s.value = _as_float(form["spawn_s"], "Offset", spawn.s.value)
         if "spawn_t" in form:
             spawn.t = _as_float(form["spawn_t"], "Lateral offset", spawn.t)
+        if "spawn_hidden_shown" in form:
+            # A checkbox submits nothing when cleared, so the form says it
+            # showed one.
+            spawn.hidden = str(form.get("spawn_hidden", "")).lower() in TRUTHY_VALUES
         if "spawn_heading_deg" in form:
             heading_deg = _as_float(
                 form["spawn_heading_deg"], "Heading", spawn.heading_deg

@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
         EnvironmentAction as EnvironmentAction,
+        FollowTrajectoryAction as FollowTrajectoryAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
         TickTiming as TickTiming,
@@ -94,6 +95,14 @@ if TYPE_CHECKING:
         WalkStraightAction as WalkStraightAction,
     )
     from .camera_recorder import CameraRecorder as CameraRecorder
+    from .trajectory import (
+        MapPose as MapPose,
+        ReferenceContext as ReferenceContext,
+        Trajectory as Trajectory,
+        TrajectoryFollowingMode as TrajectoryFollowingMode,
+        TrajectoryTiming as TrajectoryTiming,
+        TrajectoryVertex as TrajectoryVertex,
+    )
     from .conditions import (
         AccelerationCondition as AccelerationCondition,
         AccelerationDirection as AccelerationDirection,
@@ -399,6 +408,7 @@ __all__ = [
     # Actions
     "BaseAction",
     "EnvironmentAction",
+    "FollowTrajectoryAction",
     "LaneChangeAction",
     "LaneChangeDirection",
     "TickTiming",
@@ -416,6 +426,13 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
+    # Trajectories
+    "MapPose",
+    "ReferenceContext",
+    "Trajectory",
+    "TrajectoryFollowingMode",
+    "TrajectoryTiming",
+    "TrajectoryVertex",
     # Sensors
     "CameraRecorder",
     "CameraSensorBase",
@@ -432,6 +449,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
     "BaseAction": (".actions", "BaseAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
+    "FollowTrajectoryAction": (".actions", "FollowTrajectoryAction"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "LaneChangeDirection": (".actions", "LaneChangeDirection"),
     "TickTiming": (".actions", "TickTiming"),
@@ -448,6 +466,13 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficSourceAction": (".actions", "TrafficSourceAction"),
     "TrafficSinkAction": (".actions", "TrafficSinkAction"),
     "TurnDirection": (".actions", "TurnDirection"),
+    # trajectories
+    "MapPose": (".trajectory", "MapPose"),
+    "ReferenceContext": (".trajectory", "ReferenceContext"),
+    "Trajectory": (".trajectory", "Trajectory"),
+    "TrajectoryFollowingMode": (".trajectory", "TrajectoryFollowingMode"),
+    "TrajectoryTiming": (".trajectory", "TrajectoryTiming"),
+    "TrajectoryVertex": (".trajectory", "TrajectoryVertex"),
     # camera / sensor
     "CameraRecorder": (".camera_recorder", "CameraRecorder"),
     "CameraSensorBase": (".sensor", "CameraSensorBase"),
