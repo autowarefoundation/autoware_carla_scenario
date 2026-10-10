@@ -38,7 +38,7 @@ from .registry import (
     get_action_spec,
     get_condition_spec,
 )
-from ..trajectory.authoring import parse_vertices
+from ..trajectory.authoring import parse_relative_vertices, parse_vertices
 from .validator import Issue, validate_document
 
 __all__ = [
@@ -98,6 +98,8 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     if spec.kind == "trajectory":
         # Text or rows, as a hand-edited document may hold either: rows here.
         return [list(row) for row in parse_vertices(value)]
+    if spec.kind == "relative_lane_trajectory":
+        return [list(row) for row in parse_relative_vertices(value)]
     return value
 
 
@@ -206,18 +208,29 @@ def _assign_roles(document: ScenarioDocument) -> dict[str, str]:
     return roles
 
 
-def _compile_condition(node: ConditionNode, roles: dict[str, str]) -> CompiledCondition:
-    """Compile one condition subtree (already validated)."""
-    spec = get_condition_spec(node.type)
-    assert spec is not None  # noqa: S101 -- validate_document enforces this
-    params = coerce_params(spec.fields, node.params)
-    # Entity references are resolved to role names here so that no builder --
-    # and no runtime object -- has to know about document ids.
-    for field_spec in spec.fields:
+def _resolve_entity_refs(
+    fields: "tuple[FieldSpec, ...]", params: dict[str, Any], roles: dict[str, str]
+) -> dict[str, Any]:
+    """*params* with every ``entity`` field's id replaced by its role name.
+
+    Entity references are resolved here so that no builder -- and no runtime
+    object -- has to know about document ids.
+    """
+    for field_spec in fields:
         if field_spec.kind == "entity":
             entity_id = params.get(field_spec.name)
             if entity_id is not None:
                 params[field_spec.name] = roles[str(entity_id)]
+    return params
+
+
+def _compile_condition(node: ConditionNode, roles: dict[str, str]) -> CompiledCondition:
+    """Compile one condition subtree (already validated)."""
+    spec = get_condition_spec(node.type)
+    assert spec is not None  # noqa: S101 -- validate_document enforces this
+    params = _resolve_entity_refs(
+        spec.fields, coerce_params(spec.fields, node.params), roles
+    )
     children = tuple(_compile_condition(c, roles) for c in node.children)
     return CompiledCondition(spec=spec, node=node, params=params, children=children)
 
@@ -226,7 +239,9 @@ def _compile_action(node: ActionNode, roles: dict[str, str]) -> CompiledAction:
     """Compile one action (already validated)."""
     spec = get_action_spec(node.type)
     assert spec is not None  # noqa: S101 -- validate_document enforces this
-    params = coerce_params(spec.fields, node.params)
+    params = _resolve_entity_refs(
+        spec.fields, coerce_params(spec.fields, node.params), roles
+    )
     actor_role = roles.get(node.actor) if node.actor else None
     trigger = _compile_condition(node.trigger, roles) if node.trigger else None
     return CompiledAction(

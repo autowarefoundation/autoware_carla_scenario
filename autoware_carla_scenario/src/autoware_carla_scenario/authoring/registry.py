@@ -110,6 +110,11 @@ FieldKind = Literal[
     # document as data and edited as text, one vertex per line: a recording
     # transcribes to hundreds of them, which no row of form controls could hold.
     "trajectory",
+    # Vertices relative to an entity's lane, ``[ds, offset, d_lane, yaw, time]``
+    # per row (OpenSCENARIO's RelativeLanePosition; see
+    # :func:`autoware_carla_scenario.trajectory.authoring.parse_relative_vertices`).
+    # Edited as text like ``trajectory``, with its own columns.
+    "relative_lane_trajectory",
 ]
 
 #: Field kinds that hold one whole number, and those that hold a list of them.
@@ -1105,6 +1110,8 @@ register_action_spec(
                             ("lanelet_ids", "lanelet_ids"),
                             ("speed_kmh", "speed_kmh"),
                             ("lateral_offset_m", "lateral_offset_m"),
+                            ("relative_vertices", "relative_vertices"),
+                            ("reference_entity", "reference_entity"),
                         ),
                     ),
                 ),
@@ -1132,11 +1139,13 @@ register_action_spec(
                 options=(
                     SelectOption("vertices", "Vertices (map frame)"),
                     SelectOption("lanelets", "Along lanelets"),
+                    SelectOption("relative_lane", "Relative to an entity's lane"),
                 ),
                 help=(
                     "Vertices are written out below -- a recording transcribes "
                     "to them; a lanelet path follows the centrelines of the "
-                    "lanelets picked on the map."
+                    "lanelets picked on the map; relative vertices are lanes "
+                    "and metres from where an entity is when the action starts."
                 ),
             ),
             FieldSpec(
@@ -1176,6 +1185,33 @@ register_action_spec(
                 required=False,
                 unit="m",
                 help="From the lanelets' centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="reference_entity",
+                label="Relative to",
+                kind="entity",
+                default=None,
+                required=False,
+                help=(
+                    "The entity relative vertices are measured from; leave "
+                    "empty for the entity that follows the trajectory."
+                ),
+            ),
+            FieldSpec(
+                name="relative_vertices",
+                label="Relative vertices",
+                kind="relative_lane_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "One vertex per line: ds[, offset][, d_lane][, yaw][, time] "
+                    "-- metres along the reference's lane (negative behind), "
+                    "metres from the lane centre (positive left), lanes across "
+                    "(+1 left, -1 right), heading from the lane (rad, positive "
+                    "left; empty faces along the path), time (s).  Placed when "
+                    "the action starts; whether the lanes exist is only known "
+                    "then."
+                ),
             ),
             FieldSpec(
                 name="time_domain",

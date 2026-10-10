@@ -24,7 +24,12 @@ from fastapi.templating import Jinja2Templates
 from ..authoring import registry
 from ..authoring.models import SIGNAL_STATE_NAMES
 from ..authoring.persistence import DraftStore, default_draft_dir
-from ..trajectory.authoring import format_vertices, trajectory_summary
+from ..trajectory.authoring import (
+    format_relative_vertices,
+    format_vertices,
+    relative_trajectory_summary,
+    trajectory_summary,
+)
 from .service import EditorError, EditorService, condition_actions
 
 logger = logging.getLogger(__name__)
@@ -181,6 +186,8 @@ def create_app(
         # A trajectory field's rows as the text the inspector edits.
         format_vertices=format_vertices,
         trajectory_summary=trajectory_summary,
+        format_relative_vertices=format_relative_vertices,
+        relative_trajectory_summary=relative_trajectory_summary,
     )
 
     application.state.templates = templates

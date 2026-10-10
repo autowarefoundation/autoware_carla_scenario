@@ -3,22 +3,50 @@
 Kept apart from :mod:`.model` because this is the half that needs the loaded
 map: a :class:`~.model.MapPose` goes through the map's projector offset, a
 Lanelet2 or OpenDRIVE pose through :func:`~autoware_carla_scenario.coordinate.to_carla_world`,
-and a vertex that states no height is put on the road surface under it.
+a :class:`~.model.RelativeLanePose` through the lanelet pose it names from where
+its reference entity is (:mod:`.relative_lane`), and a vertex that states no
+height is put on the road surface under it.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple, Union
 
 from ..coordinate.map_manager import MapManager
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
-from .model import MapPose, ResolvedTrajectory, Trajectory, TrajectoryPosition
+from .model import (
+    MapPose,
+    RelativeLanePose,
+    ResolvedTrajectory,
+    Trajectory,
+    TrajectoryPosition,
+)
 
-__all__ = ["map_pose_to_carla", "resolve_position", "resolve_trajectory"]
+if TYPE_CHECKING:
+    from ..entity_role import EntityRole
+
+__all__ = [
+    "PositionResolver",
+    "ReferencePose",
+    "map_pose_to_carla",
+    "position_resolver",
+    "resolve_position",
+    "resolve_trajectory",
+]
 
 #: ``(x, y) -> z`` of the ground at a CARLA world point.
 GroundHeight = Callable[[float, float], Optional[float]]
+
+#: ``(x, y, z, yaw_deg)`` of a vertex in CARLA world coordinates.
+ResolvedPosition = Tuple[float, float, Optional[float], Optional[float]]
+
+#: Turns one vertex position into a :data:`ResolvedPosition`.
+PositionResolver = Callable[[TrajectoryPosition], ResolvedPosition]
+
+#: Where a :class:`~.model.RelativeLanePose`'s reference entity is now, by its
+#: ``entity_ref`` (``None`` for the entity the action moves).
+ReferencePose = Callable[[Optional[Union["EntityRole", str]]], CarlaWorldPose]
 
 
 def map_pose_to_carla(
@@ -42,14 +70,62 @@ def map_pose_to_carla(
     )
 
 
+def position_resolver(reference: Optional[ReferencePose] = None) -> PositionResolver:
+    """A :func:`resolve_position` bound to *reference*, for a whole trajectory.
+
+    The reference entities' lanelet poses are looked up once each and reused
+    for every vertex relative to them, so every vertex of one resolution is
+    placed against the same instant.
+    """
+    lanes: dict[str, Lanelet2Pose] = {}
+
+    def resolve(position: TrajectoryPosition) -> ResolvedPosition:
+        if not isinstance(position, RelativeLanePose):
+            return resolve_position(position)
+        if reference is None:
+            raise ValueError(
+                "a RelativeLanePose is placed against its reference entity, "
+                "and no reference pose was given to resolve it with"
+            )
+        from ..coordinate.transform import to_carla_world  # noqa: PLC0415
+        from .relative_lane import (  # noqa: PLC0415
+            reference_lane_pose_of,
+            relative_lane_pose,
+        )
+
+        key = "" if position.entity_ref is None else str(position.entity_ref)
+        if key not in lanes:
+            lanes[key] = reference_lane_pose_of(reference(position.entity_ref))
+        manager = MapManager.get_instance()
+        lane = relative_lane_pose(
+            manager.lanelet_map, manager.routing_graph, lanes[key], position
+        )
+        pose = to_carla_world(lane)
+        return pose.x, pose.y, pose.z, None if position.yaw is None else pose.yaw
+
+    return resolve
+
+
 def resolve_position(
     position: TrajectoryPosition,
-) -> Tuple[float, float, Optional[float], Optional[float]]:
+    reference: Optional[ReferencePose] = None,
+) -> ResolvedPosition:
     """``(x, y, z, yaw_deg)`` of any vertex position in CARLA world coordinates.
 
     Uses the initialized :class:`~autoware_carla_scenario.coordinate.MapManager`
     for every frame but CARLA's own.
+
+    Args:
+        position: The vertex position.
+        reference: Where a :class:`~.model.RelativeLanePose`'s reference entity
+            is; needed only for one.
+
+    Raises:
+        ValueError: For a relative pose without a *reference*, or one that
+            names a lane the map does not have.
     """
+    if isinstance(position, RelativeLanePose):
+        return position_resolver(reference)(position)
     if isinstance(position, CarlaWorldPose):
         return position.x, position.y, position.z, position.yaw
     if isinstance(position, MapPose):
@@ -85,9 +161,8 @@ def resolve_trajectory(
     trajectory: Trajectory,
     ground: Optional[GroundHeight] = None,
     *,
-    resolve: Callable[
-        [TrajectoryPosition], Tuple[float, float, Optional[float], Optional[float]]
-    ] = resolve_position,
+    resolve: Optional[PositionResolver] = None,
+    reference: Optional[ReferencePose] = None,
 ) -> ResolvedTrajectory:
     """Every vertex of *trajectory* in CARLA world coordinates.
 
@@ -97,14 +172,28 @@ def resolve_trajectory(
             state none.  ``None`` -- or a point it cannot answer for -- puts
             such a vertex at the last height known along the path, or at 0.
         resolve: Turns one position into ``(x, y, z, yaw_deg)``; the default
-            uses the loaded map.  Injected by the tests.
+            uses the loaded map (:func:`position_resolver`).  Injected by the
+            tests.
+        reference: Where the reference entities of its
+            :class:`~.model.RelativeLanePose` vertices are, for the default
+            *resolve*.
+
+    Raises:
+        ValueError: If a vertex cannot be placed, naming the vertex.
     """
+    if resolve is None:
+        resolve = position_resolver(reference)
     xs: list[float] = []
     ys: list[float] = []
     zs: list[Optional[float]] = []
     yaws: list[Optional[float]] = []
-    for vertex in trajectory.vertices:
-        x, y, z, yaw = resolve(vertex.position)
+    for index, vertex in enumerate(trajectory.vertices):
+        try:
+            x, y, z, yaw = resolve(vertex.position)
+        except ValueError as exc:
+            raise ValueError(
+                f"trajectory {trajectory.name!r}, vertex {index}: {exc}"
+            ) from exc
         if z is None and ground is not None:
             z = ground(x, y)
         xs.append(x)

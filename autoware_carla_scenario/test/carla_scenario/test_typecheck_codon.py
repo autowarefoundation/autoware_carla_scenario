@@ -63,6 +63,7 @@ from autoware_carla_scenario import (
     Lanelet2Pose,
     MapPose,
     ReferenceContext,
+    RelativeLanePose,
     SamplingEvent,
     ScenarioResult,
     SpeedCondition,
@@ -451,6 +452,11 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
                 TrajectoryVertex(MapPose(100.0, 200.0, yaw=0.5), 0.0),
                 TrajectoryVertex(Lanelet2Pose(10, 5.0), 2.0),
                 TrajectoryVertex(snap_to_carla_road(Lanelet2Pose(10, 9.0), self.world), 4.0),
+                TrajectoryVertex(RelativeLanePose(30.0, d_lane=1), 6.0),
+                TrajectoryVertex(
+                    RelativeLanePose(ds=-5, offset=0.5, d_lane=-1, yaw=0.1, entity_ref=EGO_ROLE_NAME),
+                    8.0,
+                ),
             ],
         )
         self.register_pre_tick(
@@ -533,6 +539,11 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
             "expected a trajectory position",
         ),
         (
+            "RelativeLanePose(10.0, entity_ref=3)\n",
+            "RelativeLanePose(10.0",
+            "expected an EntityRole or a str",
+        ),
+        (
             'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
             "TrajectoryVertex(MapPose(3.0, 4.0))]), TrajectoryFollowingMode.FOLLOW)\n",
             "FollowTrajectoryAction(",
@@ -550,6 +561,7 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
         "carla-wrong-argument",
         "carla-int-for-str",
         "trajectory-str-position",
+        "relative-lane-int-entity-ref",
         "trajectory-mode-for-timing",
     ],
 )

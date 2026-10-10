@@ -119,6 +119,7 @@ See [Trajectories and Recorded-Scene Replay](trajectory.md).
 |--------|-------------|
 | `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and an optional time. |
 | `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
+| `RelativeLanePose` | A pose relative to an entity in lane coordinates (`ds`, `offset`, `d_lane`, `yaw`, `entity_ref`; OpenSCENARIO `RelativeLanePosition`), placed when the action starts. |
 | `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
 | `TrajectoryFollowingMode` | `POSITION` (kinematic replay) or `FOLLOW` (a controller tracks it). |
 

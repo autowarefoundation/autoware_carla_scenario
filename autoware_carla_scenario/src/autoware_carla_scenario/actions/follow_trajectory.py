@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from ..action_state import ActionState
 from ..conditions import BaseCondition
 from ..conditions.base import ScenarioResult
+from ..coordinate.poses import CarlaWorldPose
 from ..entity.registry import find_entity_by_role_name
 from ..entity_role import EntityRole
 from ..trajectory.model import (
@@ -213,6 +214,14 @@ class FollowTrajectoryAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Move the entity one tick along the trajectory."""
+        if self.state is ActionState.STANDBY:
+            # The trigger's call: a new run begins, on the first call that
+            # finds the entity (and, for a relative trajectory, its references).
+            self._begun = False
+            if self._trajectory.is_relative:
+                # Placed against where the reference entities are now, at
+                # every start of a run rather than once for all of them.
+                self._resolved = None
         entity = find_entity_by_role_name(self._entity_name)
         if entity is None:
             logger.warning(
@@ -234,7 +243,9 @@ class FollowTrajectoryAction(BaseAction):
             return
         if self._resolved is None:
             self._resolved = self._resolve(world)
-        if self.state is ActionState.STANDBY or not self._begun:
+            if self._resolved is None:
+                return
+        if not self._begun:
             # The trigger's call begins a run -- or, when the entity was not
             # there to begin it with, the first call that finds it.
             self._begin(world, entity, actor)
@@ -266,10 +277,40 @@ class FollowTrajectoryAction(BaseAction):
     # Run
     # ------------------------------------------------------------------
 
-    def _resolve(self, world: "carla.World") -> ResolvedTrajectory:
+    def _resolve(self, world: "carla.World") -> Optional[ResolvedTrajectory]:
+        """The trajectory in CARLA world coordinates, or ``None`` to retry.
+
+        A :class:`~autoware_carla_scenario.trajectory.RelativeLanePose` is
+        placed against where its reference entity is now; one not (yet) in the
+        world puts the start off to a later tick.
+        """
         from ..trajectory.resolve import resolve_trajectory, road_height  # noqa: PLC0415
 
-        return resolve_trajectory(self._trajectory, road_height(world.get_map()))
+        try:
+            return resolve_trajectory(
+                self._trajectory,
+                road_height(world.get_map()),
+                reference=self._reference_pose,
+            )
+        except _ReferenceMissing as missing:
+            logger.warning(
+                "FollowTrajectoryAction: %r is placed relative to '%s', which is "
+                "not in the world yet",
+                self._trajectory.name,
+                missing.name,
+            )
+            return None
+
+    def _reference_pose(
+        self, entity_ref: Optional[Union[EntityRole, str]]
+    ) -> CarlaWorldPose:
+        """Where a relative vertex's reference entity is now."""
+        name = self._entity_name if entity_ref is None else entity_ref
+        entity = find_entity_by_role_name(name)
+        actor = getattr(entity, "actor", None) if entity is not None else None
+        if actor is None:
+            raise _ReferenceMissing(str(name))
+        return CarlaWorldPose.from_carla_transform(actor.get_transform())
 
     def _begin(self, world: "carla.World", entity: Any, actor: Any) -> None:
         """Start a run: take the entity over and set the clock or the distance."""
@@ -487,6 +528,14 @@ class FollowTrajectoryAction(BaseAction):
                 speed=_walker_speed(speed),
             )
         )
+
+
+class _ReferenceMissing(Exception):
+    """A relative vertex's reference entity is not in the world."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
 
 
 class _TrajectoryEnd(BaseCondition):

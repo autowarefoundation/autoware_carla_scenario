@@ -45,5 +45,5 @@ from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import LaneChangeDirection, TurnDirection
-from .trajectory import (MapPose, ReferenceContext, Trajectory, TrajectoryFollowingMode,
-                         TrajectoryTiming, TrajectoryVertex)
+from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, Trajectory,
+                         TrajectoryFollowingMode, TrajectoryTiming, TrajectoryVertex)
