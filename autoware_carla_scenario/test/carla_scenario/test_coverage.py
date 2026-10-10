@@ -553,7 +553,7 @@ class TestCriteria:
         ("kw", "message"),
         [
             ({"cover_by": "laps"}, "cover_by must be one of"),
-            ({"target": 0}, "target must be at least 1"),
+            ({"target": 0}, "whole number, at least 1"),
             ({"cover_by": "seconds", "target": 0}, "target must be positive"),
             ({"min_stay": -1, "event": SamplingEvent.TICK}, "must not be negative"),
             ({"cover_by": "meters"}, "need an item sampled on SamplingEvent.TICK"),
@@ -565,6 +565,39 @@ class TestCriteria:
     ) -> None:
         with pytest.raises(ValueError, match=message):
             _item(values=["a"], **kw)
+
+    def test_hits_with_a_minimum_stay_are_graded(self, drive: Any) -> None:
+        doc = drive(
+            [("a", 0.0, 0.5 * n) for n in range(1, 5)],
+            cover_by="hits",
+            target=3,
+            min_stay=1.0,
+        )
+        assert merge_coverage([doc]).entries[0].covered == ["a"]
+
+    def test_a_different_target_is_reported_apart(self, drive: Any) -> None:
+        one = drive([("a", 1.0, 1.0)])
+        two = drive([("a", 1.0, 1.0)], target=2)
+        names = [e.name for e in merge_coverage([one, two]).entries]
+        assert names == ["x", "x#2"]
+
+    def test_a_fractional_count_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="whole number"):
+            _item(values=["a"], target=2.5)
+
+    def test_bad_criteria_in_a_binding_are_reported(self) -> None:
+        from autoware_carla_scenario.odd import OpenOddError, load_openodd
+
+        taxonomy = "TAXONOMY:\n    wind_speed: float velocity\n"
+        for binding, message in (
+            ({"target": "abc"}, "must be numbers"),
+            ({"cover_by": "laps"}, "cover_by must be one of"),
+        ):
+            with pytest.raises(OpenOddError, match=message):
+                load_openodd(
+                    taxonomy,
+                    bindings={"wind_speed": {"probe": "rain", **binding}},
+                )
 
     def test_entries_need_no_tick(self) -> None:
         assert _item(values=["a"], cover_by="entries", target=2).cover_by == "entries"

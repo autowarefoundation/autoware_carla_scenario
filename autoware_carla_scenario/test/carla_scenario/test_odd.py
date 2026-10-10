@@ -512,7 +512,7 @@ class TestProbes:
             "odd.environment.illumination": ["day"],
             "odd.environment.rain": ["moderate"],
             "odd.environment.fog": ["none"],
-            "odd.dynamic.ego_speed": ["[30, 40)"],
+            "odd.dynamic.ego_speed": ["[35, 45)"],
             "odd.dynamic.traffic_density": ["low"],
             "odd.dynamic.pedestrian_nearby": ["true"],
         }
@@ -1172,7 +1172,7 @@ class TestDefaultCriteria:
     def test_accelerating_through_speeds_does_not_cover_them(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # From a stop to 45 km/h at 2 m/s^2 (about 6 s), then 45 km/h for 5 s.
+        # From a stop to 50 km/h at 2 m/s^2 (about 7 s), then 50 km/h for 5 s.
         state = {"kph": 0.0, "x": 0.0}
         monkeypatch.setattr(probes, "ego_speed_kph", lambda world: state["kph"])
         monkeypatch.setattr(probes, "ego_position", lambda w: (state["x"], 0.0, 0.0))
@@ -1180,9 +1180,9 @@ class TestDefaultCriteria:
         world = _OddWorld([], None, None)
         collector.start(world, 0.0)
         t, dt = 0.0, 0.1
-        while t < 11.0:
+        while t < 12.0:
             t += dt
-            state["kph"] = min(45.0, 2.0 * 3.6 * t)
+            state["kph"] = min(50.0, 2.0 * 3.6 * t)
             state["x"] += state["kph"] / 3.6 * dt
             world.frame += 1
             collector.tick(world, t)
@@ -1198,5 +1198,41 @@ class TestDefaultCriteria:
             if e.name == "odd.dynamic.ego_speed"
         )
         reached = [b for b, n in speed.hits.items() if n]
-        assert reached == ["[0, 10)", "[10, 20)", "[20, 30)", "[30, 40)", "[40, 50)"]
-        assert speed.covered == ["[40, 50)"]
+        assert reached == [
+            "[0, 5)",
+            "[5, 15)",
+            "[15, 25)",
+            "[25, 35)",
+            "[35, 45)",
+            "[45, 55)",
+        ]
+        assert speed.covered == ["[45, 55)"]
+
+    def test_cruising_at_a_speed_limit_covers_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 60 s at 50 km/h, wavering by 0.1 km/h every tick.
+        tick = {"n": 0}
+        monkeypatch.setattr(
+            probes,
+            "ego_speed_kph",
+            lambda world: 50.0 + (0.1 if tick["n"] % 2 else -0.1),
+        )
+        collector = CoverageCollector([], odd=default_odd())
+        world = _OddWorld([], None, None)
+        collector.start(world, 0.0)
+        for n in range(1, 1201):
+            tick["n"] = n
+            world.frame += 1
+            collector.tick(world, n * 0.05)
+        doc = {
+            "schema": COVERAGE_SCHEMA,
+            "scenario": "s",
+            "items": collector.to_dict("s")["items"],
+        }
+        speed = next(
+            e
+            for e in merge_coverage([doc]).entries
+            if e.name == "odd.dynamic.ego_speed"
+        )
+        assert speed.covered == ["[45, 55)"]

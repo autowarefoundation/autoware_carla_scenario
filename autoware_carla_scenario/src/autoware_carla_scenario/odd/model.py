@@ -50,6 +50,7 @@ from ..coverage.items import (
     CoverGroup,
     CoverItem,
     SamplingEvent,
+    _check_criteria,
     duplicates,
     value_label,
 )
@@ -426,6 +427,9 @@ class OddAttribute:
         self.unit = unit
         self.text = text
         self.item: Optional[CoverItem] = None
+        _check_criteria(
+            f"OddAttribute({name})", target, cover_by, min_stay, SamplingEvent.TICK
+        )
         self.target = target
         self.cover_by = cover_by
         self.min_stay = min_stay

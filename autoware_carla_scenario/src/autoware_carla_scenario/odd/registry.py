@@ -50,6 +50,11 @@ _REGISTRY: dict[str, OddBuilder] = {}
 _PLUGINS_LOADED = False
 
 
+#: Ego speed buckets, km/h: a stop, then 10 km/h wide and centred on the
+#: multiples of 10, where speed limits are.  An ego cruising at a limit
+#: wavers about the middle of a bucket, not across an edge.
+SPEED_EDGES = [0.0, 5.0, *(15.0 + 10.0 * i for i in range(12))]
+
 #: Seconds the ego must hold a speed bucket for the default ODD to count it.
 SPEED_MIN_STAY = 3.0
 #: Seconds on a kind of road for the default ODD to count it.
@@ -66,7 +71,9 @@ def default_odd() -> OddDefinition:
     A bucket a run only passes through is not covered.  Ego speed counts a
     bucket once the ego held it for :data:`SPEED_MIN_STAY` seconds: an ego
     accelerating from a stop to 60 km/h passes through every bucket below,
-    but has driven at none of those speeds.  The road attributes count a stay
+    but has driven at none of those speeds.  The speed buckets are centred on
+    the multiples of 10 km/h, so an ego holding a speed limit stays inside
+    one rather than flickering across an edge.  The road attributes count a stay
     of :data:`ROAD_MIN_STAY` seconds, so clipping a section while changing
     lanes or merging does not cover it.
     """
@@ -137,8 +144,7 @@ def default_odd() -> OddDefinition:
                 "dynamic.ego_speed",
                 probes.ego_speed_kph,
                 unit="km/h",
-                range=(0.0, 120.0),
-                every=10.0,
+                buckets=SPEED_EDGES,
                 cover_by="entries",
                 min_stay=SPEED_MIN_STAY,
                 text="Ego speed",

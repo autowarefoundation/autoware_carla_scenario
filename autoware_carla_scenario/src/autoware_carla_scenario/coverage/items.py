@@ -129,8 +129,10 @@ def _check_criteria(
     """Refuse a coverage criterion that cannot be met or measured."""
     if cover_by not in COVER_MEASURES:
         raise ValueError(f"{what}: cover_by must be one of {list(COVER_MEASURES)}")
-    if cover_by in ("hits", "entries") and target < 1:
-        raise ValueError(f"{what}: target must be at least 1")
+    if cover_by in ("hits", "entries") and (
+        target < 1 or not float(target).is_integer()
+    ):
+        raise ValueError(f"{what}: target must be a whole number, at least 1")
     if not target > 0:
         raise ValueError(f"{what}: target must be positive")
     if min_stay is not None and not min_stay >= 0:

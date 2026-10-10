@@ -772,12 +772,17 @@ class _Reader:
         if extra:
             raise OpenOddError(f"probes.{concept.name}: unknown keys {extra}")
         criteria: dict[str, Any] = {}
-        if "target" in binding:
-            criteria["target"] = float(binding["target"])
-        if "cover_by" in binding:
-            criteria["cover_by"] = str(binding["cover_by"])
-        if binding.get("min_stay") is not None:
-            criteria["min_stay"] = float(binding["min_stay"])
+        try:
+            if "target" in binding:
+                criteria["target"] = float(binding["target"])
+            if "cover_by" in binding:
+                criteria["cover_by"] = str(binding["cover_by"])
+            if binding.get("min_stay") is not None:
+                criteria["min_stay"] = float(binding["min_stay"])
+        except (TypeError, ValueError) as exc:
+            raise OpenOddError(
+                f"probes.{concept.name}: target and min_stay must be numbers ({exc})"
+            ) from exc
         try:
             return OddAttribute(
                 concept.name,

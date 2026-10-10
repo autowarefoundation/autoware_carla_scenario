@@ -96,12 +96,13 @@ class MergedEntry:
 
     def add_exposure(self, raw: dict[str, Any]) -> None:
         """Add one run's exposure; a run without it makes the sums unknown."""
+        for measure, counted in (raw.get("counted") or {}).items():
+            mine = self.counted.setdefault(measure, {})
+            for bucket, amount in counted.items():
+                mine[bucket] = mine.get(bucket, 0) + amount
         for measure in EXPOSURE_MEASURES:
             sums = getattr(self, measure)
             counts = raw.get(measure)
-            for bucket, amount in (raw.get("counted") or {}).get(measure, {}).items():
-                mine = self.counted.setdefault(measure, {})
-                mine[bucket] = mine.get(bucket, 0) + amount
             if sums is None:
                 continue
             if not isinstance(counts, dict):
@@ -462,6 +463,7 @@ def _key(entry: dict[str, Any], kind: str) -> tuple[Any, ...]:
         tuple(entry.get("outside_odd", ())),
         entry.get("cover_by", "hits"),
         entry.get("min_stay"),
+        float(entry.get("target", 1)),
     )
 
 

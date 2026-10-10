@@ -153,7 +153,7 @@ three top-level categories:
 | `odd.environment.illumination` | day, low_sun, twilight, night | Sun altitude: day from 15°, low sun from 0°, civil twilight to -6° |
 | `odd.environment.rain` | none, light, moderate, heavy | CARLA precipitation (0-100): 1, 30, 70 |
 | `odd.environment.fog` | none, light, moderate, heavy | CARLA fog density (0-100): 1, 30, 70 |
-| `odd.dynamic.ego_speed` ³ | 0-120 km/h every 10 | Ego velocity |
+| `odd.dynamic.ego_speed` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
 | `odd.dynamic.traffic_density` | none, low (1-2), medium (3-5), high (6+) | Other vehicles within 50 m |
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
 
@@ -163,7 +163,10 @@ Clipping a section while merging or changing lanes does not cover it.
 ³ Covered by a stay of 3 s or more (`cover_by="entries", min_stay=3`). An ego
 accelerating from a stop to 60 km/h passes through every bucket below 60
 without driving at any of those speeds. Holding a bucket for 3 s means
-driving at roughly that speed, not passing through it.
+driving at roughly that speed, not passing through it. The buckets are
+centred on the multiples of 10 km/h, where speed limits are, so an ego
+cruising at 50 km/h stays in `[45, 55)` instead of flickering between two
+buckets whose edge is at 50.
 
 A reading the simulator does not support returns nothing. The item then has
 no samples, the report says so, and the run is not affected. Examples are the
