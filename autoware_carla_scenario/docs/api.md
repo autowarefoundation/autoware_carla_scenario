@@ -58,12 +58,12 @@ See [ODD](odd.md).
 | Symbol | Purpose |
 |--------|---------|
 | `OddAttribute(name, probe, *, unit, range, every, buckets, values, text, target, cover_by, min_stay)` | A measured taxonomy concept. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`, `is_unknown`. |
-| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text)` | A named rule. |
+| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text, situation, target, cover_by, min_stay)` | A named rule; with `situation=True`, also covered as a situation. `OddDefinition.situations()` lists those. |
 | `OddDefinition(name, attributes, modules, *, roots, text)` | The ODD: judges values with OpenODD's semantics (roots, labels, inactive modules, missing values), and marks buckets outside it. |
 | `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
 | `default_odd()` | The built-in ODD: every attribute, no modules. |
 | `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
-| `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
+| `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
 | `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
 | `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |

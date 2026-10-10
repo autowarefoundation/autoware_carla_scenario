@@ -337,6 +337,18 @@ class TestVerdict:
         assert coverage.outside_m == pytest.approx(outside.length_m)
         assert coverage.inside_m == pytest.approx(coverage.length_m - outside.length_m)
 
+    def test_a_situation_not_driven_is_no_reason_to_be_outside(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        limit = _attribute(_map_odd(), "scenery.speed_limit")
+        odd = _map_odd(
+            OddModule("roads", include_and=[limit.at_most(100)]),
+            OddModule("crawl", include_and=[limit.at_most(10)], situation=True),
+        )
+        coverage = _cover(odd, LEFT_TURN, nishishinjuku)
+        assert not coverage.leaves_odd
+        assert all(not ll.failing_modules for ll in coverage.lanelets)
+
     def test_what_the_map_cannot_tell_leaves_it_undecided(
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:

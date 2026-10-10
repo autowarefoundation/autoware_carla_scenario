@@ -337,6 +337,14 @@ def build() -> OddDefinition:
                 labels=[],
             ),
             OddModule("empty", include_and=[], active=False),
+            OddModule(
+                "fast_urban",
+                include_and=[location.is_in(["urban"]), speed_limit.at_least(50)],
+                situation=True,
+                cover_by="meters",
+                target=100,
+                min_stay=2.0,
+            ),
         ],
         roots=("root",),
     )

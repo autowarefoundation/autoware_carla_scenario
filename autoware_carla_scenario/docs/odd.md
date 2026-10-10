@@ -146,8 +146,36 @@ Numbers are in the attribute's `unit`.
 ### Modules
 
 `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels,
-active, text)`. Give at most one of `include_and` / `include_or`, and at most
-one of `exclude_and` / `exclude_or`.
+active, text, situation, target, cover_by, min_stay)`. Give at most one of
+`include_and` / `include_or`, and at most one of `exclude_and` / `exclude_or`.
+
+### Situations
+
+Attribute coverage counts each attribute on its own: three lanes and 60 km/h
+can both be covered by runs that never drove 60 km/h on a three-lane road. A
+module already says such a combination, so a module can be **covered as a
+situation**:
+
+```python
+OddModule(
+    "three_lane_cruise",
+    include_and=[lanes.equals(3), speed.between(55, 65)],
+    situation=True,
+    cover_by="meters", target=200, min_stay=3.0,   # 200 m, counting stays of 3 s or more
+)
+```
+
+Every tick, the module's verdict (which the ODD works out anyway) is a sample
+of the item `odd.situation.three_lane_cruise`, which has one bucket, `holds`.
+A tick where the module holds is a sample in it. A tick where it fails, or is
+inactive, ends the stay. A tick where it rests on missing values ends the stay
+too, and is counted apart as `unknown`. `target`, `cover_by` and `min_stay`
+work as for attributes (`docs/coverage.md`). The report lists situations in a
+group of their own, **Situation coverage**.
+
+A situation is what the runs should drive, not a bound of the ODD: with
+`roots` left out, a situation nothing refers to is not a root candidate. To
+make it a bound too, refer to it from a root, or name it in `roots`.
 
 ### Built-in probes
 
@@ -396,7 +424,19 @@ parameters, and condition-level metadata.
 |---|---|
 | `openodd` | The OpenODD files, relative to the binding file |
 | `name`, `text` | The ODD's name and description |
-| `probes` | Concept → `probe` (built-in name or `package.module:function`), `unit` (built-in probes know theirs), buckets (`values`, `buckets`, or `range` + `every`), `text` |
+| `probes` | Concept → `probe` (built-in name or `package.module:function`), `unit` (built-in probes know theirs), buckets (`values`, `buckets`, or `range` + `every`), `text`, and the coverage criteria `target`, `cover_by`, `min_stay` |
+| `situations` | Module → its criteria (`target`, `cover_by`, `min_stay`, all optional): the modules to cover as situations (see Situations above) |
+
+```yaml
+situations:
+  three_lane_cruise: {cover_by: meters, target: 200, min_stay: 3}
+  urban_junction_rain: {}          # one stay of any length
+```
+
+Situations live in the binding file, not in the OpenODD documents: OpenODD has
+no notion of coverage, and a construct of its own in an OpenODD document would
+not be compliant. A module named under `situations` and not under the `ODD`
+section is not a root candidate.
 
 When no buckets are given:
 
