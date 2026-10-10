@@ -157,6 +157,14 @@ def _missing(world: Any) -> None:
     return None
 
 
+def _missing_on_lanelet(lanelet: Any, lanelet_map: Any, routing_graph: Any) -> None:
+    """On a planned route too (:mod:`.route`), the value is missing."""
+    return None
+
+
+_missing.on_lanelet = _missing_on_lanelet  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------

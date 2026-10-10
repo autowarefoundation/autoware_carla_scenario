@@ -22,6 +22,14 @@ The scenery attributes come from two maps:
 
 Weather values are CARLA's 0-100 intensities, not physical units such as mm/h,
 so rain and fog are named levels.
+
+The probes whose value the Lanelet2 map alone decides also read it off a
+lanelet, without a world: ``probe.on_lanelet(lanelet, lanelet_map,
+routing_graph)``.  That is what checks a scenario's planned route against an
+ODD before it runs (:mod:`~autoware_carla_scenario.odd.route`).  It returns
+the value, ``None`` where the run would read none, or
+:data:`~autoware_carla_scenario.odd.model.UNDECIDED` where only the run knows
+it.  The others (speed, weather, traffic) have no ``on_lanelet``.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from ..conditions.base import find_actor_in_list
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
+from .model import UNDECIDED
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -385,3 +394,87 @@ def pedestrian_nearby(world: "carla.World") -> Optional[bool]:
     """Whether a pedestrian is within :data:`NEARBY_RADIUS_M` of the ego."""
     nearby = _nearby(world)
     return None if nearby is None else nearby[1] > 0
+
+
+# ---------------------------------------------------------------------------
+# The same probes, read off a lanelet of the map (a planned route)
+# ---------------------------------------------------------------------------
+
+
+def _on_lanelet(probe: Callable[..., Any]) -> Callable[[Callable[..., Any]], Any]:
+    """Make the decorated function *probe*'s ``on_lanelet``."""
+
+    def attach(read: Callable[..., Any]) -> Any:
+        setattr(probe, "on_lanelet", read)  # noqa: B010 - a function attribute
+        return read
+
+    return attach
+
+
+def _tag(lanelet: Any, key: str) -> Optional[str]:
+    attributes = lanelet.attributes
+    return str(attributes[key]) if key in attributes else None
+
+
+def _is_junction_lanelet(lanelet: Any) -> bool:
+    """Whether *lanelet* lies in a junction: it has a ``turn_direction`` tag.
+
+    Autoware's Lanelet2 maps tag every lanelet inside an intersection with
+    ``turn_direction`` (``straight``, ``left`` or ``right``), and only those;
+    the sweeper's ``is_junction`` constraint reads it the same way.
+    """
+    return "turn_direction" in lanelet.attributes
+
+
+@_on_lanelet(in_junction)
+def _in_junction_on_lanelet(
+    lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> Optional[bool]:
+    return _is_junction_lanelet(lanelet)
+
+
+@_on_lanelet(lanelet_speed_limit_kph)
+def _lanelet_speed_limit_on_lanelet(
+    lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> Optional[float]:
+    tag = _tag(lanelet, "speed_limit")
+    if tag is None:
+        return None
+    try:
+        return float(tag)
+    except ValueError:
+        return None
+
+
+@_on_lanelet(speed_limit_kph)
+def _speed_limit_on_lanelet(lanelet: Any, lanelet_map: Any, routing_graph: Any) -> Any:
+    # Without the tag, the run reads CARLA's limit, which the map cannot tell.
+    tag = _tag(lanelet, "speed_limit")
+    if tag is None:
+        return UNDECIDED
+    return _lanelet_speed_limit_on_lanelet(lanelet, lanelet_map, routing_graph)
+
+
+@_on_lanelet(lane_count)
+def _lane_count_on_lanelet(
+    lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> Optional[int]:
+    # As the run reads it: nothing inside a junction.  The lanelets beside it
+    # in the routing graph run in its direction, and include it.
+    if _is_junction_lanelet(lanelet):
+        return None
+    return max(1, len(routing_graph.besides(lanelet)))
+
+
+@_on_lanelet(lanelet_location)
+def _location_on_lanelet(
+    lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> Optional[str]:
+    return _tag(lanelet, "location")
+
+
+@_on_lanelet(lanelet_subtype)
+def _subtype_on_lanelet(
+    lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> Optional[str]:
+    return _tag(lanelet, "subtype")

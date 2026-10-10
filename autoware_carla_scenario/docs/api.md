@@ -67,6 +67,10 @@ See [ODD](odd.md).
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
 | `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
 | `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |
+| `plan_route_coverage(odd, scenario_or_route, *, lanelet_map, routing_graph, name)` | Check a planned route against the ODD on the Lanelet2 map: the verdict per lanelet (inside, outside, undecided) and the expected metres per bucket. Takes a scenario, a `PlannedRoute(start, goal, via, name)` or lanelet ids. Raises `RouteError` when the route cannot be planned. See [Checking a planned route](odd.md#checking-a-planned-route). |
+| `combine_route_coverage(odd, routes)` | The expected coverage of several routes, and the buckets no route reaches. |
+| `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
+| `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
 

@@ -11,6 +11,7 @@ The package provides these CLI commands:
 | [`scenario`](#scenario-scenario-runner) | Hydra | Run autonomous driving scenario tests in CARLA |
 | `scenario-new` | argparse | Scaffold a standalone scenario package |
 | [`scenario-check`](typecheck.md) | Hydra compose | Compile scenarios with Codon without running them (the static check the runner makes before a run) |
+| [`scenario-odd`](odd.md#checking-an-odd) | argparse | Check an ODD and show its buckets; `scenario-odd route` checks scenarios' planned routes against it on the Lanelet2 map |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
 | [`scenario-editor`](scenario_editor.md) | FastAPI + Uvicorn | Web UI for authoring scenarios and exporting reproducible packages |
@@ -405,6 +406,16 @@ scenario's own cover items, to `{ScenarioName}_coverage.json`.
 ```bash
 uv run scenario scenario=intersection_passing/left_turn odd=path/to/urban.yaml
 uv run scenario-coverage outputs/ --markdown coverage.md
+```
+
+Before running, `scenario-odd route` plans each scenario's ego route on the
+Lanelet2 map (no CARLA server) and reports which parts of it are outside the
+ODD, which are undecided until run time, the metres it is expected to cover
+in each bucket, and the buckets no route reaches
+([Checking a planned route](odd.md#checking-a-planned-route)):
+
+```bash
+uv run scenario-odd route path/to/urban.yaml 'intersection_passing/*' lane_change/left
 ```
 
 ### Output Files
