@@ -94,7 +94,8 @@ inputs:
   cache-scope:
     description: >
       Cache key namespace. Defaults to one scope per image and platform, so
-      several images built in the same workflow do not evict each other. Give two images the
+      several images built in the same workflow do not evict each other. A
+      scope given here is used as is: give each platform its own. Give two images the
       same scope to share it instead: everything behind their scenario layer
       is the same build when the lock and framework are, client and
       dependency layers included.
@@ -150,10 +151,22 @@ runs:
         scope="${CACHE_SCOPE_IN}"
         if [ -z "${scope}" ]; then
           # Anything but [A-Za-z0-9_-] is not usable in a cache scope.
+          scope="pack-scenario-$(printf '%s' "${IMAGE}" | tr -c 'A-Za-z0-9_-' '-')"
           # Per platform as well: an amd64 and an arm64 build of one image
           # share no layer, and in one scope each would evict the other.
-          platform="${PLATFORMS:-${RUNNER_ARCH}}"
-          scope="pack-scenario-$(printf '%s-%s' "${IMAGE}" "${platform}" | tr -c 'A-Za-z0-9_-' '-')"
+          # linux/amd64 keeps the bare scope, the one used before arm64 builds
+          # existed, so upgrading the action does not start from a cold cache.
+          platform="${PLATFORMS}"
+          if [ -z "${platform}" ]; then
+            case "${RUNNER_ARCH}" in
+              X64) platform=linux/amd64 ;;
+              ARM64) platform=linux/arm64 ;;
+              *) platform="linux/${RUNNER_ARCH}" ;;
+            esac
+          fi
+          if [ "${platform}" != "linux/amd64" ]; then
+            scope="${scope}-$(printf '%s' "${platform}" | tr -c 'A-Za-z0-9_-' '-')"
+          fi
         fi
 
         {

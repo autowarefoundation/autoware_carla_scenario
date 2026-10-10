@@ -267,7 +267,7 @@ explaining further:
 | `with-ffmpeg` | Installs ffmpeg for `CameraRecorder`. The only input that adds an apt layer. |
 | `slim` | Strips the virtualenv (see above). On by default. |
 | `platforms` | Target platforms. Empty (the default) builds for the runner's own: `linux/amd64` on an x86_64 runner, `linux/arm64` on an arm64 one such as `ubuntu-24.04-arm` — see [Architectures](#architectures). |
-| `cache-scope` | Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. |
+| `cache-scope` | Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. A given scope is used as is, so give each platform its own. |
 
 Outputs: `image-ref`, `tags`, `digest` (pushed images only), `cache-scope`.
 
@@ -282,12 +282,24 @@ jobs:
   pack:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        include:
+          - { runner: ubuntu-latest, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
+    steps:
+      # ...
+      - uses: ./.github/actions/pack-scenario-image
+        with:
+          scenario-package-path: packages/my_scenario_package
+          image: ghcr.io/${{ github.repository_owner }}/my-scenario
+          # One tag per architecture: the default tags are the same on both
+          # legs, so whichever pushed last would win.
+          tags: ghcr.io/${{ github.repository_owner }}/my-scenario:${{ github.sha }}-${{ matrix.arch }}
+          push: "true"
 ```
 
 Each leg builds, loads and smoke-tests its own image natively. To publish one
-multi-architecture tag, push each leg under its own tag and join them with
+multi-architecture tag, join the per-architecture tags in a later job with
 `docker buildx imagetools create`. Cross-building on one runner
 (`platforms: linux/amd64,linux/arm64` after `docker/setup-qemu-action`) also
 works, but emulated, and a multi-platform build cannot be loaded, so it needs

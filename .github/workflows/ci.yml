@@ -59,9 +59,11 @@ jobs:
 
   test-arm64:
     # Linux aarch64, natively. Every runtime dependency ships an aarch64 wheel
-    # (typesafe-carla and its Codon toolchain since 0.4.0), so this is the same
-    # suite as on x86_64, fast and slow tests both -- a wheelhouse is built for
-    # the exporting machine's platform. The floor and the ceiling of the range
+    # (typesafe-carla and its Codon toolchain since 0.4.0); of the dev group,
+    # libsass (under mkdocs-with-pdf) does not and is compiled from its sdist
+    # with the runner's g++. Otherwise this is the same suite as on x86_64,
+    # fast and slow tests both -- a wheelhouse is built for the exporting
+    # machine's platform. The floor and the ceiling of the range
     # stand in for the interpreters between them.
     name: test (${{ matrix.python-version }}, arm64)
     runs-on: ubuntu-24.04-arm

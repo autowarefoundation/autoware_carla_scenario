@@ -102,8 +102,10 @@ class CarlaServerManager:
         exe_path = self.executable()
         if exe_path is None:
             raise RuntimeError(
-                f"Environment variable '{self.ENV_VAR}' is not set and no CARLA is "
-                "installed. Run `scenario-setup` to download one, or set "
+                f"No CARLA server to use at {self.host}:{self.port}: "
+                f"'{self.ENV_VAR}' is not set and no CARLA is installed. Start the "
+                "server (on an x86_64 host if this machine is not one, then point "
+                "server.host at it), run `scenario-setup` to download one, or set "
                 f"{self.ENV_VAR} to the path of CarlaUnreal.sh."
             )
         if not exe_path.exists():

@@ -379,12 +379,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
     machine = platform.machine()
-    if args.url == NIGHTLY_URL and machine not in NIGHTLY_MACHINES:
+    if args.url == NIGHTLY_URL and (
+        not sys.platform.startswith("linux") or machine not in NIGHTLY_MACHINES
+    ):
         print(
             f"scenario-setup: CARLA's nightly build is for Linux x86_64 and does not "
-            f"run on {machine}. Run the CARLA server on an x86_64 host and point the "
+            f"run on {sys.platform} {machine}. Run the CARLA server on an x86_64 host and point the "
             f"runner at it (server.host=<address>), or pass --url to install another "
-            f"package.",
+            f"CARLA package.",
             file=sys.stderr,
         )
         return 1
