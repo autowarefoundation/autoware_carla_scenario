@@ -278,17 +278,31 @@ def _check_condition(
     node: ConditionNode,
     refs: _Refs,
     owner: str | None = None,
+    *,
+    departure: bool = False,
 ) -> None:
     """Validate one condition subtree.
 
     *owner* is the id of the action this subtree triggers, when it is a trigger
     at all.  An action whose trigger waits on its own completion can never fire,
     so that is an error rather than a scenario that quietly does nothing.
+
+    *departure* says the subtree is a vertex's whole waypoint condition, the
+    one place a ``trajectory_time`` means the trajectory's clock: anywhere
+    else -- inside a composition, a trigger, an assertion -- it would quietly
+    read the scenario clock instead, so it is refused there.
     """
     spec: ConditionSpec | None = get_condition_spec(node.type)
     if spec is None:
         out.error(path, f"Unknown condition type {node.type!r}.", node.id)
         return
+    if node.type == "trajectory_time" and not departure:
+        out.error(
+            path,
+            "Trajectory time is a vertex's departure time: it only goes on a "
+            "Follow Trajectory card's waypoint condition, as the whole of it.",
+            node.id,
+        )
 
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
@@ -425,11 +439,15 @@ def _check_advance_conditions(
 ) -> None:
     """Check an action's waypoint conditions: where they sit, and what they say.
 
-    Each condition tree is checked as a trigger is.  Where it sits is checked
-    against the vertices the card lists: a vertex it does not have, the last
-    one -- which has no next vertex to advance to -- or one named twice.  A
-    lanelet path's vertices are made by the map, every two metres, so they
-    are nothing an author could count; it takes none.
+    Each condition tree is checked as a trigger is, and one that waits for
+    its own action to leave the running state is refused: the action is
+    running for as long as the entity waits, so it would wait for ever.
+    Where it sits is checked against the vertices the card lists: a vertex
+    it does not have, or one named twice -- a vertex departs on one
+    condition, its time included -- and the times the card's
+    ``trajectory_time`` conditions state follow the trajectory rules.  A lanelet
+    path's vertices are made by the map, every two metres, so they are
+    nothing an author could count; it takes none.
     """
     gates = node.advance_conditions
     if not gates:
@@ -467,15 +485,74 @@ def _check_advance_conditions(
                 f"There is no vertex {gate.vertex}: the trajectory has {count}.",
                 node.id,
             )
-        elif count >= 2 and gate.vertex == count:
+        _check_condition(
+            out, f"{where}.condition", gate.condition, refs, departure=True
+        )
+        # Deliberately conservative: any reference to the card's own action
+        # but "is running" is refused, wherever it sits in the tree -- under
+        # a Not as well, where it could not deadlock.  Telling the two apart
+        # means reasoning about the composition, and a waypoint condition
+        # that waits on its own card is never needed: the card is running
+        # for as long as the entity waits.
+        for child in gate.condition.walk():
+            if node.id not in condition_refs(child, "action"):
+                continue
+            state = str(child.params.get("state", ""))
+            if child.type == "action_state" and state == "runningState":
+                continue
             out.error(
-                f"{where}.vertex",
-                f"Vertex {gate.vertex} is the last one: there is no next vertex "
-                "to advance to. Put the condition on the vertex before it, or "
-                "stop the action another way.",
-                node.id,
+                f"{where}.condition",
+                f"Vertex {gate.vertex}'s condition waits for its own action to "
+                f"reach {state or 'another state'}, which it cannot while the "
+                "entity waits at the vertex: the action is running all that "
+                "time. Wait on another action, or end the run with until.",
+                child.id,
             )
-        _check_condition(out, f"{where}.condition", gate.condition, refs)
+
+    _check_vertex_times(out, path, node, count or 0)
+
+
+def _vertex_times(node: ActionNode) -> dict[int, Any]:
+    """Vertex (from 1) -> the time its ``trajectory_time`` condition states."""
+    return {
+        gate.vertex: gate.condition.params.get("time")
+        for gate in node.advance_conditions
+        if gate.condition.type == "trajectory_time"
+    }
+
+
+def _check_vertex_times(
+    out: _Collector, path: str, node: ActionNode, count: int
+) -> None:
+    """The timing rules of a trajectory, on the card's time conditions.
+
+    Once any vertex departs at a time, every vertex departs on a condition
+    (a time or another), and the times do not decrease along the path.
+    """
+    times = _vertex_times(node)
+    if not times or count < 2:
+        return
+    gated = {gate.vertex for gate in node.advance_conditions}
+    bare = [vertex for vertex in range(1, count + 1) if vertex not in gated]
+    if bare:
+        out.error(
+            f"{path}.advance_conditions",
+            "Either every vertex has a time or none has (a vertex with another "
+            f"waypoint condition counts as having one): vertex {bare[0]} has "
+            "none.",
+            node.id,
+        )
+    ordered = [
+        float(times[vertex])
+        for vertex in sorted(times)
+        if vertex <= count and _coercible_float(times[vertex])
+    ]
+    if any(later < earlier for earlier, later in zip(ordered, ordered[1:])):
+        out.error(
+            f"{path}.advance_conditions",
+            "The vertex times decrease along the path.",
+            node.id,
+        )
 
 
 def _vertex_count(node: ActionNode) -> Optional[int]:
@@ -515,13 +592,7 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
             return  # already reported against the field
         for problem in vertex_problems(rows):
             out.error(f"{path}.vertices", f"Vertices: {problem}.", node.id)
-        if timed and rows and rows[0][3] is None:
-            out.error(
-                f"{path}.time_domain",
-                "A time reference needs a time on every vertex; give them "
-                "times or choose None.",
-                node.id,
-            )
+        _check_times_for_reference(out, path, node, timed and bool(rows))
     elif source == "relative_lane":
         # Types and counts only: whether the lanes the vertices name exist
         # depends on where the reference entity is when the action starts.
@@ -533,13 +604,7 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
             out.error(
                 f"{path}.relative_vertices", f"Relative vertices: {problem}.", node.id
             )
-        if timed and relative_rows and relative_rows[0][4] is None:
-            out.error(
-                f"{path}.time_domain",
-                "A time reference needs a time on every vertex; give them "
-                "times or choose None.",
-                node.id,
-            )
+        _check_times_for_reference(out, path, node, timed and bool(relative_rows))
     elif source == "lanelets":
         if not params.get("lanelet_ids"):
             out.error(
@@ -553,6 +618,9 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
                 "A time reference needs a speed to time the lanelet path by.",
                 node.id,
             )
+    speed = params.get("speed_ms")
+    if not _is_blank(speed) and _coercible_float(speed) and float(str(speed)) < 0.0:
+        out.error(f"{path}.speed_ms", "Speed must not be negative.", node.id)
     if not _positive(params.get("time_scale", 1.0)):
         out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
     if params.get("hidden_outside_trajectory") and (
@@ -562,6 +630,19 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
             f"{path}.hidden_outside_trajectory",
             "Keeping the entity out of the world needs the Position mode and a "
             "time reference.",
+            node.id,
+        )
+
+
+def _check_times_for_reference(
+    out: _Collector, path: str, node: ActionNode, timed: bool
+) -> None:
+    """A time reference applies to vertex times, so the card needs some."""
+    if timed and not _vertex_times(node):
+        out.error(
+            f"{path}.time_domain",
+            "A time reference needs a time on every vertex: give them "
+            "Trajectory time waypoint conditions, or choose None.",
             node.id,
         )
 

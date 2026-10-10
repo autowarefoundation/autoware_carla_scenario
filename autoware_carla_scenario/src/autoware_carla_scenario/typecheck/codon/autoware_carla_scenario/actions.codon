@@ -161,11 +161,13 @@ class FollowTrajectoryAction(BaseAction):
                  initial_distance_offset: float = 0.0, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  label: str = "follow_trajectory", once: bool = True, until = None,
-                 control_config = None, hidden_outside_trajectory: bool = False):
-        _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config "
-                           "and hidden_outside_trajectory")
+                 control_config = None, hidden_outside_trajectory: bool = False,
+                 speed = None):
+        _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config, "
+                           "hidden_outside_trajectory and speed")
         _expect_role(entity_name)
         _expect_optional_timing(time_reference)
+        _expect_optional_float(speed)
         super().__init__(label, condition, timing, once=once, until=until)
 
     @property

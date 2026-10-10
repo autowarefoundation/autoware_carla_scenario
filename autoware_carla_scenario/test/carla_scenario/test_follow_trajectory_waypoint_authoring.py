@@ -1,10 +1,12 @@
 """Waypoint conditions on a *Follow Trajectory* card: the IR, its checks, its build.
 
-A card's ``advance_conditions`` put an ordinary condition tree on a vertex of
-its trajectory (counted from 1, as the editor lists them).  These tests follow
-one from the document -- and the editor that writes it -- through the
-validator to the runtime action, whose vertex then carries the condition the
-same builders make for a trigger.
+A card's ``advance_conditions`` say what a vertex of its trajectory is
+departed on (counted from 1: the Nth vertex, blank and comment lines not
+counted).  A time is one of them, a ``trajectory_time`` condition; any other
+condition tree is written as a trigger is.  These tests follow one from the
+document -- and the editor that writes it -- through the validator to the
+runtime action, whose vertex then carries the condition the same builders
+make for a trigger.
 """
 
 from __future__ import annotations
@@ -47,27 +49,29 @@ from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.editor.app import create_app
 from autoware_carla_scenario.editor.service import EditorService
 
-_ROWS = [
-    [100.0, 200.0, None, 0.0],
-    [110.0, 200.0, None, 1.0],
-    [120.0, 200.0, None, 2.0],
-]
-_RELATIVE_ROWS = [
-    [0.0, 0.0, 0, None, 0.0],
-    [20.0, 0.0, 1, None, 2.0],
-    [40.0, 0.0, 1, None, 4.0],
-]
+_ROWS = [[100.0, 200.0, None], [110.0, 200.0, None], [120.0, 200.0, None]]
+_RELATIVE_ROWS = [[0.0, 0.0, 0, None], [20.0, 0.0, 1, None], [40.0, 0.0, 1, None]]
 
 
 def _wait(seconds: float = 5.0) -> ConditionNode:
     return ConditionNode(type="elapsed_time", params={"duration_seconds": seconds})
 
 
+def _time(seconds: float) -> ConditionNode:
+    return ConditionNode(type="trajectory_time", params={"time": seconds})
+
+
 def _document(
     gates: list[VertexCondition],
     params: dict[str, Any] | None = None,
     action_type: str = "follow_trajectory",
+    *,
+    timed: bool = False,
 ) -> ScenarioDocument:
+    """A card with *gates*; untimed unless *timed* (then *gates* hold the times)."""
+    base = {"path_source": "vertices", "vertices": _ROWS} if params is None else params
+    if action_type == "follow_trajectory":
+        base = {"time_domain": "relative" if timed else "none", **base}
     return ScenarioDocument(
         id="s",
         entities=[
@@ -79,11 +83,7 @@ def _document(
                 id="a1",
                 type=action_type,
                 actor="npc1",
-                params=(
-                    {"path_source": "vertices", "vertices": _ROWS}
-                    if params is None
-                    else params
-                ),
+                params=base,
                 advance_conditions=gates,
             )
         ],
@@ -110,14 +110,20 @@ def _built(document: ScenarioDocument, action_id: str = "a1") -> FollowTrajector
 
 class TestTheDocument:
     def test_it_round_trips_through_yaml(self, tmp_path: Path) -> None:
-        document = _document([VertexCondition(vertex=2, condition=_wait(3.0))])
+        document = _document(
+            [
+                VertexCondition(vertex=1, condition=_time(0.0)),
+                VertexCondition(vertex=2, condition=_wait(3.0)),
+                VertexCondition(vertex=3, condition=_time(6.0)),
+            ],
+            timed=True,
+        )
         path = save_document(document, tmp_path / "s.yaml")
-        assert "advance_conditions" in path.read_text()
+        text = path.read_text()
+        assert "advance_conditions" in text and "trajectory_time" in text
         loaded = load_document(path)
         assert loaded == document
-        (gate,) = loaded.actions[0].advance_conditions
-        assert gate.vertex == 2
-        assert gate.condition.params["duration_seconds"] == 3.0
+        assert [g.vertex for g in loaded.actions[0].advance_conditions] == [1, 2, 3]
 
     def test_an_older_document_without_any_still_loads(self) -> None:
         raw = _document([]).to_yaml_dict()
@@ -146,28 +152,96 @@ class TestTheDocument:
 
 
 class TestValidation:
-    def test_a_gate_on_an_inner_vertex_is_fine(self) -> None:
-        assert _errors(_document([VertexCondition(vertex=2, condition=_wait())])) == []
-        assert _errors(_document([VertexCondition(vertex=1, condition=_wait())])) == []
-
-    def test_not_on_the_last_vertex(self) -> None:
-        errors = _errors(_document([VertexCondition(vertex=3, condition=_wait())]))
-        assert any("Vertex 3 is the last one" in e for e in errors)
+    def test_on_any_vertex_the_last_included(self) -> None:
+        for vertex in (1, 2, 3):
+            gate = VertexCondition(vertex=vertex, condition=_wait())
+            assert _errors(_document([gate])) == [], vertex
 
     def test_not_past_the_last_vertex(self) -> None:
         errors = _errors(_document([VertexCondition(vertex=7, condition=_wait())]))
         assert any("There is no vertex 7: the trajectory has 3" in e for e in errors)
 
-    def test_one_per_vertex(self) -> None:
+    def test_one_per_vertex_a_time_included(self) -> None:
         errors = _errors(
             _document(
                 [
-                    VertexCondition(vertex=2, condition=_wait()),
+                    VertexCondition(vertex=2, condition=_time(1.0)),
                     VertexCondition(vertex=2, condition=_wait(1.0)),
                 ]
             )
         )
         assert any("two waypoint conditions" in e for e in errors)
+
+    def test_times_and_conditions_mix(self) -> None:
+        gates = [
+            VertexCondition(vertex=1, condition=_time(0.0)),
+            VertexCondition(vertex=2, condition=_wait()),
+            VertexCondition(vertex=3, condition=_time(4.0)),
+        ]
+        assert _errors(_document(gates, timed=True)) == []
+
+    def test_once_timed_every_vertex_departs_on_something(self) -> None:
+        gates = [
+            VertexCondition(vertex=1, condition=_time(0.0)),
+            VertexCondition(vertex=3, condition=_time(4.0)),
+        ]
+        errors = _errors(_document(gates, timed=True))
+        assert any(
+            "either every vertex has a time" in e.lower() and "vertex 2" in e
+            for e in errors
+        )
+
+    def test_times_do_not_decrease(self) -> None:
+        gates = [
+            VertexCondition(vertex=1, condition=_time(3.0)),
+            VertexCondition(vertex=2, condition=_wait()),
+            VertexCondition(vertex=3, condition=_time(1.0)),
+        ]
+        assert any("times decrease" in e for e in _errors(_document(gates, timed=True)))
+
+    def test_a_time_reference_needs_times(self) -> None:
+        gates = [VertexCondition(vertex=2, condition=_wait())]
+        errors = _errors(_document(gates, timed=True))
+        assert any("needs a time on every vertex" in e for e in errors)
+
+    def test_a_trajectory_time_goes_on_a_vertex_whole(self) -> None:
+        nested = VertexCondition(
+            vertex=2,
+            condition=ConditionNode(type="all", children=[_time(1.0), _wait()]),
+        )
+        assert any(
+            "only goes on a Follow Trajectory card's waypoint condition" in e
+            for e in _errors(_document([nested]))
+        )
+        trigger = _document([])
+        trigger.actions[0].trigger = _time(1.0)
+        assert any("departure time" in e for e in _errors(trigger))
+
+    def test_waiting_on_its_own_action_finishing_is_refused(self) -> None:
+        for state in ("completeState", "endTransition", "standbyState"):
+            gate = VertexCondition(
+                vertex=2,
+                condition=ConditionNode(
+                    type="all",
+                    children=[
+                        _wait(),
+                        ConditionNode(
+                            type="action_state", params={"action": "a1", "state": state}
+                        ),
+                    ],
+                ),
+            )
+            errors = _errors(_document([gate]))
+            assert any("its own action" in e for e in errors), state
+
+    def test_its_own_action_running_is_fine(self) -> None:
+        gate = VertexCondition(
+            vertex=2,
+            condition=ConditionNode(
+                type="action_state", params={"action": "a1", "state": "runningState"}
+            ),
+        )
+        assert _errors(_document([gate])) == []
 
     def test_not_on_a_lanelet_path(self) -> None:
         document = _document(
@@ -212,18 +286,14 @@ class TestValidation:
 
     def test_relative_vertices_are_counted_the_same(self) -> None:
         params = {"path_source": "relative_lane", "relative_vertices": _RELATIVE_ROWS}
-        assert (
-            _errors(_document([VertexCondition(vertex=2, condition=_wait())], params))
-            == []
-        )
-        errors = _errors(
-            _document([VertexCondition(vertex=3, condition=_wait())], params)
-        )
-        assert any("is the last one" in e for e in errors)
+        gates = [VertexCondition(vertex=2, condition=_wait())]
+        assert _errors(_document(gates, params)) == []
+        far = [VertexCondition(vertex=4, condition=_wait())]
+        assert any("There is no vertex 4" in e for e in _errors(_document(far, params)))
 
     def test_an_invalid_gate_blocks_compilation(self) -> None:
         with pytest.raises(CompilationError):
-            compile_document(_document([VertexCondition(vertex=3, condition=_wait())]))
+            compile_document(_document([VertexCondition(vertex=7, condition=_wait())]))
 
 
 # ---------------------------------------------------------------------------
@@ -231,11 +301,29 @@ class TestValidation:
 # ---------------------------------------------------------------------------
 
 
+class TestSpeed:
+    def test_a_negative_speed_is_a_document_error(self) -> None:
+        document = _document([])
+        document.actions[0].params["speed_ms"] = -1.0
+        assert any("Speed must not be negative" in e for e in _errors(document))
+        document.actions[0].params["speed_ms"] = 0.0
+        assert _errors(document) == []
+
+
 class TestBuild:
-    def test_a_gate_becomes_the_vertex_advance_condition(self) -> None:
-        action = _built(_document([VertexCondition(vertex=2, condition=_wait(7.0))]))
+    def test_times_and_conditions_become_the_vertices_advance(self) -> None:
+        action = _built(
+            _document(
+                [
+                    VertexCondition(vertex=1, condition=_time(0.0)),
+                    VertexCondition(vertex=2, condition=_wait(7.0)),
+                    VertexCondition(vertex=3, condition=_time(9.0)),
+                ],
+                timed=True,
+            )
+        )
         vertices = action.trajectory.vertices
-        assert vertices[0].advance is None and vertices[2].advance is None
+        assert [v.time for v in vertices] == [0.0, None, 9.0]
         advance = vertices[1].advance
         assert isinstance(advance, ElapsedTimeCondition)
         assert advance.duration_seconds == 7.0
@@ -272,7 +360,7 @@ class TestBuild:
         assert isinstance(advance, AndCondition)
         assert isinstance(advance._conditions[1], EntityDistanceCondition)
 
-    def test_a_relative_card_carries_its_gates(self) -> None:
+    def test_a_relative_card_carries_its_conditions(self) -> None:
         params = {"path_source": "relative_lane", "relative_vertices": _RELATIVE_ROWS}
         action = _built(
             _document([VertexCondition(vertex=2, condition=_wait())], params)
@@ -281,7 +369,12 @@ class TestBuild:
         assert isinstance(vertex.position, RelativeLanePose)
         assert isinstance(vertex.advance, ElapsedTimeCondition)
 
-    def test_without_gates_the_trajectory_is_ungated(self) -> None:
+    def test_the_card_speed_reaches_the_action(self) -> None:
+        document = _document([])
+        document.actions[0].params["speed_ms"] = 4.5
+        assert _built(document)._given_speed == 4.5
+
+    def test_without_conditions_the_trajectory_is_ungated(self) -> None:
         assert not _built(_document([])).trajectory.is_gated
 
 
@@ -304,7 +397,7 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def _card(client: TestClient, tmp_path: Path) -> tuple[str, str, DraftStore]:
-    """A new draft with a vertex Follow Trajectory card: (draft, card, store)."""
+    """A draft with an untimed four-vertex Follow Trajectory card: (draft, card, store)."""
     response = client.post(
         "/new", data={"kind": "cut_in", "title": "Cut in"}, follow_redirects=False
     )
@@ -321,18 +414,33 @@ def _card(client: TestClient, tmp_path: Path) -> tuple[str, str, DraftStore]:
     client.post(
         f"/draft/{draft_id}/action/{card.id}",
         data={
+            # A comment line, which is not a vertex: vertex 3 is "120, 200".
+            "vertices": "100, 200\n110, 200\n# not a vertex\n120, 200\n130, 200",
             "path_source": "vertices",
-            "vertices": "100, 200, , 0\n110, 200, , 1\n120, 200, , 2\n130, 200, , 3",
-            "time_domain": "relative",
+            "time_domain": "none",
             "time_scale": "1",
             "time_offset": "0",
             "following_mode": "position",
             "initial_distance_offset": "0",
             "speed_kmh": "30",
+            "speed_ms": "5",
             "lateral_offset_m": "0",
         },
     )
     return draft_id, card.id, store
+
+
+def _add(
+    client: TestClient,
+    draft_id: str,
+    card_id: str,
+    vertex: str,
+    type_id: str = "always_true",
+) -> Any:
+    return client.post(
+        f"/draft/{draft_id}/condition",
+        data={"slot": f"advance:{card_id}", "vertex": vertex, "type_id": type_id},
+    )
 
 
 class TestEditor:
@@ -344,14 +452,7 @@ class TestEditor:
         assert "Waypoint conditions" in inspector
         assert f'value="advance:{card_id}"' in inspector
 
-        page = client.post(
-            f"/draft/{draft_id}/condition",
-            data={
-                "slot": f"advance:{card_id}",
-                "vertex": "2",
-                "type_id": "elapsed_time",
-            },
-        )
+        page = _add(client, draft_id, card_id, "2", "elapsed_time")
         assert page.status_code == 200
         card = _stored(store, draft_id).action(card_id)
         assert card is not None
@@ -369,11 +470,11 @@ class TestEditor:
         condition_page = client.get(
             f"/draft/{draft_id}/inspector/{gate.condition.id}"
         ).text
-        assert "Waypoint condition: holds the entity" in condition_page
-        assert "at vertex 2" in condition_page
+        assert "Waypoint condition: the entity of" in condition_page
+        assert "departs vertex 2 when it holds" in condition_page
 
         inspector = client.get(f"/draft/{draft_id}/inspector/{card_id}").text
-        assert "leave vertex" in inspector
+        assert "depart vertex" in inspector
         assert gate.condition.id in inspector
         body = client.get(f"/draft/{draft_id}").text
         assert "1 waypoint condition" in body
@@ -383,15 +484,37 @@ class TestEditor:
         action = _built(_stored(store, draft_id), card_id)
         assert isinstance(action.trajectory.vertices[1].advance, ElapsedTimeCondition)
 
+    def test_times_are_written_as_trajectory_time_conditions(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        draft_id, card_id, store = _card(client, tmp_path)
+        for vertex, time in (("1", "0"), ("3", "4"), ("4", "6")):
+            _add(client, draft_id, card_id, vertex, "trajectory_time")
+            card = _stored(store, draft_id).action(card_id)
+            assert card is not None
+            gate = card.vertex_condition(int(vertex))
+            assert gate is not None
+            client.post(
+                f"/draft/{draft_id}/condition/{gate.condition.id}", data={"time": time}
+            )
+        _add(client, draft_id, card_id, "2", "elapsed_time")
+        client.post(
+            f"/draft/{draft_id}/action/{card_id}",
+            data={"time_domain": "relative", "path_source": "vertices"},
+        )
+        inspector = client.get(f"/draft/{draft_id}/inspector/{card_id}").text
+        assert ">at<" in inspector.replace(" ", "")  # a time reads "depart ... at"
+        document = _stored(store, draft_id)
+        assert validate_document(document).ok
+        action = _built(document, card_id)
+        assert [v.time for v in action.trajectory.vertices] == [0.0, None, 4.0, 6.0]
+
     def test_a_second_condition_on_the_same_vertex_is_anded(
         self, client: TestClient, tmp_path: Path
     ) -> None:
         draft_id, card_id, store = _card(client, tmp_path)
         for type_id in ("elapsed_time", "always_true"):
-            client.post(
-                f"/draft/{draft_id}/condition",
-                data={"slot": f"advance:{card_id}", "vertex": "2", "type_id": type_id},
-            )
+            _add(client, draft_id, card_id, "2", type_id)
         card = _stored(store, draft_id).action(card_id)
         assert card is not None
         (gate,) = card.advance_conditions
@@ -405,56 +528,35 @@ class TestEditor:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         draft_id, card_id, store = _card(client, tmp_path)
-        for vertex in ("1", "2"):
-            client.post(
-                f"/draft/{draft_id}/condition",
-                data={
-                    "slot": f"advance:{card_id}",
-                    "vertex": vertex,
-                    "type_id": "always_true",
-                },
-            )
-        client.post(
-            f"/draft/{draft_id}/action/{card_id}/advance/1", data={"vertex": "3"}
-        )
-        card = _stored(store, draft_id).action(card_id)
-        assert card is not None
-        assert [g.vertex for g in card.advance_conditions] == [1, 3]
 
+        def gates() -> list[int]:
+            card = _stored(store, draft_id).action(card_id)
+            assert card is not None
+            return [g.vertex for g in card.advance_conditions]
+
+        for vertex in ("2", "3"):
+            _add(client, draft_id, card_id, vertex)
         page = client.post(
-            f"/draft/{draft_id}/action/{card_id}/advance/1", data={"vertex": "1"}
+            f"/draft/{draft_id}/action/{card_id}/advance/0", data={"vertex": "3"}
         )
         assert "already has a waypoint condition" in page.text
-        card = _stored(store, draft_id).action(card_id)
-        assert card is not None
-        assert [g.vertex for g in card.advance_conditions] == [1, 3]
+        assert gates() == [2, 3]
+        client.post(
+            f"/draft/{draft_id}/action/{card_id}/advance/0", data={"vertex": "4"}
+        )
+        assert gates() == [3, 4]
 
-    def test_the_last_vertex_is_a_validation_error_in_the_editor(
+    def test_the_last_vertex_ends_the_run_when_its_condition_holds(
         self, client: TestClient, tmp_path: Path
     ) -> None:
         draft_id, card_id, store = _card(client, tmp_path)
-        page = client.post(
-            f"/draft/{draft_id}/condition",
-            data={
-                "slot": f"advance:{card_id}",
-                "vertex": "4",
-                "type_id": "always_true",
-            },
-        )
-        assert "is the last one" in page.text
-        assert not validate_document(_stored(store, draft_id)).ok
+        _add(client, draft_id, card_id, "4")
+        assert validate_document(_stored(store, draft_id)).ok
 
     def test_removing_a_gate(self, client: TestClient, tmp_path: Path) -> None:
         draft_id, card_id, store = _card(client, tmp_path)
-        for vertex in ("1", "2"):
-            client.post(
-                f"/draft/{draft_id}/condition",
-                data={
-                    "slot": f"advance:{card_id}",
-                    "vertex": vertex,
-                    "type_id": "always_true",
-                },
-            )
+        for vertex in ("2", "3"):
+            _add(client, draft_id, card_id, vertex)
         card = _stored(store, draft_id).action(card_id)
         assert card is not None
         root = card.advance_conditions[0].condition.id
@@ -462,7 +564,7 @@ class TestEditor:
         client.post(f"/draft/{draft_id}/condition/{root}/delete")
         card = _stored(store, draft_id).action(card_id)
         assert card is not None
-        assert [g.vertex for g in card.advance_conditions] == [2]
+        assert [g.vertex for g in card.advance_conditions] == [3]
         # ...and so does the gate's own remove button.
         client.post(f"/draft/{draft_id}/action/{card_id}/advance/0/delete")
         card = _stored(store, draft_id).action(card_id)
@@ -476,14 +578,7 @@ class TestEditor:
         other = next(
             a for a in _stored(store, draft_id).actions if a.type != "follow_trajectory"
         )
-        page = client.post(
-            f"/draft/{draft_id}/condition",
-            data={
-                "slot": f"advance:{other.id}",
-                "vertex": "1",
-                "type_id": "always_true",
-            },
-        )
+        page = _add(client, draft_id, other.id, "1")
         assert "takes no waypoint conditions" in page.text
 
     def test_deleting_an_entity_a_gate_names_drops_the_gate(

@@ -72,6 +72,7 @@ from autoware_carla_scenario import (
     TimeoutCondition,
     Trajectory,
     TrajectoryFollowingMode,
+    TrajectoryTimeCondition,
     TrajectoryTiming,
     TrajectoryVertex,
     TurnAction,
@@ -457,13 +458,15 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
         path = Trajectory(
             "npc_path",
             [
-                TrajectoryVertex(MapPose(100.0, 200.0, yaw=0.5), 0.0),
-                TrajectoryVertex(Lanelet2Pose(10, 5.0), 2.0),
-                TrajectoryVertex(snap_to_carla_road(Lanelet2Pose(10, 9.0), self.world), 4.0),
-                TrajectoryVertex(RelativeLanePose(30.0, d_lane=1), 6.0),
+                TrajectoryVertex(MapPose(100.0, 200.0, yaw=0.5), TrajectoryTimeCondition(0.0)),
+                TrajectoryVertex(Lanelet2Pose(10, 5.0), TrajectoryTimeCondition(2.0)),
+                TrajectoryVertex(
+                    snap_to_carla_road(Lanelet2Pose(10, 9.0), self.world), TrajectoryTimeCondition(4.0)
+                ),
+                TrajectoryVertex(RelativeLanePose(30.0, d_lane=1), TrajectoryTimeCondition(6.0)),
                 TrajectoryVertex(
                     RelativeLanePose(ds=-5, offset=0.5, d_lane=-1, yaw=0.1, entity_ref=EGO_ROLE_NAME),
-                    8.0,
+                    TrajectoryTimeCondition(8.0),
                 ),
             ],
         )
@@ -489,33 +492,41 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
 
 
 def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
-    """Any condition gates a vertex: a leaf, a composition, one put on later."""
+    """Each vertex departs on a time, any other condition, or nothing."""
     setup = """
         self._setup_ego_spawn()
         path = Trajectory(
             "gated",
             [
-                TrajectoryVertex(MapPose(100.0, 200.0), 0.0),
+                TrajectoryVertex(MapPose(100.0, 200.0), TrajectoryTimeCondition(0.0)),
                 TrajectoryVertex(
-                    MapPose(110.0, 200.0), 1.0, advance=ElapsedTimeCondition(5.0, label="go")
+                    MapPose(110.0, 200.0), advance=ElapsedTimeCondition(5.0, label="go")
                 ),
                 TrajectoryVertex(
                     MapPose(120.0, 200.0),
-                    2.0,
-                    AndCondition(
+                    advance=AndCondition(
                         [
                             ElapsedTimeCondition(6.0, label="late"),
                             SpeedCondition(EGO_ROLE_NAME, 1.0, ComparisonRule.LESS_THAN, label="slow"),
                         ]
                     ),
                 ),
-                TrajectoryVertex(MapPose(130.0, 200.0), 3.0),
+                TrajectoryVertex(MapPose(125.0, 200.0), advance=TrajectoryTimeCondition(8.0)),
+                TrajectoryVertex(MapPose(130.0, 200.0), TrajectoryTimeCondition(9.0)),
             ],
         )
-        if path.is_gated:
-            path = path.gated({0: StickyCondition(ElapsedTimeCondition(1.0, label="start"))})
-        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated")
+        untimed = Trajectory("untimed", [TrajectoryVertex(MapPose(0.0, 0.0)), TrajectoryVertex(MapPose(9.0, 0.0))])
+        if path.is_gated and path.has_times:
+            untimed = untimed.gated({0: StickyCondition(ElapsedTimeCondition(1.0, label="start"))})
+        first = path.vertices[0].time
+        if first is not None:
+            logger.info("first departs at %f", first)
+        gate = path.vertices[1].gate
+        if gate is not None:
+            logger.info("second departs on %s", gate.label)
+        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated", speed=8.0)
         self.register_pre_tick(action)
+        self.register_pre_tick(FollowTrajectoryAction("npc2", untimed, label="npc2_gated"))
         held = action.held_vertex
         if held is not None:
             logger.info("held at %d", held)
@@ -579,13 +590,13 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
             "'int' does not match expected type 'str'",
         ),
         (
-            'Trajectory("t", [TrajectoryVertex("here", 0.0), TrajectoryVertex(MapPose(1.0, 2.0), 1.0)])\n',
+            'Trajectory("t", [TrajectoryVertex("here"), TrajectoryVertex(MapPose(1.0, 2.0))])\n',
             'TrajectoryVertex("here"',
             "expected a trajectory position",
         ),
         (
-            "TrajectoryVertex(MapPose(1.0, 2.0), 0.0, advance=3.0)\n",
-            "advance=3.0",
+            "TrajectoryVertex(MapPose(1.0, 2.0), 3.0)\n",
+            "TrajectoryVertex(MapPose(1.0, 2.0), 3.0)",
             "'float' does not match expected type 'BaseCondition'",
         ),
         (
@@ -611,7 +622,7 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
         "carla-wrong-argument",
         "carla-int-for-str",
         "trajectory-str-position",
-        "trajectory-advance-not-a-condition",
+        "trajectory-bare-time",
         "relative-lane-int-entity-ref",
         "trajectory-mode-for-timing",
     ],

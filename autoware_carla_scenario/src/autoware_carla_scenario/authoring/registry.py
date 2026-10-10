@@ -105,12 +105,12 @@ FieldKind = Literal[
     "signal_phase",
     "int_list",
     "int_list_or_ref",
-    # A polyline of map-frame vertices, ``[x, y, yaw, time]`` per row (see
+    # A polyline of map-frame vertices, ``[x, y, yaw]`` per row (see
     # :mod:`autoware_carla_scenario.trajectory.authoring`).  Kept in the
     # document as data and edited as text, one vertex per line: a recording
     # transcribes to hundreds of them, which no row of form controls could hold.
     "trajectory",
-    # Vertices relative to an entity's lane, ``[ds, offset, d_lane, yaw, time]``
+    # Vertices relative to an entity's lane, ``[ds, offset, d_lane, yaw]``
     # per row (OpenSCENARIO's RelativeLanePosition; see
     # :func:`autoware_carla_scenario.trajectory.authoring.parse_relative_vertices`).
     # Edited as text like ``trajectory``, with its own columns.
@@ -1103,6 +1103,7 @@ register_action_spec(
         category="Vehicle / Motion",
         builder="build_follow_trajectory_action",
         target="..actions:FollowTrajectoryAction",
+        argmap=(("speed_ms", "speed"),),
         actor_kinds=("ego", "vehicle", "pedestrian"),
         visual_kind="continuous",
         vertex_conditions=True,
@@ -1166,9 +1167,9 @@ register_action_spec(
                 default=None,
                 required=False,
                 help=(
-                    "One vertex per line: x, y[, yaw][, time] in the map frame "
-                    "(m, rad, s).  Leave yaw empty to face along the path, and "
-                    "give every vertex a time or none."
+                    "One vertex per line: x, y[, yaw] in the map frame (m, "
+                    "rad).  Leave yaw empty to face along the path.  A vertex's "
+                    "time is its Trajectory time waypoint condition, below."
                 ),
             ),
             FieldSpec(
@@ -1215,13 +1216,27 @@ register_action_spec(
                 default=None,
                 required=False,
                 help=(
-                    "One vertex per line: ds[, offset][, d_lane][, yaw][, time] "
-                    "-- metres along the reference's lane (negative behind), "
+                    "One vertex per line: ds[, offset][, d_lane][, yaw] -- "
+                    "metres along the reference's lane (negative behind), "
                     "metres from the lane centre (positive left), lanes across "
                     "(+1 left, -1 right), heading from the lane (rad, positive "
-                    "left; empty faces along the path), time (s).  Placed when "
-                    "the action starts; whether the lanes exist is only known "
-                    "then."
+                    "left; empty faces along the path).  Times are waypoint "
+                    "conditions, below.  Placed when the action starts; whether "
+                    "the lanes exist is only known then."
+                ),
+            ),
+            FieldSpec(
+                name="speed_ms",
+                label="Speed where no time paces",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m/s",
+                help=(
+                    "For segments no vertex time paces: without a time "
+                    "reference, and after a waypoint condition once the next "
+                    "time has passed. Empty takes the speed the entity has "
+                    "when the action starts."
                 ),
             ),
             FieldSpec(
@@ -1282,8 +1297,8 @@ register_action_spec(
             "Move a vehicle or pedestrian along a trajectory (OpenSCENARIO "
             "FollowTrajectoryAction).  The card runs until the entity reaches "
             "the end of it; while it runs, the action is the entity's only "
-            "driver.  Waypoint conditions hold the entity at a vertex until "
-            "they hold."
+            "driver.  A vertex is departed on its time, on a waypoint "
+            "condition, or on arrival."
         ),
     )
 )
@@ -2425,6 +2440,36 @@ register_condition_spec(
             ),
         ),
         description="Scenario clock reaches a threshold (passes).",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="trajectory_time",
+        title="Trajectory time",
+        category="World",
+        builder="build_trajectory_time_condition",
+        target="..conditions:TrajectoryTimeCondition",
+        visual=ConditionVisual(metric="Trajectory clock", value="time", unit="s"),
+        fields=(
+            FieldSpec(
+                name="time",
+                label="Time",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help=(
+                    "On the trajectory's clock: the card's time reference "
+                    "(scale, offset, from the action or the scenario start) "
+                    "maps it onto the scenario's."
+                ),
+            ),
+        ),
+        description=(
+            "A vertex's time: the entity departs the vertex when the "
+            "trajectory's clock reaches it.  Only as a Follow Trajectory "
+            "card's whole waypoint condition."
+        ),
     )
 )
 

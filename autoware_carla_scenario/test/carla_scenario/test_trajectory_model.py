@@ -7,14 +7,17 @@ the follow-trajectory action asks every tick -- so it runs without a simulator.
 from __future__ import annotations
 
 import math
+from typing import Optional
 
 import pytest
 
 from autoware_carla_scenario import (
+    AlwaysTrueCondition,
     CarlaWorldPose,
     MapPose,
     ReferenceContext,
     Trajectory,
+    TrajectoryTimeCondition,
     TrajectoryTiming,
     TrajectoryVertex,
 )
@@ -23,6 +26,11 @@ from autoware_carla_scenario.trajectory.resolve import (
     map_pose_to_carla,
     resolve_trajectory,
 )
+
+
+def _at(time: Optional[float]) -> Optional[TrajectoryTimeCondition]:
+    """A vertex's time, as the condition it departs on."""
+    return None if time is None else TrajectoryTimeCondition(time)
 
 
 def _straight(times=(0.0, 1.0, 2.0), step=10.0, yaws=None) -> ResolvedTrajectory:
@@ -43,16 +51,68 @@ def _straight(times=(0.0, 1.0, 2.0), step=10.0, yaws=None) -> ResolvedTrajectory
 
 
 class TestTrajectory:
+    def test_a_bare_time_is_refused_saying_how_to_write_it(self) -> None:
+        with pytest.raises(TypeError, match=r"advance=TrajectoryTimeCondition\(1.5\)"):
+            TrajectoryVertex(MapPose(0.0, 0.0), 1.5)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match=r"advance=TrajectoryTimeCondition\(2.0\)"):
+            TrajectoryVertex(MapPose(0.0, 0.0), time=2.0)  # type: ignore[call-arg]
+
+    def test_every_old_call_form_is_told_how_to_write_it_now(self) -> None:
+        gate = AlwaysTrueCondition()
+        pose = MapPose(0.0, 0.0)
+        with pytest.raises(TypeError, match="one departure condition"):
+            TrajectoryVertex(pose, 1.0, gate)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="one departure condition"):
+            TrajectoryVertex(pose, None, gate)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="one departure condition"):
+            TrajectoryVertex(pose, None, advance=gate)  # type: ignore[misc]
+        with pytest.raises(TypeError, match=r"drop time=None"):
+            TrajectoryVertex(pose, time=None, advance=gate)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match=r"drop time=None"):
+            TrajectoryVertex(pose, time=None)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match=r"advance=TrajectoryTimeCondition\(2.0\)"):
+            TrajectoryVertex(pose, 2.0, gate)  # type: ignore[call-arg]
+
+    def test_reading_a_vertex_does_not_import_carla(self) -> None:
+        """The editor builds and reads trajectories without a simulator."""
+        import subprocess
+        import sys
+
+        code = (
+            "import sys\n"
+            "from autoware_carla_scenario.trajectory.model import ("
+            "MapPose, Trajectory, TrajectoryVertex)\n"
+            # A condition of its own: anything with a check() will do.
+            "class Gate:\n"
+            "    label = 'gate'\n"
+            "    def check(self, world, elapsed):\n"
+            "        return None\n"
+            "t = Trajectory('t', [TrajectoryVertex(MapPose(0, 0), Gate()), "
+            "TrajectoryVertex(MapPose(1, 0))])\n"
+            "assert t.is_gated and t.vertices[0].time is None\n"
+            "assert t.vertices[0].gate is not None\n"
+            "assert 'typesafe_carla.carla' not in sys.modules\n"
+            "assert 'autoware_carla_scenario.conditions' not in sys.modules\n"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
+
+    def test_its_time_is_its_time_condition(self) -> None:
+        vertex = TrajectoryVertex(MapPose(0.0, 0.0), _at(1.5))
+        assert vertex.time == 1.5 and vertex.gate is None
+        assert vertex == TrajectoryVertex(MapPose(0.0, 0.0), _at(1.5))
+        assert hash(vertex) == hash(TrajectoryVertex(MapPose(0.0, 0.0), _at(1.5)))
+        assert TrajectoryVertex(MapPose(0.0, 0.0)).time is None
+
     def test_it_needs_two_vertices(self) -> None:
         with pytest.raises(ValueError, match="at least two"):
-            Trajectory("t", [TrajectoryVertex(MapPose(0.0, 0.0), 0.0)])
+            Trajectory("t", [TrajectoryVertex(MapPose(0.0, 0.0), _at(0.0))])
 
     def test_timing_is_all_or_nothing(self) -> None:
         with pytest.raises(ValueError, match="every vertex"):
             Trajectory(
                 "t",
                 [
-                    TrajectoryVertex(MapPose(0.0, 0.0), 0.0),
+                    TrajectoryVertex(MapPose(0.0, 0.0), _at(0.0)),
                     TrajectoryVertex(MapPose(1.0, 0.0)),
                 ],
             )
@@ -62,8 +122,8 @@ class TestTrajectory:
             Trajectory(
                 "t",
                 [
-                    TrajectoryVertex(MapPose(0.0, 0.0), 1.0),
-                    TrajectoryVertex(MapPose(1.0, 0.0), 0.5),
+                    TrajectoryVertex(MapPose(0.0, 0.0), _at(1.0)),
+                    TrajectoryVertex(MapPose(1.0, 0.0), _at(0.5)),
                 ],
             )
 
@@ -72,8 +132,8 @@ class TestTrajectory:
             Trajectory(
                 "t",
                 [
-                    TrajectoryVertex(MapPose(0.0, 0.0), 0.0),
-                    TrajectoryVertex(MapPose(1.0, 0.0), 1.0),
+                    TrajectoryVertex(MapPose(0.0, 0.0), _at(0.0)),
+                    TrajectoryVertex(MapPose(1.0, 0.0), _at(1.0)),
                 ],
                 closed=True,
             )
@@ -82,8 +142,8 @@ class TestTrajectory:
         timed = Trajectory(
             "t",
             [
-                TrajectoryVertex(MapPose(0.0, 0.0), 0.0),
-                TrajectoryVertex(MapPose(1.0, 0.0), 1.0),
+                TrajectoryVertex(MapPose(0.0, 0.0), _at(0.0)),
+                TrajectoryVertex(MapPose(1.0, 0.0), _at(1.0)),
             ],
         )
         untimed = Trajectory(
@@ -227,8 +287,8 @@ class TestResolve:
         trajectory = Trajectory(
             "t",
             [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 7.0), 0.0),
-                TrajectoryVertex(MapPose(10.0, 0.0), 1.0),
+                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 7.0), _at(0.0)),
+                TrajectoryVertex(MapPose(10.0, 0.0), _at(1.0)),
             ],
         )
 

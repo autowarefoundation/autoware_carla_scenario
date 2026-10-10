@@ -1,12 +1,12 @@
-"""Waypoint conditions: a trajectory vertex that is left only once a condition holds.
+"""Waypoint conditions: each vertex is departed on its condition.
 
-A vertex's ``advance`` condition holds the entity at that vertex until the
-condition is satisfied.  These tests run the action against the simulated
-vehicle (and walker) of ``test_follow_trajectory_action``, in every mode the
-action has, and check the three promises the feature makes: the entity waits
-at the vertex, it goes on afterwards as if the trajectory had been paused
-there, and a trajectory with no gate -- or with a gate already open -- moves
-exactly as it did before.
+A vertex is departed when its time is reached on the trajectory's clock, when
+any other condition (``advance``) holds, or -- with neither -- on arrival.
+Between a vertex departed at ``T`` and the next one the entity arrives at the
+next vertex's time if it has one not before ``T``, and goes at the action's
+speed otherwise.  These tests run the action against the simulated vehicle
+(and walker) of ``test_follow_trajectory_action``; trajectories with times
+alone or nothing at all are that module's, and stay as they were.
 """
 
 from __future__ import annotations
@@ -31,10 +31,15 @@ from autoware_carla_scenario import (
     ReferenceContext,
     Trajectory,
     TrajectoryFollowingMode,
+    TrajectoryTimeCondition,
     TrajectoryTiming,
     TrajectoryVertex,
 )
 from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions._departures import (
+    DepartureTimeline,
+    TimelineVertex,
+)
 from autoware_carla_scenario.actions.follow_trajectory import HIDDEN_DEPTH_M
 from autoware_carla_scenario.conditions.base import ScenarioResult
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
@@ -77,20 +82,6 @@ class _Recorder(BaseCondition):
         return self.asked[self.answers.index(True)]
 
 
-class _Once(BaseCondition):
-    """Holds on the first check only."""
-
-    def __init__(self) -> None:
-        super().__init__(label="once")
-        self.checks = 0
-
-    def check(self, world: Any, elapsed: float) -> Optional[ScenarioResult]:
-        self.checks += 1
-        if self.checks == 1:
-            return ScenarioResult(passed=True, message="", elapsed_seconds=elapsed)
-        return None
-
-
 @pytest.fixture
 def entity() -> Iterator[_Entity]:
     registered = _Entity(_Actor())
@@ -99,9 +90,27 @@ def entity() -> Iterator[_Entity]:
     unregister_entity("npc1")
 
 
-def _gated(trajectory: Trajectory, **advance: BaseCondition) -> Trajectory:
-    """*trajectory* with conditions on the vertices named ``v<index>``."""
-    return trajectory.gated({int(key[1:]): value for key, value in advance.items()})
+def _x(x: float) -> CarlaWorldPose:
+    return CarlaWorldPose(x, 0.0, 0.0, yaw=0.0)
+
+
+def _path(*vertices: tuple[float, Any]) -> Trajectory:
+    """A line along CARLA +x: ``(x, departure)`` per vertex.
+
+    A number is a time, a condition is an ``advance``, ``None`` is nothing.
+    """
+    return Trajectory(
+        "path",
+        [
+            TrajectoryVertex(
+                _x(x),
+                TrajectoryTimeCondition(departure)
+                if isinstance(departure, (int, float))
+                else departure,
+            )
+            for x, departure in vertices
+        ],
+    )
 
 
 def _trace(
@@ -119,265 +128,413 @@ def _trace(
     return out
 
 
+def _at(trace: list[tuple[float, float, float]], when: float) -> tuple[float, float]:
+    """``(x, speed)`` on the tick nearest *when*."""
+    _, x, speed = min(trace, key=lambda row: abs(row[0] - when))
+    return x, speed
+
+
 # ---------------------------------------------------------------------------
 # The model
 # ---------------------------------------------------------------------------
 
 
 class TestTheModel:
-    def test_a_vertex_takes_a_condition_and_stays_hashable(self) -> None:
+    def test_a_time_is_a_condition(self) -> None:
+        vertex = TrajectoryVertex(MapPose(0.0, 0.0), TrajectoryTimeCondition(2.0))
+        assert vertex.time == 2.0 and vertex.gate is None
+        assert vertex == TrajectoryVertex(
+            MapPose(0.0, 0.0), TrajectoryTimeCondition(2.0)
+        )
         gate = AlwaysTrueCondition()
-        vertex = TrajectoryVertex(MapPose(0.0, 0.0), 1.0, advance=gate)
-        assert vertex.advance is gate
-        # Hashable whenever its position is: a condition hashes by identity.
-        assert hash(vertex) == hash(TrajectoryVertex(MapPose(0.0, 0.0), 1.0, gate))
-        assert vertex != TrajectoryVertex(MapPose(0.0, 0.0), 1.0)
-        assert TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0)).advance is None
+        other = TrajectoryVertex(MapPose(0.0, 0.0), gate)
+        assert other.time is None and other.gate is gate
+        assert TrajectoryVertex(MapPose(0.0, 0.0)).advance is None
 
-    def test_a_vertex_refuses_something_that_is_not_a_condition(self) -> None:
+    def test_one_condition_per_vertex_and_no_bare_time(self) -> None:
+        with pytest.raises(TypeError, match="takes no time any more"):
+            TrajectoryVertex(MapPose(0.0, 0.0), 1.0)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="takes no time any more"):
+            TrajectoryVertex(MapPose(0.0, 0.0), time=1.0)  # type: ignore[call-arg]
+
+    def test_an_advance_is_a_condition(self) -> None:
         with pytest.raises(TypeError, match="advance must be a condition"):
-            TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), advance=3.0)  # type: ignore[arg-type]
+            TrajectoryVertex(MapPose(0.0, 0.0), advance="go")  # type: ignore[arg-type]
 
-    def test_is_gated(self) -> None:
-        assert not _line().is_gated
-        assert _gated(_line(), v1=AlwaysTrueCondition()).is_gated
-
-    def test_the_last_vertex_of_an_open_path_cannot_be_gated(self) -> None:
-        with pytest.raises(ValueError, match="last vertex of an open trajectory"):
-            _gated(_line(), v4=AlwaysTrueCondition())
-        with pytest.raises(ValueError, match="last vertex of an open trajectory"):
-            _line().gated({-1: AlwaysTrueCondition()})
-
-    def test_the_last_vertex_of_a_closed_path_can(self) -> None:
-        square = _square()
-        assert square.gated({3: AlwaysTrueCondition()}).is_gated
-
-    def test_gated_keeps_the_rest_and_refuses_a_missing_vertex(self) -> None:
-        line = _line()
+    def test_a_timed_path_departs_every_vertex_on_some_condition(self) -> None:
         gate = AlwaysTrueCondition()
-        gated = line.gated({2: gate})
-        assert gated.vertices[2].advance is gate
-        assert gated.vertices[2].time == line.vertices[2].time
-        assert gated.vertices[2].position == line.vertices[2].position
-        assert [v.advance for v in gated.vertices[:2]] == [None, None]
+        path = _path((0.0, 0.0), (10.0, gate), (20.0, 2.0))
+        assert path.is_gated and path.has_times and not path.is_timed
+        assert not _line().is_gated and _line().is_timed
+        with pytest.raises(ValueError, match="either every vertex has a time"):
+            _path((0.0, 0.0), (10.0, None), (20.0, 2.0))
+        with pytest.raises(ValueError, match="times decrease"):
+            _path((0.0, 2.0), (10.0, gate), (20.0, 1.0))
+
+    def test_the_last_vertex_may_carry_a_condition(self) -> None:
+        assert _path((0.0, None), (10.0, AlwaysTrueCondition())).is_gated
+
+    def test_a_closed_path_carries_no_time(self) -> None:
+        with pytest.raises(ValueError, match="closed trajectory cannot carry times"):
+            Trajectory(
+                "loop",
+                [
+                    TrajectoryVertex(_x(0.0), TrajectoryTimeCondition(0.0)),
+                    TrajectoryVertex(_x(10.0), AlwaysTrueCondition()),
+                ],
+                closed=True,
+            )
+
+    def test_gated_replaces_what_the_vertices_named_depart_on(self) -> None:
+        gate = AlwaysTrueCondition()
+        untimed = _line(duration=None).gated({2: gate})
+        assert untimed.vertices[2].advance is gate
+        # A time is replaced like any other condition.
+        timed = _line().gated({2: gate})
+        assert timed.vertices[2].gate is gate and timed.vertices[2].time is None
+        assert timed.vertices[3].time == _line().vertices[3].time
+        with pytest.raises(ValueError, match="either every vertex has a time"):
+            _line(duration=None).gated({1: TrajectoryTimeCondition(5.0)})
         with pytest.raises(IndexError, match="no vertex 9"):
-            line.gated({9: gate})
+            _line(duration=None).gated({9: gate})
+
+
+class TestTheTimeline:
+    """The arithmetic, without an entity."""
+
+    def _timeline(self, *vertices: TimelineVertex, speed: float = 10.0) -> Any:
+        return DepartureTimeline(list(vertices), vertices[-1].distance, False, speed)
+
+    def test_times_alone_are_the_timed_interpolation(self) -> None:
+        timeline = self._timeline(
+            TimelineVertex(0.0, 0.0),
+            TimelineVertex(10.0, 1.0),
+            TimelineVertex(30.0, 3.0),
+        )
+        timeline.start(0, 0.0, 0.0)
+        assert timeline.end_kind == "end" and timeline.end_arrival == 3.0
+        assert timeline.at(0.5) == (pytest.approx(5.0), pytest.approx(10.0))
+        assert timeline.at(2.0) == (pytest.approx(20.0), pytest.approx(10.0))
+
+    def test_a_late_departure_goes_at_the_speed(self) -> None:
+        timeline = self._timeline(
+            TimelineVertex(0.0, 0.0),
+            TimelineVertex(10.0, None, gate="g"),
+            TimelineVertex(20.0, 2.0),
+            TimelineVertex(30.0, 6.0),
+        )
+        timeline.start(0, 0.0, 0.0)
+        assert timeline.end_kind == "gate" and timeline.end_vertex == 1
+        assert timeline.end_arrival == pytest.approx(1.0)  # 10 m at 10 m/s
+        timeline.depart(3.0)  # past vertex 2's time: at the speed
+        assert timeline.times[-2:] == [pytest.approx(4.0), 6.0]  # 6.0 is not past
+        assert timeline.at(5.0) == (pytest.approx(25.0), pytest.approx(5.0))
 
 
 # ---------------------------------------------------------------------------
-# POSITION mode, timed
+# POSITION mode
 # ---------------------------------------------------------------------------
 
 
-class TestPositionTimed:
-    def test_it_waits_at_the_vertex_with_its_clock_paused(
-        self, entity: _Entity
-    ) -> None:
-        gate = _Recorder(ElapsedTimeCondition(3.0, label="go"))
+class TestPosition:
+    def test_time_condition_time(self, entity: _Entity) -> None:
+        """Departed before the next time: interpolated to arrive on it."""
+        gate = _Recorder(ElapsedTimeCondition(1.5, label="go"))
         action = FollowTrajectoryAction(
-            "npc1", _gated(_line(), v2=gate), TrajectoryTiming()
+            "npc1",
+            _path((0.0, 0.0), (10.0, gate), (20.0, 3.0), (30.0, 4.0)),
+            TrajectoryTiming(),
+            speed=10.0,
         )
-        _run(action, entity.actor, 2.9)
-        assert entity.actor.x == pytest.approx(10.0)
-        assert entity.actor.speed == 0.0
-        assert action.held_vertex == 2
-        assert action.state is ActionState.RUNNING
-        # First asked on the tick it got there -- vertex time 1.0 -- not before.
-        assert gate.asked[0] == pytest.approx(1.0, abs=_DT / 2)
-
-        trace = _trace(action, entity.actor, 2.0, start=2.9)
+        trace = _trace(action, entity.actor, 4.5)
+        # At the speed to the condition vertex (no time there), arriving at 1 s.
+        assert gate.asked[0] == pytest.approx(1.0, abs=_DT + 1e-9)
+        assert _at(trace, 0.5) == (pytest.approx(5.0), pytest.approx(10.0))
+        assert _at(trace, 1.25) == (pytest.approx(10.0), 0.0)
         released = gate.released_at
-        # Within a tick of 3 s: the clock is a sum of ticks.
-        assert released == pytest.approx(3.0, abs=_DT + 1e-9)
-        assert action.held_vertex is None
-        # Each segment after the gate keeps its recorded duration: 10 m/s,
-        # starting from the vertex on the tick the condition held.
-        for elapsed, x, speed in trace:
-            if released <= elapsed < released + 1.0 - 1e-6:
-                assert x == pytest.approx(10.0 + 10.0 * (elapsed - released))
-                assert speed == pytest.approx(10.0)
-        ended = next(e for e, _, _ in trace if e >= released + 1.0 - 1e-6)
+        assert released == pytest.approx(1.5, abs=_DT + 1e-9)
+        # Then over to the next time: 10 m in 3.0 - departure.
+        x, speed = _at(trace, 2.25)
+        pace = 10.0 / (3.0 - released)
+        assert x == pytest.approx(10.0 + pace * (2.25 - released), abs=1e-6)
+        assert speed == pytest.approx(pace)
+        assert _at(trace, 3.5) == (pytest.approx(25.0), pytest.approx(10.0))
         assert action.finished
-        # The end came the hold later than the recording had it.
-        assert ended == pytest.approx(released + 1.0, abs=1e-6)
-        assert entity.actor.x == pytest.approx(20.0)
+        assert entity.actor.x == pytest.approx(30.0)
 
-    def test_a_condition_true_on_arrival_does_not_stop_it(
+    def test_a_late_departure_goes_at_the_speed(self, entity: _Entity) -> None:
+        """Departed after the next times have passed: at the action's speed."""
+        gate = _Recorder(ElapsedTimeCondition(3.5, label="late"))
+        action = FollowTrajectoryAction(
+            "npc1",
+            _path((0.0, 0.0), (10.0, gate), (20.0, 3.0), (30.0, 4.0)),
+            TrajectoryTiming(),
+            speed=10.0,
+        )
+        trace = _trace(action, entity.actor, 6.0)
+        released = gate.released_at
+        x, speed = _at(trace, 4.0)
+        assert x == pytest.approx(10.0 + 10.0 * (4.0 - released), abs=1e-6)
+        assert speed == pytest.approx(10.0)
+        # 20 m more at 10 m/s: at the end 2 s after departing.
+        ended = next(e for e, x, _ in trace if x >= 30.0 - 1e-6)
+        assert ended == pytest.approx(released + 2.0, abs=_DT + 1e-9)
+        assert action.finished
+
+    def test_a_condition_holding_on_arrival_does_not_stop_it(
         self, entity: _Entity
     ) -> None:
-        plain = _trace(
-            FollowTrajectoryAction("npc1", _line(), TrajectoryTiming()),
-            entity.actor,
-            2.5,
-        )
-        entity.actor.x = entity.actor.vx = entity.actor.speed = 0.0
         gate = _Recorder(AlwaysTrueCondition())
-        gated = _trace(
-            FollowTrajectoryAction(
-                "npc1",
-                _gated(_line(), v1=gate, v2=AlwaysTrueCondition()),
-                TrajectoryTiming(),
-            ),
-            entity.actor,
-            2.5,
+        action = FollowTrajectoryAction(
+            "npc1",
+            _path((0.0, 0.0), (10.0, gate), (20.0, 3.0)),
+            TrajectoryTiming(),
+            speed=10.0,
         )
-        assert gated == plain
+        trace = _trace(action, entity.actor, 2.9)
         assert len(gate.asked) == 1
+        assert all(speed > 0.0 for _, _, speed in trace)
 
-    def test_once_open_a_gate_stays_open(self, entity: _Entity) -> None:
-        once = _Once()
-        action = FollowTrajectoryAction(
-            "npc1", _gated(_line(), v1=once), TrajectoryTiming()
-        )
-        _run(action, entity.actor, 2.5)
-        assert once.checks == 1
-        assert action.finished
-
-    def test_several_gates_in_turn(self, entity: _Entity) -> None:
-        first = _Recorder(ElapsedTimeCondition(1.0, label="first"))
-        second = _Recorder(ElapsedTimeCondition(3.0, label="second"))
-        action = FollowTrajectoryAction(
-            "npc1", _gated(_line(), v1=first, v3=second), TrajectoryTiming()
-        )
-        _run(action, entity.actor, 2.0)
-        # Held at 5 m from 0.5 s to 1.0 s, so 15 m is reached at 2.0 s.
-        assert first.released_at == pytest.approx(1.0, abs=_DT + 1e-9)
-        assert entity.actor.x == pytest.approx(15.0, abs=0.51)
-        _run(action, entity.actor, 0.8, start=2.0)
-        assert entity.actor.x == pytest.approx(15.0)
-        assert action.held_vertex == 3
-        _run(action, entity.actor, 1.0, start=2.8)
-        assert second.released_at == pytest.approx(3.0, abs=_DT + 1e-9)
-        assert action.finished
-
-    def test_absolute_timing_pauses_the_scenario_clock_too(
+    def test_a_condition_on_the_first_vertex_holds_the_start(
         self, entity: _Entity
     ) -> None:
-        gate = _Recorder(ElapsedTimeCondition(2.0, label="go"))
         action = FollowTrajectoryAction(
             "npc1",
-            _gated(_line(), v2=gate),
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
+            _path((0.0, ElapsedTimeCondition(1.0, label="go")), (10.0, None)),
+            speed=5.0,
         )
-        trace = _trace(action, entity.actor, 2.5)
-        released = gate.released_at
-        last_elapsed, last_x, _ = trace[-1]
-        assert last_x == pytest.approx(10.0 + 10.0 * (last_elapsed - released))
-
-    def test_absolute_timing_started_past_a_gate_waits_at_it(
-        self, entity: _Entity
-    ) -> None:
-        """Begun after the gate's time, it is held there, not let through."""
-        action = FollowTrajectoryAction(
-            "npc1",
-            _gated(_line(), v2=ElapsedTimeCondition(5.0, label="go")),
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
-        )
-        _run(action, entity.actor, _DT, start=1.5)
-        assert entity.actor.x == pytest.approx(10.0)
-        assert action.held_vertex == 2
-
-    def test_scale_applies_after_the_hold(self, entity: _Entity) -> None:
-        gate = _Recorder(ElapsedTimeCondition(3.0, label="go"))
-        action = FollowTrajectoryAction(
-            "npc1", _gated(_line(), v2=gate), TrajectoryTiming(scale=2.0)
-        )
-        trace = _trace(action, entity.actor, 3.5)
-        # Reached at scenario time 2.0 (vertex time 1.0, played at half speed).
-        assert gate.asked[0] == pytest.approx(2.0, abs=_DT / 2)
-        released = gate.released_at
-        elapsed, x, speed = trace[-1]
-        assert x == pytest.approx(10.0 + 5.0 * (elapsed - released))
+        trace = _trace(action, entity.actor, 2.0)
+        assert _at(trace, 0.5) == (pytest.approx(0.0), 0.0)
+        x, speed = _at(trace, 1.5)
         assert speed == pytest.approx(5.0)
+        assert x == pytest.approx(2.5, abs=5.0 * _DT + 1e-6)
 
-    def test_an_initial_offset_past_a_gate_skips_it(self, entity: _Entity) -> None:
+    def test_a_condition_on_the_last_vertex_ends_the_run_when_it_holds(
+        self, entity: _Entity
+    ) -> None:
+        gate = _Recorder(open=False)
+        action = FollowTrajectoryAction(
+            "npc1", _path((0.0, None), (10.0, None), (20.0, gate)), speed=10.0
+        )
+        _run(action, entity.actor, 3.0)
+        assert not action.finished
+        assert action.held_vertex == 2
+        assert entity.actor.x == pytest.approx(20.0)
+        gate.open = True
+        _run(action, entity.actor, 0.2, start=3.0)
+        assert action.finished
+        assert action.state is ActionState.COMPLETE
+
+    def test_absolute_scale_and_offset(self, entity: _Entity) -> None:
+        """Times go through the timing; conditions read the scenario clock."""
+        action = FollowTrajectoryAction(
+            "npc1",
+            _path(
+                (0.0, 0.0), (10.0, ElapsedTimeCondition(2.0, label="go")), (20.0, 2.0)
+            ),
+            TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0, offset=1.0),
+            speed=10.0,
+        )
+        trace = _trace(action, entity.actor, 6.0)
+        # Vertex 0 departs at 0 * 2 + 1 = 1 s; 10 m at 10 m/s; waits for 2 s
+        # on the scenario clock; vertex 2 is at 2 * 2 + 1 = 5 s.
+        assert _at(trace, 0.5) == (pytest.approx(0.0), 0.0)
+        assert _at(trace, 1.5)[0] == pytest.approx(5.0)
+        x, speed = _at(trace, 3.5)
+        assert speed == pytest.approx(10.0 / 3.0)
+        assert x == pytest.approx(10.0 + 1.5 * 10.0 / 3.0, abs=1e-6)
+
+    def test_an_initial_offset_past_a_condition_skips_it(self, entity: _Entity) -> None:
         gate = _Recorder(open=False)
         action = FollowTrajectoryAction(
             "npc1",
-            _gated(_line(), v2=gate),
-            TrajectoryTiming(),
+            _line(duration=None).gated({2: gate}),
             initial_distance_offset=12.0,
+            speed=10.0,
         )
         _run(action, entity.actor, 1.0)
         assert gate.asked == []
         assert action.finished
 
-    def test_an_initial_offset_before_a_gate_reaches_it_sooner(
+    def test_an_initial_offset_before_a_condition_reaches_it_sooner(
         self, entity: _Entity
     ) -> None:
         gate = _Recorder(open=False)
         action = FollowTrajectoryAction(
             "npc1",
-            _gated(_line(), v2=gate),
-            TrajectoryTiming(),
+            _line(duration=None).gated({2: gate}),
             initial_distance_offset=5.0,
+            speed=10.0,
         )
         _run(action, entity.actor, 1.0)
-        assert gate.asked[0] == pytest.approx(0.5, abs=_DT / 2)
+        assert gate.asked[0] == pytest.approx(0.5, abs=_DT + 1e-9)
         assert entity.actor.x == pytest.approx(10.0)
 
-
-class TestHiddenWithGates:
-    def _late(self, gate: BaseCondition) -> Trajectory:
-        return Trajectory(
-            "late",
-            [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), 1.0),
-                TrajectoryVertex(CarlaWorldPose(10.0, 0.0, 0.0), 2.0, gate),
-                TrajectoryVertex(CarlaWorldPose(20.0, 0.0, 0.0), 3.0),
-            ],
-        )
-
-    def test_it_is_in_the_world_while_held_and_leaves_the_hold_later(
-        self, entity: _Entity
-    ) -> None:
-        gate = _Recorder(ElapsedTimeCondition(4.0, label="go"))
+    def test_waiting_is_on_the_vertex_itself(self, entity: _Entity) -> None:
+        """Waiting before a zero-duration jump stays on the waiting vertex."""
         action = FollowTrajectoryAction(
             "npc1",
-            self._late(gate),
+            _path(
+                (0.0, 0.0),
+                (10.0, _Recorder(open=False)),
+                (20.0, 2.0),
+                (20.0, 2.0),
+                (30.0, 4.0),
+            ),
+            TrajectoryTiming(),
+            speed=10.0,
+        )
+        _run(action, entity.actor, 3.0)
+        assert action.held_vertex == 1
+        assert entity.actor.x == pytest.approx(10.0)
+        assert entity.actor.speed == 0.0
+
+    def test_a_run_ended_while_waiting_holds_nothing(self, entity: _Entity) -> None:
+        action = FollowTrajectoryAction(
+            "npc1",
+            _line(duration=None).gated({1: _Recorder(open=False)}),
+            speed=10.0,
+            until=ElapsedTimeCondition(2.0, label="enough"),
+        )
+        _run(action, entity.actor, 1.5)
+        assert action.held_vertex == 1
+        _run(action, entity.actor, 1.5, start=1.5)
+        assert action.state is ActionState.COMPLETE
+        assert action.held_vertex is None
+
+    def test_a_closed_path_checks_its_conditions_on_every_lap(
+        self, entity: _Entity
+    ) -> None:
+        at_start = _Recorder(AlwaysTrueCondition())
+        corner = _Recorder(AlwaysTrueCondition())
+        action = FollowTrajectoryAction(
+            "npc1", _square().gated({0: at_start, 1: corner}), speed=10.0
+        )
+        # A lap is 40 m, 4 s: the start is reached at 0, 4 and 8 s, the
+        # corner at 1 and 5 s.
+        _run(action, entity.actor, 8.5)
+        assert at_start.asked == pytest.approx([0.0, 4.0, 8.0], abs=_DT + 1e-9)
+        assert corner.asked == pytest.approx([1.0, 5.0], abs=_DT + 1e-9)
+        assert not action.finished
+
+    def test_a_closed_path_waits_on_its_last_vertex(self, entity: _Entity) -> None:
+        action = FollowTrajectoryAction(
+            "npc1", _square().gated({3: _Recorder(open=False)}), speed=10.0
+        )
+        _run(action, entity.actor, 6.0)
+        assert (entity.actor.x, entity.actor.y) == (
+            pytest.approx(0.0),
+            pytest.approx(10.0),
+        )
+        assert action.held_vertex == 3
+
+    def test_every_run_rearms_its_conditions(self, entity: _Entity) -> None:
+        gate = _Recorder(AlwaysTrueCondition())
+        action = FollowTrajectoryAction(
+            "npc1",
+            _path((0.0, 0.0), (10.0, gate), (20.0, 2.0)),
+            TrajectoryTiming(),
+            once=False,
+            speed=10.0,
+        )
+        world = _World()
+        elapsed = 0.0
+        ends = 0
+        while ends < 2 and elapsed < 10.0:
+            was = action.finished
+            action.tick(world, elapsed)
+            entity.actor.step(_DT, driven=False)
+            elapsed += _DT
+            if action.finished and not was:
+                ends += 1
+        assert ends == 2
+        assert len(gate.asked) == 2
+
+
+class TestHidden:
+    def test_hidden_until_its_first_time_and_after_its_end(
+        self, entity: _Entity
+    ) -> None:
+        gate = _Recorder(ElapsedTimeCondition(3.0, label="go"))
+        action = FollowTrajectoryAction(
+            "npc1",
+            _path((0.0, 1.0), (10.0, gate), (20.0, 4.0)),
             TrajectoryTiming(ReferenceContext.ABSOLUTE),
             hidden_outside_trajectory=True,
+            speed=10.0,
         )
         _run(action, entity.actor, 0.5)
         assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        _run(action, entity.actor, 3.0, start=0.5)
-        # 3.5 s: past the recording's end, but held at the gate and visible.
+        _run(action, entity.actor, 2.0, start=0.5)
+        # 2.5 s: waiting at the condition vertex, in the world.
         assert entity.actor.physics is True
-        assert entity.actor.z == pytest.approx(0.0)
         assert entity.actor.x == pytest.approx(10.0)
-        _run(action, entity.actor, 1.0, start=3.5)
-        assert entity.actor.physics is True
-        assert not action.finished
-        _run(action, entity.actor, 1.0, start=4.5)
+        assert action.held_vertex == 1
+        _run(action, entity.actor, 1.2, start=2.5)
+        assert not action.finished and entity.actor.physics is True
+        _run(action, entity.actor, 0.5, start=3.7)
         assert action.finished
         assert entity.actor.physics is False
 
-    def test_held_on_the_end_time_it_stays(self, entity: _Entity) -> None:
-        """A gate whose time is the last one's holds it in the world, unfinished."""
-        stop = Trajectory(
-            "stop",
+
+# ---------------------------------------------------------------------------
+# Other conditions
+# ---------------------------------------------------------------------------
+
+
+class TestOtherConditions:
+    def test_a_condition_on_the_distance_to_another_entity(self) -> None:
+        """Wait at the vertex until the lead is more than 30 m away."""
+        lead = _Located(x=35.0, speed=2.0)
+        lead.attributes = {"role_name": "lead"}
+        npc = _Located(speed=5.0)
+        npc.attributes = {"role_name": "npc2"}
+        world = _ActorsWorld([npc, lead])
+        gate = _Recorder(
+            EntityDistanceCondition(
+                "npc2", "lead", 30.0, ComparisonRule.GREATER_THAN, label="clear"
+            )
+        )
+        register_entity("npc2", _Entity(npc))
+        register_entity("lead", _Entity(lead))
+        try:
+            action = FollowTrajectoryAction(
+                "npc2", _line(length=60.0, duration=None, count=7).gated({1: gate})
+            )
+            elapsed = 0.0
+            for _ in range(int(round(6.0 / _DT))):
+                action.tick(world, elapsed)
+                npc.step(_DT, driven=False)
+                lead.step(_DT, driven=False)
+                elapsed += _DT
+        finally:
+            unregister_entity("npc2")
+            unregister_entity("lead")
+        # At the vertex (10 m) from 2 s, with the lead 25 m and closing the
+        # gap at 2 m/s: departed once it is past 40 m, after 2.5 s.
+        released = gate.released_at
+        assert gate.asked[0] == pytest.approx(2.0, abs=_DT + 1e-9)
+        assert released == pytest.approx(2.5, abs=2 * _DT)
+        assert npc.x == pytest.approx(10.0 + 5.0 * (6.0 - released), abs=1e-6)
+
+    def test_a_composed_condition(self, entity: _Entity) -> None:
+        both = AndCondition(
             [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), 0.0),
-                TrajectoryVertex(
-                    CarlaWorldPose(10.0, 0.0, 0.0), 1.0, _Recorder(open=False)
-                ),
-                TrajectoryVertex(CarlaWorldPose(10.0, 0.0, 0.0), 1.0),
-            ],
+                ElapsedTimeCondition(1.0, label="settled"),
+                ElapsedTimeCondition(2.0, label="late_enough"),
+            ]
         )
         action = FollowTrajectoryAction(
-            "npc1",
-            stop,
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
-            hidden_outside_trajectory=True,
+            "npc1", _line(duration=None).gated({1: both}), speed=10.0
         )
-        _run(action, entity.actor, 3.0)
-        assert not action.finished
-        assert entity.actor.physics is True
-        assert entity.actor.x == pytest.approx(10.0)
+        _run(action, entity.actor, 1.9)
+        assert entity.actor.x == pytest.approx(5.0)
+        _run(action, entity.actor, 0.6, start=1.9)
+        assert entity.actor.x > 5.0
 
 
 # ---------------------------------------------------------------------------
-# POSITION mode, untimed
+# FOLLOW mode
 # ---------------------------------------------------------------------------
 
 
@@ -394,142 +551,41 @@ def _square() -> Trajectory:
     )
 
 
-class TestPositionUntimed:
-    def test_the_distance_stops_at_the_gate_and_goes_on(self, entity: _Entity) -> None:
-        entity.actor.vx = entity.actor.speed = 4.0
-        gate = _Recorder(open=False)
-        action = FollowTrajectoryAction("npc1", _gated(_line(duration=None), v2=gate))
-        _run(action, entity.actor, 5.0)
-        assert entity.actor.x == pytest.approx(10.0)
-        assert entity.actor.speed == 0.0
-        assert action.held_vertex == 2
-        assert gate.asked[0] == pytest.approx(2.5, abs=_DT + 1e-9)
-        gate.open = True
-        _run(action, entity.actor, 1.0, start=5.0)
-        # From the vertex, at the speed it had: 4 m in a second.
-        assert entity.actor.x == pytest.approx(14.0)
-        assert entity.actor.speed == pytest.approx(4.0)
-
-    def test_without_gates_it_is_as_before(self, entity: _Entity) -> None:
-        entity.actor.vx = entity.actor.speed = 4.0
-        plain = _trace(
-            FollowTrajectoryAction("npc1", _line(duration=None)), entity.actor, 3.0
-        )
-        entity.actor.x, entity.actor.vx, entity.actor.speed = 0.0, 4.0, 4.0
-        open_gate = _trace(
-            FollowTrajectoryAction(
-                "npc1", _gated(_line(duration=None), v1=AlwaysTrueCondition())
-            ),
-            entity.actor,
-            3.0,
-        )
-        assert open_gate == plain
-
-    def test_a_closed_path_checks_its_gates_on_every_lap(self, entity: _Entity) -> None:
-        entity.actor.vx = entity.actor.speed = 10.0
-        at_start = _Recorder(AlwaysTrueCondition())
-        corner = _Recorder(AlwaysTrueCondition())
+def _drive(
+    trajectory: Trajectory,
+    *,
+    seconds: float,
+    timed: bool = False,
+    speed: Optional[float] = None,
+    start_speed: float = 0.0,
+    stop_when_finished: bool = True,
+) -> tuple[FollowTrajectoryAction, _Actor, float, list[float]]:
+    """Drive a fresh vehicle (FOLLOW); the action, the actor, the clock, its speeds."""
+    actor = _Actor(speed=start_speed)
+    register_entity("npc9", _Entity(actor))
+    speeds: list[float] = []
+    try:
         action = FollowTrajectoryAction(
-            "npc1", _square().gated({0: at_start, 1: corner})
-        )
-        # A lap is 40 m, 4 s: the start is reached at 0, 4 and 8 s, the
-        # corner at 1 and 5 s.
-        _run(action, entity.actor, 8.5)
-        assert at_start.asked == pytest.approx([0.0, 4.0, 8.0], abs=_DT / 2)
-        assert corner.asked == pytest.approx([1.0, 5.0], abs=_DT / 2)
-        assert not action.finished
-
-    def test_a_closed_path_waits_on_its_last_vertex(self, entity: _Entity) -> None:
-        entity.actor.vx = entity.actor.speed = 10.0
-        action = FollowTrajectoryAction(
-            "npc1", _square().gated({3: _Recorder(open=False)})
-        )
-        _run(action, entity.actor, 6.0)
-        assert (entity.actor.x, entity.actor.y) == (
-            pytest.approx(0.0),
-            pytest.approx(10.0),
-        )
-        assert action.held_vertex == 3
-
-
-class TestRepeatedRuns:
-    def test_every_run_rearms_its_gates(self, entity: _Entity) -> None:
-        gate = _Recorder(AlwaysTrueCondition())
-        action = FollowTrajectoryAction(
-            "npc1", _gated(_line(), v2=gate), TrajectoryTiming(), once=False
+            "npc9",
+            trajectory,
+            TrajectoryTiming() if timed else None,
+            TrajectoryFollowingMode.FOLLOW,
+            speed=speed,
         )
         world = _World()
         elapsed = 0.0
-        ends = 0
-        while ends < 2 and elapsed < 10.0:
-            was = action.finished
+        while elapsed < seconds and not (stop_when_finished and action.finished):
             action.tick(world, elapsed)
-            entity.actor.step(_DT, driven=False)
+            actor.step(_DT, driven=True)
             elapsed += _DT
-            if action.finished and not was:
-                ends += 1
-        assert ends == 2
-        assert len(gate.asked) == 2
-
-
-class TestOtherConditions:
-    def test_a_gate_on_the_distance_to_another_entity(self) -> None:
-        """Wait at the vertex until the lead is more than 30 m away."""
-        lead = _Located(x=35.0, speed=2.0)
-        lead.attributes = {"role_name": "lead"}
-        npc = _Located(speed=5.0)
-        world = _ActorsWorld([npc, lead])
-        gate = _Recorder(
-            EntityDistanceCondition(
-                "npc2", "lead", 30.0, ComparisonRule.GREATER_THAN, label="clear"
-            )
-        )
-        npc.attributes = {"role_name": "npc2"}
-        register_entity("npc2", _Entity(npc))
-        register_entity("lead", _Entity(lead))
-        try:
-            action = FollowTrajectoryAction(
-                "npc2", _gated(_line(length=60.0, duration=None, count=7), v1=gate)
-            )
-            elapsed = 0.0
-            for _ in range(int(round(6.0 / _DT))):
-                action.tick(world, elapsed)
-                npc.step(_DT, driven=False)
-                lead.step(_DT, driven=False)
-                elapsed += _DT
-        finally:
-            unregister_entity("npc2")
-            unregister_entity("lead")
-        # At the vertex (10 m) from 2 s, with the lead 25 m and closing the
-        # gap at 2 m/s: released once it is past 40 m, after 2.5 s.
-        released = gate.released_at
-        assert gate.asked[0] == pytest.approx(2.0, abs=_DT + 1e-9)
-        assert released == pytest.approx(2.5, abs=2 * _DT)
-        assert npc.x == pytest.approx(10.0 + 5.0 * (6.0 - released), abs=1e-6)
-
-    def test_a_composed_gate(self, entity: _Entity) -> None:
-        """A composition gates a vertex like any condition: both must hold."""
-        entity.actor.vx = entity.actor.speed = 10.0
-        both = AndCondition(
-            [
-                ElapsedTimeCondition(1.0, label="settled"),
-                ElapsedTimeCondition(2.0, label="late_enough"),
-            ]
-        )
-        action = FollowTrajectoryAction("npc1", _gated(_line(duration=None), v1=both))
-        _run(action, entity.actor, 1.9)
-        assert entity.actor.x == pytest.approx(5.0)
-        _run(action, entity.actor, 0.6, start=1.9)
-        assert entity.actor.x > 5.0
-
-
-# ---------------------------------------------------------------------------
-# FOLLOW mode
-# ---------------------------------------------------------------------------
+            speeds.append(actor.speed)
+    finally:
+        unregister_entity("npc9")
+    return action, actor, elapsed, speeds
 
 
 class TestFollow:
-    def test_a_vehicle_stops_at_a_held_gate_and_drives_on(
+    def test_a_vehicle_stops_at_a_waiting_vertex_and_drives_on(
         self, entity: _Entity
     ) -> None:
         actor = entity.actor
@@ -537,7 +593,7 @@ class TestFollow:
         gate = _Recorder(open=False)
         action = FollowTrajectoryAction(
             "npc1",
-            _gated(_line(length=100.0, duration=None, count=11), v3=gate),
+            _line(length=100.0, duration=None, count=11).gated({3: gate}),
             following_mode=TrajectoryFollowingMode.FOLLOW,
         )
         world = _World()
@@ -553,7 +609,6 @@ class TestFollow:
         assert furthest < 31.0
         assert actor.speed < 0.1
         assert actor.control.brake > 0.0
-        assert gate.asked  # reached, and asked every tick since
 
         gate.open = True
         _run(action, actor, 12.0, start=elapsed, driven=True)
@@ -561,58 +616,86 @@ class TestFollow:
         assert actor.x > 60.0
         assert actor.speed == pytest.approx(5.0, abs=0.7)
 
-    def test_a_timed_vehicle_waits_and_its_schedule_shifts(
-        self, entity: _Entity
-    ) -> None:
-        actor = entity.actor
-        # 60 m in 10 s, 6 m/s; the gate is the vertex at 30 m, 5 s.
+    def test_a_timed_vehicle_waits_then_goes_at_the_speed(self) -> None:
+        # 60 m in 10 s (6 m/s); the vertex at 30 m waits for 12 s, by when
+        # every later time has passed: on at the action's 6 m/s.
         line = _line(length=60.0, duration=10.0, count=7)
-        gate = _Recorder(ElapsedTimeCondition(12.0, label="go"))
-        action = FollowTrajectoryAction(
-            "npc1",
-            _gated(line, v3=gate),
-            TrajectoryTiming(),
-            TrajectoryFollowingMode.FOLLOW,
+        vertices = list(line.vertices)
+        vertices[3] = TrajectoryVertex(
+            vertices[3].position, advance=ElapsedTimeCondition(12.0, label="go")
         )
-        world = _World()
-        elapsed = 0.0
-        while elapsed < 11.9:
-            action.tick(world, elapsed)
-            actor.step(_DT, driven=True)
-            elapsed += _DT
+        action, actor, elapsed, _ = _drive(
+            Trajectory("line", vertices), seconds=30.0, timed=True, speed=6.0
+        )
+        assert action.finished
+        # Departed at 12 s with 30 m to go at 6 m/s.
+        assert 12.0 + 5.0 - 1.0 < elapsed < 12.0 + 5.0 + 3.0
+
+    def test_a_timed_vehicle_waiting_is_on_the_brake(self) -> None:
+        line = _line(length=60.0, duration=10.0, count=7)
+        vertices = list(line.vertices)
+        vertices[3] = TrajectoryVertex(
+            vertices[3].position, advance=ElapsedTimeCondition(12.0, label="go")
+        )
+        action, actor, _, _ = _drive(
+            Trajectory("line", vertices), seconds=11.9, timed=True, speed=6.0
+        )
         assert action.held_vertex == 3
         assert actor.x == pytest.approx(30.0, abs=1.0)
         assert actor.speed < 0.1
-        while elapsed < 30.0 and not action.finished:
-            action.tick(world, elapsed)
-            actor.step(_DT, driven=True)
-            elapsed += _DT
-        assert action.finished
-        # Released at 12 s with 5 s of recording left.
-        assert 12.0 + 5.0 - 1.0 < elapsed < 12.0 + 5.0 + 3.0
 
-    def test_an_open_gate_lets_a_vehicle_through(self, entity: _Entity) -> None:
-        actor = entity.actor
-        actor.vx = actor.speed = 5.0
-        action = FollowTrajectoryAction(
-            "npc1",
-            _gated(
-                _line(length=100.0, duration=None, count=11), v3=AlwaysTrueCondition()
-            ),
-            following_mode=TrajectoryFollowingMode.FOLLOW,
+    def test_a_condition_already_holding_costs_the_schedule_nothing(self) -> None:
+        line = _line(length=120.0, duration=12.0, count=13)
+        _, plain_actor, plain_end, _ = _drive(line, seconds=40.0, timed=True)
+        vertices = list(line.vertices)
+        gate = _Recorder(AlwaysTrueCondition())
+        vertices[4] = TrajectoryVertex(vertices[4].position, advance=gate)
+        action, actor, gated_end, _ = _drive(
+            Trajectory("line", vertices), seconds=40.0, timed=True, speed=10.0
         )
-        _run(action, actor, 15.0, driven=True)
-        assert actor.x > 50.0
+        assert gate.asked
+        assert action.finished
+        assert gated_end == pytest.approx(plain_end, abs=0.3)
+        assert actor.x == pytest.approx(plain_actor.x, abs=0.5)
 
-    def test_a_walker_stops_at_a_held_gate_and_walks_on(self) -> None:
+    def test_an_untimed_open_vertex_is_driven_through_at_speed(self) -> None:
+        line = _line(length=100.0, duration=None, count=11)
+        _, _, _, plain = _drive(line, seconds=10.0, start_speed=5.0)
+        _, _, _, gated = _drive(
+            line.gated({3: AlwaysTrueCondition()}), seconds=10.0, start_speed=5.0
+        )
+        assert min(gated[60:]) == pytest.approx(min(plain[60:]), abs=0.2)
+
+    def test_a_condition_on_the_last_vertex_is_driven_up_to(self) -> None:
+        """Holding already, it ends the run at the end, not from braking distance."""
+        path = _path((0.0, None), (25.0, None), (60.0, AlwaysTrueCondition()))
+        action, actor, _, _ = _drive(path, seconds=30.0, speed=8.0, start_speed=8.0)
+        assert action.finished
+        assert actor.x > 58.0
+
+    def test_a_walker_walks_up_to_a_last_vertex_whose_condition_holds(self) -> None:
         walker = _Walker(speed=1.4)
-        holder = _Entity(walker)
-        register_entity("walker1", holder)
+        register_entity("walker1", _Entity(walker))
+        try:
+            action = FollowTrajectoryAction(
+                "walker1",
+                _path((0.0, None), (10.0, None), (20.0, AlwaysTrueCondition())),
+                following_mode=TrajectoryFollowingMode.FOLLOW,
+            )
+            _run(action, walker, 30.0)
+        finally:
+            unregister_entity("walker1")
+        assert action.finished
+        assert walker.x > 19.0
+
+    def test_a_walker_stops_at_a_waiting_vertex_and_walks_on(self) -> None:
+        walker = _Walker(speed=1.4)
+        register_entity("walker1", _Entity(walker))
         gate = _Recorder(open=False)
         try:
             action = FollowTrajectoryAction(
                 "walker1",
-                _gated(_line(duration=None), v2=gate),
+                _line(duration=None).gated({2: gate}),
                 following_mode=TrajectoryFollowingMode.FOLLOW,
             )
             _run(action, walker, 15.0)
