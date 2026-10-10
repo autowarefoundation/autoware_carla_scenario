@@ -7,8 +7,8 @@ A run's ODD is named by a string (the ``odd`` key of the CLI config, or
   framework can measure and no modules, so every condition is inside it;
 * a name registered with :func:`register_odd`, in code or by a package through
   the ``autoware_carla_scenario.odds`` entry point group (the entry point
-  names the builder: a function that takes nothing and returns an
-  :class:`OddDefinition`);
+  names a function that takes nothing and calls :func:`register_odd`, as the
+  scenario and traffic-backend groups do);
 * a path to a ``.yaml`` / ``.yml`` file: a binding file (OpenODD files and
   the probes that measure them, :func:`~autoware_carla_scenario.odd.load_odd_binding`),
   or an OpenODD document on its own
@@ -20,9 +20,8 @@ from __future__ import annotations
 
 import importlib
 import logging
-from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from . import probes
 from .model import OddAttribute, OddDefinition
@@ -152,13 +151,9 @@ def _load_plugins() -> None:
     if _PLUGINS_LOADED:
         return
     _PLUGINS_LOADED = True
-    for entry_point in importlib_metadata.entry_points(group=ENTRY_POINT_GROUP):
-        try:
-            _REGISTRY.setdefault(entry_point.name, entry_point.load())
-        except Exception:  # noqa: BLE001 -- one bad plugin must not kill the CLI
-            logger.exception(
-                "Failed to load ODD plugin %r; skipping.", entry_point.name
-            )
+    from ..registry import load_entry_point_plugins  # noqa: PLC0415
+
+    load_entry_point_plugins(ENTRY_POINT_GROUP, "ODD")
 
 
 def odd_names() -> list[str]:
@@ -167,23 +162,43 @@ def odd_names() -> list[str]:
     return [DEFAULT_ODD, *sorted(_REGISTRY)]
 
 
+def import_callable(spec: str) -> Callable[..., Any]:
+    """The function ``"package.module:function"`` names.
+
+    Raises:
+        ValueError: if *spec* does not name one.
+    """
+    module_name, sep, attr = spec.partition(":")
+    if not sep or not module_name or not attr:
+        raise ValueError(f"{spec!r} is not package.module:function")
+    try:
+        found = getattr(importlib.import_module(module_name), attr)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(f"cannot import {spec!r}: {exc}") from exc
+    if not callable(found):
+        raise ValueError(f"{spec!r} is not callable")
+    return found
+
+
+def _is_yaml(text: str) -> bool:
+    return text.endswith((".yaml", ".yml"))
+
+
 def odd_builder(spec: Union[str, Path, OddDefinition, None]) -> Optional[OddBuilder]:
     """The Python builder *spec* names, or ``None`` for the built-in ODD or YAML."""
     if spec is None or isinstance(spec, (OddDefinition, Path)):
         return None
     text = str(spec).strip()
-    if not text or text == DEFAULT_ODD or text.endswith((".yaml", ".yml")):
+    if not text or text == DEFAULT_ODD or _is_yaml(text):
         return None
     _load_plugins()
     if text in _REGISTRY:
         return _REGISTRY[text]
     if ":" in text:
-        module_name, _, attr = text.partition(":")
-        builder: OddBuilder = getattr(importlib.import_module(module_name), attr)
-        return builder
+        return import_callable(text)
     raise ValueError(
         f"no ODD named {text!r}; known: {', '.join(odd_names())}, "
-        "an OpenODD .yaml file, or package.module:function"
+        "a .yaml file, or package.module:function"
     )
 
 
@@ -196,18 +211,15 @@ def resolve_odd(spec: Union[str, Path, OddDefinition, None] = None) -> OddDefini
     """
     if isinstance(spec, OddDefinition):
         return spec
+    builder = odd_builder(spec)
+    if builder is not None:
+        odd = builder()
+        if not isinstance(odd, OddDefinition):
+            raise ValueError(f"ODD builder {spec!r} returned {type(odd).__name__}")
+        return odd
     text = str(spec).strip() if spec is not None else ""
-    if not text or text == DEFAULT_ODD:
-        return default_odd()
-    if text.endswith((".yaml", ".yml")):
-        from .openodd import is_binding_file, load_odd_binding, load_openodd  # noqa: PLC0415
+    if _is_yaml(text):
+        from .openodd import load_odd_file  # noqa: PLC0415
 
-        if is_binding_file(text):
-            return load_odd_binding(text)
-        return load_openodd(Path(text))
-    builder = odd_builder(text)
-    assert builder is not None
-    odd = builder()
-    if not isinstance(odd, OddDefinition):
-        raise ValueError(f"ODD builder {text!r} returned {type(odd).__name__}")
-    return odd
+        return load_odd_file(text)
+    return default_odd()

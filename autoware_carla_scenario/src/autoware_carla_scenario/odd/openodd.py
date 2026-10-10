@@ -68,7 +68,6 @@ Not read: ``COD`` / ``OD`` records, numeric terms (``1.75*ego_width``),
 
 from __future__ import annotations
 
-import importlib
 import logging
 import math
 import re
@@ -85,19 +84,23 @@ from .model import (
     OddCondition,
     OddDefinition,
     OddModule,
+    _Equal,
+    _Group,
+    _Interval,
+    _Leaf,
     all_of,
     any_of,
     module_holds,
+    read_probe,
 )
+from .registry import import_callable
 from .units import Units, UnitError, normalize_unit
 
 __all__ = [
-    "BUILTIN_PROBES",
     "OpenOddError",
-    "is_binding_file",
     "load_odd_binding",
+    "load_odd_file",
     "load_openodd",
-    "register_odd_probe",
 ]
 
 logger = logging.getLogger(__name__)
@@ -107,45 +110,41 @@ class OpenOddError(ValueError):
     """An OpenODD document this reader cannot make an ODD of."""
 
 
-#: Probe name -> (probe, the unit it returns).
-BUILTIN_PROBES: dict[str, tuple[Callable[[Any], Any], str]] = {
+#: Built-in probe name -> (probe, the unit it returns).
+_PROBES: dict[str, tuple[Callable[[Any], Any], str]] = {
     "ego_speed_kph": (probes.ego_speed_kph, "km/h"),
     "speed_limit_kph": (probes.speed_limit_kph, "km/h"),
     "lanelet_speed_limit_kph": (probes.lanelet_speed_limit_kph, "km/h"),
-    "in_junction": (probes.in_junction, ""),
-    "lane_count": (probes.lane_count, ""),
-    "lanelet_location": (probes.lanelet_location, ""),
-    "lanelet_subtype": (probes.lanelet_subtype, ""),
-    "illumination": (probes.illumination, ""),
-    "rain": (probes.rain, ""),
-    "fog": (probes.fog, ""),
-    "traffic_density": (probes.traffic_density, ""),
-    "pedestrian_nearby": (probes.pedestrian_nearby, ""),
+    **{
+        name: (getattr(probes, name), "")
+        for name in (
+            "in_junction",
+            "lane_count",
+            "lanelet_location",
+            "lanelet_subtype",
+            "illumination",
+            "rain",
+            "fog",
+            "traffic_density",
+            "pedestrian_nearby",
+        )
+    },
 }
-
-_PROBES: dict[str, tuple[Callable[[Any], Any], str]] = dict(BUILTIN_PROBES)
-
-
-def register_odd_probe(name: str, probe: Callable[[Any], Any], unit: str = "") -> None:
-    """Make *probe* (returning values in *unit*) bindable by *name*."""
-    if not name:
-        raise ValueError("register_odd_probe(): name must not be empty")
-    _PROBES[name] = (probe, unit)
 
 
 def _probe(spec: str) -> tuple[Callable[[Any], Any], str]:
+    """A probe and its unit, by built-in name or ``package.module:function``."""
     if spec in _PROBES:
         return _PROBES[spec]
-    if ":" in spec:
-        module, _, attr = spec.partition(":")
-        try:
-            return getattr(importlib.import_module(module), attr), ""
-        except (ImportError, AttributeError) as exc:
-            raise OpenOddError(f"probe {spec!r}: {exc}") from exc
-    raise OpenOddError(
-        f"unknown probe {spec!r}; built-in: {', '.join(sorted(_PROBES))}, "
-        "or package.module:function"
-    )
+    if ":" not in spec:
+        raise OpenOddError(
+            f"unknown probe {spec!r}; built-in: {', '.join(sorted(_PROBES))}, "
+            "or package.module:function"
+        )
+    try:
+        return import_callable(spec), ""
+    except ValueError as exc:
+        raise OpenOddError(f"probe: {exc}") from exc
 
 
 def _missing(world: Any) -> None:
@@ -179,7 +178,13 @@ def _merge(into: dict[str, Any], doc: Mapping[str, Any], where: str) -> None:
             into[key] = dict(value) if isinstance(value, Mapping) else value
 
 
-def _read(source: Union[str, Path], docs: _Documents, stack: tuple[Path, ...]) -> None:
+def _read(
+    source: Union[str, Path],
+    docs: _Documents,
+    stack: tuple[Path, ...],
+    loaded: Optional[list[Any]] = None,
+) -> None:
+    """Read *source* (a path or YAML text) into *docs*; *loaded* if parsed already."""
     if isinstance(source, Path) or (
         "\n" not in source and source.strip().endswith((".yaml", ".yml"))
     ):
@@ -187,18 +192,12 @@ def _read(source: Union[str, Path], docs: _Documents, stack: tuple[Path, ...]) -
         if path in stack:
             chain = " -> ".join(p.name for p in (*stack, path))
             raise OpenOddError(f"IMPORT cycle: {chain}")
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise OpenOddError(f"cannot read {source}: {exc}") from exc
         base, stack = path.parent, (*stack, path)
         docs.first_stem = docs.first_stem or path.stem
     else:
-        text, base = str(source), Path.cwd()
-    try:
-        loaded = [d for d in yaml.safe_load_all(text) if d is not None]
-    except yaml.YAMLError as exc:
-        raise OpenOddError(f"not YAML: {exc}") from exc
+        path, base = None, Path.cwd()
+    if loaded is None:
+        loaded = _parse(path if path is not None else str(source))
     for doc in loaded:
         if not isinstance(doc, Mapping):
             raise OpenOddError("an OpenODD document must be a mapping")
@@ -226,6 +225,19 @@ def _read(source: Union[str, Path], docs: _Documents, stack: tuple[Path, ...]) -
             logger.info("OpenODD: COD/OD records are not read")
 
 
+def _parse(source: Union[Path, str]) -> list[Any]:
+    """The YAML documents in a file (a path) or in text."""
+    try:
+        text = (
+            source.read_text(encoding="utf-8") if isinstance(source, Path) else source
+        )
+        return [d for d in yaml.safe_load_all(text) if d is not None]
+    except OSError as exc:
+        raise OpenOddError(f"cannot read {source}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise OpenOddError(f"not YAML: {exc}") from exc
+
+
 def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -251,7 +263,6 @@ class _Concept:
     #: literal -> the expressions defining it (a derived categorical)
     definitions: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     attribute: Optional[OddAttribute] = None
-    thresholds: set[float] = field(default_factory=set)
 
     @property
     def name(self) -> str:
@@ -462,39 +473,6 @@ class _Reader:
         except UnitError as exc:
             raise OpenOddError(f"{where}: {concept.name}: {exc}") from exc
 
-    # -- thresholds, so a numeric concept without buckets gets some -------
-
-    def collect_thresholds(self) -> None:
-        def walk(section: Any, where: str) -> None:
-            if not isinstance(section, Mapping):
-                return
-            for key, value in section.items():
-                key = str(key)
-                if key in ("AND", "OR"):
-                    walk(value, where)
-                    continue
-                if key in self.module_names or key in self.labels:
-                    continue
-                try:
-                    concept = self.concept(key, where)
-                except OpenOddError:
-                    continue  # reported when the condition is built
-                if concept.kind != "number" or isinstance(value, bool):
-                    continue
-                for token, unit in _numbers_in(value):
-                    try:
-                        concept.thresholds.add(self.number(token, unit, concept, where))
-                    except OpenOddError:
-                        pass  # reported when the condition is built
-
-        for name, mdef in self.docs.modules.items():
-            if isinstance(mdef, Mapping):
-                for key in ("INCLUDE_AND", "INCLUDE_OR", "EXCLUDE_AND", "EXCLUDE_OR"):
-                    walk(mdef.get(key), f"module {name}")
-        for concept in self.concepts.values():
-            for definition in concept.definitions.values():
-                walk(definition, f"TAXONOMY {concept.name}")
-
     # -- attributes --------------------------------------------------------
 
     def build_attributes(self) -> list[OddAttribute]:
@@ -527,8 +505,6 @@ class _Reader:
                 buckets["values"] = list(concept.literals)
             elif concept.kind == "boolean":
                 buckets["values"] = [False, True]
-            elif concept.kind == "number" and concept.thresholds:
-                buckets["buckets"] = [-math.inf, *sorted(concept.thresholds), math.inf]
         try:
             return OddAttribute(
                 concept.name,
@@ -540,12 +516,8 @@ class _Reader:
         except ValueError as exc:
             raise OpenOddError(f"binding {concept.name}: {exc}") from exc
 
-    def derived_probe(self, concept: _Concept) -> Optional[Callable[[Any], Any]]:
-        """A categorical defined by expressions: its literal whose expressions hold.
-
-        Where two literals' ranges share an endpoint, the one written first
-        takes it.  ``None`` when nothing the expressions read is measured.
-        """
+    def derived_probe(self, concept: _Concept) -> Optional["_DerivedProbe"]:
+        """A categorical defined by expressions; ``None`` when nothing it reads is measured."""
         rules: list[tuple[str, OddCondition]] = []
         for literal, definition in concept.definitions.items():
             where = f"TAXONOMY {concept.name}.{literal}"
@@ -555,23 +527,52 @@ class _Reader:
         sources = {a.name: a for _, c in rules for a in c._attributes()}
         if all(a.probe is _missing for a in sources.values()):
             return None
+        return _DerivedProbe(rules, list(sources.values()))
 
-        def probe(world: Any) -> Optional[str]:
-            values = {}
-            for name, attribute in sources.items():
-                try:
-                    values[name] = attribute.probe(world)
-                except Exception:
-                    values[name] = None
-            for literal, condition in rules:
-                verdict = condition.evaluate(values, {})
-                if verdict is None:
-                    return None
-                if verdict:
-                    return literal
-            return None
+    def threshold_buckets(self, modules: list[OddModule]) -> None:
+        """Give a measured number without buckets buckets at the thresholds tested.
 
-        return probe
+        Every bound and range the modules and the derived categoricals test a
+        number against becomes a bucket edge, so each boundary the ODD draws
+        is covered from both sides.
+        """
+        conditions: list[OddCondition] = [c for m in modules for c in m._conditions()]
+        for concept in self.concepts.values():
+            if isinstance(concept.attribute, OddAttribute) and isinstance(
+                concept.attribute.probe, _DerivedProbe
+            ):
+                conditions += [c for _, c in concept.attribute.probe.rules]
+        edges: dict[str, set[float]] = {}
+        while conditions:
+            condition = conditions.pop()
+            if isinstance(condition, _Group):
+                conditions += condition.children
+            elif isinstance(condition, _Leaf):
+                predicate = condition.predicate
+                found = edges.setdefault(condition.attribute.name, set())
+                if isinstance(predicate, _Interval):
+                    found |= {
+                        x for x in (predicate.low, predicate.high) if math.isfinite(x)
+                    }
+                elif (
+                    isinstance(predicate, _Equal)
+                    and isinstance(predicate.value, (int, float))
+                    and not isinstance(predicate.value, bool)
+                ):
+                    found.add(float(predicate.value))
+        for concept in self.concepts.values():
+            attribute = concept.attribute
+            if (
+                attribute is None
+                or attribute.item is not None
+                or attribute.probe is _missing
+                or concept.kind != "number"
+                or not edges.get(attribute.name)
+            ):
+                continue
+            attribute._set_buckets(
+                buckets=[-math.inf, *sorted(edges[attribute.name]), math.inf]
+            )
 
     # -- conditions --------------------------------------------------------
 
@@ -760,9 +761,9 @@ class _Reader:
         return modules
 
     def build(self) -> OddDefinition:
-        self.collect_thresholds()
         attributes = self.build_attributes()
         modules = self.build_modules()
+        self.threshold_buckets(modules)
         missing = [
             c.name
             for c in self.concepts.values()
@@ -776,19 +777,47 @@ class _Reader:
         if clash:
             raise OpenOddError(f"labels named like concepts: {clash}")
         try:
-            odd = OddDefinition(self.name, attributes, modules, text=self.text)
-            if self.docs.roots:
-                # Modules under ODD are the entry points, but the standard's
-                # own examples put the modules they refer to there too: the
-                # roots are those no other module refers to.
-                referenced: set[str] = set()
-                for module in odd.modules:
-                    referenced |= odd._depends_on(module)
-                roots = [r for r in self.docs.roots if r not in referenced]
-                odd._use_roots(roots or self.docs.roots)
-            return odd
+            # Modules under ODD are the root candidates; the standard's own
+            # examples put modules they refer to there too, which the
+            # candidates rule leaves out.
+            return OddDefinition(
+                self.name,
+                attributes,
+                modules,
+                roots=self.docs.roots or None,
+                text=self.text,
+            )
         except ValueError as exc:
             raise OpenOddError(str(exc)) from exc
+
+
+class _DerivedProbe:
+    """The value of a categorical defined by expressions: the literal that holds.
+
+    It is worked out from the tick's other values
+    (:meth:`OddDefinition.sample`).  Where two literals' ranges share an
+    endpoint, the one written first takes it.
+    """
+
+    def __init__(
+        self, rules: list[tuple[str, OddCondition]], sources: list[OddAttribute]
+    ) -> None:
+        self.rules = rules
+        self.sources = sources
+
+    def from_values(self, values: Mapping[str, Any]) -> Optional[str]:
+        for literal, condition in self.rules:
+            verdict = condition.evaluate(values, {})
+            if verdict is None:
+                return None
+            if verdict:
+                return literal
+        return None
+
+    def __call__(self, world: Any) -> Optional[str]:
+        return self.from_values(
+            {a.name: read_probe(a.probe, world) for a in self.sources}
+        )
 
 
 def _labels_of(mdef: Mapping[str, Any]) -> list[str]:
@@ -807,20 +836,6 @@ def _flag(value: Any, where: str) -> bool:
     if text in ("false", "no"):
         return False
     raise OpenOddError(f"{where}: expected true or false, not {value!r}")
-
-
-def _numbers_in(value: Any) -> list[tuple[str, Optional[str]]]:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return [(str(value), None)]
-    if not isinstance(value, str):
-        return []
-    text = value.strip()
-    m = _RANGE_RE.match(text)
-    if m:
-        return [(m["low"], m["unit"]), (m["high"], m["unit"])]
-    b = _BOUND_RE.match(text)
-    q = _QUANTITY_RE.match(b["rest"].strip() if b else text)
-    return [(q["value"], q["unit"])] if q else []
 
 
 # ---------------------------------------------------------------------------
@@ -878,14 +893,16 @@ def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
     thresholds the ODD tests it against; a categorical gets one per literal.
     """
     path = Path(path)
-    try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise OpenOddError(f"cannot read {path}: {exc}") from exc
+    docs = _parse(path)
+    doc = docs[0] if len(docs) == 1 else None
     if not isinstance(doc, Mapping) or "openodd" not in doc:
         raise OpenOddError(
             f"{path}: a binding file names its OpenODD files under 'openodd'"
         )
+    return _load_binding(path, doc)
+
+
+def _load_binding(path: Path, doc: Mapping[str, Any]) -> OddDefinition:
     extra = sorted(
         str(k) for k in doc if k not in ("openodd", "name", "text", "probes")
     )
@@ -900,10 +917,16 @@ def load_odd_binding(path: Union[str, Path]) -> OddDefinition:
     )
 
 
-def is_binding_file(path: Union[str, Path]) -> bool:
-    """Whether *path* is a binding file rather than an OpenODD document."""
-    try:
-        doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return False
-    return isinstance(doc, Mapping) and "openodd" in doc
+def load_odd_file(path: Union[str, Path]) -> OddDefinition:
+    """Read a ``.yaml`` ODD file: a binding file, or an OpenODD document on its own.
+
+    An OpenODD document on its own is read with no probes, so nothing is
+    measured; a binding file names the probes (:func:`load_odd_binding`).
+    """
+    path = Path(path)
+    docs = _parse(path)
+    if len(docs) == 1 and isinstance(docs[0], Mapping) and "openodd" in docs[0]:
+        return _load_binding(path, docs[0])
+    od = _Documents()
+    _read(path, od, (), loaded=docs)
+    return _Reader(od, {}, od.first_stem or path.stem, "").build()

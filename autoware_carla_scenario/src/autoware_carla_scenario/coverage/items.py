@@ -27,8 +27,10 @@ model did not describe.
 
 from __future__ import annotations
 
+import bisect
 import enum
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Sequence, Union
 
@@ -38,6 +40,7 @@ if TYPE_CHECKING:
     from ..conditions import BaseCondition
 
 __all__ = [
+    "duplicates",
     "BELOW_RANGE",
     "ABOVE_RANGE",
     "CoverGroup",
@@ -82,6 +85,11 @@ class CoverGroup(enum.Enum):
 
 
 Event = Union[SamplingEvent, "BaseCondition"]
+
+
+def duplicates(names: Iterable[str]) -> list[str]:
+    """The names that occur more than once, sorted."""
+    return sorted(n for n, count in Counter(names).items() if count > 1)
 
 
 def value_label(value: Any) -> str:
@@ -129,8 +137,6 @@ class CoverItem:
     edges: list[float] = field(init=False, default_factory=list)
     #: Bucket labels, in order.
     labels: list[str] = field(init=False, default_factory=list)
-    #: Labels of buckets outside the ODD: reported, but not coverage targets.
-    outside: list[str] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -205,10 +211,8 @@ class CoverItem:
             return BELOW_RANGE
         if x > self.edges[-1]:
             return ABOVE_RANGE
-        for i in range(len(self.edges) - 1):
-            if x < self.edges[i + 1]:
-                return self.labels[i]
-        return self.labels[-1]
+        index = bisect.bisect_right(self.edges, x) - 1
+        return self.labels[min(index, len(self.labels) - 1)]
 
     def describe(self) -> dict[str, Any]:
         """The item's definition, as written to a coverage file."""
@@ -220,7 +224,6 @@ class CoverItem:
             "event": event_name(self.event),
             "kind": "numeric" if self.numeric else "categorical",
             "buckets": list(self.labels),
-            "outside_odd": list(self.outside),
             "target": self.target,
         }
 

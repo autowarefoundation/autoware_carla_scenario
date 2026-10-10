@@ -8,6 +8,10 @@ here can fail a run.  An expression that returns ``None`` has nothing to say
 (the ego is gone, the simulator does not report the weather) and is not a
 sample either.
 
+With an ODD, every tick also samples the ODD's attributes, once each
+(:meth:`OddDefinition.sample`).  Those values fill the ODD's cover items and
+decide whether the tick was inside the ODD.
+
 The coverage file (``{Scenario}_coverage.json``) holds hit counts per bucket
 for one run; ``scenario-coverage`` merges any number of them into a report.
 """
@@ -27,6 +31,7 @@ from .items import (
     CrossItem,
     Event,
     SamplingEvent,
+    duplicates,
 )
 
 if TYPE_CHECKING:
@@ -43,8 +48,6 @@ COVERAGE_SCHEMA = "autoware_carla_scenario.coverage/1"
 
 #: Joins the bucket labels of a cross-coverage cell.
 CROSS_SEPARATOR = " / "
-
-_NO_SAMPLE = object()
 
 #: Out-of-ODD intervals kept per run; a run that leaves the ODD more often is
 #: still counted in full, only the intervals past this are not listed.
@@ -103,8 +106,10 @@ class _OddMonitor:
 
 
 class _ItemHits:
-    def __init__(self, item: CoverItem) -> None:
+    def __init__(self, item: CoverItem, outside: list[str]) -> None:
         self.item = item
+        #: Buckets outside the run's ODD: reported, but not coverage targets.
+        self.outside = outside
         self.hits: dict[str, int] = {label: 0 for label in item.labels}
         self.out_of_range: dict[str, int] = {}
         self.ignored = 0
@@ -114,6 +119,7 @@ class _ItemHits:
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.item.describe(),
+            "outside_odd": list(self.outside),
             "samples": self.samples,
             "ignored": self.ignored,
             "hits": dict(self.hits),
@@ -122,15 +128,25 @@ class _ItemHits:
 
 
 class _CrossHits:
-    def __init__(self, cross: CrossItem) -> None:
+    def __init__(self, cross: CrossItem, outside: dict[str, list[str]]) -> None:
         self.cross = cross
-        self.hits: dict[str, int] = {
-            CROSS_SEPARATOR.join(cell): 0
-            for cell in itertools.product(*(i.labels for i in cross.items))
-        }
+        cells = list(itertools.product(*(i.labels for i in cross.items)))
+        self.hits: dict[str, int] = {CROSS_SEPARATOR.join(c): 0 for c in cells}
+        self.outside = [
+            CROSS_SEPARATOR.join(cell)
+            for cell in cells
+            if any(
+                label in outside.get(item.name, ())
+                for item, label in zip(cross.items, cell)
+            )
+        ]
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self.cross.describe(), "hits": dict(self.hits)}
+        return {
+            **self.cross.describe(),
+            "outside_odd": list(self.outside),
+            "hits": dict(self.hits),
+        }
 
 
 class CoverageCollector:
@@ -147,32 +163,39 @@ class CoverageCollector:
         With an *odd*, its attributes' cover items come first, and every tick
         is also judged inside or outside it.
         """
-        if odd is not None:
-            items = [*odd.cover_items(), *items]
         self._odd = _OddMonitor(odd) if odd is not None else None
-        self._last_elapsed = 0.0
-        #: The value each item sampled last, ``None`` when it took no sample.
-        self._values: dict[str, Any] = {}
+        # ODD item -> the attribute whose sampled value fills it.
+        self._odd_items: dict[str, str] = {}
+        outside: dict[str, list[str]] = {}
+        if odd is not None:
+            for attribute in odd.attributes:
+                if attribute.item is not None:
+                    self._odd_items[attribute.item.name] = attribute.name
+                    outside[attribute.item.name] = odd.outside_buckets(attribute)
+            items = [*odd.cover_items(), *items]
         names = [i.name for i in items] + [c.name for c in crosses or ()]
-        duplicates = sorted({n for n in names if names.count(n) > 1})
-        if duplicates:
-            raise ValueError(f"coverage: names used more than once: {duplicates}")
-        self._items = [_ItemHits(i) for i in items]
-        self._crosses = [_CrossHits(c) for c in crosses or ()]
-        # Conditions an item or a cross is sampled on, and whether each was
-        # satisfied on the previous tick: an item is sampled when one becomes
-        # satisfied, not on every tick it stays so.
-        self._conditions: dict[int, Any] = {}
-        self._was_satisfied: dict[int, bool] = {}
+        if duplicates(names):
+            raise ValueError(
+                f"coverage: names used more than once: {duplicates(names)}"
+            )
+        self._items = [_ItemHits(i, outside.get(i.name, [])) for i in items]
+        self._crosses = [_CrossHits(c, outside) for c in crosses or ()]
+        # Items and crosses by the event they are sampled on.
+        self._items_on: dict[int, list[_ItemHits]] = {}
         for entry in self._items:
-            event = entry.item.event
-            if not isinstance(event, SamplingEvent):
-                self._conditions[id(event)] = event
-                self._was_satisfied[id(event)] = False
-
-    @property
-    def empty(self) -> bool:
-        return not self._items
+            self._items_on.setdefault(id(entry.item.event), []).append(entry)
+        self._crosses_on: dict[int, list[_CrossHits]] = {}
+        for cross in self._crosses:
+            self._crosses_on.setdefault(id(cross.cross.event), []).append(cross)
+        # Conditions an item is sampled on, each with whether it was satisfied
+        # on the previous tick: an item is sampled when one becomes satisfied,
+        # not on every tick it stays so.
+        self._conditions: dict[int, list[Any]] = {
+            id(e.item.event): [e.item.event, False]
+            for e in self._items
+            if not isinstance(e.item.event, SamplingEvent)
+        }
+        self._last_elapsed = 0.0
 
     def start(self, world: "carla.World", elapsed: float) -> None:
         """Sample the items on :attr:`SamplingEvent.START`."""
@@ -181,11 +204,15 @@ class CoverageCollector:
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Sample the items on :attr:`SamplingEvent.TICK` and on conditions that fired."""
-        self._sample_event(world, SamplingEvent.TICK)
+        values: dict[str, Any] = {}
         if self._odd is not None:
-            self._odd.record(self._odd_values(world), self._last_elapsed, elapsed)
+            attributes = self._odd.odd.sample(world)
+            values = {item: attributes[a] for item, a in self._odd_items.items()}
+            self._odd.record(attributes, self._last_elapsed, elapsed)
         self._last_elapsed = elapsed
-        for key, condition in self._conditions.items():
+        self._sample_event(world, SamplingEvent.TICK, values)
+        for key, entry in self._conditions.items():
+            condition, was_satisfied = entry
             try:
                 satisfied = condition.check(world, elapsed) is not None
             except Exception:
@@ -195,9 +222,8 @@ class CoverageCollector:
                     exc_info=True,
                 )
                 satisfied = False
-            rising = satisfied and not self._was_satisfied[key]
-            self._was_satisfied[key] = satisfied
-            if rising:
+            entry[1] = satisfied
+            if satisfied and not was_satisfied:
                 self._sample_event(world, condition)
 
     def end(self, world: "carla.World", elapsed: float) -> None:
@@ -226,44 +252,43 @@ class CoverageCollector:
 
     # ------------------------------------------------------------------
 
-    def _odd_values(self, world: "carla.World") -> dict[str, Any]:
-        """The ODD's attribute values this tick: as sampled, or read now."""
-        assert self._odd is not None
-        values: dict[str, Any] = {}
-        for attribute in self._odd.odd.attributes:
-            if attribute.item is not None:
-                values[attribute.name] = self._values.get(attribute.item.name)
-                continue
-            try:
-                values[attribute.name] = attribute.probe(world)
-            except Exception:
-                values[attribute.name] = None
-        return values
-
-    def _sample_event(self, world: "carla.World", event: Event) -> None:
-        buckets: dict[str, Optional[str]] = {}
-        for entry in self._items:
-            if entry.item.event is event:
-                buckets[entry.item.name] = self._sample(entry, world)
-        if not buckets:
+    def _sample_event(
+        self,
+        world: "carla.World",
+        event: Event,
+        values: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Sample the items on *event*; *values* holds those sampled already."""
+        entries = self._items_on.get(id(event), ())
+        if not entries:
             return
-        for cross in self._crosses:
-            if cross.cross.event is not event:
-                continue
+        buckets: dict[str, Optional[str]] = {}
+        for entry in entries:
+            name = entry.item.name
+            if values is not None and name in values:
+                value = values[name]
+            else:
+                value = self._evaluate(entry, world)
+            buckets[name] = self._count(entry, value)
+        for cross in self._crosses_on.get(id(event), ()):
             cell = [buckets.get(i.name) for i in cross.cross.items]
             if all(label is not None for label in cell):
                 key = CROSS_SEPARATOR.join(cell)  # type: ignore[arg-type]
                 if key in cross.hits:
                     cross.hits[key] += 1
 
-    def _sample(self, entry: _ItemHits, world: "carla.World") -> Optional[str]:
-        """Sample one item; the bucket it hit, or ``None`` when it hit none."""
-        item = entry.item
-        value = self._evaluate(entry, world)
-        if value is _NO_SAMPLE or value is None:
-            self._values[item.name] = None
+    def _evaluate(self, entry: _ItemHits, world: "carla.World") -> Any:
+        try:
+            return entry.item.expression(world)
+        except Exception:
+            self._fail_once(entry, "expression raised")
             return None
-        self._values[item.name] = value
+
+    def _count(self, entry: _ItemHits, value: Any) -> Optional[str]:
+        """Count *value* for one item; the bucket it hit, or ``None`` when it hit none."""
+        if value is None:
+            return None
+        item = entry.item
         try:
             if item.ignore is not None and item.ignore(value):
                 entry.ignored += 1
@@ -279,13 +304,6 @@ class CoverageCollector:
         if label in (BELOW_RANGE, ABOVE_RANGE) or not item.numeric:
             entry.out_of_range[label] = entry.out_of_range.get(label, 0) + 1
         return None
-
-    def _evaluate(self, entry: _ItemHits, world: "carla.World") -> Any:
-        try:
-            return entry.item.expression(world)
-        except Exception:
-            self._fail_once(entry, "expression raised")
-            return _NO_SAMPLE
 
     @staticmethod
     def _fail_once(entry: _ItemHits, what: str) -> None:

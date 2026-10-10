@@ -49,14 +49,9 @@ def _show(spec: str) -> int:
     odd = resolve_odd(spec)
     out = odd.describe()
     out["attributes"] = [
-        {
-            "name": a.name,
-            "unit": a.unit,
-            "text": a.text,
-            "buckets": list(a.item.labels) if a.item is not None else None,
-            "outside_odd": odd.outside_buckets(a),
-        }
+        {**a.item.describe(), "outside_odd": odd.outside_buckets(a)}
         for a in odd.attributes
+        if a.item is not None
     ]
     print(json.dumps(out, indent=2))  # noqa: T201
     return 0

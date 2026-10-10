@@ -94,6 +94,16 @@ def check_registered_scenario(
     if result is None:
         logger.info("Scenario %r has a custom builder: not statically checked", name)
         return None
+    return _enforce(result, mode)
+
+
+def _enforce(result: TypeCheckResult, mode: TypecheckMode) -> TypeCheckResult:
+    """Apply *mode* to a check's *result*: raise, warn or log.
+
+    Raises:
+        ScenarioTypeError: The check failed, or *mode* is ``required`` and no
+            check could be made.
+    """
     if result.skipped is not None:
         if mode == "required":
             result.ok = False
@@ -127,14 +137,4 @@ def check_odd(spec: str | None, mode: TypecheckMode = "auto") -> TypeCheckResult
     builder = odd_builder(spec)
     if builder is None:
         return None
-    result = typecheck_odd(builder)
-    if result.skipped is not None:
-        if mode == "required":
-            result.ok = False
-            raise ScenarioTypeError(result)
-        logger.warning("%s", result.format())
-    elif not result.ok:
-        raise ScenarioTypeError(result)
-    else:
-        logger.info("%s", result.format())
-    return result
+    return _enforce(typecheck_odd(builder), mode)

@@ -6,19 +6,14 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only, _expect_float
-from .coverage import _expect_optional_range, _expect_optional_edges
+from ._tc import _keyword_only, _expect_float, _expect_optional_float
+from .coverage import _expect_cover_expression, _expect_optional_range, _expect_optional_edges
 
 
 NEARBY_RADIUS_M: float = 50.0
 ILLUMINATION_LEVELS: List[str] = ["day", "low_sun", "twilight", "night"]
 INTENSITY_LEVELS: List[str] = ["none", "light", "moderate", "heavy"]
 TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
-
-
-def _expect_probe(probe):
-    """A Callable[[carla.World], Any] argument."""
-    probe(carla.Client().get_world())
 
 
 class OddCondition:
@@ -58,8 +53,9 @@ class OddAttribute:
     def __init__(self, name: str, probe, *_kw, unit: str = "", range = None,
                  every = None, buckets = None, values = None, text: str = ""):
         _keyword_only(_kw, "OddAttribute(): every argument but name and probe")
-        _expect_probe(probe)
+        _expect_cover_expression(probe)
         _expect_optional_range(range)
+        _expect_optional_float(every)
         _expect_optional_edges(buckets)
         self.name = name
         self.unit = unit
@@ -145,9 +141,10 @@ class OddDefinition:
     text: str
 
     def __init__(self, name: str, attributes: List[OddAttribute], modules = None, *_kw,
-                 root: Optional[str] = None, text: str = ""):
-        _keyword_only(_kw, "OddDefinition(): root and text")
+                 roots = None, text: str = ""):
+        _keyword_only(_kw, "OddDefinition(): roots and text")
         _expect_optional_modules(modules)
+        _expect_optional_labels(roots)
         self.name = name
         self.text = text
 

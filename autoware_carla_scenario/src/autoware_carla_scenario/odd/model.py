@@ -17,10 +17,9 @@ names:
   (:func:`module_holds`).  A label holds when any module declaring it holds.
 * An **inactive** module is ignored: every condition referring to it is
   satisfied.
-* The **root** modules are the entry points.  They are the one given as
-  ``root``, otherwise every active module no other module refers to, either
-  by name or through a label it declares.  The ODD holds when its roots
-  hold.
+* The **roots** are the entry points.  Each root candidate (by default,
+  every active module) that no other module refers to, by name or through a
+  label it declares, is a root.  The ODD holds when its roots hold.
 
 Missing values follow OpenODD's *missing-value semantics*: a value the probe
 could not read (``None``) does not by itself put a situation outside the ODD.
@@ -29,6 +28,11 @@ This is open-world semantics.  A condition that needs the value says so with
 exclude section.  Internally, conditions are evaluated three-valued.  A
 verdict that is unknown only because values are missing counts as inside, and
 is flagged as resting on missing values.
+
+The same evaluation decides which buckets lie outside the ODD.  The bucket
+stands for the attribute's value, and every other attribute is left open.
+A bucket is outside when the ODD fails for every value in it, whatever the
+other attributes are.
 
 Modules follow ISO 34503's "default" definition mode, as OpenODD requires:
 whatever no module rules out is inside the ODD.
@@ -40,7 +44,13 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Union
 
-from ..coverage.items import CoverGroup, CoverItem, SamplingEvent, value_label
+from ..coverage.items import (
+    CoverGroup,
+    CoverItem,
+    SamplingEvent,
+    duplicates,
+    value_label,
+)
 
 __all__ = [
     "OddAttribute",
@@ -51,6 +61,7 @@ __all__ = [
     "all_of",
     "any_of",
     "module_holds",
+    "read_probe",
 ]
 
 Probe = Callable[[Any], Any]
@@ -60,6 +71,14 @@ Probe = Callable[[Any], Any]
 #: take as satisfied.
 INACTIVE = "inactive"
 Truth = Mapping[str, Union[Optional[bool], str]]
+
+
+def read_probe(probe: Probe, world: Any) -> Any:
+    """What *probe* reads from *world*; ``None`` (missing) when it raises."""
+    try:
+        return probe(world)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +108,22 @@ def _or(values: Iterable[Optional[bool]]) -> Optional[bool]:
 
 def _not(value: Optional[bool]) -> Optional[bool]:
     return None if value is None else not value
+
+
+# ---------------------------------------------------------------------------
+# Abstract values: what deciding the buckets outside the ODD evaluates
+# ---------------------------------------------------------------------------
+
+#: An attribute whose value is open: present, but could be anything.
+_OPEN = object()
+
+
+@dataclass(frozen=True)
+class _Bucket:
+    """Every value of one bucket of a cover item."""
+
+    item: CoverItem
+    index: int
 
 
 # ---------------------------------------------------------------------------
@@ -122,14 +157,15 @@ class _Interval:
         high_ok = x < self.high or (self.include_high and x == self.high)
         return low_ok and high_ok
 
-    def contains_bucket(self, low: float, high: float, closed: bool) -> bool:
-        """Whether every value in ``[low, high)`` (``]`` when *closed*) holds."""
-        low_ok = low > self.low or (self.include_low and low == self.low)
-        if closed:
-            high_ok = high < self.high or (self.include_high and high == self.high)
-        else:
-            high_ok = high <= self.high
-        return low_ok and high_ok
+    def on_bucket(self, low: float, high: float, closed: bool) -> Optional[bool]:
+        """Whether ``[low, high)`` (``]`` when *closed*) lies within: ``None``, partly."""
+        if self.holds(low) and (self.holds(high) if closed else high <= self.high):
+            return True
+        below = high < self.low or (
+            high == self.low and (not closed or not self.include_low)
+        )
+        above = low > self.high or (low == self.high and not self.include_high)
+        return False if below or above else None
 
     def describe(self) -> str:
         if self.low == -math.inf:
@@ -198,34 +234,34 @@ class _Leaf(OddCondition):
 
     def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         value = values.get(self.attribute.name)
-        if value is None:
+        if value is None or value is _OPEN:
             return None
+        if isinstance(value, _Bucket):
+            return self._on_bucket(value)
         try:
             return self.predicate.holds(value)
         except (TypeError, ValueError):
             return None
+
+    def _on_bucket(self, bucket: _Bucket) -> Optional[bool]:
+        item, i = bucket.item, bucket.index
+        if not item.numeric:
+            values = item.values
+            assert isinstance(values, list)  # CoverItem keeps its values as a list
+            try:
+                return self.predicate.holds(values[i])
+            except (TypeError, ValueError):
+                return None
+        if isinstance(self.predicate, _Interval):
+            last = i == len(item.labels) - 1
+            return self.predicate.on_bucket(item.edges[i], item.edges[i + 1], last)
+        return None
 
     def describe(self) -> str:
         return f"{self.attribute.name} {self.predicate.describe()}"
 
     def _attributes(self) -> list["OddAttribute"]:
         return [self.attribute]
-
-    def contains_bucket(self, item: CoverItem, index: int) -> bool:
-        """Whether every value of bucket *index* of *item* satisfies this leaf."""
-        if item.numeric:
-            if not isinstance(self.predicate, _Interval):
-                return False
-            last = index == len(item.labels) - 1
-            return self.predicate.contains_bucket(
-                item.edges[index], item.edges[index + 1], closed=last
-            )
-        assert item.values is not None
-        value = list(item.values)[index]
-        try:
-            return self.predicate.holds(value)
-        except (TypeError, ValueError):
-            return False
 
 
 class _Missing(OddCondition):
@@ -235,7 +271,8 @@ class _Missing(OddCondition):
         self.attribute = attribute
 
     def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
-        return values.get(self.attribute.name) is None
+        value = values.get(self.attribute.name)
+        return None if value is _OPEN else value is None
 
     def describe(self) -> str:
         return f"{self.attribute.name} is unknown"
@@ -352,21 +389,23 @@ class OddAttribute:
         self.unit = unit
         self.text = text
         self.item: Optional[CoverItem] = None
-        if values is not None or buckets is not None or range is not None:
-            self.item = CoverItem(
-                name=f"odd.{name}",
-                expression=probe,
-                unit=unit,
-                range=range,
-                every=every,
-                buckets=buckets,
-                values=values,
-                event=SamplingEvent.TICK,
-                text=text,
-                group=CoverGroup.ODD,
-            )
-        elif every is not None:
-            raise ValueError(f"OddAttribute({name}): every needs a range")
+        self._set_buckets(range=range, every=every, buckets=buckets, values=values)
+
+    def _set_buckets(self, **buckets: Any) -> None:
+        """Make the attribute's cover item from ``range``/``every``/``buckets``/``values``."""
+        if all(buckets.get(k) is None for k in ("values", "buckets", "range")):
+            if buckets.get("every") is not None:
+                raise ValueError(f"OddAttribute({self.name}): every needs a range")
+            return
+        self.item = CoverItem(
+            name=f"odd.{self.name}",
+            expression=self.probe,
+            unit=self.unit,
+            event=SamplingEvent.TICK,
+            text=self.text,
+            group=CoverGroup.ODD,
+            **buckets,
+        )
 
     # -- conditions ------------------------------------------------------
 
@@ -462,32 +501,32 @@ class OddModule:
                 f"OddModule({name}): one exclude section, EXCLUDE_AND or EXCLUDE_OR"
             )
         self.name = name
-        self.include_and = list(include_and or ())
-        self.include_or = list(include_or or ())
-        self.exclude_and = list(exclude_and or ())
-        self.exclude_or = list(exclude_or or ())
+        #: The sections, as groups: ``all`` for ``*_AND``, ``any`` for ``*_OR``.
+        self.include: Optional[_Group] = (
+            _Group("all", include_and)
+            if include_and
+            else _Group("any", include_or)
+            if include_or
+            else None
+        )
+        self.exclude: Optional[_Group] = (
+            _Group("all", exclude_and)
+            if exclude_and
+            else _Group("any", exclude_or)
+            if exclude_or
+            else None
+        )
         self.labels = list(labels or ())
         self.active = active
         self.text = text
 
     def _conditions(self) -> list[OddCondition]:
-        return [
-            *self.include_and,
-            *self.include_or,
-            *self.exclude_and,
-            *self.exclude_or,
-        ]
+        return [c for s in (self.include, self.exclude) if s for c in s.children]
 
     def evaluate(self, values: Mapping[str, Any], truth: Truth) -> Optional[bool]:
         """Whether the module holds for *values*, given *truth* of the others."""
-        if self.include_or:
-            include = _or(c.evaluate(values, truth) for c in self.include_or)
-        else:
-            include = _and(c.evaluate(values, truth) for c in self.include_and)
-        if self.exclude_and:
-            exclude = _and(c.evaluate(values, truth) for c in self.exclude_and)
-        else:
-            exclude = _or(c.evaluate(values, truth) for c in self.exclude_or)
+        include = self.include.evaluate(values, truth) if self.include else True
+        exclude = self.exclude.evaluate(values, truth) if self.exclude else False
         return _and([include, _not(exclude)])
 
     def describe(self) -> dict[str, Any]:
@@ -496,10 +535,10 @@ class OddModule:
             "text": self.text,
             "active": self.active,
         }
-        for key in ("include_and", "include_or", "exclude_and", "exclude_or"):
-            conditions = getattr(self, key)
-            if conditions:
-                out[key] = [c.describe() for c in conditions]
+        for kind, section in (("include", self.include), ("exclude", self.exclude)):
+            if section is not None:
+                key = f"{kind}_{'and' if section.op == 'all' else 'or'}"
+                out[key] = [c.describe() for c in section.children]
         if self.labels:
             out["labels"] = list(self.labels)
         return out
@@ -531,8 +570,9 @@ class OddDefinition:
         name: The ODD's name, written to coverage files and reports.
         attributes: The attributes, measured on every tick.
         modules: The rules.  With none, every situation is inside the ODD.
-        root: The module whose verdict is the ODD's.  ``None`` takes every
-            active module that no other module refers to.
+        roots: The root candidates: those no other module refers to are the
+            roots (all of them, if every one is referred to).  ``None``
+            takes every active module.
         text: A description for the report.
     """
 
@@ -542,7 +582,7 @@ class OddDefinition:
         attributes: Sequence[OddAttribute],
         modules: Optional[Sequence[OddModule]] = None,
         *,
-        root: Optional[str] = None,
+        roots: Optional[Sequence[str]] = None,
         text: str = "",
     ) -> None:
         if not name:
@@ -553,15 +593,15 @@ class OddDefinition:
         self.modules = list(modules or ())
 
         names = [a.name for a in self.attributes]
-        duplicates = sorted({n for n in names if names.count(n) > 1})
-        if duplicates:
+        if duplicates(names):
             raise ValueError(
-                f"ODD {name}: attributes named more than once: {duplicates}"
+                f"ODD {name}: attributes named more than once: {duplicates(names)}"
             )
         module_names = [m.name for m in self.modules]
-        duplicates = sorted({n for n in module_names if module_names.count(n) > 1})
-        if duplicates:
-            raise ValueError(f"ODD {name}: modules named more than once: {duplicates}")
+        if duplicates(module_names):
+            raise ValueError(
+                f"ODD {name}: modules named more than once: {duplicates(module_names)}"
+            )
         self._by_module = {m.name: m for m in self.modules}
         self._label_modules: dict[str, list[str]] = {}
         for m in self.modules:
@@ -572,8 +612,9 @@ class OddDefinition:
                         "attribute's name"
                     )
                 self._label_modules.setdefault(label, []).append(m.name)
-        if root is not None and root not in self._by_module:
-            raise ValueError(f"ODD {name}: root module {root!r} does not exist")
+        unknown_roots = [r for r in roots or () if r not in self._by_module]
+        if unknown_roots:
+            raise ValueError(f"ODD {name}: no root module {unknown_roots}")
 
         known = set(names)
         for m in self.modules:
@@ -591,7 +632,24 @@ class OddDefinition:
                             "which is neither a module nor a label"
                         )
         self._order = self._evaluation_order()
-        self.roots = [root] if root is not None else self._unreferenced()
+        # Each label is settled after the last module declaring it.
+        last: dict[str, str] = {}
+        for module in self._order:
+            for label in module.labels:
+                last[label] = module.name
+        self._labels_after: dict[str, list[str]] = {}
+        for label, module_name in last.items():
+            self._labels_after.setdefault(module_name, []).append(label)
+
+        referenced: set[str] = set()
+        for module in self.modules:
+            referenced |= self._depends_on(module)
+        candidates = (
+            list(roots) if roots else [m.name for m in self.modules if m.active]
+        )
+        self.roots = [r for r in candidates if r not in referenced] or candidates
+        self._plain = [a for a in self.attributes if not _derived(a.probe)]
+        self._derived = [a for a in self.attributes if _derived(a.probe)]
         self._outside = self._outside_buckets()
 
     # -- structure -------------------------------------------------------
@@ -627,38 +685,21 @@ class OddDefinition:
             visit(m.name, [])
         return order
 
-    def _unreferenced(self) -> list[str]:
-        """Active modules no other module refers to: the roots, by default."""
-        referenced: set[str] = set()
-        for module in self.modules:
-            referenced |= self._depends_on(module)
-        return [m.name for m in self.modules if m.active and m.name not in referenced]
-
-    def _use_roots(self, roots: Sequence[str]) -> None:
-        """Make *roots* the entry points (an OpenODD document's ``ODD`` modules)."""
-        unknown = [r for r in roots if r not in self._by_module]
-        if unknown:
-            raise ValueError(f"ODD {self.name}: no root module {unknown}")
-        self.roots = list(roots)
-        self._outside = self._outside_buckets()
-
     # -- evaluation ------------------------------------------------------
 
     def evaluate(self, values: Mapping[str, Any]) -> OddVerdict:
         """The ODD's verdict on *values*, by attribute name (``None``: missing)."""
         truth: dict[str, Union[Optional[bool], str]] = {}
         # The order is topological over labels too (a reference to a label
-        # depends on every module declaring it), so each label is complete
-        # before any module that refers to it is evaluated.
+        # depends on every module declaring it), so a label is settled before
+        # any module that refers to it.
         for module in self._order:
             truth[module.name] = (
                 module.evaluate(values, truth) if module.active else INACTIVE
             )
-            for label in module.labels:
+            for label in self._labels_after.get(module.name, ()):
                 verdicts = [
-                    truth[m]
-                    for m in self._label_modules[label]
-                    if m in truth and truth[m] != INACTIVE
+                    truth[m] for m in self._label_modules[label] if truth[m] != INACTIVE
                 ]
                 truth[label] = _or(verdicts) if verdicts else INACTIVE  # type: ignore[arg-type]
         verdict = _and(truth[r] for r in self.roots)  # type: ignore[misc]
@@ -669,77 +710,26 @@ class OddDefinition:
         )
 
     def sample(self, world: Any) -> dict[str, Any]:
-        """Every attribute's value in *world*; a probe that raises gives ``None``."""
-        values: dict[str, Any] = {}
-        for attribute in self.attributes:
-            try:
-                values[attribute.name] = attribute.probe(world)
-            except Exception:
-                values[attribute.name] = None
+        """Every attribute's value in *world*, by name; ``None`` when missing.
+
+        Each probe runs once.  An attribute derived from others (an OpenODD
+        categorical defined by expressions) is worked out from their values.
+        """
+        values = {a.name: read_probe(a.probe, world) for a in self._plain}
+        for attribute in self._derived:
+            values[attribute.name] = attribute.probe.from_values(values)  # type: ignore[attr-defined]
         return values
 
     # -- buckets inside and outside the ODD --------------------------------
 
-    def _members(self, name: str) -> list[str]:
-        """The modules a module or label name stands for."""
-        return self._label_modules.get(name, [name] if name in self._by_module else [])
-
-    def _requirements(self) -> tuple[list[_Leaf], list[_Leaf]]:
-        """Single-attribute conditions that must hold, and that must not.
-
-        Walks from the roots through module references: a module the ODD
-        needs to hold contributes its include-AND leaves (and a lone
-        include-OR leaf) as conditions that must hold, and its exclude leaves
-        as ones that must not.  A module it needs *not* to hold contributes
-        the leaves that alone make it hold.
-        """
-        must_hold: list[_Leaf] = []
-        must_not: list[_Leaf] = []
-        seen: set[tuple[str, bool]] = set()
-        pending = [(r, True) for r in self.roots]
-        while pending:
-            name, holds = pending.pop()
-            if (name, holds) in seen:
-                continue
-            seen.add((name, holds))
-            module = self._by_module[name]
-            if not module.active:
-                continue
-            include = module.include_and or module.include_or
-            single_include = len(module.include_or) == 1 or bool(module.include_and)
-            if holds:
-                if single_include:
-                    must_hold += [c for c in include if isinstance(c, _Leaf)]
-                excludes = module.exclude_or or (
-                    module.exclude_and if len(module.exclude_and) == 1 else []
-                )
-                must_not += [c for c in excludes if isinstance(c, _Leaf)]
-                for c in module.include_and:
-                    if isinstance(c, _ModuleRef):
-                        pending += [(m, c.holds) for m in self._members(c.name)]
-                for c in module.exclude_or:
-                    if isinstance(c, _ModuleRef):
-                        pending += [(m, not c.holds) for m in self._members(c.name)]
-            elif not module.exclude_and and not module.exclude_or:
-                # Without an exclude section the module holds whenever its
-                # include section does, so what makes that hold must not.
-                if module.include_or:
-                    must_not += [c for c in module.include_or if isinstance(c, _Leaf)]
-                elif len(module.include_and) == 1 and isinstance(
-                    module.include_and[0], _Leaf
-                ):
-                    must_not.append(module.include_and[0])
-        return must_hold, must_not
-
     def _outside_buckets(self) -> dict[str, list[str]]:
         """Attribute name -> the labels of its buckets the ODD rules out.
 
-        A bucket is ruled out when every value in it fails a condition that
-        must hold, or meets one that must not (:meth:`_requirements`).  A
-        condition that ties attributes together can rule out a combination,
-        never a bucket on its own, so it leaves the bucket in.
+        A bucket is ruled out when the ODD fails for every value in it,
+        whatever the other attributes are: the bucket is evaluated in place
+        of the attribute's value, with every other attribute left open.
         """
-        must_hold, must_not = self._requirements()
+        open_values: dict[str, Any] = {a.name: _OPEN for a in self.attributes}
         outside: dict[str, list[str]] = {}
         for attribute in self.attributes:
             item = attribute.item
@@ -748,15 +738,9 @@ class OddDefinition:
             labels = [
                 label
                 for index, label in enumerate(item.labels)
-                if any(
-                    leaf.attribute is attribute
-                    and not leaf.contains_bucket(item, index)
-                    for leaf in must_hold
-                )
-                or any(
-                    leaf.attribute is attribute and leaf.contains_bucket(item, index)
-                    for leaf in must_not
-                )
+                if not self.evaluate(
+                    {**open_values, attribute.name: _Bucket(item, index)}
+                ).inside
             ]
             if labels:
                 outside[attribute.name] = labels
@@ -768,12 +752,7 @@ class OddDefinition:
 
     def cover_items(self) -> list[CoverItem]:
         """The cover items of the attributes that have buckets."""
-        items = []
-        for attribute in self.attributes:
-            if attribute.item is not None:
-                attribute.item.outside = self.outside_buckets(attribute)
-                items.append(attribute.item)
-        return items
+        return [a.item for a in self.attributes if a.item is not None]
 
     def unmeasured(self) -> list[str]:
         """Attributes with no buckets: monitored, but not covered."""
@@ -791,3 +770,8 @@ class OddDefinition:
 
     def __repr__(self) -> str:
         return f"OddDefinition({self.name!r})"
+
+
+def _derived(probe: Any) -> bool:
+    """Whether *probe* derives its value from the other attributes' values."""
+    return callable(getattr(probe, "from_values", None))

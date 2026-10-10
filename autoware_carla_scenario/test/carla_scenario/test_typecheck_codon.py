@@ -316,7 +316,7 @@ def build() -> OddDefinition:
                 include_or=[yaw.at_most(20.0), any_of([yaw.less_than(25.0)])],
             ),
         ],
-        root="root",
+        roots=["root"],
     )
 
 

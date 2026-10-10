@@ -35,7 +35,7 @@ The model and its semantics follow OpenODD 1.0 (chapters 6 and 7).
 | **Condition** | A test on one attribute (`speed_limit.between(0, 60)`), a group of conditions (`all_of`, `any_of`), another module's verdict (`module_holds`), or a missing value (`is_unknown`). |
 | **Module** | A named rule: `INCLUDE AND (NOT EXCLUDE)`. It has at most one include section and at most one exclude section. |
 | **Label** | A name several modules declare. It holds when any active module declaring it holds. |
-| **Root** | An entry point. It is the `root` given, otherwise every active module no other module refers to (by name or through a label). The ODD holds when its roots hold. |
+| **Root** | An entry point. Each root candidate (`roots=`; by default every active module) that no other module refers to, by name or through a label, is a root. The ODD holds when its roots hold. |
 
 **Missing values.** OpenODD's *missing-value semantics* apply. A value the
 probe could not read does not, by itself, put a situation outside the ODD
@@ -104,7 +104,7 @@ def urban_odd() -> OddDefinition:
                 "root", include_and=[module_holds("urban_roads"), module_holds("fair")]
             ),
         ],
-        root="root",
+        roots=["root"],
         text="Urban roads, fair weather",
     )
 
@@ -328,9 +328,9 @@ When no buckets are given:
 - a categorical gets one bucket per literal, and a boolean gets two;
 - a number gets buckets at the **thresholds the modules test it against**.
   `"<= 60 km/h"` makes `[-inf, 60)` and `[60, inf]`, so every boundary the ODD
-  draws is tested from both sides. Each bucket holds its lower edge, so the
-  value 60 itself lands in `[60, inf]`, which `<= 60` marks as outside. Give
-  explicit `buckets` where the edge value matters.
+  draws is tested from both sides. Each bucket holds its lower edge, so
+  `[60, inf]` holds 60, which `<= 60` lets in. That bucket is partly inside, so
+  it stays a coverage target. With `"< 60 km/h"`, it would be outside.
 
 A categorical defined by expressions is measured when what its expressions
 read is. A concept with no probe is always missing, and is reported as
@@ -353,13 +353,20 @@ uv run scenario scenario=intersection_passing/left_turn odd=path/to/urban.yaml
 uv run scenario scenario=intersection_passing/left_turn odd=my_package.odds:urban_odd
 ```
 
-A package that ships its ODD registers the builder under the
-`autoware_carla_scenario.odds` entry point group. A private taxonomy can then
-plug in without the framework knowing it:
+A package that ships its ODD registers it through the
+`autoware_carla_scenario.odds` entry point group. The entry point names a
+function that takes nothing and calls `register_odd`, the convention the
+scenario and traffic-backend groups use. A private taxonomy can then plug in
+without the framework knowing it:
 
 ```toml
 [project.entry-points."autoware_carla_scenario.odds"]
-urban = "my_package.odds:urban_odd"
+my_package = "my_package.odds:register"
+```
+
+```python
+def register() -> None:
+    register_odd("urban", urban_odd)
 ```
 
 ## Checking an ODD
@@ -393,9 +400,14 @@ the following ([Coverage](coverage.md#the-report)):
 - which runs left it, and when (the first intervals);
 - which attributes are monitored but not covered.
 
-A bucket that a module rules out on its own is **outside the ODD**. It is
-reported, but it is not a coverage target. An example is `nonurban` under
-`location.is_in(["urban"])`. Some conditions tie several attributes together
-(`any_of` across two of them, or a junction and a speed). Such a condition
-rules out combinations, never a single bucket, so it leaves the buckets as
-targets.
+A bucket is **outside the ODD** when the ODD fails for every value in it,
+whatever the other attributes are. It is reported, but it is not a coverage
+target. An example is `nonurban` under `location.is_in(["urban"])`.
+
+To decide this, the ODD's own evaluation runs with the bucket in place of the
+attribute's value and every other attribute left open. Labels, inactive
+modules, groups and module references therefore count exactly as they do on
+a tick. A condition that ties attributes together (`any_of` across two of
+them, or a junction and a speed) rules out combinations, never a single
+bucket. A bucket only partly inside (`[60, 90]` under `<= 60`) stays a
+target.

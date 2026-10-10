@@ -678,6 +678,8 @@ def run_batch(
         scenarios.append(scenario)
 
     first_cfg = configs[0]
+    # The ODD every run is measured against, checked once when it is Python.
+    check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
 
@@ -761,8 +763,6 @@ def build_scenario(
     # Compile the scenario before building anything of it: one that does not
     # type-check is refused here, before the runner touches CARLA.
     check_registered_scenario(scenario_name, scenario_dict, typecheck_mode(cfg))
-    # And the ODD the run is measured against, when it is written in Python.
-    check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
@@ -883,6 +883,8 @@ def run_scenario(
     logger.info("Resolved config:\n%s", OmegaConf.to_yaml(cfg))
 
     _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
+    # The ODD the run is measured against, checked when it is Python.
+    check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     map_paths = resolve_map_paths(cfg.map)
     cooldown = float(cfg.server.get("cooldown_seconds", 0.0))

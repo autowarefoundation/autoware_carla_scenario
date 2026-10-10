@@ -120,7 +120,7 @@ class TestModulesAndOdd:
         modules = [
             OddModule(
                 "roads",
-                include_and=[a["loc"].is_in(["urban"]), a["speed"].between(0, 60)],
+                include_and=[a["loc"].is_in(["urban"]), a["speed"].less_than(60)],
             ),
             OddModule(
                 "weather", exclude_or=[a["rain"].is_in(["heavy"])], labels=["ok"]
@@ -160,7 +160,7 @@ class TestModulesAndOdd:
         root = OddModule(
             "root", include_and=[module_holds("roads"), module_holds("ok")]
         )
-        odd = OddDefinition("t", odd.attributes, [*odd.modules, root], root="root")
+        odd = OddDefinition("t", odd.attributes, [*odd.modules, root], roots=["root"])
         assert odd.roots == ["root"]
         inside = {"speed": 40, "loc": "urban", "rain": "none"}
         assert odd.evaluate(inside).inside is True
@@ -177,7 +177,7 @@ class TestModulesAndOdd:
         for holds in (True, False):
             root = OddModule("root", include_and=[module_holds("never", holds)])
             with_root = OddDefinition(
-                "t", odd.attributes, [*odd.modules, root], root="root"
+                "t", odd.attributes, [*odd.modules, root], roots=["root"]
             )
             assert with_root.evaluate({"speed": 5}).inside is True
 
@@ -190,8 +190,11 @@ class TestModulesAndOdd:
         assert odd.outside_buckets(a["speed"]) == ["[60, 90]"]
         assert odd.outside_buckets(a["loc"]) == ["nonurban"]
         assert odd.outside_buckets(a["rain"]) == ["heavy"]
-        items = {i.name: i for i in odd.cover_items()}
-        assert items["odd.loc"].outside == ["nonurban"]
+        assert [i.name for i in odd.cover_items()] == [
+            "odd.speed",
+            "odd.loc",
+            "odd.rain",
+        ]
 
     def test_a_module_the_odd_excludes_rules_its_leaves_out(self) -> None:
         rain = _attr("rain", values=["none", "light", "heavy"])
@@ -206,6 +209,20 @@ class TestModulesAndOdd:
         assert odd.roots == ["root"]
         assert odd.outside_buckets(rain) == ["heavy"]
 
+    def test_a_bucket_partly_inside_stays_a_target(self) -> None:
+        speed = _attr("speed", buckets=[0, 30, 60, 90])
+        odd = OddDefinition(
+            "t", [speed], [OddModule("m", include_and=[speed.at_most(60)])]
+        )
+        # [60, 90] holds 60, which is inside.
+        assert odd.outside_buckets(speed) == []
+        odd = OddDefinition(
+            "t",
+            [speed],
+            [OddModule("m", include_or=[speed.less_than(30), speed.greater_than(60)])],
+        )
+        assert odd.outside_buckets(speed) == ["[30, 60)"]
+
     def test_a_condition_across_attributes_rules_out_no_bucket(self) -> None:
         a = _attr("a", values=[1, 2])
         b = _attr("b", values=[1, 2])
@@ -217,7 +234,7 @@ class TestModulesAndOdd:
         assert odd.outside_buckets(a) == [] and odd.outside_buckets(b) == []
 
     def test_an_unrequired_module_rules_out_no_bucket(self) -> None:
-        odd, a = self._odd(root="roads")
+        odd, a = self._odd(roots=["roads"])
         assert odd.outside_buckets(a["rain"]) == []
 
     def test_a_module_has_one_include_and_one_exclude_section(self) -> None:
@@ -263,8 +280,8 @@ class TestModulesAndOdd:
             OddDefinition("t", [x], build(x))
 
     def test_a_missing_root_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="root module"):
-            OddDefinition("t", [_attr(values=[1])], root="nope")
+        with pytest.raises(ValueError, match="no root module"):
+            OddDefinition("t", [_attr(values=[1])], roots=["nope"])
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +296,7 @@ def _speed_odd() -> OddDefinition:
         "speed_odd",
         [speed, hidden],
         [
-            OddModule("slow", include_and=[speed.at_most(60)]),
+            OddModule("slow", include_and=[speed.less_than(60)]),
             OddModule("visible", exclude_or=[hidden.equals(True)]),
         ],
     )
@@ -399,6 +416,7 @@ class _Lane:
     def __init__(self, lane_id: int) -> None:
         self.lane_id = lane_id
         self.lane_type = "LaneType.Driving"
+        self.road_id, self.section_id = 1, 0
         self.is_junction = False
         self._left: Any = None
         self._right: Any = None
@@ -499,7 +517,7 @@ class TestProbes:
     ) -> None:
         monkeypatch.setattr(
             probes,
-            "_lanelet_attributes",
+            "_lanelet_tags",
             lambda world: {"location": "urban", "subtype": "road", "speed_limit": "40"},
         )
         hits = _hits(_odd_world())
@@ -644,6 +662,10 @@ def _items(odd: OddDefinition) -> dict[str, Any]:
     return {i.name: i for i in odd.cover_items()}
 
 
+def _outside(odd: OddDefinition) -> dict[str, list[str]]:
+    return {a.name: odd.outside_buckets(a) for a in odd.attributes}
+
+
 class TestOpenOdd:
     def test_it_reads_the_standards_shape(self, tmp_path: Path) -> None:
         odd = load_odd_binding(_write(tmp_path))
@@ -694,23 +716,27 @@ class TestOpenOdd:
         RAIN["value"] = 0.0
 
     def test_buckets_and_what_the_odd_rules_out(self, tmp_path: Path) -> None:
-        items = _items(load_odd_binding(_write(tmp_path)))
+        odd = load_odd_binding(_write(tmp_path))
+        items, outside = _items(odd), _outside(odd)
         assert items["odd.scenery.road_type"].labels == [
             "town_local",
             "dead_end",
             "town_expressway",
             "expressway",
         ]
-        assert items["odd.scenery.road_type"].outside == [
-            "town_expressway",
-            "expressway",
-        ]
-        assert items["odd.scenery.lane_count"].outside == ["3"]
+        assert outside["scenery.road_type"] == ["town_expressway", "expressway"]
+        assert outside["scenery.lane_count"] == ["3"]
         # bad_weather (a label, one active module) must not hold.
-        assert items["odd.environment_conditions.rainfall_level"].outside == [
-            "heavy_rain"
+        assert outside["environment_conditions.rainfall_level"] == ["heavy_rain"]
+        assert outside["environment_conditions.is_dangerous_wind"] == ["true"]
+        # Thresholds the ODD tests become bucket edges, in the probe's unit.
+        assert items["odd.environment_conditions.rainfall_rate"].labels == [
+            "[-inf, 0.1)",
+            "[0.1, 2)",
+            "[2, 2.5)",
+            "[2.5, 7.6)",
+            "[7.6, inf]",
         ]
-        assert items["odd.environment_conditions.is_dangerous_wind"].outside == ["true"]
         # No probe, no buckets.
         assert "odd.connectivity.downlink_latency" not in items
 
@@ -908,7 +934,7 @@ class TestCli:
         assert odd_main(["show", "default"]) == 0
         shown = json.loads(capsys.readouterr().out)
         assert shown["name"] == "default"
-        assert any(a["name"] == "dynamic.ego_speed" for a in shown["attributes"])
+        assert any(a["name"] == "odd.dynamic.ego_speed" for a in shown["attributes"])
 
     def test_list(self, capsys: Any) -> None:
         assert odd_main(["list"]) == 0

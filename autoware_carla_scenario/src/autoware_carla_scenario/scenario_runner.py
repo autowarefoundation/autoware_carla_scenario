@@ -22,8 +22,8 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
-from .coverage import CoverageCollector
-from .odd import OddDefinition, default_odd, reset_probes
+from .coverage.collector import CoverageCollector
+from .odd import OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
@@ -326,9 +326,9 @@ class ScenarioRunner:
                 existed expects.
             odd: The ODD every run is measured against: its attributes are
                 the ODD coverage, its modules say which ticks were outside it
-                (docs/odd.md).  *None* selects :func:`default_odd`.
+                (docs/odd.md).  *None* selects the built-in ``default`` ODD.
         """
-        self.odd = odd if odd is not None else default_odd()
+        self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
         self._tm_port = tm_port

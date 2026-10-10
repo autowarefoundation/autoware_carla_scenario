@@ -9,6 +9,7 @@ which ticks were outside it.  See ``docs/odd.md``.
 """
 
 from . import probes
+from .openodd import OpenOddError, load_odd_binding, load_odd_file, load_openodd
 from .model import (
     OddAttribute,
     OddCondition,
@@ -18,6 +19,7 @@ from .model import (
     all_of,
     any_of,
     module_holds,
+    read_probe,
 )
 from .probes import (
     ILLUMINATION_LEVELS,
@@ -42,6 +44,7 @@ from .registry import (
     DEFAULT_ODD,
     ENTRY_POINT_GROUP,
     default_odd,
+    import_callable,
     odd_names,
     register_odd,
     resolve_odd,
@@ -70,12 +73,16 @@ __all__ = [
     "lanelet_location",
     "lanelet_speed_limit_kph",
     "lanelet_subtype",
+    "OpenOddError",
     "load_odd_binding",
+    "load_odd_file",
     "load_openodd",
     "module_holds",
+    "import_callable",
     "odd_names",
     "pedestrian_nearby",
     "probes",
+    "read_probe",
     "rain",
     "register_odd",
     "reset_probes",
@@ -83,12 +90,3 @@ __all__ = [
     "speed_limit_kph",
     "traffic_density",
 ]
-
-
-def __getattr__(name: str) -> object:
-    # The OpenODD reader needs PyYAML; import it only when asked for.
-    if name in ("load_openodd", "load_odd_binding"):
-        from . import openodd  # noqa: PLC0415
-
-        return getattr(openodd, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

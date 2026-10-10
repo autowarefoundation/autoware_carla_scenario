@@ -28,7 +28,7 @@ def _expect_sampling_event(event):
 
 
 def _expect_cover_expression(expression):
-    """A Callable[[carla.World], Any] argument."""
+    """A Callable[[carla.World], Any] argument: a cover expression or an ODD probe."""
     expression(carla.Client().get_world())
 
 

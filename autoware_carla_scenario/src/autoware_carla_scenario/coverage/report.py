@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
-from .collector import COVERAGE_SCHEMA, CROSS_SEPARATOR
+from .collector import COVERAGE_SCHEMA
 
 __all__ = [
     "CoverageReport",
@@ -352,21 +352,6 @@ def _key(entry: dict[str, Any], kind: str) -> tuple[Any, ...]:
     )
 
 
-def _cross_outside(
-    cross: dict[str, Any], outside_by_item: dict[str, set[str]]
-) -> list[str]:
-    """Cells of *cross* with a bucket outside the ODD in any of its items."""
-    items = list(cross.get("items", ()))
-    out = []
-    for cell in cross.get("hits", {}):
-        labels = cell.split(CROSS_SEPARATOR)
-        if len(labels) == len(items) and any(
-            label in outside_by_item.get(item, ()) for item, label in zip(items, labels)
-        ):
-            out.append(cell)
-    return out
-
-
 def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
     """Merge coverage documents (the contents of coverage files) into a report."""
     report = CoverageReport()
@@ -384,14 +369,8 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
         if odd:
             name = str(odd.get("name", ""))
             report.odds.setdefault(name, OddExposure(name)).add(scenario, odd)
-        outside_by_item = {
-            e["name"]: set(e.get("outside_odd", ())) for e in doc.get("items", ())
-        }
         entries = [(e, e["kind"]) for e in doc.get("items", ())]
-        entries += [
-            ({**c, "outside_odd": _cross_outside(c, outside_by_item)}, "cross")
-            for c in doc.get("crosses", ())
-        ]
+        entries += [(c, "cross") for c in doc.get("crosses", ())]
         for raw, kind in entries:
             key = _key(raw, kind)
             entry = merged.get(key)
@@ -430,7 +409,7 @@ def merge_coverage(documents: Sequence[dict[str, Any]]) -> CoverageReport:
                 )
             entry.samples += int(raw.get("samples", 0))
             entry.ignored += int(raw.get("ignored", 0))
-    if not merged and report.runs == 0:
+    if report.runs == 0:
         logger.warning("coverage: nothing to merge")
     return report
 
