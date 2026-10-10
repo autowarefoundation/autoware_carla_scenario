@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/dev/typecheck/">
       
       
-        <link rel="prev" href="../traffic_backends/">
+        <link rel="prev" href="../odd/">
       
       
         <link rel="next" href="../docker/">
@@ -423,6 +423,44 @@
     
   
   Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../odd/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
 
       </a>
     </li>
@@ -1073,6 +1111,60 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../odd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -1549,6 +1641,11 @@ everything <code>setup()</code> and <code>is_done()</code> reach: the calls into
 scenario's own helpers, and, through <code>register_pass_condition()</code> and the
 other <code>register_*</code> methods, the <code>check()</code> of a custom condition and the
 <code>execute()</code> of a custom action.</p>
+<p>An ODD written in Python (<a href="../odd/">ODD</a>) is checked the same way: the program
+calls its builder (<code>odd: OddDefinition = urban_odd()</code>). Every attribute's
+probe is then called with a world, and every condition must come from an
+attribute. The runner checks the ODD named by the <code>odd</code> key under the same
+<code>typecheck</code> mode, and <code>scenario-odd check</code> does it without running anything.</p>
 <h3 id="the-model">The model<a class="headerlink" href="#the-model" title="Permanent link">&para;</a></h3>
 <p><code>autoware_carla_scenario/typecheck/codon/</code> holds Codon declarations of
 everything a scenario imports from <code>autoware_carla_scenario</code>: the conditions,
@@ -1622,7 +1719,7 @@ Codon then checks each call with the arguments it is given.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 5, 2026 19:25:15 UTC"><span class="timeago" datetime="2026-10-05T19:25:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 5, 2026 19:25:15 UTC">2026-10-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:08:08 UTC"><span class="timeago" datetime="2026-10-10T09:08:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:08:08 UTC">2026-10-10</span>
   </span>
 
     
