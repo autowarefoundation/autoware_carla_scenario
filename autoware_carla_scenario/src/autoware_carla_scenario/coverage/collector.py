@@ -70,6 +70,11 @@ MAX_OUT_INTERVALS = 100
 
 def _sample_value(value: Any) -> Any:
     """A value as the coverage file keeps it: a JSON number, bool or string."""
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()  # a numpy scalar: its Python value
+        except (TypeError, ValueError):
+            pass
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
@@ -137,7 +142,11 @@ class _OddMonitor:
         position: Optional[tuple[float, float]] = None,
     ) -> "OddVerdict":
         """Judge one tick and keep its values; the verdict, for the situations."""
-        lat, lon = position if position is not None else (None, None)
+        lat, lon = (
+            (round(position[0], 7), round(position[1], 7))
+            if position is not None
+            else (None, None)
+        )
         self.rows.append(
             [round(end, 3), lat, lon]
             + [_sample_value(values.get(a.name)) for a in self.odd.attributes]

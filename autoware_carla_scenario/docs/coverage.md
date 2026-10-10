@@ -292,7 +292,10 @@ Each run gives three files:
 | `<run>_taxonomy.yml` | An OpenODD YAML taxonomy of the attributes, which a COD has to travel with (6.1.4.5) |
 
 A tick without an ego position is left out, since `SPATIAL_EXTENT` may not be
-empty. Coverage files written before samples were recorded are skipped with a
+empty. OpenODD wants every number to carry a unit: give numeric attributes a
+`unit`, or their column has none. A name such as `env.rain.duration` beside an
+attribute `env.rain` is written as OpenODD writes a measure of an element: the
+key `rain.duration` under `env`. Times are UTC. Coverage files written before samples were recorded are skipped with a
 warning. Scenario cover items are not taxonomy concepts and stay in the
 coverage file only.
 

@@ -27,8 +27,6 @@ import yaml
 
 __all__ = ["CodExport", "export_cod"]
 
-_LITERAL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 
 class CodExport:
     """The files written for one run."""
@@ -58,17 +56,34 @@ def _kind(meta: dict[str, Any], column: list[Any]) -> str:
     return "number"
 
 
+def _place(name: str, names: set[str]) -> tuple[list[str], str]:
+    """Where an attribute goes in the taxonomy: its records, and its key.
+
+    A dotted name nests one record per part, except past a part that is an
+    attribute itself: ``env.rain.duration`` beside ``env.rain`` is the key
+    ``rain.duration`` under ``env``, as OpenODD writes a measure of an element.
+    """
+    parts = name.split(".")
+    for i in range(1, len(parts)):
+        if ".".join(parts[:i]) in names:
+            return parts[: i - 1], ".".join(parts[i - 1 :])
+    return parts[:-1], parts[-1]
+
+
 def _unit_type(unit: str) -> Optional[str]:
     from ..odd.units import Units  # noqa: PLC0415 - odd imports coverage
 
     return Units().unit_type(unit) if unit else None
 
 
-def _taxonomy(attributes: list[dict[str, Any]], kinds: list[str]) -> dict[str, Any]:
+def _taxonomy(
+    attributes: list[dict[str, Any]], kinds: list[str], columns: list[list[Any]]
+) -> dict[str, Any]:
     """An OpenODD YAML taxonomy of the attributes, nested by their dotted names."""
     root: dict[str, Any] = {}
-    for meta, kind in zip(attributes, kinds):
-        *parents, leaf = str(meta["name"]).split(".")
+    names = {str(meta["name"]) for meta in attributes}
+    for meta, kind, column in zip(attributes, kinds, columns):
+        parents, leaf = _place(str(meta["name"]), names)
         node = root
         for part in parents:
             node = node.setdefault(part, {})
@@ -77,8 +92,14 @@ def _taxonomy(attributes: list[dict[str, Any]], kinds: list[str]) -> dict[str, A
         elif kind == "integer":
             node[leaf] = "integer count"
         elif kind == "categorical":
-            literals = [str(v) for v in meta.get("values") or ()]
-            node[leaf] = [v for v in literals if _LITERAL.match(v)] or literals
+            # Every literal a cell can hold: the declared ones, else those seen.
+            declared = meta.get("values")
+            literals = (
+                [str(v) for v in declared]
+                if declared is not None
+                else sorted({str(v) for v in column if v is not None})
+            )
+            node[leaf] = literals
         else:
             unit_type = _unit_type(str(meta.get("unit", ""))) or "count"
             node[leaf] = f"float {unit_type}"
@@ -138,7 +159,8 @@ def export_cod(doc: dict[str, Any], out_dir: Path, stem: str) -> Optional[CodExp
             )
             written += 1
 
-    leaves = [str(meta["name"]).rsplit(".", 1)[-1] for meta in attributes]
+    names = {str(meta["name"]) for meta in attributes}
+    leaves = [_place(str(meta["name"]), names)[1] for meta in attributes]
     with manifest.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(
@@ -172,7 +194,7 @@ def export_cod(doc: dict[str, Any], out_dir: Path, stem: str) -> Optional[CodExp
             )
 
     taxonomy.write_text(
-        yaml.safe_dump(_taxonomy(attributes, kinds), sort_keys=False),
+        yaml.safe_dump(_taxonomy(attributes, kinds, columns), sort_keys=False),
         encoding="utf-8",
     )
     return CodExport(cod, manifest, taxonomy, written)
@@ -182,7 +204,8 @@ def _start(started_at: Any) -> datetime:
     """The run's start time; the epoch when it was not recorded."""
     if isinstance(started_at, str):
         try:
-            return datetime.fromisoformat(started_at)
+            # Python 3.10 reads "+00:00", not "Z".
+            return datetime.fromisoformat(started_at.replace("Z", "+00:00"))
         except ValueError:
             pass
     return datetime(1970, 1, 1)

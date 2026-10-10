@@ -625,6 +625,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"Exported {len(exported)} COD table(s) to {args.export_cod}",
             file=sys.stderr,
         )
+        if not exported:
+            return 1  # asked for, and nothing had samples to export
     if report.runs == 0:
         print("No coverage files found.", file=sys.stderr)
         return 1

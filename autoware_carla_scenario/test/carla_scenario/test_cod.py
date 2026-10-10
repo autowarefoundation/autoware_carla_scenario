@@ -132,3 +132,61 @@ def test_the_cli_exports_every_run(
     assert main([str(tmp_path / "runs"), "--export-cod", str(out)]) == 0
     assert sorted(p.name for p in out.glob("*_cod.csv")) == ["S-2_cod.csv", "S_cod.csv"]
     assert "Exported 2 COD table(s)" in capsys.readouterr().err
+
+
+def _doc(attributes: list[dict[str, Any]], rows: list[list[Any]]) -> dict[str, Any]:
+    return {
+        "odd": {
+            "started_at": "2026-01-01T00:00:00.000Z",
+            "samples": {"attributes": attributes, "rows": rows},
+        }
+    }
+
+
+def test_a_measure_of_an_element_keeps_both(tmp_path: Path) -> None:
+    # OpenODD writes a measure of an element as <element>.<measure> (10.2.2.5).
+    for order in ([0, 1], [1, 0]):
+        metas: list[dict[str, Any]] = [
+            {"name": "env.rain", "unit": "mm/h", "values": None},
+            {"name": "env.rain.duration", "unit": "s", "values": None},
+        ]
+        metas = [metas[i] for i in order]
+        result = export_cod(_doc(metas, [[0.1, 1.0, 2.0, 3.0, 4.0]]), tmp_path, "S")
+        assert result is not None
+        taxonomy = yaml.safe_load(result.taxonomy.read_text())["TAXONOMY"]
+        assert taxonomy["env"]["rain"] == "float precipitation_rate"
+        assert taxonomy["env"]["rain.duration"] == "float time"
+        names = {a.name for a in load_openodd(result.taxonomy).attributes}
+        assert names == {"env.rain", "env.rain.duration"}
+
+
+def test_every_literal_is_in_the_taxonomy(tmp_path: Path) -> None:
+    metas: list[dict[str, Any]] = [
+        {"name": "road", "unit": "", "values": ["RQ28", "RQ43-5", "two lane"]},
+        {"name": "free", "unit": "", "values": None},
+    ]
+    rows = [[0.1, 1.0, 2.0, "RQ43-5", "b"], [0.2, 1.0, 2.0, "RQ28", "a"]]
+    result = export_cod(_doc(metas, rows), tmp_path, "S")
+    assert result is not None
+    taxonomy = yaml.safe_load(result.taxonomy.read_text())["TAXONOMY"]
+    assert taxonomy["road"] == ["RQ28", "RQ43-5", "two lane"]
+    assert taxonomy["free"] == ["a", "b"]
+    assert result.cod.read_text().splitlines()[1].startswith("2026-01-01 00:00:00.100")
+
+
+def test_numpy_values_keep_their_type() -> None:
+    np = pytest.importorskip("numpy")
+    from autoware_carla_scenario.coverage.collector import _sample_value
+
+    assert _sample_value(np.int64(3)) == 3 and isinstance(
+        _sample_value(np.int64(3)), int
+    )
+    assert _sample_value(np.bool_(True)) is True
+    assert _sample_value(np.float32(0.5)) == 0.5
+    assert _sample_value(np.float64("nan")) is None
+
+
+def test_the_cli_fails_when_nothing_was_exported(tmp_path: Path) -> None:
+    doc = {"schema": "autoware_carla_scenario.coverage/1", "scenario": "S", "items": []}
+    (tmp_path / "S_coverage.json").write_text(json.dumps(doc))
+    assert main([str(tmp_path), "--export-cod", str(tmp_path / "cod")]) == 1
