@@ -98,6 +98,7 @@ if TYPE_CHECKING:
     from .trajectory import (
         MapPose as MapPose,
         ReferenceContext as ReferenceContext,
+        RelativeLanePose as RelativeLanePose,
         Trajectory as Trajectory,
         TrajectoryFollowingMode as TrajectoryFollowingMode,
         TrajectoryTiming as TrajectoryTiming,
@@ -429,6 +430,7 @@ __all__ = [
     # Trajectories
     "MapPose",
     "ReferenceContext",
+    "RelativeLanePose",
     "Trajectory",
     "TrajectoryFollowingMode",
     "TrajectoryTiming",
@@ -469,6 +471,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # trajectories
     "MapPose": (".trajectory", "MapPose"),
     "ReferenceContext": (".trajectory", "ReferenceContext"),
+    "RelativeLanePose": (".trajectory", "RelativeLanePose"),
     "Trajectory": (".trajectory", "Trajectory"),
     "TrajectoryFollowingMode": (".trajectory", "TrajectoryFollowingMode"),
     "TrajectoryTiming": (".trajectory", "TrajectoryTiming"),

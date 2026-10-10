@@ -57,10 +57,82 @@ A vertex's position may be written in any frame the framework addresses:
 - `MapPose(x, y, yaw=None, z=None)` -- an absolute pose in **Autoware's `map`
   frame** (the Lanelet2 file's projected frame), which is the frame a recording
   states its poses in. A missing `yaw` is taken from the direction of the path;
-  a missing `z` puts the entity on the road surface under it.
+  a missing `z` puts the entity on the road surface under it;
+- `RelativeLanePose(ds=0.0, offset=0.0, d_lane=0, yaw=None, entity_ref=None)`
+  -- a pose **relative to an entity, in lane coordinates** (OpenSCENARIO's
+  `RelativeLanePosition`); see [below](#lane-relative-vertices).
 
 Positions are converted to CARLA world coordinates when the action first runs,
-through the loaded map.
+through the loaded map. Vertices of different kinds may be mixed in one
+trajectory.
+
+### Lane-relative vertices
+
+A `RelativeLanePose` writes the shape of a manoeuvre -- pull out, overtake, cut
+in ahead of the ego -- once, to be played from wherever it begins:
+
+```python
+from autoware_carla_scenario import EGO_ROLE_NAME, RelativeLanePose
+
+overtake = Trajectory(
+    "overtake",
+    [
+        TrajectoryVertex(RelativeLanePose(), time=0.0),  # where npc1 is
+        TrajectoryVertex(RelativeLanePose(ds=20.0, d_lane=1), time=2.0),
+        TrajectoryVertex(RelativeLanePose(ds=60.0, d_lane=1), time=5.0),
+        # 10 m ahead of the ego, in its lane: a cut-in.
+        TrajectoryVertex(RelativeLanePose(ds=10.0, entity_ref=EGO_ROLE_NAME), time=7.0),
+    ],
+)
+self.register_pre_tick(
+    FollowTrajectoryAction("npc1", overtake, TrajectoryTiming(), label="npc1_overtakes")
+)
+```
+
+| Field | OpenSCENARIO | Meaning |
+|---|---|---|
+| `entity_ref` | `entityRef` | `role_name` of the reference entity. `None` (default) is the entity the action moves. |
+| `ds` | `ds` | Metres along the reference entity's lane, from where it is; negative goes back. |
+| `d_lane` | `dLane` | Lanes across: `+1` one lane to the left, `-1` one to the right, `0` the reference's own lane. |
+| `offset` | `offset` | Metres from the **target lane's centreline**, positive to the left -- the sign of `Lanelet2Pose.t`. The reference entity's own lateral position does not carry over. |
+| `yaw` | `Orientation` (relative) | Radians from the target lane's direction, positive to the left (anticlockwise) -- the sense of `Lanelet2Pose.heading`. `None` faces along the path, as for `MapPose`. |
+
+How a vertex is placed, on the Lanelet2 map and its routing graph:
+
+1. **The reference's lane.** The lanelet the reference entity is on, and the
+   exact distance along its centreline. Where lanelets overlap (a junction) or
+   meet (a seam), the one whose direction is nearest the entity's heading
+   wins, then the one nearest its elevation, then the lowest id.
+2. **`ds` along the lane.** Past a lanelet's end the distance carries on into
+   the lanelet that follows it in the routing graph; a negative `ds` past its
+   start into the one before it. Where several follow (a fork) or precede (a
+   merge), the one that **turns least** is taken, then the lowest id -- the
+   "straight on" a route most often takes, and deterministic. A `ds` that runs
+   off a lanelet nothing follows is an error naming that lanelet.
+3. **`d_lane` across.** At the point `ds` reached, one step per lane through
+   the routing graph's left or right neighbour -- lane-changeable or not (a
+   solid line still has a lane beyond it), but only lanes of the same
+   direction of travel. The point keeps abreast: its distance along the
+   neighbour is where the point projects onto it, so the outside of a bend is
+   not shortchanged. A missing neighbour is an error naming the lanelet and the
+   side. Lanelet2 only knows a neighbour that shares the lanelet's whole side,
+   so where the two lanes are split into lanelets at different points (one
+   20 m lanelet beside two 10 m ones) there is no neighbour to step to, and
+   the vertex raises the same error.
+4. **`offset` and `yaw`** are applied on that lanelet, which gives a
+   `Lanelet2Pose`, converted to CARLA coordinates like any other.
+
+**When.** A trajectory with relative vertices is placed **when the action
+starts** -- the first tick of a run, against where each reference entity is at
+that tick -- and is then fixed: the vertices do not move with the reference
+entity afterwards, so the rest of the action (timing, both modes, hiding) works
+on it exactly as on absolute vertices. A repeating action (`once=False`) places
+it again at the start of every run. A reference entity that is not in the world
+yet puts the start off until it is -- for as long as it takes: the action
+neither ends nor fails meanwhile, and warns once per run; a lane the map does
+not have raises a
+`ValueError` naming the trajectory and the vertex. These lane checks can only
+be made then: they depend on where the reference entity is.
 
 ### Following modes
 
@@ -98,7 +170,7 @@ cannot be spawned once a run has started.
 
 **Follow Trajectory** (category *Vehicle / Motion*) is a card like any other,
 for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
-two sources:
+three sources:
 
 - **Vertices (map frame)** -- written in the card, one vertex per line:
   `x, y[, yaw][, time]` (metres, radians, seconds; `81234.5, 50123.0, , 1.5`
@@ -107,13 +179,24 @@ two sources:
   transcribes to, so a replayed road user's card can be edited like any other.
 - **Along lanelets** -- the lanelets picked on the map, followed along their
   centrelines at a lateral offset and timed at a constant speed.
+- **Relative to an entity's lane** -- [lane-relative vertices](#lane-relative-vertices),
+  one per line: `ds[, offset][, d_lane][, yaw][, time]` (metres, metres,
+  lanes, radians, seconds; only `ds` is required, `d_lane` is a whole number),
+  measured from the entity chosen in **Relative to** -- or, left empty, from
+  the card's own actor. The document stores them as rows
+  `[ds, offset, d_lane, yaw, time]` and the reference as an entity id, which
+  the compiler turns into that entity's role name. Deleting the reference
+  entity clears the field, so the card is then measured from its own actor.
 
 The other fields are the action's: the time reference (from the action start,
 from the scenario start, or none), its scale and offset, the following mode,
 how far along to start, and whether the entity is out of the world outside the
 trajectory's time. The validator checks what the fields only mean together: a
 time reference needs vertex times (or a speed, for lanelets), and keeping the
-entity out of the world needs the Position mode and a time reference.
+entity out of the world needs the Position mode and a time reference. For
+relative vertices it checks the numbers, the timing and that the reference
+entity exists; whether the lanes they name exist is only known when the action
+starts.
 
 An entity's **Spawn out of the world** option (non-ego entities) spawns it under
 the map with its physics off, for a card that brings it in at its first vertex:

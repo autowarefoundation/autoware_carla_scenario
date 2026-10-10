@@ -1,12 +1,13 @@
 # Model of autoware_carla_scenario.trajectory (docs/typecheck.md).
 #
-# A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose
-# or MapPose), which Codon cannot store: TrajectoryVertex checks the position it
+# A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose,
+# MapPose or RelativeLanePose), which Codon cannot store: TrajectoryVertex checks the position it
 # is given with _expect_trajectory_position and keeps only its time, which is
 # all the model needs -- it is compiled, never run.
 
-from ._tc import _expect_optional_float
+from ._tc import _expect_float, _expect_optional_float
 from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from .entity_role import EntityRole, _expect_optional_role
 
 
 class MapPose:
@@ -22,9 +23,27 @@ class MapPose:
         self.z = _expect_optional_float(z)
 
 
+class RelativeLanePose:
+    ds: float
+    offset: float
+    d_lane: int
+    yaw: Optional[float]
+    entity_ref: Optional[EntityRole]
+
+    def __init__(self, ds = 0.0, offset = 0.0, d_lane: int = 0, yaw = None,
+                 entity_ref = None):
+        self.ds = _expect_float(ds)
+        self.offset = _expect_float(offset)
+        self.d_lane = d_lane
+        self.yaw = _expect_optional_float(yaw)
+        self.entity_ref = _expect_optional_role(entity_ref)
+
+
 def _expect_trajectory_position(position):
     """A TrajectoryPosition argument."""
     if isinstance(position, MapPose):
+        pass
+    elif isinstance(position, RelativeLanePose):
         pass
     elif isinstance(position, Lanelet2Pose):
         pass
@@ -33,8 +52,8 @@ def _expect_trajectory_position(position):
     elif isinstance(position, CarlaWorldPose):
         pass
     else:
-        compile_error("expected a trajectory position: a MapPose, a Lanelet2Pose, "
-                      "an OpenDrivePose or a CarlaWorldPose")
+        compile_error("expected a trajectory position: a MapPose, a RelativeLanePose, "
+                      "a Lanelet2Pose, an OpenDrivePose or a CarlaWorldPose")
 
 
 class TrajectoryVertex:
@@ -57,6 +76,10 @@ class Trajectory:
 
     @property
     def is_timed(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def is_relative(self) -> bool:
         raise NotImplementedError()
 
 

@@ -856,6 +856,8 @@ def build_follow_trajectory_action(
         lanelet_ids=params["lanelet_ids"],
         speed_kmh=params["speed_kmh"],
         lateral_offset_m=params["lateral_offset_m"],
+        relative_vertices=params["relative_vertices"],
+        reference_entity=params["reference_entity"],
     )
     time_reference = authored_timing(
         time_domain=params["time_domain"],
