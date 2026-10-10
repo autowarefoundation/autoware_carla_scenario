@@ -1278,6 +1278,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="ODD coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exposure-seconds-meters-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exposure: seconds, meters, entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1567,6 +1584,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="ODD coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exposure-seconds-meters-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exposure: seconds, meters, entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1910,6 +1944,40 @@ mm/h of rain. The rain and fog buckets are therefore named levels.</p>
 <p>Because ODD items are sampled every tick, their hits count ticks. The report
 also counts, per bucket, how many <strong>runs</strong> hit it. A bucket held for many
 ticks in a single run is still only one situation.</p>
+<h3 id="exposure-seconds-meters-entries">Exposure: seconds, meters, entries<a class="headerlink" href="#exposure-seconds-meters-entries" title="Permanent link">&para;</a></h3>
+<p>Ticks are a poor measure of how much of a situation a run saw: a stopped ego
+keeps adding them. So every item sampled on <code>TICK</code> (every ODD item, and any
+scenario item or cross with <code>event=SamplingEvent.TICK</code>) also records, per
+bucket:</p>
+<table>
+<thead>
+<tr>
+<th>Measure</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>seconds</code></td>
+<td>simulated time spent in the bucket</td>
+</tr>
+<tr>
+<td><code>meters</code></td>
+<td>distance the ego drove while the item was in the bucket</td>
+</tr>
+<tr>
+<td><code>entries</code></td>
+<td>how many times the item entered the bucket; a run of consecutive ticks in it counts once</td>
+</tr>
+</tbody>
+</table>
+<p>A tick stands for the step since the previous tick: its duration, and the
+ego's displacement over it. A tick with no sample (a missing value, an
+ignored one) ends the stay, so the next sample in the same bucket is a new
+entry. A step faster than 100 m/s is a respawn or a teleport, not driving,
+and adds no distance; without an ego, no distance is measured. A one-shot item
+(<code>START</code>, <code>END</code>, a condition) has no duration: each hit is an entry, and its
+seconds and meters stay 0.</p>
 <h2 id="the-report">The report<a class="headerlink" href="#the-report" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Every *_coverage.json under outputs/ and multirun/</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>multirun/
@@ -1923,7 +1991,9 @@ outside it. It
 then lists the modules that ruled ticks out, and the runs that left the ODD,
 with when. After that comes a summary table per group: item, event, grade,
 covered buckets (of those inside the ODD) and holes. Below it, each item gets its buckets with hits and
-runs. Runs merge per item: two coverage files describe the same item when the
+runs, and an item sampled every tick its seconds, meters and entries too.
+Exposure sums over runs; a coverage file written before it was recorded makes
+the item's sums unknown (<code>?</code> in Markdown, <code>null</code> in JSON) rather than short. Runs merge per item: two coverage files describe the same item when the
 name, event and buckets agree. An item whose definition changed between runs
 is reported once per definition (<code>name#2</code>, ...), because adding up hits of
 different buckets would mean nothing.</p>
@@ -1945,34 +2015,40 @@ different buckets would mean nothing.</p>
 <a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">      </span><span class="nt">"samples"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
 <a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">      </span><span class="nt">"ignored"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
 <a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">      </span><span class="nt">"out_of_range"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">  </span><span class="p">],</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">  </span><span class="nt">"crosses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"speed_x_gap"</span><span class="p">,</span>
-<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">      </span><span class="nt">"group"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scenario"</span><span class="p">,</span>
-<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">      </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">      </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"condition:cut_in_started"</span><span class="p">,</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">      </span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"speed_at_cut_in"</span><span class="p">,</span><span class="w"> </span><span class="s2">"gap_at_cut_in"</span><span class="p">],</span>
-<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">      </span><span class="nt">"buckets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"[0, 10) / [0, 5)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="p">],</span>
-<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">      </span><span class="nt">"outside_odd"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 10) / [0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
-<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="w">  </span><span class="p">],</span>
-<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="w">  </span><span class="nt">"odd"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urban"</span><span class="p">,</span>
-<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="w">    </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Urban roads up to 60 km/h"</span><span class="p">,</span>
-<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="w">    </span><span class="nt">"roots"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"root"</span><span class="p">],</span>
-<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="w">    </span><span class="nt">"modules"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"roads"</span><span class="p">,</span><span class="w"> </span><span class="nt">"include_and"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"scenery.location in [urban]"</span><span class="p">],</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
-<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a><span class="w">    </span><span class="nt">"unmeasured"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a><span class="w">    </span><span class="nt">"ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mi">512</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">},</span>
-<a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a><span class="w">    </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mf">25.6</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.4</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mf">2.0</span><span class="p">},</span>
-<a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a><span class="w">    </span><span class="nt">"module_ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"roads"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"failed_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">}},</span>
-<a id="__codelineno-2-43" name="__codelineno-2-43" href="#__codelineno-2-43"></a><span class="w">    </span><span class="nt">"out_intervals"</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="mf">12.3</span><span class="p">,</span><span class="w"> </span><span class="mf">14.3</span><span class="p">]]</span>
-<a id="__codelineno-2-44" name="__codelineno-2-44" href="#__codelineno-2-44"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-2-45" name="__codelineno-2-45" href="#__codelineno-2-45"></a><span class="p">}</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">      </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">      </span><span class="nt">"meters"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">      </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"[5, 15)"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"[15, 40]"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">      </span><span class="nt">"out_of_range"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">  </span><span class="nt">"crosses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"speed_x_gap"</span><span class="p">,</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">      </span><span class="nt">"group"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scenario"</span><span class="p">,</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">      </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">      </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"condition:cut_in_started"</span><span class="p">,</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">      </span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"speed_at_cut_in"</span><span class="p">,</span><span class="w"> </span><span class="s2">"gap_at_cut_in"</span><span class="p">],</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="w">      </span><span class="nt">"buckets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"[0, 10) / [0, 5)"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="p">],</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="w">      </span><span class="nt">"outside_odd"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="w">      </span><span class="nt">"hits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"[0, 10) / [0, 5)"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="w">      </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="w">      </span><span class="nt">"meters"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="w">      </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a><span class="w">  </span><span class="nt">"odd"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urban"</span><span class="p">,</span>
+<a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a><span class="w">    </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Urban roads up to 60 km/h"</span><span class="p">,</span>
+<a id="__codelineno-2-43" name="__codelineno-2-43" href="#__codelineno-2-43"></a><span class="w">    </span><span class="nt">"roots"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"root"</span><span class="p">],</span>
+<a id="__codelineno-2-44" name="__codelineno-2-44" href="#__codelineno-2-44"></a><span class="w">    </span><span class="nt">"modules"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"roads"</span><span class="p">,</span><span class="w"> </span><span class="nt">"include_and"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"scenery.location in [urban]"</span><span class="p">],</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
+<a id="__codelineno-2-45" name="__codelineno-2-45" href="#__codelineno-2-45"></a><span class="w">    </span><span class="nt">"unmeasured"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-2-46" name="__codelineno-2-46" href="#__codelineno-2-46"></a><span class="w">    </span><span class="nt">"ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mi">512</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">},</span>
+<a id="__codelineno-2-47" name="__codelineno-2-47" href="#__codelineno-2-47"></a><span class="w">    </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"inside"</span><span class="p">:</span><span class="w"> </span><span class="mf">25.6</span><span class="p">,</span><span class="w"> </span><span class="nt">"assumed"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.4</span><span class="p">,</span><span class="w"> </span><span class="nt">"outside"</span><span class="p">:</span><span class="w"> </span><span class="mf">2.0</span><span class="p">},</span>
+<a id="__codelineno-2-48" name="__codelineno-2-48" href="#__codelineno-2-48"></a><span class="w">    </span><span class="nt">"module_ticks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"roads"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"failed_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_ticks"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">}},</span>
+<a id="__codelineno-2-49" name="__codelineno-2-49" href="#__codelineno-2-49"></a><span class="w">    </span><span class="nt">"out_intervals"</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="mf">12.3</span><span class="p">,</span><span class="w"> </span><span class="mf">14.3</span><span class="p">]]</span>
+<a id="__codelineno-2-50" name="__codelineno-2-50" href="#__codelineno-2-50"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-2-51" name="__codelineno-2-51" href="#__codelineno-2-51"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="not-yet-supported">Not yet supported<a class="headerlink" href="#not-yet-supported" title="Permanent link">&para;</a></h2>
 <ul>
@@ -2002,7 +2078,7 @@ different buckets would mean nothing.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:08:08 UTC"><span class="timeago" datetime="2026-10-10T09:08:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:08:08 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 10:24:25 UTC"><span class="timeago" datetime="2026-10-10T10:24:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 10:24:25 UTC">2026-10-10</span>
   </span>
 
     
