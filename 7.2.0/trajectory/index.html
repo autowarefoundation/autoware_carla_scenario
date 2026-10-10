@@ -1,0 +1,2279 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/7.2.0/trajectory/">
+      
+      
+        <link rel="prev" href="../traffic_backends/">
+      
+      
+        <link rel="next" href="../logical_scenarios/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Trajectories and Recorded-Scene Replay - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#trajectories-and-recorded-scene-replay" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Trajectories and Recorded-Scene Replay
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../autoware/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Autoware as the Ego
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../odd/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autoware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The action
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The action">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lane-relative-vertices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lane-relative vertices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#following-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Following modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-drives-and-when-it-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who drives, and when it ends
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waypoint-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waypoint conditions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-the-scenario-editor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In the Scenario Editor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replaying-a-recorded-scene" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replaying a recorded scene
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../odd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The action
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The action">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lane-relative-vertices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lane-relative vertices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#following-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Following modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-drives-and-when-it-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who drives, and when it ends
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waypoint-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waypoint conditions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-the-scenario-editor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In the Scenario Editor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replaying-a-recorded-scene" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replaying a recorded scene
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="trajectories-and-recorded-scene-replay">Trajectories and Recorded-Scene Replay<a class="headerlink" href="#trajectories-and-recorded-scene-replay" title="Permanent link">&para;</a></h1>
+<p><code>FollowTrajectoryAction</code> moves a vehicle or a pedestrian along a given
+trajectory. It is OpenSCENARIO's <code>FollowTrajectoryAction</code>, and it is what lets a
+recorded drive be <strong>written down as a scenario</strong>: a recording is transcribed
+into one trajectory per road user, and each one is replayed around the ego.
+Reading a dataset is left to tools outside the framework (see
+<a href="#replaying-a-recorded-scene">Replaying a recorded scene</a>), so the framework
+carries no dataset format.</p>
+<h2 id="the-action">The action<a class="headerlink" href="#the-action" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">Lanelet2Pose</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">MapPose</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">ReferenceContext</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">Trajectory</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">TrajectoryFollowingMode</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">)</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">path</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="s2">"npc1_path"</span><span class="p">,</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="p">[</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">30.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">4.0</span><span class="p">)),</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mf">81234.5</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mf">50123.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">7.0</span><span class="p">)),</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="p">],</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="p">)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="s2">"npc1"</span><span class="p">,</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="n">path</span><span class="p">,</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(</span><span class="n">ReferenceContext</span><span class="o">.</span><span class="n">RELATIVE</span><span class="p">),</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="n">following_mode</span><span class="o">=</span><span class="n">TrajectoryFollowingMode</span><span class="o">.</span><span class="n">POSITION</span><span class="p">,</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_follows_path"</span><span class="p">,</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    <span class="p">)</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="p">)</span>
+</code></pre></div>
+<p>It has the same four parts as in OpenSCENARIO:</p>
+<table>
+<thead>
+<tr>
+<th>OpenSCENARIO</th>
+<th>Here</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Trajectory</code> (<code>name</code>, <code>closed</code>, <code>shape</code>)</td>
+<td><code>Trajectory(name, vertices, closed=False)</code></td>
+<td>Only the <code>Polyline</code> shape. A recording is a sequence of samples; a clothoid or NURBS fitted to one would add an approximation between the data and the vehicle.</td>
+</tr>
+<tr>
+<td><code>Vertex</code> (<code>time</code>, <code>Position</code>)</td>
+<td><code>TrajectoryVertex(position, advance=None)</code></td>
+<td>A vertex's time is its departure condition, <code>advance=TrajectoryTimeCondition(t)</code> (read back as <code>vertex.time</code>); any other condition can take its place -- see <a href="#waypoint-conditions">Waypoint conditions</a>. Either every vertex has a time or none has, a vertex with another condition counting as having one.</td>
+</tr>
+<tr>
+<td><code>TimeReference</code></td>
+<td><code>time_reference=None</code> or <code>TrajectoryTiming(domain, scale, offset)</code></td>
+<td><code>None</code> is <code>&lt;None/&gt;</code>: the vertex times are ignored and the entity keeps the speed it had when the action started. With a timing, a vertex at time <code>τ</code> is reached at <code>τ * scale + offset</code> seconds after the scenario (<code>ABSOLUTE</code>) or the action (<code>RELATIVE</code>) started.</td>
+</tr>
+<tr>
+<td><code>TrajectoryFollowingMode</code></td>
+<td><code>following_mode=POSITION</code> or <code>FOLLOW</code></td>
+<td>See below.</td>
+</tr>
+<tr>
+<td><code>initialDistanceOffset</code></td>
+<td><code>initial_distance_offset</code></td>
+<td>Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point.</td>
+</tr>
+</tbody>
+</table>
+<p>A vertex's position may be written in any frame the framework addresses:</p>
+<ul>
+<li><code>Lanelet2Pose</code>, <code>OpenDrivePose</code> and <code>CarlaWorldPose</code> -- as everywhere else;</li>
+<li><code>MapPose(x, y, yaw=None, z=None)</code> -- an absolute pose in <strong>Autoware's <code>map</code>
+  frame</strong> (the Lanelet2 file's projected frame), which is the frame a recording
+  states its poses in. A missing <code>yaw</code> is taken from the direction of the path;
+  a missing <code>z</code> puts the entity on the road surface under it;</li>
+<li><code>RelativeLanePose(ds=0.0, offset=0.0, d_lane=0, yaw=None, entity_ref=None)</code>
+  -- a pose <strong>relative to an entity, in lane coordinates</strong> (OpenSCENARIO's
+  <code>RelativeLanePosition</code>); see <a href="#lane-relative-vertices">below</a>.</li>
+</ul>
+<p>Positions are converted to CARLA world coordinates when the action first runs,
+through the loaded map. Vertices of different kinds may be mixed in one
+trajectory.</p>
+<h3 id="lane-relative-vertices">Lane-relative vertices<a class="headerlink" href="#lane-relative-vertices" title="Permanent link">&para;</a></h3>
+<p>A <code>RelativeLanePose</code> writes the shape of a manoeuvre -- pull out, overtake, cut
+in ahead of the ego -- once, to be played from wherever it begins:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="n">RelativeLanePose</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">overtake</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"overtake"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="p">[</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>  <span class="c1"># where npc1 is</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)),</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">5.0</span><span class="p">)),</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="c1"># 10 m ahead of the ego, in its lane: a cut-in.</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">entity_ref</span><span class="o">=</span><span class="n">EGO_ROLE_NAME</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">7.0</span><span class="p">)),</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="p">],</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span><span class="s2">"npc1"</span><span class="p">,</span> <span class="n">overtake</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_overtakes"</span><span class="p">)</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>OpenSCENARIO</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_ref</code></td>
+<td><code>entityRef</code></td>
+<td><code>role_name</code> of the reference entity. <code>None</code> (default) is the entity the action moves.</td>
+</tr>
+<tr>
+<td><code>ds</code></td>
+<td><code>ds</code></td>
+<td>Metres along the reference entity's lane, from where it is; negative goes back.</td>
+</tr>
+<tr>
+<td><code>d_lane</code></td>
+<td><code>dLane</code></td>
+<td>Lanes across: <code>+1</code> one lane to the left, <code>-1</code> one to the right, <code>0</code> the reference's own lane.</td>
+</tr>
+<tr>
+<td><code>offset</code></td>
+<td><code>offset</code></td>
+<td>Metres from the <strong>target lane's centreline</strong>, positive to the left -- the sign of <code>Lanelet2Pose.t</code>. The reference entity's own lateral position does not carry over.</td>
+</tr>
+<tr>
+<td><code>yaw</code></td>
+<td><code>Orientation</code> (relative)</td>
+<td>Radians from the target lane's direction, positive to the left (anticlockwise) -- the sense of <code>Lanelet2Pose.heading</code>. <code>None</code> faces along the path, as for <code>MapPose</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>How a vertex is placed, on the Lanelet2 map and its routing graph:</p>
+<ol>
+<li><strong>The reference's lane.</strong> The lanelet the reference entity is on, and the
+   exact distance along its centreline. Where lanelets overlap (a junction) or
+   meet (a seam), the one whose direction is nearest the entity's heading
+   wins, then the one nearest its elevation, then the lowest id.</li>
+<li><strong><code>ds</code> along the lane.</strong> Past a lanelet's end the distance carries on into
+   the lanelet that follows it in the routing graph; a negative <code>ds</code> past its
+   start into the one before it. Where several follow (a fork) or precede (a
+   merge), the one that <strong>turns least</strong> is taken, then the lowest id -- the
+   "straight on" a route most often takes, and deterministic. A <code>ds</code> that runs
+   off a lanelet nothing follows is an error naming that lanelet.</li>
+<li><strong><code>d_lane</code> across.</strong> At the point <code>ds</code> reached, one step per lane through
+   the routing graph's left or right neighbour -- lane-changeable or not (a
+   solid line still has a lane beyond it), but only lanes of the same
+   direction of travel. The point keeps abreast: its distance along the
+   neighbour is where the point projects onto it, so the outside of a bend is
+   not shortchanged. A missing neighbour is an error naming the lanelet and the
+   side. Lanelet2 only knows a neighbour that shares the lanelet's whole side,
+   so where the two lanes are split into lanelets at different points (one
+   20 m lanelet beside two 10 m ones) there is no neighbour to step to, and
+   the vertex raises the same error.</li>
+<li><strong><code>offset</code> and <code>yaw</code></strong> are applied on that lanelet, which gives a
+   <code>Lanelet2Pose</code>, converted to CARLA coordinates like any other.</li>
+</ol>
+<p><strong>When.</strong> A trajectory with relative vertices is placed <strong>when the action
+starts</strong> -- the first tick of a run, against where each reference entity is at
+that tick -- and is then fixed: the vertices do not move with the reference
+entity afterwards, so the rest of the action (timing, both modes, hiding) works
+on it exactly as on absolute vertices. A repeating action (<code>once=False</code>) places
+it again at the start of every run. A reference entity that is not in the world
+yet puts the start off until it is -- for as long as it takes: the action
+neither ends nor fails meanwhile, and warns once per run; a lane the map does
+not have raises a
+<code>ValueError</code> naming the trajectory and the vertex. These lane checks can only
+be made then: they depend on where the reference entity is.</p>
+<h3 id="following-modes">Following modes<a class="headerlink" href="#following-modes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>POSITION</code></strong> places the entity on the trajectory every tick, with the
+  velocity the trajectory implies (so speed conditions and the recorder see the
+  recorded speed). It is a kinematic replay: it reproduces a recording exactly,
+  whatever the vehicle could actually do.</li>
+<li><strong><code>FOLLOW</code></strong> drives the vehicle there with the pure-pursuit and speed
+  controller of the <a href="../driver_interface/">external driver interface</a>
+  (<code>TrajectoryFollower</code>, on the vehicle's own powertrain model). The motion is
+  the vehicle's own, so it can lag or cut a corner. A pedestrian is walked
+  towards the path.</li>
+</ul>
+<h3 id="who-drives-and-when-it-ends">Who drives, and when it ends<a class="headerlink" href="#who-drives-and-when-it-ends" title="Permanent link">&para;</a></h3>
+<p>For the length of the run the action is the entity's only driver. A vehicle is
+taken back from the <a href="../traffic_backends/">traffic backend</a> first
+(<code>TrafficBackend.release</code>); an ego driven by an external stack (Autoware, a
+driver policy) is refused, because two authorities on one vehicle is not a
+scenario anyone wrote.</p>
+<p>The action stays <code>runningState</code> until the entity reaches the end of the
+trajectory: the last vertex's time with a timing, the end of the path without
+one (never, for a closed trajectory), within <code>ARRIVAL_TOLERANCE_M</code> (1 m) of it
+in <code>FOLLOW</code> mode. Then a vehicle is braked to a stop and a walker stood still
+where the trajectory ended. Pass <code>until=</code> to end it on a condition of your own.</p>
+<p><code>hidden_outside_trajectory=True</code> (an extension, <code>POSITION</code> mode with a timing
+only) keeps the entity out of the world -- parked under the map with its physics
+off -- before its first vertex's time and after its last. That is what a road
+user that enters a recording late or leaves it early needs, since an entity
+cannot be spawned once a run has started.</p>
+<p><code>appear_on_start=True</code> (an extension, either mode) is the other way in: when a
+run of the action starts, the entity -- spawned hidden -- is put on the first
+vertex facing along the path, physics on, moving at <code>speed</code> (standing if
+unset), and then follows the trajectory. Triggered by a <code>RouteProgressCondition</code>
+it enters when the ego has come as far as it had when the road user was first
+seen; it cannot be combined with <code>hidden_outside_trajectory</code>.</p>
+<p>Vertices may also be placed against a logical scenario's <em>route</em>
+(<code>RouteLanePose</code>, <code>RouteOppositePose</code>, <code>RouteCrossingPose</code>,
+<code>RouteCrosswalkPose</code>, <code>RouteRoadsidePose</code>; <code>path_source: route</code> in a
+document) -- see <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</p>
+<h2 id="waypoint-conditions">Waypoint conditions<a class="headerlink" href="#waypoint-conditions" title="Permanent link">&para;</a></h2>
+<p><strong>Each vertex is departed on one condition</strong>, its <code>advance</code>: when it holds,
+the entity leaves the vertex for the next one. A vertex with none is passed
+through on arrival.</p>
+<ul>
+<li><strong>Time is one kind of condition.</strong> <code>TrajectoryTimeCondition(t)</code> departs the
+  vertex when the trajectory's clock reaches <code>t</code> -- the scenario clock mapped
+  through the action's <code>TrajectoryTiming</code> (domain, <code>scale</code>, <code>offset</code>) and its
+  <code>initial_distance_offset</code>. That is what a vertex time has always meant, and
+  <code>vertex.time</code> reads it back. Without a time reference times are ignored, as
+  OpenSCENARIO's <code>&lt;None/&gt;</code> says, and such a vertex is passed through.</li>
+<li><strong>Any other condition</strong> -- one the framework has now, one it gains later, or
+  your own: an elapsed time, the distance to another entity, a speed, a
+  traffic signal, an <code>ActionStateCondition</code> on another action, and
+  <code>AndCondition</code> / <code>OrCondition</code> / <code>StickyCondition</code> / <code>PersistentCondition</code>
+  compositions of them. The action asks it only what every condition answers,
+  <code>check(world, elapsed)</code>, and as for a trigger anything but <code>None</code> counts as
+  satisfied. <code>elapsed</code> is the <strong>scenario's elapsed time</strong>, so
+  <code>ElapsedTimeCondition(30.0, label=...)</code> reads "not before the scenario is
+  30 s old". (A <code>TrajectoryTimeCondition</code> <em>inside</em> a composition has no
+  trajectory clock to read and compares the scenario's elapsed time; the
+  editor refuses it there.)</li>
+</ul>
+<p>A vertex cannot carry two: a time and another condition are combined, if
+that is what is meant, by giving the vertex an <code>AndCondition</code> of an
+<code>ElapsedTimeCondition</code> and the other.</p>
+<p><strong>Between two vertices.</strong> After vertex <em>i</em> is departed at scenario time <code>T</code>:</p>
+<ul>
+<li>if vertex <em>i + 1</em> has a time whose scenario time is not before <code>T</code>, the
+  entity arrives there exactly then, moving linearly in between. When <em>i</em> was
+  departed on its own time this is exactly the timed interpolation a
+  recording is replayed with (a zero-duration segment is a jump), so <strong>a
+  trajectory of times alone moves as it always did</strong>;</li>
+<li>otherwise -- no time on <em>i + 1</em>, or one already past because the entity
+  waited -- it goes at the <strong>action's speed</strong>: <code>speed=</code> (m/s) when given, else
+  the speed the entity had when the run started. At (near) zero that segment
+  is never finished, and the action warns when the run starts.</li>
+</ul>
+<p>So after a late departure, a next vertex whose time is at or just after the
+departure is reached at once -- a jump in <code>POSITION</code>; in <code>FOLLOW</code> the vehicle
+cannot keep up and drives as fast as its controller lets it. That is the rule
+"arrive at its time if that is not before the departure" doing what it says.</p>
+<p><strong>Waiting.</strong> In <code>POSITION</code> mode a condition is checked from the tick the
+entity <strong>reaches</strong> its vertex -- not before -- then on every tick while it
+waits there, standing
+still with zero velocity. Once it holds the vertex is departed for the rest of
+that run; it is not asked again. If it already holds on arrival the entity
+does not stop. A condition that never holds keeps the entity there until
+<code>until=</code> ends the run. On the <strong>last vertex</strong> of an open path a condition
+means "end the run when it holds" (a time: when the clock reaches it, as
+ever); arriving at a last vertex with none ends the run. On the <strong>first
+vertex</strong> it is the departure from the start (a time: wait at the start until
+then). Vertices before the point a run starts from (<code>initial_distance_offset</code>)
+are not checked. A repeating action (<code>once=False</code>) re-arms every condition at
+the start of each run, and a <strong>closed</strong> path -- which cannot carry times --
+checks its conditions again on every lap in <code>POSITION</code> mode. Whatever state a
+condition object keeps is its own: a latched <code>StickyCondition</code> stays latched.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">EGO_ROLE_NAME</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">ComparisonRule</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">EntityDistanceCondition</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">MapPose</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">Trajectory</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">)</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">crossing</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="s2">"walker_crossing"</span><span class="p">,</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="p">[</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81200.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="c1"># At the kerb: wait until the ego is within 25 m, then step out.</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>            <span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>            <span class="n">EntityDistanceCondition</span><span class="p">(</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>                <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"ego_close"</span><span class="p">,</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>            <span class="p">),</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="p">),</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="c1"># Across by 11 s -- or, if the ego came late, at 1.4 m/s.</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50110.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">11.0</span><span class="p">)),</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>    <span class="p">],</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="p">)</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>        <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">crossing</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">speed</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"cross"</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>    <span class="p">)</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="p">)</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="c1"># A trajectory built elsewhere (a recording, a lanelet route): `gated` replaces</span>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="c1"># what the vertices named depart on, a time included.</span>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="n">held</span> <span class="o">=</span> <span class="n">recorded</span><span class="o">.</span><span class="n">gated</span><span class="p">({</span><span class="mi">12</span><span class="p">:</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"not_before_20s"</span><span class="p">)})</span>
+</code></pre></div>
+<p><strong>By following mode.</strong></p>
+<ul>
+<li><code>POSITION</code> places the entity where that timeline has it every tick; waiting,
+  it stands on the vertex itself.</li>
+<li><code>FOLLOW</code> (vehicle): a vertex whose condition has not held yet is a <strong>stop
+  line</strong> -- the controller's plan ends on it, slowed to come to rest there at
+  2 m/s². A car cannot stop within a tick, so here the condition is checked
+  <strong>before</strong> arrival, from as far off as stopping there takes (braking
+  distance, a second's travel and the arrival band); one that holds then is
+  passed, letting the vehicle through at speed and costing the schedule
+  nothing -- even if it would no longer hold by the time the vehicle gets
+  there, and a <code>PersistentCondition</code> starts counting from that distance. The
+  last vertex of an open path is the exception: it is checked only on
+  arrival, since departing it ends the run.
+  Otherwise it is looked at every tick; within <code>ARRIVAL_TOLERANCE_M</code> (1 m)
+  along the path the vehicle has reached the vertex and waits on the brake.
+  The plan after it is stamped from the timeline above.</li>
+<li><code>FOLLOW</code> (walker): looked at early in the same way, walked onto the vertex,
+  slowing as it gets close; within 0.3 m it has reached it and stands.</li>
+<li>On a <strong>closed</strong> path <code>FOLLOW</code> finds where the entity is by projecting it
+  near where it was, and that projection does not wrap from the end of the
+  path to its start -- so in <code>FOLLOW</code> mode a closed path's conditions are
+  reliable on the first lap only. <code>POSITION</code> has no such limit.</li>
+</ul>
+<p><code>hidden_outside_trajectory</code> keeps the entity out of the world until the first
+vertex is departed on its time, and after the run ends -- for a trajectory of
+times alone, exactly as before. <code>FollowTrajectoryAction.held_vertex</code> names the
+vertex (0-based) the entity waits at for a condition other than a time, or
+<code>None</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Breaking change</p>
+<p><code>TrajectoryVertex</code> no longer takes <code>time=</code> (or a time as its second
+argument), and the editor's vertex rows no longer have a time column:
+write <code>TrajectoryVertex(position, TrajectoryTimeCondition(t))</code>, and in a
+document a <code>trajectory_time</code> waypoint condition on the vertex. The old
+forms raise an error that says so.</p>
+</div>
+<h2 id="in-the-scenario-editor">In the Scenario Editor<a class="headerlink" href="#in-the-scenario-editor" title="Permanent link">&para;</a></h2>
+<p><strong>Follow Trajectory</strong> (category <em>Vehicle / Motion</em>) is a card like any other,
+for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
+three sources:</p>
+<ul>
+<li><strong>Vertices (map frame)</strong> -- written in the card, one vertex per line:
+  <code>x, y[, yaw]</code> (metres, radians; <code>81234.5, 50123.0</code> leaves the yaw to the
+  path). The line above the text says how many vertices and how long. Their
+  times are waypoint conditions (below). This is what a recording
+  transcribes to, so a replayed road user's card can be edited like any other.</li>
+<li><strong>Along lanelets</strong> -- the lanelets picked on the map, followed along their
+  centrelines at a lateral offset and timed at a constant speed.</li>
+<li><strong>Relative to an entity's lane</strong> -- <a href="#lane-relative-vertices">lane-relative vertices</a>,
+  one per line: <code>ds[, offset][, d_lane][, yaw]</code> (metres, metres, lanes,
+  radians; only <code>ds</code> is required, <code>d_lane</code> is a whole number),
+  measured from the entity chosen in <strong>Relative to</strong> -- or, left empty, from
+  the card's own actor. The document stores them as rows
+  <code>[ds, offset, d_lane, yaw]</code> and the reference as an entity id, which
+  the compiler turns into that entity's role name. Deleting the reference
+  entity clears the field, so the card is then measured from its own actor.</li>
+</ul>
+<p><strong>Waypoint conditions</strong> -- what each vertex departs on, its time included --
+are under the card's fields in the inspector: <em>+ waypoint condition</em> takes a
+vertex number -- counted <strong>from 1</strong>: the Nth vertex of the list (map-frame or
+relative), blank and comment lines not counted -- and a condition type, and
+adds an ordinary condition tree there, drawn and edited exactly as a trigger
+is (click it for its fields, add children to an <em>All</em> / <em>Any</em>). A vertex's
+time is the type <strong>Trajectory time</strong> (<code>trajectory_time</code>, one field: <code>time</code>
+on the trajectory's clock), read "depart vertex N at". A second condition
+added to the same vertex is combined with the first in an <em>All</em> (a Trajectory
+time cannot be combined: it is only ever a vertex's whole condition). The
+vertex number of each can be changed in place, and the bin removes it; a
+recording's long list of times folds away. The card on the canvas says how
+many it has, and <strong>Speed where no time paces</strong> sets the action's <code>speed</code>. In
+the document they are a list on the action, each a vertex and a condition
+node:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">actions</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a_walker</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker1</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vertices</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">81200.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">               </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50110.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">]]</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">relative</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.4</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="nt">advance_conditions</span><span class="p">:</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">          </span><span class="c1"># the second vertex</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">entity_distance</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">walker1</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">less_than</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">11.0</span><span class="p p-Indicator">}}</span>
+</code></pre></div>
+<p>The compiler builds each condition with the same builders as a trigger, and
+the validator checks them as it checks a trigger, plus where they sit and the
+timing rules: a vertex the card has, one condition per vertex, every vertex
+departing on something once any has a time, times that do not decrease, a
+time reference only with times, a Trajectory time only as a vertex's whole
+condition, no condition waiting for its own action to leave the running state
+(the action runs for as long as the entity waits), and only for vertices
+written in the card -- a lanelet path's vertices are generated every 2 m,
+nothing anyone could count, so it takes none (its speed times it). A
+condition that names an entity or action you delete goes with it, as a
+trigger does. The own-action rule is deliberately conservative: any
+reference to the card's own action but "is running" is refused, even under a
+<em>Not</em> where it could not deadlock. A row with a time cell, as documents had before, is refused
+with a message that gives the <code>trajectory_time</code> condition to write instead.</p>
+<p>The other fields are the action's: the time reference (from the action start,
+from the scenario start, or none), its scale and offset, the following mode,
+how far along to start, and whether the entity is out of the world outside the
+trajectory's time. The validator checks what the fields only mean together: a
+time reference needs vertex times (or a speed, for lanelets), and keeping the
+entity out of the world needs the Position mode and a time reference. For
+relative vertices it checks the numbers, the timing and that the reference
+entity exists; whether the lanes they name exist is only known when the action
+starts.</p>
+<p>An entity's <strong>Spawn out of the world</strong> option (non-ego entities) spawns it under
+the map with its physics off, for a card that brings it in at its first vertex:
+a road user a recording picks up late, placed where it first appears, could
+otherwise collide at spawn with whatever stood there when the run began.</p>
+<h2 id="replaying-a-recorded-scene">Replaying a recorded scene<a class="headerlink" href="#replaying-a-recorded-scene" title="Permanent link">&para;</a></h2>
+<p>A transcribed recording becomes an ordinary scenario document -- the one the
+editor edits and the declarative runtime runs -- with nothing beyond the parts
+above:</p>
+<ul>
+<li>the ego spawns where the recording's ego started and is sent where it went;</li>
+<li>every road user is an entity spawned on the lanelet it was first seen on,
+  with one Follow Trajectory card: map-frame vertices, each departed at its
+  recorded time (a <code>trajectory_time</code> waypoint condition) on the scenario
+  clock (<code>time_domain: absolute</code>, <code>time_offset</code> moving the recording's first
+  frame to <code>t = 0</code>), in Position mode and hidden outside its trajectory;</li>
+<li>a road user first seen after the start spawns <strong>out of the world</strong>
+  (<code>spawn.hidden</code>) and appears at its first vertex.</li>
+</ul>
+<p>Open it in the editor to add the conditions the test is about -- a road
+user can wait for the ego by replacing one of its vertex times with another
+waypoint condition.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Transcribers written for the earlier format (a time column in the vertex
+rows) have to write <code>trajectory_time</code> waypoint conditions instead; a
+document with a time column is refused with a message saying so.</p>
+</div>
+<p>T4 scenes are transcribed this way by <code>scenario-import-t4</code> of the separate
+<code>scene_to_scenario_transpiler</code> package, which depends on the framework, never
+the other way round.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Map-frame vertices are Autoware's <code>map</code> frame, so a document replaying a
+recording has to run on <strong>the map the scene was recorded on</strong>, loaded with
+the same projector.</p>
+</div>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:58:35 UTC"><span class="timeago" datetime="2026-10-10T09:58:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:58:35 UTC">2026-10-10</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
