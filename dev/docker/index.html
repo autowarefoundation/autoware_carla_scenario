@@ -1499,6 +1499,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#architectures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-smoke-test" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1751,6 +1762,17 @@
     <span class="md-ellipsis">
       
         Inputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architectures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectures
       
     </span>
   </a>
@@ -2118,12 +2140,45 @@ explaining further:</p>
 <td>Strips the virtualenv (see above). On by default.</td>
 </tr>
 <tr>
+<td><code>platforms</code></td>
+<td>Target platforms. Empty (the default) builds for the runner's own: <code>linux/amd64</code> on an x86_64 runner, <code>linux/arm64</code> on an arm64 one such as <code>ubuntu-24.04-arm</code> — see <a href="#architectures">Architectures</a>.</td>
+</tr>
+<tr>
 <td><code>cache-scope</code></td>
-<td>Cache key namespace. Defaults to one scope per image, so images built in the same workflow do not evict each other — give two images the same scope to <a href="#sharing-the-build-cache">share it</a> instead.</td>
+<td>Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other — give two images the same scope to <a href="#sharing-the-build-cache">share it</a> instead. A given scope is used as is, so give each platform its own.</td>
 </tr>
 </tbody>
 </table>
 <p>Outputs: <code>image-ref</code>, <code>tags</code>, <code>digest</code> (pushed images only), <code>cache-scope</code>.</p>
+<h3 id="architectures">Architectures<a class="headerlink" href="#architectures" title="Permanent link">&para;</a></h3>
+<p>typesafe-carla and its Codon toolchain ship wheels for Linux x86_64 and
+aarch64, and so does every other native dependency of the image, so the action
+packs for either. Run it on an arm64 runner to get an arm64 image:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">jobs</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">pack</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">matrix</span><span class="p">:</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">        </span><span class="nt">include</span><span class="p">:</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> runner</span><span class="p">:</span><span class="w"> </span><span class="nv">ubuntu-latest</span><span class="p p-Indicator">,</span><span class="nt"> arch</span><span class="p">:</span><span class="w"> </span><span class="nv">amd64</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> runner</span><span class="p">:</span><span class="w"> </span><span class="nv">ubuntu-24.04-arm</span><span class="p p-Indicator">,</span><span class="nt"> arch</span><span class="p">:</span><span class="w"> </span><span class="nv">arm64</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ matrix.runner }}</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">      </span><span class="c1"># ...</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./.github/actions/pack-scenario-image</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">          </span><span class="nt">scenario-package-path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">packages/my_scenario_package</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">          </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/${{ github.repository_owner }}/my-scenario</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">          </span><span class="c1"># One tag per architecture: the default tags are the same on both</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">          </span><span class="c1"># legs, so whichever pushed last would win.</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">          </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/${{ github.repository_owner }}/my-scenario:${{ github.sha }}-${{ matrix.arch }}</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">          </span><span class="nt">push</span><span class="p">:</span><span class="w"> </span><span class="s">"true"</span>
+</code></pre></div>
+<p>Each leg builds, loads and smoke-tests its own image natively. To publish one
+multi-architecture tag, join the per-architecture tags in a later job with
+<code>docker buildx imagetools create</code>. Cross-building on one runner
+(<code>platforms: linux/amd64,linux/arm64</code> after <code>docker/setup-qemu-action</code>) also
+works, but emulated, and a multi-platform build cannot be loaded, so it needs
+<code>load: "false"</code> and <code>smoke-test: "false"</code>.</p>
 <h3 id="the-smoke-test">The smoke test<a class="headerlink" href="#the-smoke-test" title="Permanent link">&para;</a></h3>
 <p>With <code>smoke-test: "true"</code> the action runs its <code>smoke-test.py</code> inside the
 freshly built image and checks that</p>
@@ -2141,35 +2196,35 @@ freshly built image and checks that</p>
 editable install resolves via <code>src/</code>, so losing it from the wheel breaks every
 <code>scenario=&lt;name&gt;/…</code> override in the image while leaving development untouched.</p>
 <h2 id="building-by-hand">Building by hand<a class="headerlink" href="#building-by-hand" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">ACTION</span><span class="o">=</span>.github/actions/pack-scenario-image
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># 1. Assemble a minimal build context (framework + scenario, nothing else).</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="s2">"</span><span class="nv">$ACTION</span><span class="s2">/assemble-context.sh"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>--scenario<span class="w"> </span>../my_scenario_package<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span>--out<span class="w"> </span>/tmp/scenario-ctx
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1"># 2. Build. Nothing is compiled: the CARLA client's CPython package comes</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="c1">#    prebuilt in the typesafe-carla wheel.</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>docker<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span>--file<span class="w"> </span><span class="s2">"</span><span class="nv">$ACTION</span><span class="s2">/Dockerfile"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">  </span>--tag<span class="w"> </span>my-scenario:latest<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">  </span>/tmp/scenario-ctx
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="c1"># 3. Verify.</span>
-<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-i<span class="w"> </span>--entrypoint<span class="w"> </span>python<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">  </span>my-scenario:latest<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span><span class="s2">"</span><span class="nv">$ACTION</span><span class="s2">/smoke-test.py"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">ACTION</span><span class="o">=</span>.github/actions/pack-scenario-image
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="c1"># 1. Assemble a minimal build context (framework + scenario, nothing else).</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="s2">"</span><span class="nv">$ACTION</span><span class="s2">/assemble-context.sh"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--scenario<span class="w"> </span>../my_scenario_package<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span>--out<span class="w"> </span>/tmp/scenario-ctx
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="c1"># 2. Build. Nothing is compiled: the CARLA client's CPython package comes</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="c1">#    prebuilt in the typesafe-carla wheel.</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>docker<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">  </span>--file<span class="w"> </span><span class="s2">"</span><span class="nv">$ACTION</span><span class="s2">/Dockerfile"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">  </span>--tag<span class="w"> </span>my-scenario:latest<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">  </span>/tmp/scenario-ctx
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="c1"># 3. Verify.</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-i<span class="w"> </span>--entrypoint<span class="w"> </span>python<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="w">  </span>my-scenario:latest<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span><span class="s2">"</span><span class="nv">$ACTION</span><span class="s2">/smoke-test.py"</span>
 </code></pre></div>
 <h2 id="running-a-scenario">Running a scenario<a class="headerlink" href="#running-a-scenario" title="Permanent link">&para;</a></h2>
 <p>The image holds the client, not the simulator, so point it at a CARLA server
 and give it the map files:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--network<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/maps:/maps:ro"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/outputs:/work/outputs"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">NISHISHINJUKU_XODR_PATH</span><span class="o">=</span>/maps/nishishinjuku_carla.xodr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">NISHISHINJUKU_LANELET2_PATH</span><span class="o">=</span>/maps/nishishinjuku.osm<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span>my-scenario:latest<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="nv">scenario</span><span class="o">=</span>my_scenario/default<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--network<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/maps:/maps:ro"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/outputs:/work/outputs"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">NISHISHINJUKU_XODR_PATH</span><span class="o">=</span>/maps/nishishinjuku_carla.xodr<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">NISHISHINJUKU_LANELET2_PATH</span><span class="o">=</span>/maps/nishishinjuku.osm<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span>my-scenario:latest<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">  </span><span class="nv">scenario</span><span class="o">=</span>my_scenario/default<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <p>Without <code>--network host</code>, pass the server address explicitly with
 <code>server.host=&lt;address&gt; server.port=2000</code>. Hydra writes under the working
@@ -2197,7 +2252,7 @@ the image runs as UID 1000, which must be able to write to it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 5, 2026 10:49:03 UTC"><span class="timeago" datetime="2026-10-05T10:49:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 5, 2026 10:49:03 UTC">2026-10-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 22:56:18 UTC"><span class="timeago" datetime="2026-10-10T22:56:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 22:56:18 UTC">2026-10-10</span>
   </span>
 
     

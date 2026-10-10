@@ -1920,10 +1920,15 @@
 <h2 id="system-requirements">System Requirements<a class="headerlink" href="#system-requirements" title="Permanent link">&para;</a></h2>
 <h3 id="operating-system">Operating System<a class="headerlink" href="#operating-system" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Linux x86_64</strong> (Ubuntu 22.04 is the reference; CI runs on
-  <code>ubuntu-latest</code>). Every dependency resolves to a wheel, the CARLA client's
-  CPython package included (see <a href="#carla-client">CARLA client</a>), so nothing
-  is compiled on install.</li>
+<li><strong>Linux x86_64 or aarch64</strong> (Ubuntu 22.04 is the reference; CI runs on
+  <code>ubuntu-latest</code> and <code>ubuntu-24.04-arm</code>). Every runtime dependency resolves
+  to a wheel on both, the CARLA client's CPython package included (see
+  <a href="#carla-client">CARLA client</a>), so nothing is compiled on install.</li>
+<li>On aarch64 the framework, its CARLA client and the static check all run,
+  but CARLA itself does not: its server is built for x86_64 only. Run the
+  server on an x86_64 host and point the runner at it with
+  <code>server.host=&lt;address&gt;</code> (a server already listening is used rather than
+  launched); <code>scenario-setup</code> refuses to download the nightly there.</li>
 </ul>
 <h3 id="python-version">Python Version<a class="headerlink" href="#python-version" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1941,8 +1946,8 @@ way is used through <code>CARLA_EXECUTABLE</code>.</p>
 <h3 id="carla-client">CARLA client<a class="headerlink" href="#carla-client" title="Permanent link">&para;</a></h3>
 <p>The Python client is
 <a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>, a plain
-dependency of the package (<code>typesafe-carla&gt;=0.3.0,&lt;0.4</code>, from PyPI, Linux
-x86_64 only), imported as <code>import typesafe_carla.carla as carla</code>. It also
+dependency of the package (<code>typesafe-carla&gt;=0.4.0,&lt;0.5</code>, from PyPI, Linux
+x86_64 and aarch64), imported as <code>import typesafe_carla.carla as carla</code>. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in <code>typesafe-carla-toolchain</code>, the pinned Codon compiler. The official
 <code>carla</code> wheels are not used, and no extra has to be requested.</p>
@@ -2060,7 +2065,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <p>The package's runtime dependencies (declared in <code>pyproject.toml</code>):</p>
 <ul>
-<li><code>typesafe-carla&gt;=0.3.0,&lt;0.4</code> (Linux x86_64) — the CARLA client and its Codon
+<li><code>typesafe-carla&gt;=0.4.0,&lt;0.5</code> (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in <code>typesafe-carla-toolchain</code></li>
 <li><code>pyxodr&gt;=0.1.0</code> — OpenDRIVE parser used by <code>MapManager</code> / <code>to_opendrive</code></li>
 <li><code>opencv-python-headless&gt;=4.8</code> — frame processing for the camera recorder (headless: the package makes no GUI calls)</li>
@@ -2119,7 +2124,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 9, 2026 00:53:54 UTC"><span class="timeago" datetime="2026-10-09T00:53:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 9, 2026 00:53:54 UTC">2026-10-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 22:56:18 UTC"><span class="timeago" datetime="2026-10-10T22:56:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 22:56:18 UTC">2026-10-10</span>
   </span>
 
     
