@@ -114,7 +114,7 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
-| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `held_vertex` names the vertex a waypoint condition is holding it at. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
+| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
 
 ## Trajectories (`autoware_carla_scenario.trajectory`)
 
@@ -122,7 +122,8 @@ See [Trajectories and Recorded-Scene Replay](trajectory.md).
 
 | Symbol | Description |
 |--------|-------------|
-| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position, an optional time, and an optional `advance` condition that holds the entity at the vertex until it is satisfied ([waypoint conditions](trajectory.md#waypoint-conditions); `Trajectory.is_gated`, `Trajectory.gated({index: condition})`). |
+| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and the condition the entity departs it on (`advance`) -- a time, `TrajectoryTimeCondition(t)` (read back as `vertex.time`), or any other condition ([waypoint conditions](trajectory.md#waypoint-conditions); `Trajectory.is_gated`, `Trajectory.gated({index: condition})`). |
+| `TrajectoryTimeCondition` | A vertex's time: depart when the trajectory's clock reaches it. |
 | `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
 | `RelativeLanePose` | A pose relative to an entity in lane coordinates (`ds`, `offset`, `d_lane`, `yaw`, `entity_ref`; OpenSCENARIO `RelativeLanePosition`), placed when the action starts. |
 | `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
