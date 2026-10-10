@@ -222,6 +222,10 @@ class RouteCoverageSummary:
     #: Attribute name -> the labels of its buckets inside the ODD (not ruled
     #: out by it) that no route reaches, for the attributes the map decides.
     unreached: dict[str, list[str]]
+    #: Attributes the map decides in general but not on every lanelet of
+    #: these routes (metres in :data:`UNDECIDED_BUCKET`): the run may reach
+    #: any of their buckets there, so none is called unreached.
+    undetermined: list[str] = field(default_factory=list)
 
     @property
     def leaving(self) -> list[str]:
@@ -235,6 +239,7 @@ class RouteCoverageSummary:
             "leaving_odd": self.leaving,
             "expected_m": _round_buckets(self.expected_m),
             "unreached": {k: list(v) for k, v in self.unreached.items()},
+            "undetermined": list(self.undetermined),
         }
 
 
@@ -548,6 +553,9 @@ def combine_route_coverage(
     Only the attributes the map decides are said to leave buckets unreached:
     the others are read at run time, which no route says anything about.  A
     bucket the ODD rules out is not a target, so it is not unreached either.
+    An attribute the map leaves undecided on some lanelet of a route (a
+    ``speed_limit_kph`` lanelet with no tag) could reach any bucket there: it
+    is reported as undetermined rather than with unreached buckets.
     """
     odd = resolve_odd(odd)
     expected: dict[str, dict[str, float]] = {
@@ -561,9 +569,13 @@ def combine_route_coverage(
     expected = _in_bucket_order(odd, expected)
     map_attributes = set(_map_attributes(odd))
     unreached: dict[str, list[str]] = {}
+    undetermined: list[str] = []
     for attribute in odd.attributes:
         item = attribute.item
         if item is None or attribute.name not in map_attributes:
+            continue
+        if expected.get(attribute.name, {}).get(UNDECIDED_BUCKET, 0.0) > 0.0:
+            undetermined.append(attribute.name)
             continue
         outside = set(odd.outside_buckets(attribute))
         reached = expected.get(attribute.name, {})
@@ -575,5 +587,9 @@ def combine_route_coverage(
         if missing:
             unreached[attribute.name] = missing
     return RouteCoverageSummary(
-        odd=odd.name, routes=list(routes), expected_m=expected, unreached=unreached
+        odd=odd.name,
+        routes=list(routes),
+        expected_m=expected,
+        unreached=unreached,
+        undetermined=undetermined,
     )

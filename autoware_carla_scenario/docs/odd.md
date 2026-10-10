@@ -512,8 +512,8 @@ What the lanelet forms read, and where that differs from the run:
 | Probe | On a lanelet | At run time |
 |---|---|---|
 | `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | CARLA waypoint `is_junction` |
-| `lane_count` | Lanelets beside it in the routing graph (`besides()`: same direction, itself included); nothing in a junction | CARLA OpenDRIVE waypoints: driving lanes of the same sign |
-| `speed_limit_kph` | The `speed_limit` tag, else undecided | The tag, else CARLA's `get_speed_limit()` |
+| `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | CARLA OpenDRIVE waypoints: driving lanes of the same sign |
+| `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a number) undecided | The tag, else CARLA's `get_speed_limit()` |
 | `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph` | The tag | The tag of the lanelet the ego is on |
 
 Route lane counts come from Lanelet2 and run-time lane counts come from
@@ -528,7 +528,10 @@ the spawn pose, the goal lanelet up to the goal pose, and a lane change
 splits the lanelets' length between the two sides. Over several scenarios
 the metres are summed, and the report lists the buckets of each map-decided
 attribute that **no planned route reaches**, leaving out buckets outside the
-ODD (they are not targets).
+ODD (they are not targets). An attribute the map decides in general but left
+undecided on some lanelet of a route (metres in `<undecided>`) is reported as
+**undetermined** instead: the run may reach any of its buckets there, so none
+is called unreached.
 
 The exit status is 0 when no route leaves the ODD, 1 when one does, and 2
 when a route could not be planned (no goal, no path, a lanelet the map does

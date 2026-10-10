@@ -186,6 +186,8 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
                     print(f"  {attribute}: {_format_buckets(buckets) or '-'}")  # noqa: T201
             for attribute, labels in summary.unreached.items():
                 print(f"  unreached {attribute}: {', '.join(labels)}")  # noqa: T201
+            for attribute in summary.undetermined:
+                print(f"  undetermined {attribute}: undecided on some lanelets")  # noqa: T201
     if summary.leaving:
         return 1
     return 2 if failed else 0
@@ -222,8 +224,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     route.add_argument("--json", action="store_true", help="print JSON")
     # Scenario configs and overrides may come either side of --json.
     args, extra = parser.parse_known_args(argv)
-    if extra and args.command != "route":
-        parser.error(f"unrecognized arguments: {' '.join(extra)}")
+    unknown = [a for a in extra if args.command != "route" or a.startswith("-")]
+    if unknown:
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
     if args.command == "list":

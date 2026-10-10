@@ -448,22 +448,35 @@ def _lanelet_speed_limit_on_lanelet(
 
 @_on_lanelet(speed_limit_kph)
 def _speed_limit_on_lanelet(lanelet: Any, lanelet_map: Any, routing_graph: Any) -> Any:
-    # Without the tag, the run reads CARLA's limit, which the map cannot tell.
-    tag = _tag(lanelet, "speed_limit")
-    if tag is None:
-        return UNDECIDED
-    return _lanelet_speed_limit_on_lanelet(lanelet, lanelet_map, routing_graph)
+    # Without a tag it can read as a number, the run reads CARLA's limit,
+    # which the map cannot tell.
+    limit = _lanelet_speed_limit_on_lanelet(lanelet, lanelet_map, routing_graph)
+    return UNDECIDED if limit is None else limit
 
 
 @_on_lanelet(lane_count)
 def _lane_count_on_lanelet(
     lanelet: Any, lanelet_map: Any, routing_graph: Any
 ) -> Optional[int]:
-    # As the run reads it: nothing inside a junction.  The lanelets beside it
-    # in the routing graph run in its direction, and include it.
+    # As the run reads it: nothing inside a junction, and every lane in the
+    # same direction, whether or not a lane change into it is allowed.  The
+    # routing graph's left()/right() are the lane-changeable neighbours,
+    # adjacentLeft()/adjacentRight() the ones behind a solid line; both run in
+    # the lanelet's direction (``besides()`` would stop at a solid line).
     if _is_junction_lanelet(lanelet):
         return None
-    return max(1, len(routing_graph.besides(lanelet)))
+    seen = {lanelet.id}
+    for step, adjacent in (("left", "adjacentLeft"), ("right", "adjacentRight")):
+        here = lanelet
+        while len(seen) < 64:  # a guard against a malformed map's loops
+            there = getattr(routing_graph, step)(here) or getattr(
+                routing_graph, adjacent
+            )(here)
+            if there is None or there.id in seen:
+                break
+            seen.add(there.id)
+            here = there
+    return len(seen)
 
 
 @_on_lanelet(lanelet_location)

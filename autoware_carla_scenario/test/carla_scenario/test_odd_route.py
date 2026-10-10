@@ -90,11 +90,34 @@ def _fake_lanelet(**tags: str) -> Any:
 
 
 class _Graph:
-    def __init__(self, besides: int) -> None:
-        self.count = besides
+    """Lanes 1..n side by side, left to right, in one direction.
 
-    def besides(self, lanelet: Any) -> list[Any]:
-        return [lanelet] * self.count
+    *solid* lists the lane ids a lane change may not cross into from the
+    neighbour: they are reached through adjacentLeft/adjacentRight only.
+    """
+
+    def __init__(self, lanes: int, solid: tuple[int, ...] = ()) -> None:
+        self.lanes = lanes
+        self.solid = set(solid)
+
+    def _lane(self, lane_id: int, changeable: bool) -> Any:
+        if not 1 <= lane_id <= self.lanes:
+            return None
+        if (lane_id in self.solid) == changeable:
+            return None
+        return SimpleNamespace(id=lane_id, attributes={})
+
+    def left(self, lanelet: Any) -> Any:
+        return self._lane(lanelet.id - 1, True)
+
+    def adjacentLeft(self, lanelet: Any) -> Any:  # noqa: N802 - Lanelet2's name
+        return self._lane(lanelet.id - 1, False)
+
+    def right(self, lanelet: Any) -> Any:
+        return self._lane(lanelet.id + 1, True)
+
+    def adjacentRight(self, lanelet: Any) -> Any:  # noqa: N802 - Lanelet2's name
+        return self._lane(lanelet.id + 1, False)
 
 
 class TestOnLanelet:
@@ -119,19 +142,39 @@ class TestOnLanelet:
         on = probes.speed_limit_kph.on_lanelet  # type: ignore[attr-defined]
         assert on(_fake_lanelet(), None, None) is UNDECIDED
 
-    def test_a_speed_limit_that_is_not_a_number_is_missing(self) -> None:
+    def test_a_speed_limit_that_is_not_a_number(self) -> None:
+        # The run falls back to CARLA's limit (speed_limit_kph) or reads
+        # nothing (lanelet_speed_limit_kph).
         lanelet = _fake_lanelet(speed_limit="fast")
-        assert probes.speed_limit_kph.on_lanelet(lanelet, None, None) is None  # type: ignore[attr-defined]
+        on = probes.speed_limit_kph.on_lanelet  # type: ignore[attr-defined]
+        assert on(lanelet, None, None) is UNDECIDED
+        assert probes.lanelet_speed_limit_kph.on_lanelet(lanelet, None, None) is None  # type: ignore[attr-defined]
 
     def test_a_junction_lanelet_has_a_turn_direction(self) -> None:
         on = probes.in_junction.on_lanelet  # type: ignore[attr-defined]
         assert on(_fake_lanelet(turn_direction="left"), None, None) is True
         assert on(_fake_lanelet(), None, None) is False
 
-    def test_lane_count_is_the_lanelets_beside_and_nothing_in_a_junction(self) -> None:
+    def test_lane_count_is_every_lane_beside_and_nothing_in_a_junction(self) -> None:
         on = probes.lane_count.on_lanelet  # type: ignore[attr-defined]
-        assert on(_fake_lanelet(), None, _Graph(3)) == 3
+        assert on(_fake_lanelet(), None, _Graph(3)) == 3  # lane 1 of 3
+        # Lanes behind a solid line count too.
+        assert on(_fake_lanelet(), None, _Graph(4, solid=(2, 4))) == 4
         assert on(_fake_lanelet(turn_direction="straight"), None, _Graph(3)) is None
+
+    def test_lane_count_counts_lanes_behind_a_solid_line_on_the_map(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        lanelet_map, graph = nishishinjuku
+        on = probes.lane_count.on_lanelet  # type: ignore[attr-defined]
+        # 9 has no lane-changeable neighbour, but three lanes to its right.
+        assert [x.id for x in graph.besides(lanelet_map.laneletLayer[9])] == [9]
+        assert on(lanelet_map.laneletLayer[9], lanelet_map, graph) == 4
+        # intersection_passing's approaches: 242 and 243 lie side by side.
+        assert on(lanelet_map.laneletLayer[242], lanelet_map, graph) > 1
+        assert on(lanelet_map.laneletLayer[243], lanelet_map, graph) == on(
+            lanelet_map.laneletLayer[242], lanelet_map, graph
+        )
 
     def test_on_the_fixture_map(self, nishishinjuku: tuple[Any, Any]) -> None:
         lanelet_map, graph = nishishinjuku
@@ -487,6 +530,27 @@ class TestExpectedCoverage:
         assert summary.leaving == []
         json.dumps(summary.describe())
 
+    def test_an_attribute_undecided_on_a_route_is_undetermined(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        lanelet_map, graph = nishishinjuku
+
+        def lanes(world: Any) -> Any:
+            return None
+
+        # Decided on 203 only; undecided on the rest of the left turn.
+        lanes.on_lanelet = lambda ll, m, g: 1 if ll.id == 203 else UNDECIDED  # type: ignore[attr-defined]
+        x = OddAttribute("x", lanes, values=[1, 2, 3])
+        y = OddAttribute("y", probes.lanelet_location, values=["urban", "nonurban"])
+        odd = OddDefinition("t", [x, y])
+        route = _cover(odd, LEFT_TURN, nishishinjuku)
+        assert route.expected_m["x"][UNDECIDED_BUCKET] > 0
+        summary = combine_route_coverage(odd, [route])
+        assert summary.undetermined == ["x"]
+        assert "x" not in summary.unreached
+        assert summary.unreached == {"y": ["nonurban"]}
+        assert summary.describe()["undetermined"] == ["x"]
+
     def test_attributes_only_the_run_reads_are_never_unreached(
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
@@ -580,6 +644,13 @@ class TestCli:
     def test_an_odd_that_cannot_be_read(self, capsys: Any) -> None:
         assert odd_main(["route", "no_such_odd", "lane_change/left"]) == 2
         assert "no_such_odd" in capsys.readouterr().err
+
+    def test_an_unknown_option_is_not_a_scenario_config(self, capsys: Any) -> None:
+        with pytest.raises(SystemExit) as exc:
+            odd_main(["route", "default", "lane_change/left", "--jsn", *self.MAP])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "usage:" in err and "--jsn" in err
 
     def test_a_glob_matching_nothing(self, capsys: Any) -> None:
         assert odd_main(["route", "default", "no_such_scenario/*"]) == 2
