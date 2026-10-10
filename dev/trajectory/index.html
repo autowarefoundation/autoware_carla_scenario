@@ -1205,6 +1205,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#lane-relative-vertices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lane-relative vertices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#following-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1489,6 +1500,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#lane-relative-vertices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lane-relative vertices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#following-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1638,10 +1660,105 @@ carries no dataset format.</p>
 <li><code>MapPose(x, y, yaw=None, z=None)</code> -- an absolute pose in <strong>Autoware's <code>map</code>
   frame</strong> (the Lanelet2 file's projected frame), which is the frame a recording
   states its poses in. A missing <code>yaw</code> is taken from the direction of the path;
-  a missing <code>z</code> puts the entity on the road surface under it.</li>
+  a missing <code>z</code> puts the entity on the road surface under it;</li>
+<li><code>RelativeLanePose(ds=0.0, offset=0.0, d_lane=0, yaw=None, entity_ref=None)</code>
+  -- a pose <strong>relative to an entity, in lane coordinates</strong> (OpenSCENARIO's
+  <code>RelativeLanePosition</code>); see <a href="#lane-relative-vertices">below</a>.</li>
 </ul>
 <p>Positions are converted to CARLA world coordinates when the action first runs,
-through the loaded map.</p>
+through the loaded map. Vertices of different kinds may be mixed in one
+trajectory.</p>
+<h3 id="lane-relative-vertices">Lane-relative vertices<a class="headerlink" href="#lane-relative-vertices" title="Permanent link">&para;</a></h3>
+<p>A <code>RelativeLanePose</code> writes the shape of a manoeuvre -- pull out, overtake, cut
+in ahead of the ego -- once, to be played from wherever it begins:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="n">RelativeLanePose</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">overtake</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"overtake"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="p">[</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(),</span> <span class="n">time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>  <span class="c1"># where npc1 is</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span> <span class="n">d_lane</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">5.0</span><span class="p">),</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="c1"># 10 m ahead of the ego, in its lane: a cut-in.</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">RelativeLanePose</span><span class="p">(</span><span class="n">ds</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">entity_ref</span><span class="o">=</span><span class="n">EGO_ROLE_NAME</span><span class="p">),</span> <span class="n">time</span><span class="o">=</span><span class="mf">7.0</span><span class="p">),</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="p">],</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span><span class="s2">"npc1"</span><span class="p">,</span> <span class="n">overtake</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_overtakes"</span><span class="p">)</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>OpenSCENARIO</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_ref</code></td>
+<td><code>entityRef</code></td>
+<td><code>role_name</code> of the reference entity. <code>None</code> (default) is the entity the action moves.</td>
+</tr>
+<tr>
+<td><code>ds</code></td>
+<td><code>ds</code></td>
+<td>Metres along the reference entity's lane, from where it is; negative goes back.</td>
+</tr>
+<tr>
+<td><code>d_lane</code></td>
+<td><code>dLane</code></td>
+<td>Lanes across: <code>+1</code> one lane to the left, <code>-1</code> one to the right, <code>0</code> the reference's own lane.</td>
+</tr>
+<tr>
+<td><code>offset</code></td>
+<td><code>offset</code></td>
+<td>Metres from the <strong>target lane's centreline</strong>, positive to the left -- the sign of <code>Lanelet2Pose.t</code>. The reference entity's own lateral position does not carry over.</td>
+</tr>
+<tr>
+<td><code>yaw</code></td>
+<td><code>Orientation</code> (relative)</td>
+<td>Radians from the target lane's direction, positive to the left (anticlockwise) -- the sense of <code>Lanelet2Pose.heading</code>. <code>None</code> faces along the path, as for <code>MapPose</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>How a vertex is placed, on the Lanelet2 map and its routing graph:</p>
+<ol>
+<li><strong>The reference's lane.</strong> The lanelet the reference entity is on, and the
+   exact distance along its centreline. Where lanelets overlap (a junction) or
+   meet (a seam), the one whose direction is nearest the entity's heading
+   wins, then the one nearest its elevation, then the lowest id.</li>
+<li><strong><code>ds</code> along the lane.</strong> Past a lanelet's end the distance carries on into
+   the lanelet that follows it in the routing graph; a negative <code>ds</code> past its
+   start into the one before it. Where several follow (a fork) or precede (a
+   merge), the one that <strong>turns least</strong> is taken, then the lowest id -- the
+   "straight on" a route most often takes, and deterministic. A <code>ds</code> that runs
+   off a lanelet nothing follows is an error naming that lanelet.</li>
+<li><strong><code>d_lane</code> across.</strong> At the point <code>ds</code> reached, one step per lane through
+   the routing graph's left or right neighbour -- lane-changeable or not (a
+   solid line still has a lane beyond it), but only lanes of the same
+   direction of travel. The point keeps abreast: its distance along the
+   neighbour is where the point projects onto it, so the outside of a bend is
+   not shortchanged. A missing neighbour is an error naming the lanelet and the
+   side. Lanelet2 only knows a neighbour that shares the lanelet's whole side,
+   so where the two lanes are split into lanelets at different points (one
+   20 m lanelet beside two 10 m ones) there is no neighbour to step to, and
+   the vertex raises the same error.</li>
+<li><strong><code>offset</code> and <code>yaw</code></strong> are applied on that lanelet, which gives a
+   <code>Lanelet2Pose</code>, converted to CARLA coordinates like any other.</li>
+</ol>
+<p><strong>When.</strong> A trajectory with relative vertices is placed <strong>when the action
+starts</strong> -- the first tick of a run, against where each reference entity is at
+that tick -- and is then fixed: the vertices do not move with the reference
+entity afterwards, so the rest of the action (timing, both modes, hiding) works
+on it exactly as on absolute vertices. A repeating action (<code>once=False</code>) places
+it again at the start of every run. A reference entity that is not in the world
+yet puts the start off until it is -- for as long as it takes: the action
+neither ends nor fails meanwhile, and warns once per run; a lane the map does
+not have raises a
+<code>ValueError</code> naming the trajectory and the vertex. These lane checks can only
+be made then: they depend on where the reference entity is.</p>
 <h3 id="following-modes">Following modes<a class="headerlink" href="#following-modes" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>POSITION</code></strong> places the entity on the trajectory every tick, with the
@@ -1673,7 +1790,7 @@ cannot be spawned once a run has started.</p>
 <h2 id="in-the-scenario-editor">In the Scenario Editor<a class="headerlink" href="#in-the-scenario-editor" title="Permanent link">&para;</a></h2>
 <p><strong>Follow Trajectory</strong> (category <em>Vehicle / Motion</em>) is a card like any other,
 for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
-two sources:</p>
+three sources:</p>
 <ul>
 <li><strong>Vertices (map frame)</strong> -- written in the card, one vertex per line:
   <code>x, y[, yaw][, time]</code> (metres, radians, seconds; <code>81234.5, 50123.0, , 1.5</code>
@@ -1682,13 +1799,24 @@ two sources:</p>
   transcribes to, so a replayed road user's card can be edited like any other.</li>
 <li><strong>Along lanelets</strong> -- the lanelets picked on the map, followed along their
   centrelines at a lateral offset and timed at a constant speed.</li>
+<li><strong>Relative to an entity's lane</strong> -- <a href="#lane-relative-vertices">lane-relative vertices</a>,
+  one per line: <code>ds[, offset][, d_lane][, yaw][, time]</code> (metres, metres,
+  lanes, radians, seconds; only <code>ds</code> is required, <code>d_lane</code> is a whole number),
+  measured from the entity chosen in <strong>Relative to</strong> -- or, left empty, from
+  the card's own actor. The document stores them as rows
+  <code>[ds, offset, d_lane, yaw, time]</code> and the reference as an entity id, which
+  the compiler turns into that entity's role name. Deleting the reference
+  entity clears the field, so the card is then measured from its own actor.</li>
 </ul>
 <p>The other fields are the action's: the time reference (from the action start,
 from the scenario start, or none), its scale and offset, the following mode,
 how far along to start, and whether the entity is out of the world outside the
 trajectory's time. The validator checks what the fields only mean together: a
 time reference needs vertex times (or a speed, for lanelets), and keeping the
-entity out of the world needs the Position mode and a time reference.</p>
+entity out of the world needs the Position mode and a time reference. For
+relative vertices it checks the numbers, the timing and that the reference
+entity exists; whether the lanes they name exist is only known when the action
+starts.</p>
 <p>An entity's <strong>Spawn out of the world</strong> option (non-ego entities) spawns it under
 the map with its physics off, for a card that brings it in at its first vertex:
 a road user a recording picks up late, placed where it first appears, could
@@ -1738,7 +1866,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:58:35 UTC"><span class="timeago" datetime="2026-10-10T09:58:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:58:35 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 12:40:31 UTC"><span class="timeago" datetime="2026-10-10T12:40:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 12:40:31 UTC">2026-10-10</span>
   </span>
 
     
