@@ -37,7 +37,7 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["DRIVER_MODULE", "Driver", "render_driver"]
+__all__ = ["DRIVER_MODULE", "Driver", "render_driver", "render_odd_driver"]
 
 #: File name of the generated program in the check workspace.
 DRIVER_MODULE = "_acs_check_main.py"
@@ -224,3 +224,19 @@ def render_driver(
         config_lines[len(lines)] = f"scenario.{key}"
     lines += tail
     return Driver("\n".join(lines) + "\n", config_lines)
+
+
+def render_odd_driver(module: str, function: str) -> Driver:
+    """The program that checks an ODD: call its builder, keep an ODD."""
+    lines = [
+        "from autoware_carla_scenario import OddDefinition",
+        f"from {module} import {function}",
+        "",
+        "",
+        "def _acs_check_odd():",
+        f"    odd: OddDefinition = {function}()",
+        "",
+        "",
+        "_acs_check_odd()",
+    ]
+    return Driver("\n".join(lines) + "\n")

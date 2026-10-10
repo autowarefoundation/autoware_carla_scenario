@@ -38,6 +38,36 @@ renderer driven by the native CARLA recorder + an RGB camera sensor.
 It is used internally by `ScenarioRunner` and can also be instantiated
 directly.
 
+## Coverage (`autoware_carla_scenario.coverage`)
+
+See [Coverage](coverage.md).
+
+| Symbol | Purpose |
+|--------|---------|
+| `BaseScenario.register_cover(name, expression, *, unit, range, every, buckets, values, ignore, event, text, target)` | Declare a cover item, after `cover()` in OpenSCENARIO DSL. |
+| `BaseScenario.register_cross(name, items, *, text, target)` | Cross coverage of cover items sampled on the same event. |
+| `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
+| `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
+| `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
+| `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
+
+## ODD (`autoware_carla_scenario.odd`)
+
+See [ODD](odd.md).
+
+| Symbol | Purpose |
+|--------|---------|
+| `OddAttribute(name, probe, *, unit, range, every, buckets, values, text)` | A measured taxonomy concept. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`, `is_unknown`. |
+| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text)` | A named rule. |
+| `OddDefinition(name, attributes, modules, *, roots, text)` | The ODD: judges values with OpenODD's semantics (roots, labels, inactive modules, missing values), and marks buckets outside it. |
+| `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
+| `default_odd()` | The built-in ODD: every attribute, no modules. |
+| `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
+| `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
+| `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
+| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
+| `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |
+
 ## Conditions (`autoware_carla_scenario.conditions`)
 
 All conditions inherit from `BaseCondition` and return a
@@ -251,6 +281,8 @@ Defined in `pyproject.toml`:
 | `viewer` | `autoware_carla_scenario.ui:main` |
 | `scenario-editor` | `autoware_carla_scenario.editor:main` |
 | `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
+| `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` |
+| `scenario-odd` | `autoware_carla_scenario.odd.cli:main` |
 
 The `scenario` command also exposes Python-level helpers in
 `autoware_carla_scenario.examples.run` for downstream packages:

@@ -32,7 +32,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .driver import DRIVER_MODULE, render_driver
+from .driver import DRIVER_MODULE, render_driver, render_odd_driver
 from .toolchain import (
     SUPPORTED_CODON_SERIES,
     Toolchain,
@@ -56,6 +56,7 @@ __all__ = [
     "available_toolchain",
     "find_supported_codon",
     "model_dir",
+    "typecheck_odd",
     "typecheck_scenario",
 ]
 
@@ -530,6 +531,27 @@ def typecheck_scenario(
         scenario class without a source file).
     """
     name = f"{scenario_cls.__module__}.{scenario_cls.__qualname__}"
+    roots = sorted({scenario_cls.__module__, config_cls.__module__})
+    return _typecheck(
+        name,
+        roots,
+        lambda: render_driver(scenario_cls, config_cls, dict(scenario_dict or {})),
+        toolchain,
+        timeout,
+        what="scenario",
+    )
+
+
+def _typecheck(
+    name: str,
+    roots: list[str],
+    driver: Any,
+    toolchain: Toolchain | None,
+    timeout: float,
+    *,
+    what: str,
+) -> TypeCheckResult:
+    """Compile the modules *roots* with the driver *driver()* renders, cached."""
     if toolchain is None:
         try:
             toolchain = find_supported_codon()
@@ -539,20 +561,53 @@ def typecheck_scenario(
         codon_path = codon_path_dir()
     except ToolchainError as exc:
         return TypeCheckResult(name, ok=True, skipped=f"no CARLA API to check: {exc}")
-    roots = sorted({scenario_cls.__module__, config_cls.__module__})
     if any(_module_file(root) is None for root in roots):
         return TypeCheckResult(
-            name, ok=True, skipped="the scenario has no source file to compile"
+            name, ok=True, skipped=f"the {what} has no source file to compile"
         )
     sources = _collect(roots, toolchain, codon_path)
-    driver = render_driver(scenario_cls, config_cls, dict(scenario_dict or {}))
-    key = _cache_key(toolchain, codon_path, sources, driver.source)
+    rendered = driver()
+    key = _cache_key(toolchain, codon_path, sources, rendered.source)
     if key not in _CACHE:
-        result = _compile(name, sources, driver, toolchain, codon_path, timeout)
+        result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
         if result is None:  # timed out: no verdict worth keeping
             return _timed_out(name, timeout)
         _CACHE[key] = result
     return _CACHE[key]
+
+
+def typecheck_odd(
+    builder: Any,
+    *,
+    toolchain: Toolchain | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> TypeCheckResult:
+    """Compile the ODD *builder* returns, as :func:`typecheck_scenario` compiles a scenario.
+
+    *builder* is a module-level function that takes nothing and returns an
+    :class:`~autoware_carla_scenario.OddDefinition`.  The driver calls it, so
+    everything it reaches is checked: each attribute's probe is called with a
+    world, each condition must come from an attribute, and the result must
+    be an ODD.
+
+    Returns:
+        The result; ``result.ok`` is ``False`` when the ODD must not be used.
+    """
+    module = getattr(builder, "__module__", "") or ""
+    qualname = getattr(builder, "__qualname__", "<callable>")
+    name = f"{module}.{qualname}"
+    if "." in qualname or "<" in qualname:
+        return TypeCheckResult(
+            name, ok=True, skipped="only a module-level function can be compiled"
+        )
+    return _typecheck(
+        name,
+        [module],
+        lambda: render_odd_driver(module, qualname),
+        toolchain,
+        timeout,
+        what="ODD",
+    )
 
 
 def _timed_out(name: str, timeout: float) -> TypeCheckResult:

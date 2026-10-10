@@ -13,13 +13,14 @@ import logging
 import os
 from typing import Any, Literal, Mapping, cast, get_args
 
-from .check import ScenarioTypeError, TypeCheckResult, typecheck_scenario
+from .check import ScenarioTypeError, TypeCheckResult, typecheck_odd, typecheck_scenario
 from .toolchain import Toolchain
 
 __all__ = [
     "TYPECHECK_ENV",
     "TYPECHECK_MODES",
     "TypecheckMode",
+    "check_odd",
     "check_registered_scenario",
     "typecheck_mode",
     "typecheck_registered",
@@ -93,6 +94,16 @@ def check_registered_scenario(
     if result is None:
         logger.info("Scenario %r has a custom builder: not statically checked", name)
         return None
+    return _enforce(result, mode)
+
+
+def _enforce(result: TypeCheckResult, mode: TypecheckMode) -> TypeCheckResult:
+    """Apply *mode* to a check's *result*: raise, warn or log.
+
+    Raises:
+        ScenarioTypeError: The check failed, or *mode* is ``required`` and no
+            check could be made.
+    """
     if result.skipped is not None:
         if mode == "required":
             result.ok = False
@@ -103,3 +114,27 @@ def check_registered_scenario(
     else:
         logger.info("%s", result.format())
     return result
+
+
+def check_odd(spec: str | None, mode: TypecheckMode = "auto") -> TypeCheckResult | None:
+    """Check the ODD *spec* names when it is written in Python.
+
+    *spec* is what :func:`~autoware_carla_scenario.resolve_odd` takes.  The
+    built-in ODD and OpenODD YAML files are not compiled: the first is the
+    framework's own, and the second is validated as it is read.
+
+    Returns:
+        The result, or ``None`` when nothing was checked.
+
+    Raises:
+        ScenarioTypeError: The ODD does not compile, or *mode* is ``required``
+            and there is no Codon compiler.
+    """
+    from ..odd.registry import odd_builder  # noqa: PLC0415
+
+    if mode == "off":
+        return None
+    builder = odd_builder(spec)
+    if builder is None:
+        return None
+    return _enforce(typecheck_odd(builder), mode)
