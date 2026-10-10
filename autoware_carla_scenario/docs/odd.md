@@ -526,7 +526,7 @@ to the config key that sets it:
 | Field | Meaning |
 |---|---|
 | `key` | The config key the value is written to |
-| `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from; a bucket without one is not drawn. Numeric: a range in the attribute's unit to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
+| `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range in the attribute's unit to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
 | `scale`, `offset` | A numeric value drawn in the attribute's unit is written as `value * scale + offset` (`scale` not zero) |
 | `integer` | Write an integer. A rounded numeric value that falls in another bucket is drawn again |
 
@@ -569,9 +569,9 @@ buckets first, counting the cases already drawn in the batch as covered, so
 a batch works through the holes before it repeats one; it falls back to any
 bucket (the less covered the likelier) only when the ODD admits no
 combination of the least covered. **Situations** that are still holes (or
-that no earlier run measured) are aimed at first, one case each. A situation
-the knobs alone decide -- every attribute it tests has a knob -- holds in its
-case. One that also tests what no knob sets -- a speed, a road -- gets a case
+that no earlier run measured) are aimed at first, one case each; inactive
+ones are not. A situation the knobs alone decide -- every attribute it tests
+has a knob, and it refers to no other module -- holds in its case. One that also tests what no knob sets -- a speed, a road -- gets a case
 under which it *can* hold; whether it does is up to the drive. A situation
 the ODD and the knobs leave no case for is given up on, with a warning.
 

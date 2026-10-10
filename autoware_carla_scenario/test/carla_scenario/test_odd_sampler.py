@@ -641,3 +641,45 @@ def test_boolean_bucket_keys_from_yaml() -> None:
 def test_a_zero_scale_is_refused() -> None:
     with pytest.raises(ValueError, match="scale"):
         OddKnob("k", scale=0)
+
+
+def test_a_point_range_on_an_integer_knob_writes_an_integer() -> None:
+    lanes = OddAttribute("scenery.lanes", lambda world: None, values=["few", "many"])
+    sampler = OddSampler(
+        OddDefinition("x", [lanes]),
+        {"scenery.lanes": OddKnob("x.n", values={"many": [5, 5]}, integer=True)},
+    )
+
+    assert sampler.sample(1)[0].overrides == ["x.n=5"]
+
+
+def test_an_inactive_situation_is_not_aimed_at() -> None:
+    base = _storm_odd()
+    (situation,) = base.modules
+    situation.active = False
+    sampler = OddSampler(
+        OddDefinition("weather", base.attributes, [situation]),
+        seed=0,
+        strategy="coverage",
+    )
+
+    assert sampler.situation_holes == []
+    assert sampler.sample(1)[0].situation is None
+
+
+def test_coverage_counted_another_way_is_not_read() -> None:
+    by_seconds = _entry(
+        "odd.environment.rain",
+        list(INTENSITY_LEVELS),
+        {"none": 5, "light": 5, "moderate": 5},
+        cover_by="seconds",
+    )
+    sampler = OddSampler(
+        _weather_odd(),
+        seed=0,
+        strategy="coverage",
+        coverage=SimpleNamespace(entries=[by_seconds]),
+    )
+
+    # The ODD counts hits; seconds say nothing about them.
+    assert sampler._amount == {}

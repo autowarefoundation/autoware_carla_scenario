@@ -301,7 +301,9 @@ class OddSampler:
         #: Situation -> whether the knobs alone decide it: every attribute it
         #: tests is drawn, and it refers to no other module.
         self._decided: dict[str, bool] = {}
-        for module in odd.situations():
+        # An inactive situation is not measured, so it is never a hole.
+        self._situations = [m for m in odd.situations() if m.active]
+        for module in self._situations:
             conditions = module._conditions()
             tested = {a.name for c in conditions for a in c._attributes()}
             refers = any(c._references() for c in conditions)
@@ -329,12 +331,13 @@ class OddSampler:
     def _read_coverage(self, coverage: Any) -> None:
         """Remember how covered each bucket is, and which situations are holes.
 
-        An entry counts when its name (less a ``#n`` variant suffix) and its
-        buckets are the ones this ODD defines.  Every situation whose entry is
-        missing or has a hole is a hole.
+        An entry counts when its name (less a ``#n`` variant suffix), its
+        buckets and what it counts (``cover_by``) are the ones this ODD
+        defines.  Every active situation whose entry is missing or has a hole
+        is a hole.
         """
         items = {f"odd.{a.name}": a for a in self.odd.attributes if a.item is not None}
-        situations = {f"odd.situation.{m.name}": m for m in self.odd.situations()}
+        situations = {f"odd.situation.{m.name}": m for m in self._situations}
         covered_situations: set[str] = set()
         entries = [] if coverage is None else coverage.entries
         for entry in entries:
@@ -348,7 +351,11 @@ class OddSampler:
             attribute = items.get(name)
             if attribute is None or attribute.item is None:
                 continue
-            if list(entry.buckets) != attribute.item.labels:
+            # Coverage measured some other way counts towards something else.
+            if (
+                list(entry.buckets) != attribute.item.labels
+                or getattr(entry, "cover_by", "hits") != attribute.cover_by
+            ):
                 continue
             target = entry.target if entry.target > 0 else 1.0
             for bucket in entry.buckets:
@@ -357,7 +364,7 @@ class OddSampler:
                     self._amount.get(key, 0.0) + entry.amount(bucket) / target
                 )
         self._situation_holes = [
-            m.name for m in self.odd.situations() if m.name not in covered_situations
+            m.name for m in self._situations if m.name not in covered_situations
         ]
 
     @property
@@ -419,9 +426,12 @@ class OddSampler:
     def _uniform(
         self, low: float, high: float, *, closed: bool, integer: bool
     ) -> Optional[float]:
-        """A value in ``[low, high)`` (``[low, high]`` if *closed*); ``None`` if none."""
+        """A value in ``[low, high)`` (``[low, high]`` if *closed*); ``None`` if none.
+
+        ``[x, x]`` is the value ``x``, half-open or not.
+        """
         if low == high:
-            return low
+            return int(low) if integer else low
         if integer:
             first = math.ceil(low)
             last = math.floor(high) if closed else math.ceil(high) - 1
