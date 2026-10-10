@@ -104,6 +104,12 @@
     <p class="ed-help mono">{{ trajectory_summary(current) }}</p>
     <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
               placeholder="x, y[, yaw][, time]  -- one vertex per line">{{ format_vertices(current or []) }}</textarea>
+  {% elif spec.kind == 'relative_lane_trajectory' %}
+    {# The same text editing as a map-frame trajectory, with the columns of a
+       lane-relative vertex. #}
+    <p class="ed-help mono">{{ relative_trajectory_summary(current) }}</p>
+    <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
+              placeholder="ds[, offset][, d_lane][, yaw][, time]  -- one vertex per line">{{ format_relative_vertices(current or []) }}</textarea>
   {% elif spec.kind == 'int' %}
     <input type="number" step="1" name="{{ name }}" class="ed-input"
            value="{{ '' if current is none else current }}">

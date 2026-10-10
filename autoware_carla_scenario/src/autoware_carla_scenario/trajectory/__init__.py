@@ -15,6 +15,7 @@ The action that follows a trajectory is
 from .model import (
     MapPose,
     ReferenceContext,
+    RelativeLanePose,
     ResolvedTrajectory,
     Trajectory,
     TrajectoryFollowingMode,
@@ -27,6 +28,7 @@ from .model import (
 __all__ = [
     "MapPose",
     "ReferenceContext",
+    "RelativeLanePose",
     "ResolvedTrajectory",
     "Trajectory",
     "TrajectoryFollowingMode",

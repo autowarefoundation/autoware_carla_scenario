@@ -17,9 +17,11 @@ module models each one under the same name:
 A vertex's position may be written in any frame the framework addresses: a
 :class:`~autoware_carla_scenario.coordinate.poses.Lanelet2Pose`,
 :class:`~autoware_carla_scenario.coordinate.poses.OpenDrivePose` or
-:class:`~autoware_carla_scenario.coordinate.poses.CarlaWorldPose`, or a
+:class:`~autoware_carla_scenario.coordinate.poses.CarlaWorldPose`, a
 :class:`MapPose` -- an absolute pose in Autoware's ``map`` frame, which is what a
-recording (a T4 scene, a rosbag) states.  Positions are resolved to CARLA world
+recording (a T4 scene, a rosbag) states -- or a :class:`RelativeLanePose`, an
+offset in lanes and metres from where an entity is when the action starts
+(OpenSCENARIO's ``RelativeLanePosition``).  Positions are resolved to CARLA world
 coordinates only when the action runs, because that needs the loaded map; the
 geometry here (:class:`ResolvedTrajectory`) works on the resolved points and
 imports nothing from CARLA, so it can be tested without a simulator.
@@ -35,10 +37,12 @@ from typing import TYPE_CHECKING, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
     from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+    from ..entity_role import EntityRole
 
 __all__ = [
     "MapPose",
     "ReferenceContext",
+    "RelativeLanePose",
     "ResolvedTrajectory",
     "Trajectory",
     "TrajectoryFollowingMode",
@@ -79,8 +83,66 @@ class MapPose:
     z: Optional[float] = None
 
 
+@dataclass(frozen=True)
+class RelativeLanePose:
+    """A pose relative to an entity, in lane coordinates.
+
+    OpenSCENARIO's ``RelativeLanePosition`` (``entityRef``, ``dLane``, ``ds``,
+    ``offset``): start from the lanelet the reference entity is on and the
+    distance it has come along it, go *ds* metres along the lane, then
+    *d_lane* lanes across, and stand *offset* metres from that lane's
+    centreline.  It is resolved against where the reference entity is when the
+    action starts, and stays where it was resolved to afterwards: the vertex
+    does not move with the entity (see ``docs/trajectory.md``).
+
+    * Along the lane, a lanelet's end continues into the lanelet following it
+      in the routing graph (a negative *ds* into the one before it).  Where
+      there are several, the one that turns least is taken, then the lowest
+      id: deterministic, and the "straight on" a route would most often take.
+    * Across, *d_lane* counts lanes of the same direction of travel, through
+      the routing graph's left and right neighbours, lane-changeable or not.
+      The lane change is made at the point *ds* reached, onto the neighbour of
+      the lanelet found there.
+
+    Args:
+        ds: Metres along the reference entity's lane, from where it is;
+            negative goes back.
+        offset: Metres from the target lane's centreline, positive to the left
+            of its direction of travel -- the sign of
+            :attr:`~autoware_carla_scenario.coordinate.poses.Lanelet2Pose.t`.
+            Measured from the centreline, not from the reference entity's own
+            lateral position, as OpenSCENARIO does.
+        d_lane: Lanes across: ``+1`` one lane to the left, ``-1`` one to the
+            right, ``0`` the reference entity's own lane.
+        yaw: Heading in radians relative to the target lane's direction,
+            counter-clockwise (left) positive -- the sense of
+            :attr:`~autoware_carla_scenario.coordinate.poses.Lanelet2Pose.heading`.
+            ``None`` takes the direction of the trajectory at this vertex.
+        entity_ref: ``role_name`` of the entity the pose is relative to.
+            ``None`` means the entity the action moves.
+    """
+
+    ds: float = 0.0
+    offset: float = 0.0
+    d_lane: int = 0
+    yaw: Optional[float] = None
+    entity_ref: Optional[Union["EntityRole", str]] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.d_lane, bool) or int(self.d_lane) != self.d_lane:
+            raise ValueError(
+                f"RelativeLanePose.d_lane must be a whole number, got {self.d_lane!r}"
+            )
+        object.__setattr__(self, "d_lane", int(self.d_lane))
+        for name in ("ds", "offset"):
+            if not math.isfinite(float(getattr(self, name))):
+                raise ValueError(f"RelativeLanePose.{name} must be finite")
+
+
 #: Any position a vertex may be written in.
-TrajectoryPosition = Union["CarlaWorldPose", "Lanelet2Pose", "OpenDrivePose", MapPose]
+TrajectoryPosition = Union[
+    "CarlaWorldPose", "Lanelet2Pose", "OpenDrivePose", MapPose, RelativeLanePose
+]
 
 
 @dataclass(frozen=True)
@@ -153,6 +215,17 @@ class Trajectory:
     def is_timed(self) -> bool:
         """Whether every vertex carries a time."""
         return self.vertices[0].time is not None
+
+    @property
+    def is_relative(self) -> bool:
+        """Whether any vertex is a :class:`RelativeLanePose`.
+
+        Such a trajectory is placed anew each time the action starts, since
+        where it lies depends on where the reference entity then is.
+        """
+        return any(
+            isinstance(vertex.position, RelativeLanePose) for vertex in self.vertices
+        )
 
 
 class ReferenceContext(enum.Enum):

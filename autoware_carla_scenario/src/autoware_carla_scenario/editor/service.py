@@ -788,6 +788,7 @@ class EditorService:
         for owned in [a for a in document.actions if a.actor == entity_id]:
             self.delete_action(document, owned.id)
         _purge_references(document, "entity", entity_id)
+        _clear_action_entity_refs(document, entity_id)
         document.sync_layout()
 
     def update_entity(
@@ -1423,6 +1424,27 @@ def _purge_references(document: ScenarioDocument, kind: str, target: str) -> Non
     assertions.fail_conditions = [
         c for c in assertions.fail_conditions if not names_target(c)
     ]
+
+
+def _clear_action_entity_refs(document: ScenarioDocument, entity_id: str) -> None:
+    """Unset every action parameter that names *entity_id* through an entity field.
+
+    An action's entity fields are optional references -- the entity a
+    *Follow Trajectory* card's relative vertices are measured from -- whose
+    absence has a meaning of its own (the card's own actor), so the action is
+    kept and the reference cleared, rather than the card being deleted with
+    everything written on it.
+    """
+    for action in document.actions:
+        spec = get_action_spec(action.type)
+        if spec is None:
+            continue
+        for field_spec in spec.fields:
+            if (
+                field_spec.kind == "entity"
+                and action.params.get(field_spec.name) == entity_id
+            ):
+                action.params[field_spec.name] = None
 
 
 def _attach_trigger(

@@ -24,7 +24,12 @@ from .models import (
     ScenarioDocument,
     condition_refs,
 )
-from ..trajectory.authoring import parse_vertices, vertex_problems
+from ..trajectory.authoring import (
+    parse_relative_vertices,
+    parse_vertices,
+    relative_vertex_problems,
+    vertex_problems,
+)
 from .registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -206,6 +211,11 @@ def _check_field(
     elif spec.kind == "trajectory":
         try:
             parse_vertices(value)
+        except ValueError as exc:
+            out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
+    elif spec.kind == "relative_lane_trajectory":
+        try:
+            parse_relative_vertices(value)
         except ValueError as exc:
             out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
     elif spec.kind == "int_list_or_ref":
@@ -429,6 +439,24 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
         for problem in vertex_problems(rows):
             out.error(f"{path}.vertices", f"Vertices: {problem}.", node.id)
         if timed and rows and rows[0][3] is None:
+            out.error(
+                f"{path}.time_domain",
+                "A time reference needs a time on every vertex; give them "
+                "times or choose None.",
+                node.id,
+            )
+    elif source == "relative_lane":
+        # Types and counts only: whether the lanes the vertices name exist
+        # depends on where the reference entity is when the action starts.
+        try:
+            relative_rows = parse_relative_vertices(params.get("relative_vertices"))
+        except ValueError:
+            return  # already reported against the field
+        for problem in relative_vertex_problems(relative_rows):
+            out.error(
+                f"{path}.relative_vertices", f"Relative vertices: {problem}.", node.id
+            )
+        if timed and relative_rows and relative_rows[0][4] is None:
             out.error(
                 f"{path}.time_domain",
                 "A time reference needs a time on every vertex; give them "
