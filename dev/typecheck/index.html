@@ -2052,9 +2052,15 @@ stands in for it in the check's workspace:</p>
 <li>another <strong>checked</strong> module: its own (rewritten) source;</li>
 <li>any other module: its <strong>model</strong>, the <code>codon/autoware_carla_scenario/</code> module
   of the public package it belongs to (<code>coordinate.poses</code> is modelled by
-  <code>coordinate.codon</code>). A module with no model (<code>utils.config</code>) cannot be
-  imported by a checked module until it is checked itself.</li>
+  <code>coordinate.codon</code>), or, for a module of a package that is itself checked,
+  a model of that module alone (<code>utils/traffic_light.codon</code>). A module with no
+  model (<code>utils.config</code>) cannot be imported by a checked module until it is
+  checked itself.</li>
 </ul>
+<p>A model module that stands in for unchecked code (<code>coordinate.codon</code> for
+<code>transform.py</code> and <code>map_manager.py</code>) declares only what the checked modules
+and scenarios use of it: <code>MapManager</code> there is <code>get_instance()</code> and the
+<code>road_network</code> it reads, not the class's whole API.</p>
 <p>A checked module is compiled under a name of its own
 (<code>_acs_lib.autoware_carla_scenario__coordinate__frames</code>), since Codon reads
 the workspace's packages only from <code>.codon</code> files and names a file in its
@@ -2063,6 +2069,14 @@ source file. A type a checked module defines is not the type the model
 declares under the same name, so a checked module cannot hand its own value to
 a model function that wants the model's: check modules bottom-up, before the
 modules that use them.</p>
+<p>Where the model's functions take the types a checked module defines (the
+poses, which <code>to_opendrive</code> takes and returns), the model's own declarations
+of them live in a model module of their own (<code>_poses.codon</code>), which
+<code>REPLACED_MODELS</code> in <code>typecheck/library.py</code> names with the modules it
+models. Once those are all checked, the library check compiles that model
+module as a re-export of their definitions, so the model and the checked
+modules share one <code>Lanelet2Pose</code>. A name the model declares that none of the
+checked modules defines is reported.</p>
 <h3 id="conditions-the-checked-base-and-the-model">Conditions: the checked base and the model<a class="headerlink" href="#conditions-the-checked-base-and-the-model" title="Permanent link">&para;</a></h3>
 <p><code>conditions.base</code> is checked, so the checked conditions derive from the real
 <code>BaseCondition</code> (<code>_acs_lib.autoware_carla_scenario__conditions__base</code>), not
@@ -2156,6 +2170,18 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
   <code>coordinate/frames.py</code> does for <code>poses.py</code>. Set class attributes in the
   class body (<code>FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2</code>)
   rather than from a function run after the class.
+- <strong>Codon does not narrow an <code>Optional</code></strong> after <code>if x is None: return</code>. Where
+  the narrowed value goes into something typed (a tuple the function
+  returns), assign it to an annotated local first (<code>od: OpenDrivePose = x</code>),
+  which Codon unwraps.
+- <strong>One <code>except</code> clause per exception type</strong>: Codon 0.19 does not take a
+  tuple (<code>except (KeyError, ValueError):</code>). <code>raise X from None</code> is rewritten
+  to <code>raise X</code> by the check; <code>raise X from exc</code> compiles as it is.
+- <strong>No <code>frozenset</code></strong> and no variable-length tuple (<code>tuple[X, ...]</code>, which the
+  check drops from an annotation): use a <code>set</code> or a <code>list</code> where nothing
+  relies on the immutability.
+- <strong><code>dict.get</code> takes its default</strong>: Codon's has no one-argument form. Test
+  <code>key in d</code> and index instead of <code>d.get(key)</code>.
 - <strong>No variable-length tuples</strong>: Codon's tuples have a fixed length, so a
   <code>tuple[int, ...]</code> parameter or field gives the check nothing to call with.
   Turning it into a list changes what the class does (a frozen dataclass's
@@ -2189,7 +2215,7 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 02:45:57 UTC"><span class="timeago" datetime="2026-10-11T02:45:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 02:45:57 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 03:05:32 UTC"><span class="timeago" datetime="2026-10-11T03:05:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 03:05:32 UTC">2026-10-11</span>
   </span>
 
     
