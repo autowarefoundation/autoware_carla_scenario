@@ -46,6 +46,20 @@ the author wrote:
   classmethods; a subclass calling it gets the base class's).
 * ``raise X from None`` becomes ``raise X``: Codon 0.19 cannot type the
   ``None`` cause.
+* A class-level ``tuple[X, ...]`` becomes ``List[X]``, and ``tuple(x)``
+  becomes ``_acs_tuple(x)``, a list unless *x* is a tuple: Codon's tuples
+  have a fixed length.  ``callable(x)``, which Codon 0.19 lacks, becomes
+  ``_acs_callable(x)``.
+* ``object.__setattr__(obj, "name", value)`` (a frozen dataclass setting a
+  field) becomes ``obj.name = (value)``; a ``field(init=False)`` without a
+  default gets an empty value of its type (``List[float]()``), since Codon's
+  constructor takes every field.
+* A string inside a module-level ``Union[...]`` / ``Optional[...]`` alias (a
+  forward reference) is unquoted: Codon takes no string as a type.
+* A function decorator named in *dropped_decorators* is removed: the
+  library check drops the run-time-only wrappers ``UNCALLED`` lists.  An
+  annotation naming a module-level ``TypeVar`` (which types such a wrapper
+  for mypy) is dropped.
 
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
@@ -75,11 +89,14 @@ __all__ = [
 #: back by as many.
 PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list\n"
-    "from autoware_carla_scenario._tc import _Required as _acs_Required\n"
+    "from autoware_carla_scenario._tc import _Required as _acs_Required, "
+    "_acs_callable, _acs_tuple\n"
 )
 
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}
 _UNION_NAMES = {"Union", "typing.Union"}
+_TUPLE_NAMES = {"tuple", "Tuple"}
+_TYPE_VAR_NAMES = {"TypeVar", "typing.TypeVar"}
 _CONCRETE_GENERICS = {
     "list",
     "List",
@@ -150,6 +167,11 @@ _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
 #: Function decorators dropped: Codon 0.19 rejects a decorated method, and
 #: the method compiles the same without them.
 _DROPPED_FUNCTION_DECORATORS = {"abstractmethod", "abc.abstractmethod"}
+#: Builtins Codon 0.19 lacks, or has for fewer kinds of argument, called with
+#: one argument: the ``_tc`` stand-in the call goes to instead.  ``tuple(x)``
+#: of a list or a generator is a list (Codon's tuples have a fixed length; a
+#: tuple stays itself); ``callable(x)`` is decided when Codon compiles.
+_RENAMED_BUILTINS = {"tuple": "_acs_tuple", "callable": "_acs_callable"}
 
 #: Enum bases (``enum.X`` too), and the value type a base implies.
 _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
@@ -326,7 +348,13 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         if base_name not in _CONCRETE_GENERICS and base not in _ABSTRACT_GENERICS:
             return None  # a generic Codon has no model of (NDArray, ...)
         if any(isinstance(a, ast.Constant) and a.value is Ellipsis for a in args):
-            return None  # tuple[X, ...]: Codon tuples have a fixed length
+            # tuple[X, ...]: Codon's tuples have a fixed length.  A class-level
+            # declaration holds a list instead, as `tuple(x)` is checked as one;
+            # a parameter, which a caller may pass a tuple, is dropped.
+            if not class_level or len(args) != 2 or base not in _TUPLE_NAMES:
+                return None
+            item = codon_annotation(args[0], class_level=class_level)
+            return None if item is None else f"List[{item}]"
         converted = [codon_annotation(a, class_level=class_level) for a in args]
         if any(c is None for c in converted):
             return None
@@ -360,12 +388,31 @@ def _field_default(
                 )
                 return f"{typed}()" if typed is not None else _FACTORY_LITERALS[name]
             return edits.text(*edits.node_span(factory)) + "()"
+    if annotation is not None and any(
+        kw.arg == "init"
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is False
+        for kw in call.keywords
+    ):
+        # `field(init=False)`, set by __post_init__: Codon's constructor takes
+        # every field, so the field gets an empty value of its type to leave
+        # it out of the call.
+        typed = codon_annotation(annotation, class_level=True)
+        if typed is not None:
+            return f"{typed}()"
     return None
 
 
 class _Rewriter(ast.NodeVisitor):
-    def __init__(self, edits: _Edits, exceptions: set[str]) -> None:
+    def __init__(
+        self,
+        edits: _Edits,
+        exceptions: set[str],
+        dropped_decorators: Collection[str] = (),
+    ) -> None:
         self.edits = edits
+        #: Function decorators dropped besides :data:`_DROPPED_FUNCTION_DECORATORS`.
+        self._dropped_decorators = set(dropped_decorators)
         self._class_depth = 0
         self._function_depth = 0
         #: Top-level classes of the module that are exceptions.
@@ -375,6 +422,10 @@ class _Rewriter(ast.NodeVisitor):
         #: Top-level classes of the module defined below the statement
         #: being visited.
         self._later_classes: set[str] = set()
+        #: Module-level ``TypeVar``s: an annotation naming one is dropped, as
+        #: Codon (whose ``typing`` shim makes a ``TypeVar`` a string) cannot
+        #: type with it.
+        self._type_vars: set[str] = set()
         #: Enum classes rewritten at the module's top level, with the type of
         #: their values: each is given a constructor by value
         #: (:func:`_enum_lookups`).
@@ -384,6 +435,15 @@ class _Rewriter(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
+        self._type_vars = {
+            target.id
+            for stmt in node.body
+            if isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Call)
+            and _dotted(stmt.value.func) in _TYPE_VAR_NAMES
+            for target in stmt.targets
+            if isinstance(target, ast.Name)
+        }
         for stmt in node.body:
             if isinstance(stmt, ast.ClassDef):
                 later.discard(stmt.name)  # a class may name itself
@@ -394,6 +454,8 @@ class _Rewriter(ast.NodeVisitor):
         """Rewrite *node* in place; ``None`` when it must be dropped instead."""
         if not class_level and _annotation_names(node) & self._later_classes:
             return None  # a class defined further down: Codon cannot name it yet
+        if _annotation_names(node) & self._type_vars:
+            return None  # a TypeVar, which types for mypy only
         converted = codon_annotation(node, class_level=class_level)
         if converted is not None:
             start, end = self.edits.node_span(node)
@@ -498,7 +560,10 @@ class _Rewriter(ast.NodeVisitor):
         for decorator in node.decorator_list:
             if classmethod_ and _dotted(decorator) == "classmethod":
                 self.edits.replace(*self.edits.node_span(decorator), "staticmethod")
-            elif _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS:
+            elif (
+                _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
+                or _dotted(decorator) in self._dropped_decorators
+            ):
                 start, end = self.edits.node_span(decorator)
                 self.edits.replace(start - 1, end, "")  # with its "@"
             else:
@@ -677,6 +742,58 @@ class _Rewriter(ast.NodeVisitor):
             # Codon 0.19 has no frozenset: build a set, which types the same.
             start, end = self.edits.node_span(node.func)
             self.edits.replace(start, end, "set")
+        elif (
+            isinstance(node.func, ast.Name)
+            and node.func.id in _RENAMED_BUILTINS
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            start, end = self.edits.node_span(node.func)
+            self.edits.replace(start, end, _RENAMED_BUILTINS[node.func.id])
+        self.generic_visit(node)
+
+    def visit_Expr(self, node: ast.Expr) -> None:
+        call = node.value
+        if (
+            isinstance(call, ast.Call)
+            and _dotted(call.func) == "object.__setattr__"
+            and len(call.args) == 3
+            and not call.keywords
+            and isinstance(call.args[1], ast.Constant)
+            and isinstance(call.args[1].value, str)
+            and call.args[1].value.isidentifier()
+        ):
+            # A frozen dataclass sets its fields with object.__setattr__,
+            # which Codon 0.19 lacks: assign the attribute, which types the
+            # same.
+            target, _, value = call.args
+            name = call.args[1].value
+            start, end = self.edits.node_span(call)
+            self.edits.replace(
+                start,
+                self.edits.node_span(value)[0],
+                # In brackets, so the line breaks a long call kept stay inside.
+                f"{self.edits.text(*self.edits.node_span(target))}.{name} = (",
+            )
+            self.edits.replace(self.edits.node_span(value)[1], end, ")")
+            self.visit(value)
+            return
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        value = node.value
+        if (
+            self._class_depth == 0
+            and self._function_depth == 0
+            and isinstance(value, ast.Subscript)
+            and _dotted(value.value) in _UNION_NAMES | _OPTIONAL_NAMES
+        ):
+            # A type alias, `Position = Union["Lanelet2Pose", MapPose]`: Codon
+            # takes no string as a type, so a forward reference is unquoted
+            # (Codon reads the TYPE_CHECKING imports, which define the name).
+            for member in ast.walk(value.slice):
+                if isinstance(member, ast.Constant) and isinstance(member.value, str):
+                    self.edits.replace(*self.edits.node_span(member), member.value)
         self.generic_visit(node)
 
     def visit_List(self, node: ast.List) -> None:
@@ -692,13 +809,18 @@ class _Rewriter(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def transform_source(source: str) -> str:
-    """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`."""
+def transform_source(source: str, dropped_decorators: Collection[str] = ()) -> str:
+    """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
+
+    *dropped_decorators* names function decorators to drop besides
+    ``@abstractmethod``: the library check passes the run-time-only wrappers
+    :data:`.library.UNCALLED` lists, which Codon never compiles.
+    """
     if not source.endswith("\n"):
         source += "\n"
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
-    rewriter = _Rewriter(edits, _exception_classes(tree))
+    rewriter = _Rewriter(edits, _exception_classes(tree), dropped_decorators)
     rewriter.visit(tree)
     return PRELUDE + edits.apply() + _enum_lookups(rewriter.enums)
 

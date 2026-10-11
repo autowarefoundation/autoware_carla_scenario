@@ -25,6 +25,14 @@ class Any:
     pass
 
 
+# Only for a module-level `T = TypeVar("T", bound="...")` that types a
+# decorator for mypy (trajectory.model's _refusing_vertex_times, which the
+# library check drops): Codon has its own generics, and nothing is typed with
+# the value.
+def TypeVar(name: str, bound: str = "") -> str:
+    return name
+
+
 # A protocol is an empty base here, and the checker drops @runtime_checkable
 # (typecheck/transform.py): Codon checks each call with the type it is given,
 # so a protocol class is only ever a declaration.

@@ -51,6 +51,21 @@ def _expect_role_name(role) -> str:
         compile_error("expected an EntityRole or a str (a role name)")
 
 
+def _expect_optional_role_name(role) -> Optional[str]:
+    """A Union[EntityRole, str, None] argument stored as its string
+    (RelativeLanePose.entity_ref)."""
+    if isinstance(role, None):
+        return None
+    elif isinstance(role, Optional[NoneType]):
+        return None
+    elif isinstance(role, Optional):
+        if role is None:
+            return None
+        return _expect_role_name(unwrap(role))
+    else:
+        return _expect_role_name(role)
+
+
 def _expect_optional_role(role) -> Optional[EntityRole]:
     """A Union[EntityRole, str, None] argument."""
     if isinstance(role, None):

@@ -32,6 +32,23 @@ def _keyword_only(extra, where: Literal[str]):
         compile_error(where + " is keyword-only")
 
 
+def _acs_tuple(values):
+    """What the checker puts in place of tuple(values) (typecheck/transform.py):
+    Codon's tuples have a fixed length, so a tuple of a list or a generator is
+    a list (a class-level tuple[X, ...] is checked as a List[X]); a tuple stays
+    itself."""
+    if isinstance(values, Tuple):
+        return values
+    else:
+        return list(values)
+
+
+def _acs_callable(value) -> bool:
+    """What the checker puts in place of callable(value): Codon 0.19 has no
+    callable(), and decides it from the type when it compiles."""
+    return hasattr(value, "__call__")
+
+
 def _expect_float(x) -> float:
     if isinstance(x, float):
         return x

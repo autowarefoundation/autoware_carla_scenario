@@ -782,8 +782,16 @@ class _LibraryFile:
 
 def _uncalled(module: str) -> list[str]:
     """What :data:`.library.UNCALLED` lists of *module*, relative to it."""
-    prefix = f"{module}."
-    return [name.removeprefix(prefix) for name in UNCALLED if name.startswith(prefix)]
+    # A name belongs to the longest module it starts with:
+    # ``trajectory.model._wrap`` is of ``trajectory.model``, not of the
+    # ``trajectory`` package.
+    modules = {*CHECKED, module}
+    out: list[str] = []
+    for name in UNCALLED:
+        owners = [m for m in modules if name.startswith(f"{m}.")]
+        if owners and max(owners, key=len) == module:
+            out.append(name.removeprefix(f"{module}."))
+    return out
 
 
 def _read_module(path: Path) -> _Module:
@@ -875,10 +883,16 @@ def _library_files(
             every.__contains__,
             uncalled=_uncalled(name),
         )
-        checks = render_library_checks(module.tree, _uncalled(name))
+        uncalled = _uncalled(name)
+        checks = render_library_checks(module.tree, uncalled)
         for line, message in [*problems, *checks.problems]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
-        body = transform_source(redirected)
+        # A function the check never compiles cannot decorate one it does: a
+        # run-time-only wrapper (trajectory.model's TrajectoryVertex.__init__)
+        # is dropped, and the function it wraps is compiled as written.
+        body = transform_source(
+            redirected, dropped_decorators=[n for n in uncalled if "." not in n]
+        )
         rel = workspace_module(name).replace(".", "/") + ".codon"
         files.append(
             _LibraryFile(

@@ -252,23 +252,25 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 85 of
-the package's 225 modules (38%; about 13,700 of 68,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 86 of
+the package's 225 modules (38%; about 14,800 of 68,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
 the signal-controller registry, the ego, NPC vehicle and pedestrian entities
 and the entity registry, `BaseScenario`, the traffic backend interface with
 the TrafficManager backend, the Autoware bridge interface and its fake, the
-measures, the ODD units and the CARLA-only helpers, the traffic-light lookups
-included. 47 functions and methods of those modules are `UNCALLED`: most of
-them a condition's `get_details()` or a backend's `describe()`, what takes a
-traffic backend's options node (`Mapping[str, Any]`), and the six members of
-`BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`: the
-constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
-`register_route_to_goal()`, which also registers the unchecked
-`RoutingAction`) or on cover expressions of any value (`register_cover()`).
-The 140 `EXCLUDED` modules fall into three groups:
+trajectory model, the measures, the ODD units and the CARLA-only helpers, the
+traffic-light lookups included. 48 functions and methods of those modules are
+`UNCALLED`: most of them a condition's `get_details()` or a backend's
+`describe()`, what takes a traffic backend's options node
+(`Mapping[str, Any]`), the six members of `BaseScenario` built on the ego's
+class (`ego_type`, a `type[EgoVehicle]`: the constructor, `create_ego()`,
+`ego_requires_goal`, `require_goal()` and `register_route_to_goal()`, which
+also registers the unchecked `RoutingAction`) or on cover expressions of any
+value (`register_cover()`), and the run-time wrapper of
+`TrajectoryVertex.__init__` (`_refusing_vertex_times`). The 139 `EXCLUDED`
+modules fall into three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -279,10 +281,11 @@ The 140 `EXCLUDED` modules fall into three groups:
   `examples.configs`; the `signals` package, the traffic backend registry,
   the SUMO backend and the authoring compiler.
 - **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
-  `odd.model`), a union-typed attribute, which crashes Codon 0.19
-  (`RelativeLanePose.entity_ref`), a variable-length tuple (`route.model`,
-  `actions.routing`'s waypoints), or a class as a value (`utils.config`,
-  which `traffic.config` imports only in its uncalled `from_mapping()`).
+  `odd.model`), a callable of any value as a parameter
+  (`trajectory.resolve`'s position resolvers), a variable-length tuple
+  (`route.model`, `actions.routing`'s waypoints), or a class as a value
+  (`utils.config`, which `traffic.config` imports only in its uncalled
+  `from_mapping()`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -502,11 +505,54 @@ What Codon 0.19 needs that Python does not, beyond
   name instead.
 - **An attribute holds one type**: one assigned a union (`EntityRole | str`)
   is stored converted where every use converts it anyway
-  (`self._entity_name = str(entity_name)`). Codon 0.19 crashes on an
-  attribute declared with a union ("union already sealed"). A public
-  dataclass field is converted in `__post_init__`
-  (`VehicleEntityConfig.role_name: str`, `self.role_name =
-  str(self.role_name)`), which still takes an `EntityRole` at run time.
+  (`self._entity_name = str(entity_name)`). Codon 0.19 can assign nothing
+  to an attribute declared with an optional union (`Optional[Union[EntityRole,
+  str]]`): neither a member nor `None` matches it ("'Optional[EntityRole]'
+  does not match expected type 'Optional[Union[EntityRole | str]]'"), and
+  `Union[EntityRole, str, None]` takes no `None`. A public dataclass field
+  is converted in `__post_init__` (`VehicleEntityConfig.role_name: str`,
+  `self.role_name = str(self.role_name)`), which still takes an `EntityRole`
+  at run time; or
+  by a constructor written out, which keeps the union on the parameter for
+  mypy (`RelativeLanePose(entity_ref: Union[EntityRole, str, None])`, stored
+  as `entity_ref: Optional[str]`).
+- **A union of classes without `None` is an attribute type**: Codon 0.19
+  holds `Union[Lanelet2Pose, MapPose, ...]` (`TrajectoryVertex.position`, any
+  of ten poses), declared whole or through an alias (`position:
+  TrajectoryPosition`), and decides `isinstance` on it when the program
+  runs. A union is no parameter type: Codon 0.19 crashes on one ("union
+  already sealed"), so the check drops it and the library check calls the
+  function once per member. Spell the parameter's union out, not through an
+  alias, which the library check would call with the union itself and so
+  catch less. A module-level alias whose members are strings
+  (`Union["Lanelet2Pose", MapPose]`, for names imported under
+  `TYPE_CHECKING`) has them unquoted by the check.
+- **Codon does not run `__post_init__`**: its constructor of a class with
+  declared fields only assigns them. The check calls `__post_init__` itself,
+  as a dunder method, so its body is checked. A `field(init=False)` set there
+  is given an empty value of its type (`list[float]()`) by the check, so the
+  constructor leaves it out as Python's does.
+- **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
+  its fields, is checked as `self.name = value`: Codon 0.19 has no
+  `object.__setattr__`.
+- **No `**kwargs` iterated as a dict**: Codon's `**kwargs` is a named tuple,
+  with no `items()`. Pass the names and values as parameters
+  (`_finite(owner, "ds", self.ds)`), one call each.
+- **A run-time-only wrapper of a method**: Codon 0.19 cannot decorate a
+  method, and a decorator `UNCALLED` names (a function of the same module) is
+  dropped by the library check, which compiles the method as written.
+  `TrajectoryVertex.__init__` is typed `(position, advance=None)`;
+  `_refusing_vertex_times` wraps it at run time to refuse the calls written
+  for a vertex with a time, with `inspect` and `functools` imported inside
+  it, where Codon never compiles them. The wrapper is typed with a
+  `TypeVar` (`(init: _Init) -> _Init`), so mypy still sees the typed
+  `__init__`; the check drops an annotation that names a module-level
+  `TypeVar`.
+- **`isinstance(x, (A, *OTHERS))`** does not compile: Codon 0.19 cannot
+  unpack a tuple of classes into `isinstance`. Spell the classes out
+  (`Trajectory.is_relative`).
+- **`callable(x)`** is checked as `hasattr(x, "__call__")`, which Codon
+  decides when it compiles: Codon 0.19 has no `callable`.
 - **Annotate a local that starts as `None`** (`spawn_points:
   Optional[list[carla.Transform]] = None`): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
@@ -571,10 +617,13 @@ What Codon 0.19 needs that Python does not, beyond
   to `raise X` by the check; `raise X from exc` compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
   rewrites `frozenset(...)` to `set(...)` and `frozenset[X]` /
-  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`. A
-  variable-length tuple (`tuple[X, ...]`, which the check drops from an
-  annotation) has no such stand-in: use a `list` where nothing relies on the
-  immutability.
+  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`.
+- **A variable-length tuple attribute is checked as a list**: a class-level
+  `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
+  list or a generator becomes a list (a tuple passed to `tuple()` stays
+  itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
+  its tuple. A parameter `tuple[X, ...]` is dropped (a caller may pass a
+  tuple), and the library check calls it with a `List[X]`.
 - **No star-unpacking into a tuple display** (`(*a, *b)`): Codon wants a
   tuple after `*`. Concatenate the lists (`a + b`).
 - **A default does not name a class attribute** (`random_seed: int =
@@ -640,12 +689,13 @@ What Codon 0.19 needs that Python does not, beyond
   (`if hasattr(data, "as_collision"): data = data.as_collision()`, as
   `conditions/collision.py` does): Codon decides `hasattr` when it compiles,
   and the CPython measurement has no `as_<kind>()`.
-- **No variable-length tuples**: Codon's tuples have a fixed length, so a
-  `tuple[int, ...]` parameter or field gives the check nothing to call with.
-  Turning it into a list changes what the class does (a frozen dataclass's
-  hash, its equality with a tuple), so such a module stays in `EXCLUDED`
-  (`route.model`). A function that only *returns* one, built with
-  `tuple(iterable)`, compiles: the check drops the `tuple[X, ...]` return
+- **No variable-length tuples beyond attributes**: Codon's tuples have a
+  fixed length. A class-level `tuple[X, ...]` and `tuple(x)` are checked as
+  lists (above), but a tuple built otherwise (a display grown in a loop,
+  `a + (b,)`) is not, and turning the source's tuple into a list changes what
+  the class does (a frozen dataclass's hash, its equality with a tuple), so
+  such a module stays in `EXCLUDED` (`route.model`). A function that only
+  *returns* one compiles: the check drops the `tuple[X, ...]` return
   annotation (`signals.registry.registered_signal_controllers()`).
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked

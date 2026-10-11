@@ -92,7 +92,7 @@ self.register_pre_tick(
 
 | Field | OpenSCENARIO | Meaning |
 |---|---|---|
-| `entity_ref` | `entityRef` | `role_name` of the reference entity. `None` (default) is the entity the action moves. |
+| `entity_ref` | `entityRef` | `role_name` of the reference entity, a `str` or an `EntityRole` (stored as its string). `None` (default) is the entity the action moves. |
 | `ds` | `ds` | Metres along the reference entity's lane, from where it is; negative goes back. |
 | `d_lane` | `dLane` | Lanes across: `+1` one lane to the left, `-1` one to the right, `0` the reference's own lane. |
 | `offset` | `offset` | Metres from the **target lane's centreline**, positive to the left -- the sign of `Lanelet2Pose.t`. The reference entity's own lateral position does not carry over. |

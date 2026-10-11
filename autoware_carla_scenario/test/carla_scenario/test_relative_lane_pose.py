@@ -17,6 +17,7 @@ the action following one against the simulated vehicle of
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Iterator
 from typing import Any
@@ -41,6 +42,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
+from autoware_carla_scenario.entity_role import EntityRole
 from autoware_carla_scenario.trajectory.relative_lane import (
     advance_along_lane,
     reference_lane_pose,
@@ -138,6 +140,22 @@ class TestThePose:
         pose = RelativeLanePose()
         assert (pose.ds, pose.offset, pose.d_lane) == (0.0, 0.0, 0)
         assert pose.yaw is None and pose.entity_ref is None
+
+    def test_an_entity_role_is_stored_as_its_role_name(self) -> None:
+        # One type whatever it was built with (docs/typecheck.md); the
+        # constructor still takes an EntityRole.
+        pose = RelativeLanePose(5.0, entity_ref=EntityRole("npc1"))
+        assert pose.entity_ref == "npc1" and type(pose.entity_ref) is str
+        assert pose == RelativeLanePose(5.0, entity_ref="npc1")
+        assert hash(pose) == hash(RelativeLanePose(5.0, entity_ref="npc1"))
+        assert dataclasses.replace(pose, ds=1.0).entity_ref == "npc1"
+        assert RelativeLanePose(entity_ref="lead").entity_ref == "lead"
+
+    def test_ds_and_offset_are_finite(self) -> None:
+        with pytest.raises(ValueError, match=r"RelativeLanePose\.ds must be finite"):
+            RelativeLanePose(math.inf)
+        with pytest.raises(ValueError, match=r"RelativeLanePose\.offset"):
+            RelativeLanePose(0.0, math.nan)
 
     def test_d_lane_is_a_whole_number(self) -> None:
         assert RelativeLanePose(d_lane=2.0).d_lane == 2  # type: ignore[arg-type]
