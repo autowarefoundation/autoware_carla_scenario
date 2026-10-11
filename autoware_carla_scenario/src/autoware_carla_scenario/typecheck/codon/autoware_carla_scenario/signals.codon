@@ -1,9 +1,10 @@
 # Model of autoware_carla_scenario.signals (docs/typecheck.md), for
-# conditions.traffic_signal_controller, signals.registry and
-# actions.traffic_signal_controller, which are checked. signals.controller is
-# not (typecheck/library.py): this declares only what checked modules use of
-# it, a controller found by name, the phase it is showing and the jump to
-# another phase.
+# conditions.traffic_signal_controller and actions.traffic_signal_controller.
+# The whole signals package is checked (typecheck/library.py), so the library
+# check compiles them against its source; this stands in for it only when one
+# of them is checked alone (`scenario-check --library <module>`), and declares
+# only what they use of it: a controller found by name, the phase it is
+# showing and the jump to another phase.
 
 import typesafe_carla.carla as carla
 
