@@ -2052,15 +2052,17 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 73 of
-the package's 218 modules (33%; about 10,400 of 66,700 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 79 of
+the package's 224 modules (35%; about 10,900 of 68,100 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
-lane-change, set-speed, turn and walk-straight actions, the ego, NPC vehicle
-and pedestrian entities and the entity registry, the measures, the ODD units
-and the CARLA-only helpers. 33 functions and methods of those modules are
-<code>UNCALLED</code>, almost all of them a condition's <code>get_details()</code>. The 145
-<code>EXCLUDED</code> modules fall into three groups:</p>
+signal-controller, lane-change, set-speed, turn and walk-straight actions,
+the signal-controller registry, the ego, NPC vehicle and pedestrian entities
+and the entity registry, the Autoware bridge interface and its fake, the
+measures, the ODD units and the CARLA-only helpers, the traffic-light lookups
+included. 33 functions and methods of those modules are <code>UNCALLED</code>, almost
+all of them a condition's <code>get_details()</code>. The 145 <code>EXCLUDED</code> modules fall
+into three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -2068,7 +2070,7 @@ and the CARLA-only helpers. 33 functions and methods of those modules are
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
 <li><strong>About 25 build on an excluded module</strong>: the example scenarios, through
-  <code>examples.configs</code>; the signal controllers, the traffic backends and the
+  <code>examples.configs</code>; the <code>signals</code> package, the traffic backends and the
   authoring compiler.</li>
 <li><strong>About 12 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
   <code>odd.model</code>), a class or a callable of any value as a parameter
@@ -2193,9 +2195,19 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
   Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base.
   <code>typing.Any</code> imports, and every annotation naming it is dropped.</li>
+<li><strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
+  <code>RoadNetwork</code> that <code>coordinate.codon</code> declares (what the framework reads of
+  it, down to the XML elements), so a module that may not import
+  <code>coordinate</code> annotates with pyxodr's own class under <code>TYPE_CHECKING</code>
+  (<code>utils/traffic_light.py</code>) and takes the network <code>MapManager</code> returns.
+  Nothing else of pyxodr is there.</li>
 <li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
-  abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.</li>
+  abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.
+  <code>AutowareBridge.configure()</code> takes <code>waypoints: Optional[list[BridgePose]]
+  = None</code> in the base class and in the checked <code>FakeAutowareBridge</code>, and its
+  caller passes a list. (<code>None</code>, not <code>[]</code>: a mutable default is shared by
+  every call.)</li>
 <li><strong>No <code>**</code> in a dict display</strong> (<code>{"a": 1, **other}</code>): Codon's parser fails on
   it, even in a function it never compiles. Build the dict, then
   <code>update()</code> it.</li>
@@ -2322,7 +2334,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   naming one of typesafe_carla's integer enumerations
   (<code>carla.TrafficLightState</code>, <code>carla.LaneType</code>, ...) as <code>int</code>, so keep the
   CARLA name (the authoring code generator reads it), and compare with
-  <code>get_state()</code> rather than look a member up by value.
+  <code>get_state()</code> rather than look a member up by value. A member's name is
+  found through the enumeration's <code>names</code> (<code>for name, member in
+  carla.TrafficLightState.names.items()</code>), which both APIs have, as
+  <code>utils/traffic_light.py</code> does.
 - <strong>A sensor callback gets a <code>carla.SensorData</code> in the check</strong>, where the
   CPython API hands it the measurement itself (a <code>carla.CollisionEvent</code>).
   Listen through a method that converts only when it has to
@@ -2333,7 +2348,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>tuple[int, ...]</code> parameter or field gives the check nothing to call with.
   Turning it into a list changes what the class does (a frozen dataclass's
   hash, its equality with a tuple), so such a module stays in <code>EXCLUDED</code>
-  (<code>route.model</code>).
+  (<code>route.model</code>). A function that only <em>returns</em> one, built with
+  <code>tuple(iterable)</code>, compiles: the check drops the <code>tuple[X, ...]</code> return
+  annotation (<code>signals.registry.registered_signal_controllers()</code>).
 - <strong>A model shared with checked modules is split out</strong>: the model's
   <code>EgoConfig</code> derives from <code>VehicleEntityConfig</code>, and the checked
   <code>EgoVehicle.spawn()</code> hands its spawn location to the checked
@@ -2370,7 +2387,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 06:42:30 UTC"><span class="timeago" datetime="2026-10-11T06:42:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 06:42:30 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:14:30 UTC"><span class="timeago" datetime="2026-10-11T07:14:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:14:30 UTC">2026-10-11</span>
   </span>
 
     
