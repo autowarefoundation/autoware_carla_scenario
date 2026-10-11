@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 94 of
-the package's 225 modules (42%; about 17,000 of 68,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 96 of
+the package's 225 modules (43%; about 17,200 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -280,7 +280,7 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 131 `EXCLUDED` modules fall into
+the authoring package's pydantic specs. The 129 `EXCLUDED` modules fall into
 three groups:
 
 - **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
