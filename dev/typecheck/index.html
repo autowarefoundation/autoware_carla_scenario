@@ -2040,10 +2040,14 @@ annotated type:</p>
 is ever run. A parameter annotated with a union (<code>Lanelet2Pose |
 OpenDrivePose</code>) is called once with each member, so the body is checked for
 every type it accepts. A parameter with no annotation, or one Codon cannot
-express (<code>Any</code>, <code>object</code>, <code>Callable</code>, ...), gives the check nothing to call
-with and is reported as a problem of the module, at its line: annotate it with
-the type its callers pass. The one exception is <code>other: object</code> in <code>__eq__</code>
-and <code>__ne__</code>, which Python requires; it is called with the class itself.</p>
+express (<code>Any</code>, <code>object</code>, <code>Callable[..., R]</code>, <code>Callable[[Any], Any]</code>, ...),
+gives the check nothing to call with and is reported as a problem of the
+module, at its line: annotate it with the type its callers pass. The one
+exception is <code>other: object</code> in <code>__eq__</code> and <code>__ne__</code>, which Python requires;
+it is called with the class itself. A <code>Callable</code> whose argument and result
+types Codon can express (<code>Callable[[carla.World], Optional[float]]</code>, a
+dataclass field too) is called with a value of Codon's <code>Callable</code> type, which
+a function of that signature converts to.</p>
 <h3 id="checked-modules-and-the-model">Checked modules and the model<a class="headerlink" href="#checked-modules-and-the-model" title="Permanent link">&para;</a></h3>
 <p>The checked modules are compiled next to the same model the scenario check
 uses. Every import of the framework in a checked module is pointed at what
@@ -2109,7 +2113,17 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
 <li><strong><code>hasattr()</code> instead of <code>getattr(x, name, default)</code></strong>: Codon decides
   <code>hasattr</code> when it compiles, so the branch for a type without the attribute
   is never compiled.</li>
-<li>An exception's <code>__init__</code> passes one message string to <code>super().__init__</code>.</li>
+<li>An exception's <code>__init__</code> passes one message string to <code>super().__init__</code>.
+  An exception class with nothing in its body but a docstring needs that
+  <code>__init__</code> written out (<code>def __init__(self, message: str) -&gt; None:</code>).</li>
+<li><strong><code>key in d</code> and <code>d[key]</code> instead of <code>d.get(key)</code></strong>: Codon's <code>dict.get</code>
+  wants a default of the value's type. Likewise <code>if not x: continue</code> instead
+  of <code>(x or {})</code>, <code>s.startswith(a) or s.startswith(b)</code> instead of
+  <code>s.startswith((a, b))</code>, and <code>if x is None: return None</code> / <code>return x.attr</code>
+  instead of <code>None if x is None else x.attr</code>.</li>
+<li><strong>A dict of values of different types</strong> (<code>{"at": None, "around": None}</code>
+  read back as a tuple and a list) becomes a small class with one declared
+  attribute per key.</li>
 <li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>importlib</code>,
   <code>pathlib</code>, ...) are not available to a checked module; the <code>typing</code>,
   <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code> and <code>__future__</code> shims of
@@ -2215,7 +2229,7 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 03:05:32 UTC"><span class="timeago" datetime="2026-10-11T03:05:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 03:05:32 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 03:26:47 UTC"><span class="timeago" datetime="2026-10-11T03:26:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 03:26:47 UTC">2026-10-11</span>
   </span>
 
     
