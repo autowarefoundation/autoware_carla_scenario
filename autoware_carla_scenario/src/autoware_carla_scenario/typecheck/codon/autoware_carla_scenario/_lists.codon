@@ -7,9 +7,6 @@
 # List[BaseCondition] (List[BaseAction]), and any other display keeps the type
 # of its first element, as Codon's would.
 
-from .actions import BaseAction
-from .conditions import BaseCondition
-
 
 def _acs_list(*items):
     if hasattr(items[0], "_acs_condition"):
@@ -27,3 +24,11 @@ def _acs_list(*items):
         for item in items:
             out.append(item)
         return out
+
+
+# Last, not first: every module the checker rewrites imports _acs_list, and in
+# the library check some of them are imported by the model these import
+# (typecheck/library.py, REPLACED_MODELS). Codon resolves an import cycle with
+# the names already defined, so _acs_list has to be defined by then.
+from .actions import BaseAction
+from .conditions import BaseCondition
