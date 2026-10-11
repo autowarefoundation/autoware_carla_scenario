@@ -515,7 +515,15 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
 @needs_codon
 @pytest.mark.parametrize(
     "module",
-    ["scenario_base", "entity.ego", "actions.turn", "actions.lane_change"],
+    [
+        "scenario_base",
+        "entity.ego",
+        "actions.turn",
+        "actions.lane_change",
+        # The run starts at coordinate.frames, which the model's _poses.codon
+        # re-exports: the driver must read the model first.
+        "coordinate.poses",
+    ],
 )
 def test_a_module_importing_a_checked_only_name_compiles_alone(module: str) -> None:
     result = typecheck_library([f"{_PACKAGE}.{module}"])

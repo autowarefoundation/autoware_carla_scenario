@@ -211,8 +211,9 @@ fully as the named ones: their public functions are called too, and **errors
 are reported for every compiled module**, not only the named ones. An error
 in a module the named one imports is an error the full run reports as well,
 and it would stop the named module from compiling anyway. Hiding it would
-only make the run fail without a reason. The result names the count
-(`1 checked modules, 18 more they import`). Run without names, the check
+only make the run fail without a reason. The result's title gives both
+counts (`1 checked modules, 44 more they import` for `scenario_base`, at the
+time of writing). Run without names, the check
 compiles exactly `CHECKED`, as before. Every checked module passes on its own.
 
 The check's driver imports the model before any checked module, whichever
