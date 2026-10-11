@@ -802,7 +802,11 @@ What Codon 0.19 needs that Python does not, beyond
   `SpawnLocation`. Likewise `GroundProjectionConfig` (`_ground_projection.codon`,
   replaced with `coordinate.snap`): the example scenarios import it from the
   top-level package, which is the model, and hand it both to the model's
-  `BaseScenario` and to the checked `VehicleEntityConfig` (#99).
+  `BaseScenario` and to the checked `VehicleEntityConfig` (#99). The
+  top-level package model itself is not replaced: the examples would then
+  derive from the checked `BaseScenario`, and their constructors' calls to
+  `super().__init__()` would compile `BaseScenario.__init__`, which is
+  `UNCALLED` (it stores the ego's class, `ego_type`).
 - **A name the model lacks at the boundary**: when a checked module imports a
   name of a modelled package that the model does not declare
   (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in
