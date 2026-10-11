@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 import autoware_carla_scenario as acs
+from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
 
 _MODEL = model_dir() / "autoware_carla_scenario"
@@ -161,9 +162,27 @@ def test_the_model_exports_only_names_the_package_exports() -> None:
 
 @pytest.mark.parametrize("name", sorted(_EXPORTS))
 def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
-    definitions = _definitions(_EXPORTS[name]).get(name)
-    assert definitions, f"{name} is imported by __init__.codon but not defined"
-    python = getattr(acs, name)
+    _assert_declared_as_in_python(name, _EXPORTS[name], getattr(acs, name))
+
+
+#: Names the model declares for the modules the library check compiles
+#: (typecheck/library.py), though the package does not export them: name ->
+#: (model module, the Python object).
+_BOUNDARY: dict[str, tuple[str, Any]] = {
+    "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
+    "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_BOUNDARY))
+def test_a_boundary_name_is_declared_as_in_python(name: str) -> None:
+    module, python = _BOUNDARY[name]
+    _assert_declared_as_in_python(name, module, python)
+
+
+def _assert_declared_as_in_python(name: str, module: str, python: Any) -> None:
+    definitions = _definitions(module).get(name)
+    assert definitions, f"{name} is not defined in {module}.codon"
     node = definitions[0]
 
     if isinstance(node, ast.FunctionDef):
