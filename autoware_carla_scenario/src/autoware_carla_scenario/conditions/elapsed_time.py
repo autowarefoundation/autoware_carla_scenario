@@ -30,6 +30,9 @@ class ElapsedTimeCondition(BaseCondition):
             Defaults to ``1e-6``.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _comparison: ScalarComparisonRule
+
     def __init__(
         self,
         duration_seconds: float,

@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -47,10 +47,11 @@ from .toolchain import (
     find_codon,
     is_supported_version,
 )
-from .library import CHECKED, REPLACED_MODELS, package_modules
+from .library import CHECKED, REPLACED_MODELS, UNCALLED, package_modules
 from .library_driver import (
     render_library_checks,
     render_library_driver,
+    uncalled_nodes,
     workspace_module,
 )
 from .transform import (
@@ -285,12 +286,21 @@ def _user_prefix(module: str) -> str:
 
 
 def _imports(
-    tree: ast.Module, module: str, is_package: bool
+    tree: ast.Module,
+    module: str,
+    is_package: bool,
+    *,
+    skip: Collection[int] = (),
 ) -> list[tuple[str, list[str], int]]:
-    """(absolute module, imported names, line) for every import in *tree*."""
+    """(absolute module, imported names, line) for every import in *tree*.
+
+    *skip* holds the ``id()`` of import nodes to leave out.
+    """
     package = module if is_package else module.rpartition(".")[0]
     out: list[tuple[str, list[str], int]] = []
     for node in ast.walk(tree):
+        if id(node) in skip:
+            continue
         if isinstance(node, ast.Import):
             out += [(alias.name, [], node.lineno) for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
@@ -764,6 +774,12 @@ class _LibraryFile:
     labels: dict[int, str]
 
 
+def _uncalled(module: str) -> list[str]:
+    """What :data:`.library.UNCALLED` lists of *module*, relative to it."""
+    prefix = f"{module}."
+    return [name.removeprefix(prefix) for name in UNCALLED if name.startswith(prefix)]
+
+
 def _library_files(
     names: list[str], sources: _Sources, every: dict[str, Path]
 ) -> list[_LibraryFile]:
@@ -783,7 +799,7 @@ def _library_files(
         redirected, problems = redirect_imports(
             module.text, name, module.is_package, target, every.__contains__
         )
-        checks = render_library_checks(module.tree)
+        checks = render_library_checks(module.tree, _uncalled(name))
         for line, message in [*problems, *checks.problems]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
         body = transform_source(redirected)
@@ -800,7 +816,15 @@ def _library_imports(sources: _Sources, tc: Toolchain, codon_path: Path) -> None
     """Report each import of a module Codon has nothing for."""
     known = _codon_stdlib(tc) | _shims() | _linked(codon_path) | {_PACKAGE}
     for name, module in sources.modules.items():
-        for imported, _names, lineno in _imports(module.tree, name, module.is_package):
+        # Codon compiles no import in a function nothing calls.
+        skipped = {
+            id(node)
+            for function in uncalled_nodes(module.tree, _uncalled(name))
+            for node in ast.walk(function)
+        }
+        for imported, _names, lineno in _imports(
+            module.tree, name, module.is_package, skip=skipped
+        ):
             if imported.split(".")[0] not in known:
                 sources.problems.append(
                     Diagnostic(

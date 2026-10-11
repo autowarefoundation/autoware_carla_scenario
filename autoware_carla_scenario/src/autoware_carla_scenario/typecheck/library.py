@@ -17,6 +17,11 @@ module at a time, as each is made to compile.  This file says which:
 Every module of the package except ``typecheck/`` is in exactly one of the
 two (``test_typecheck_library.py``), so a new module needs an entry here.
 
+:data:`UNCALLED` names the few public functions and methods of a checked
+module the check leaves out, each with its reason: one whose job Codon cannot
+express (a dict of mixed value types, ``json``), in a module that otherwise
+compiles.
+
 To move a module into :data:`CHECKED`, delete its :data:`EXCLUDED` entry, add
 it to :data:`CHECKED`, run ``uv run scenario-check --library`` and fix what
 that reports, in the module itself: annotations and Codon-friendly rewrites
@@ -36,6 +41,7 @@ __all__ = [
     "EXCLUDED",
     "NOT_YET_CHECKED",
     "REPLACED_MODELS",
+    "UNCALLED",
     "package_modules",
 ]
 
@@ -48,6 +54,18 @@ _NOT_YET = NOT_YET_CHECKED
 CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.autoware_bridge._proto",
     "autoware_carla_scenario.autoware_bridge.base",
+    "autoware_carla_scenario.conditions.always_true",
+    "autoware_carla_scenario.conditions.and_condition",
+    "autoware_carla_scenario.conditions.base",
+    "autoware_carla_scenario.conditions.comparison",
+    "autoware_carla_scenario.conditions.elapsed_time",
+    "autoware_carla_scenario.conditions.entity_existence",
+    "autoware_carla_scenario.conditions.not_condition",
+    "autoware_carla_scenario.conditions.or_condition",
+    "autoware_carla_scenario.conditions.persistent",
+    "autoware_carla_scenario.conditions.sticky",
+    "autoware_carla_scenario.conditions.timeout",
+    "autoware_carla_scenario.conditions.trajectory_time",
     "autoware_carla_scenario.constants",
     "autoware_carla_scenario.coordinate",
     "autoware_carla_scenario.coordinate.frames",
@@ -63,10 +81,37 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.kinematics.vector",
     "autoware_carla_scenario.tools",
     "autoware_carla_scenario.kinematics.velocity",
+    "autoware_carla_scenario.trajectory",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.opendrive",
     "autoware_carla_scenario.utils.vehicles",
 )
+
+#: The reason of a method that builds a dict of mixed value types.
+_DETAILS = "builds a dict[str, Any] of mixed value types, which Codon cannot express"
+
+#: Public functions and methods of checked modules the check does not call,
+#: by dotted name (``module.Class.method``), with the reason.  Codon compiles
+#: a function only when something calls it, so the body of one listed here is
+#: not checked; nor are the imports made inside it, which is where a module
+#: imports what Codon has nothing for (``json``) and only that function uses.
+#: Everything else in the module still is.
+UNCALLED: dict[str, str] = {
+    "autoware_carla_scenario.conditions.and_condition.AndCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.base.BaseCondition.__init_subclass__": "wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for",
+    "autoware_carla_scenario.conditions.base.BaseCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.base.BaseCondition.to_summary_dict": _DETAILS,
+    "autoware_carla_scenario.conditions.base.ConditionStatus.__init__": "takes `details: dict[str, Any]`, a dict of mixed value types, which Codon cannot express",
+    "autoware_carla_scenario.conditions.base.ConditionStatus.to_dict": _DETAILS,
+    "autoware_carla_scenario.conditions.base.ScenarioResult.to_dict": _DETAILS,
+    "autoware_carla_scenario.conditions.base.ScenarioResult.to_json": "serialises with json, which Codon does not have",
+    "autoware_carla_scenario.conditions.comparison.ScalarComparisonRule.to_dict": _DETAILS,
+    "autoware_carla_scenario.conditions.elapsed_time.ElapsedTimeCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.not_condition.NotCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.or_condition.OrCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.persistent.PersistentCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.sticky.StickyCondition.get_details": _DETAILS,
+}
 
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
@@ -112,12 +157,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.camera_recorder": "imports numpy, pathlib, ffmpeg, subprocess, queue",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, shutil, json, argparse, urllib, http, email, tarfile, platform",
     "autoware_carla_scenario.conditions": _NOT_YET,
-    "autoware_carla_scenario.conditions.action_state": _NOT_YET,
-    "autoware_carla_scenario.conditions.always_true": _NOT_YET,
-    "autoware_carla_scenario.conditions.and_condition": _NOT_YET,
-    "autoware_carla_scenario.conditions.base": _NOT_YET,
+    "autoware_carla_scenario.conditions.action_state": "imports action_state, which is neither checked nor modelled; looks an ActionState up by value (`ActionState(state)`), which the enum shim does not model; and compares it with the model's BaseAction.state, a different ActionState until actions are checked",
     "autoware_carla_scenario.conditions.collision": _NOT_YET,
-    "autoware_carla_scenario.conditions.comparison": _NOT_YET,
     "autoware_carla_scenario.conditions.composition": _NOT_YET,
     "autoware_carla_scenario.conditions.composition.acceleration": _NOT_YET,
     "autoware_carla_scenario.conditions.composition.base": _NOT_YET,
@@ -132,18 +173,10 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.conditions.composition.time_headway": _NOT_YET,
     "autoware_carla_scenario.conditions.composition.time_to_collision": _NOT_YET,
     "autoware_carla_scenario.conditions.composition.waypoint": _NOT_YET,
-    "autoware_carla_scenario.conditions.elapsed_time": _NOT_YET,
-    "autoware_carla_scenario.conditions.entity_existence": _NOT_YET,
-    "autoware_carla_scenario.conditions.lane_change_settled": _NOT_YET,
-    "autoware_carla_scenario.conditions.not_condition": _NOT_YET,
-    "autoware_carla_scenario.conditions.or_condition": _NOT_YET,
-    "autoware_carla_scenario.conditions.persistent": _NOT_YET,
+    "autoware_carla_scenario.conditions.lane_change_settled": "imports entity.registry, whose find_entity_by_role_name (any kind of entity, or None) the model does not declare, and reads a method the entity may lack with getattr(entity, name, None)",
     "autoware_carla_scenario.conditions.route_progress": _NOT_YET,
-    "autoware_carla_scenario.conditions.sticky": _NOT_YET,
-    "autoware_carla_scenario.conditions.timeout": _NOT_YET,
     "autoware_carla_scenario.conditions.traffic_signal": _NOT_YET,
     "autoware_carla_scenario.conditions.traffic_signal_controller": _NOT_YET,
-    "autoware_carla_scenario.conditions.trajectory_time": _NOT_YET,
     "autoware_carla_scenario.coordinate.map_manager": "imports numpy, lanelet2, pyxodr, pathlib",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
     "autoware_carla_scenario.coordinate.stop_line": "imports lanelet2",
@@ -210,13 +243,13 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.units": _NOT_YET,
     "autoware_carla_scenario.pytest_fixtures": "imports pytest",
     "autoware_carla_scenario.registry": "imports pathlib, omegaconf, importlib",
-    "autoware_carla_scenario.route": _NOT_YET,
-    "autoware_carla_scenario.route.active": _NOT_YET,
-    "autoware_carla_scenario.route.frame": _NOT_YET,
+    "autoware_carla_scenario.route": "imports route.model, which is neither checked nor modelled",
+    "autoware_carla_scenario.route.active": "imports route.model and route.frame, which are neither checked nor modelled, and takes lanelet2's map and routing graph (`Any`)",
+    "autoware_carla_scenario.route.frame": "imports route.geometry and trajectory.relative_lane, which use lanelet2, and holds lanelet2's map, routing graph and lanelets (`Any`)",
     "autoware_carla_scenario.route.geometry": "imports lanelet2, autoware_lanelet2_extension_python",
-    "autoware_carla_scenario.route.model": _NOT_YET,
-    "autoware_carla_scenario.route.positions": _NOT_YET,
-    "autoware_carla_scenario.route.search": _NOT_YET,
+    "autoware_carla_scenario.route.model": "holds variable-length tuples (`tuple[int, ...]`), which Codon cannot express, and parses YAML mappings of `Any` (`Range.parse`, `RouteMatch.from_config`) into `dict[str, Any]`",
+    "autoware_carla_scenario.route.positions": "imports route.frame and trajectory.relative_lane, which use lanelet2",
+    "autoware_carla_scenario.route.search": "imports route.geometry (lanelet2) and sweeper.constraints, which are neither checked nor modelled, and walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",
     "autoware_carla_scenario.scaffold.generator": "imports pathlib, argparse, keyword",
     "autoware_carla_scenario.scenario_base": _NOT_YET,
@@ -251,11 +284,10 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.traffic.sumo.network": "imports pathlib, roadgen, sumo, subprocess, shutil, tempfile, importlib, hashlib",
     "autoware_carla_scenario.traffic.sumo.physics_control": _NOT_YET,
     "autoware_carla_scenario.traffic.traffic_manager": _NOT_YET,
-    "autoware_carla_scenario.trajectory": _NOT_YET,
-    "autoware_carla_scenario.trajectory.authoring": _NOT_YET,
+    "autoware_carla_scenario.trajectory.authoring": "parses document values of `Any` (YAML rows, editor fields) into `dict[str, Any]`, which Codon cannot express",
     "autoware_carla_scenario.trajectory.model": _NOT_YET,
     "autoware_carla_scenario.trajectory.relative_lane": "imports lanelet2, autoware_lanelet2_extension_python",
-    "autoware_carla_scenario.trajectory.resolve": _NOT_YET,
+    "autoware_carla_scenario.trajectory.resolve": "imports route.active and route.positions, which are neither checked nor modelled, and takes and returns callables (`PositionResolver`, `GroundHeight`, `ReferencePose`)",
     "autoware_carla_scenario.trajectory_recorder": "imports pathlib, json",
     "autoware_carla_scenario.ui": "imports pathlib, uvicorn",
     "autoware_carla_scenario.ui.app": "imports pathlib, fastapi, json, asyncio, fnmatch",

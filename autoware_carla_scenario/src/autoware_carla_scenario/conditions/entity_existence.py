@@ -31,9 +31,13 @@ class EntityExistenceCondition(BaseCondition):
             Accepts both :class:`EntityRole` and plain ``str``.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+
     def __init__(self, entity_name: Union[EntityRole, str], *, label: str) -> None:
         super().__init__(label=label)
-        self._entity_name = entity_name
+        # Kept as its string, the one thing every use of it reads.
+        self._entity_name = str(entity_name)
 
     def get_details(self) -> dict[str, Any]:
         return {"entity_name": str(self._entity_name)}
