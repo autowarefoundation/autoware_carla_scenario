@@ -400,20 +400,27 @@ What Codon 0.19 needs that Python does not, beyond
   name instead.
 - **An attribute holds one type**: one assigned a union (`EntityRole | str`)
   is stored converted where every use converts it anyway
-  (`self._entity_name = str(entity_name)`). Codon 0.19 crashes on an
-  attribute declared with an optional union (`Optional[Union[EntityRole,
-  str]]`: "union already sealed"). A public dataclass field is converted in
-  `__post_init__` (`VehicleEntityConfig.role_name: str`, `self.role_name =
-  str(self.role_name)`), which still takes an `EntityRole` at run time; or
+  (`self._entity_name = str(entity_name)`). Codon 0.19 can assign nothing
+  to an attribute declared with an optional union (`Optional[Union[EntityRole,
+  str]]`): neither a member nor `None` matches it ("'Optional[EntityRole]'
+  does not match expected type 'Optional[Union[EntityRole | str]]'"), and
+  `Union[EntityRole, str, None]` takes no `None`. A public dataclass field
+  is converted in `__post_init__` (`VehicleEntityConfig.role_name: str`,
+  `self.role_name = str(self.role_name)`), which still takes an `EntityRole`
+  at run time; or
   by a constructor written out, which keeps the union on the parameter for
   mypy (`RelativeLanePose(entity_ref: Union[EntityRole, str, None])`, stored
   as `entity_ref: Optional[str]`).
 - **A union of classes without `None` is an attribute type**: Codon 0.19
   holds `Union[Lanelet2Pose, MapPose, ...]` (`TrajectoryVertex.position`, any
-  of ten poses), decides `isinstance` on it when the program runs, and the
-  check calls the constructor once per member. Spell the union out in the
-  declaration, not through an alias. A module-level alias whose members are
-  strings (`Union["Lanelet2Pose", MapPose]`, for names imported under
+  of ten poses), declared whole or through an alias (`position:
+  TrajectoryPosition`), and decides `isinstance` on it when the program
+  runs. A union is no parameter type: Codon 0.19 crashes on one ("union
+  already sealed"), so the check drops it and the library check calls the
+  function once per member. Spell the parameter's union out, not through an
+  alias, which the library check would call with the union itself and so
+  catch less. A module-level alias whose members are strings
+  (`Union["Lanelet2Pose", MapPose]`, for names imported under
   `TYPE_CHECKING`) has them unquoted by the check.
 - **Codon does not run `__post_init__`**: its constructor of a class with
   declared fields only assigns them. The check calls `__post_init__` itself,
@@ -432,7 +439,10 @@ What Codon 0.19 needs that Python does not, beyond
   `TrajectoryVertex.__init__` is typed `(position, advance=None)`;
   `_refusing_vertex_times` wraps it at run time to refuse the calls written
   for a vertex with a time, with `inspect` and `functools` imported inside
-  it, where Codon never compiles them.
+  it, where Codon never compiles them. The wrapper is typed with a
+  `TypeVar` (`(init: _Init) -> _Init`), so mypy still sees the typed
+  `__init__`; the check drops an annotation that names a module-level
+  `TypeVar`.
 - **`isinstance(x, (A, *OTHERS))`** does not compile: Codon 0.19 cannot
   unpack a tuple of classes into `isinstance`. Spell the classes out
   (`Trajectory.is_relative`).
