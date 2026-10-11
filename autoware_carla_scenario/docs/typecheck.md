@@ -211,7 +211,9 @@ check leaves out (`module.Class.method`), each with its reason: one whose job
 Codon cannot express, in a module that otherwise compiles. Today that is
 what builds a condition's details (`get_details()`, `to_summary_dict()`,
 `to_dict()`: a `dict[str, Any]` of mixed value types) and what serialises
-them (`ScenarioResult.to_json()`, with `json`). Codon compiles a function
+them (`ScenarioResult.to_json()`, with `json`), and what reads the
+authoring package's pydantic specs, typed `Any`
+(`signals.build_controllers()`). Codon compiles a function
 only when something calls it, so neither its body nor an import made inside
 it is compiled: a module that needs a standard module Codon lacks for one
 function imports it inside that function (`import json` in `to_json()`) and
@@ -228,17 +230,18 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 79 of
-the package's 224 modules (35%; about 10,900 of 68,100 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 82 of
+the package's 224 modules (37%; about 12,600 of 68,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
-the signal-controller registry, the ego, NPC vehicle and pedestrian entities
-and the entity registry, the Autoware bridge interface and its fake, the
-measures, the ODD units and the CARLA-only helpers, the traffic-light lookups
-included. 33 functions and methods of those modules are `UNCALLED`, almost
-all of them a condition's `get_details()`. The 145 `EXCLUDED` modules fall
-into three groups:
+the `signals` package (the signal controllers and their registry), the ego,
+NPC vehicle and pedestrian entities and the entity registry, the trajectory
+model, the Autoware bridge interface and its fake, the measures, the ODD
+units and the CARLA-only helpers, the traffic-light lookups included. 35
+functions and methods of those modules are `UNCALLED`, almost all of them a
+condition's `get_details()`. The 142 `EXCLUDED` modules fall into three
+groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -246,14 +249,15 @@ into three groups:
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
 - **About 25 build on an excluded module**: the example scenarios, through
-  `examples.configs`; the `signals` package, the traffic backends and the
+  `examples.configs`; the `route` package, the traffic backends and the
   authoring compiler.
 - **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
   `odd.model`), a class or a callable of any value as a parameter
   (`scenario_base`'s `ego_type`, callbacks and measure expressions,
-  `trajectory.resolve`'s position resolvers), a variable-length tuple
-  (`route.model`, `actions.routing`'s waypoints), or a class as a value
-  (`utils.config`).
+  `trajectory.resolve`'s position resolvers), a list of a union, which
+  crashes Codon 0.19 (`route.model`'s `RouteSearchSpec.segments`, each a lane
+  or a junction segment), a dict unpacked into keyword arguments
+  (`actions.routing`'s waypoints), or a class as a value (`utils.config`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -521,6 +525,13 @@ What Codon 0.19 needs that Python does not, beyond
   itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
   its tuple. A parameter `tuple[X, ...]` is dropped (a caller may pass a
   tuple), and the library check calls it with a `List[X]`.
+  `Phase.states` and `SignalController.phases` (`signals.controller`) are
+  checked this way. What only a tuple does is not checked: its hash (a
+  frozen dataclass's `__hash__`), its equality with another tuple and its
+  immutability; nothing compiled is run, so nothing can mutate the list.
+  Of a union (`tuple[A | B, ...]`) it is dropped, since a list of a union
+  crashes Codon 0.19 ("union already sealed"), so such a field cannot be
+  declared (`route.model`'s `RouteSearchSpec.segments`).
 - **No `del` of a parameter** (`del world, goal` to mark it unused): Codon
   reads it as a call on the value. Leave the parameter unused.
 - **An `Optional` attribute is assigned without an annotation**: with one
@@ -577,6 +588,12 @@ What Codon 0.19 needs that Python does not, beyond
   lists (above), but a tuple built otherwise (a display grown in a loop,
   `a + (b,)`) is not, and turning the source's tuple into a list changes what
   the class does (a frozen dataclass's hash, its equality with a tuple).
+- **No `**` of a dict in a call** (`f(**extra)` with `extra` a `dict`):
+  Codon unpacks only a named tuple into keyword arguments
+  (`actions.routing`).
+- **No escaped brace in an f-string** (`f"{{min, max}} of {name}"`): Codon's
+  parser rejects it, even in a function it never compiles. Concatenate the
+  literal part (`"{min, max}" + f" of {name}"`).
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked
