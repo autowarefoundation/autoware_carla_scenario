@@ -47,6 +47,8 @@ _NOT_YET = NOT_YET_CHECKED
 CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.autoware_bridge._proto",
     "autoware_carla_scenario.autoware_bridge.base",
+    "autoware_carla_scenario.autoware_bridge.ros_bridge",
+    "autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api",
     "autoware_carla_scenario.conditions.always_true",
     "autoware_carla_scenario.conditions.and_condition",
     "autoware_carla_scenario.conditions.base",
@@ -139,9 +141,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_bridge._proto.autoware_bridge_pb2_grpc": "imports grpc",
     "autoware_carla_scenario.autoware_bridge.fake": "overrides AutowareBridge.configure, whose Sequence[BridgePose] parameter is generic in Codon, and Codon 0.19 cannot call an overridden method with a generic parameter",
     "autoware_carla_scenario.autoware_bridge.grpc_server": "imports grpc, concurrent",
-    "autoware_carla_scenario.autoware_bridge.ros_bridge": "part of the scenario_bridge node, which runs on Autoware's ROS 2 Python, not the framework's",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.__main__": "runs the scenario_bridge node (rclpy)",
-    "autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api": "part of the scenario_bridge node, which runs on Autoware's ROS 2 Python, not the framework's",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.client": "imports grpc",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.node": "imports rclpy, autoware_adapi_v1_msgs, geometry_msgs, grpc",
     "autoware_carla_scenario.autoware_stack": "re-exports autoware_stack.devcontainer (yaml, json), autoware_stack.docker and autoware_stack.launcher (subprocess)",

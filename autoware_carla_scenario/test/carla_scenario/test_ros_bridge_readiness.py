@@ -110,22 +110,20 @@ def test_localization_not_required_for_ground_truth_stacks():
 
 
 def test_the_enum_values_are_checked_against_the_ad_api() -> None:
-    from types import SimpleNamespace
-
     import pytest
 
     from autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api import (
+        ENUM_VALUES,
         check_enum_values,
     )
 
-    localization = SimpleNamespace(INITIALIZED=3)
-    route = SimpleNamespace(UNKNOWN=0, UNSET=1, SET=2)
-    mode = SimpleNamespace(AUTONOMOUS=2)
-    check_enum_values(localization, route, mode)
+    check_enum_values(dict(ENUM_VALUES))
 
     with pytest.raises(RuntimeError, match=r"RouteState.SET = 5 \(expected 2\)"):
+        check_enum_values({**ENUM_VALUES, "RouteState.SET": 5})
+    with pytest.raises(RuntimeError, match="RouteState.UNSET is missing"):
         check_enum_values(
-            localization, SimpleNamespace(UNKNOWN=0, UNSET=1, SET=5), mode
+            {k: v for k, v in ENUM_VALUES.items() if k != "RouteState.UNSET"}
         )
 
 

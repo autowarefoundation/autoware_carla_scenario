@@ -602,7 +602,17 @@ class ScenarioBridgeNode(Node):
 
 def main(args: Optional[list] = None) -> None:
     """Entry point for the ``scenario_bridge`` node."""
-    check_enum_values(LocalizationInitializationState, RouteState, OperationModeState)
+    check_enum_values(
+        {
+            "LocalizationInitializationState.INITIALIZED": (
+                LocalizationInitializationState.INITIALIZED
+            ),
+            "RouteState.UNKNOWN": RouteState.UNKNOWN,
+            "RouteState.UNSET": RouteState.UNSET,
+            "RouteState.SET": RouteState.SET,
+            "OperationModeState.AUTONOMOUS": OperationModeState.AUTONOMOUS,
+        }
+    )
     rclpy.init(args=args)
     node = ScenarioBridgeNode()
     executor = MultiThreadedExecutor()

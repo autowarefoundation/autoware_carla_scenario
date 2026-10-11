@@ -11,7 +11,6 @@ starts (:func:`check_enum_values`), so a value that drifted fails there.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 # -- AD API interface names (see autoware_adapi_specs) -----------------------
 
@@ -42,33 +41,33 @@ ROUTE_STATE_UNKNOWN = 0
 OPERATION_MODE_AUTONOMOUS = 2
 
 
-def check_enum_values(
-    localization_state: Any, route_state: Any, operation_mode_state: Any
-) -> None:
-    """Check the values above against the ``autoware_adapi_v1_msgs`` classes given.
+#: The values above, by their names in ``autoware_adapi_v1_msgs``.
+ENUM_VALUES: dict[str, int] = {
+    "LocalizationInitializationState.INITIALIZED": LOCALIZATION_STATE_INITIALIZED,
+    "RouteState.UNKNOWN": ROUTE_STATE_UNKNOWN,
+    "RouteState.UNSET": ROUTE_STATE_UNSET,
+    "RouteState.SET": ROUTE_STATE_SET,
+    "OperationModeState.AUTONOMOUS": OPERATION_MODE_AUTONOMOUS,
+}
+
+
+def check_enum_values(defined: dict[str, int]) -> None:
+    """Check the values above against what ``autoware_adapi_v1_msgs`` defines.
+
+    *defined* maps each name in :data:`ENUM_VALUES` to the message class's
+    constant, as the node reads it.
 
     Raises:
-        RuntimeError: If the AD API defines one differently.
+        RuntimeError: If the AD API defines one differently, or not at all.
     """
-    expected = {
-        "LocalizationInitializationState.INITIALIZED": (
-            localization_state.INITIALIZED,
-            LOCALIZATION_STATE_INITIALIZED,
-        ),
-        "RouteState.UNKNOWN": (route_state.UNKNOWN, ROUTE_STATE_UNKNOWN),
-        "RouteState.UNSET": (route_state.UNSET, ROUTE_STATE_UNSET),
-        "RouteState.SET": (route_state.SET, ROUTE_STATE_SET),
-        "OperationModeState.AUTONOMOUS": (
-            operation_mode_state.AUTONOMOUS,
-            OPERATION_MODE_AUTONOMOUS,
-        ),
-    }
-    wrong = {name: v for name, v in expected.items() if v[0] != v[1]}
+    wrong: list[str] = []
+    for name, expected in ENUM_VALUES.items():
+        if name not in defined:
+            wrong.append(f"{name} is missing")
+        elif defined[name] != expected:
+            wrong.append(f"{name} = {defined[name]} (expected {expected})")
     if wrong:
-        raise RuntimeError(
-            "autoware_adapi_v1_msgs defines "
-            + ", ".join(f"{n} = {a} (expected {b})" for n, (a, b) in wrong.items())
-        )
+        raise RuntimeError("autoware_adapi_v1_msgs defines " + ", ".join(wrong))
 
 
 @dataclass
