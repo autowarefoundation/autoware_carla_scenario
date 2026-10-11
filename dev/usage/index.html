@@ -894,6 +894,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Batch Execution with Glob Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-every-sweep-case-in-a-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running every sweep case in a batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2186,6 +2203,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Batch Execution with Glob Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-every-sweep-case-in-a-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running every sweep case in a batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2882,23 +2916,45 @@ neither starts the other.</p>
 <li>All scenarios in a batch <strong>must share the same map</strong> (CARLA loads one map per session)</li>
 <li>Results are written to <code>outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json</code></li>
 <li>A summary table is printed at the end with per-scenario pass/fail status</li>
+<li>A scenario with a <code>sweep:</code> section runs once, as configured; add <code>--multirun</code>
+  to run every case of it (see <a href="#running-every-sweep-case-in-a-batch">Running every sweep case in a batch</a>)</li>
 </ul>
+<h4 id="running-every-sweep-case-in-a-batch">Running every sweep case in a batch<a class="headerlink" href="#running-every-sweep-case-in-a-batch" title="Permanent link">&para;</a></h4>
+<p>With <code>--multirun</code>, a batch expands each scenario's <code>sweep:</code> -- lanelet
+constraints, a route search, the <a href="../odd/#sampling-scenarios-from-the-odd">ODD sampler</a> --
+into its cases, the same ones <code>scenario-expand</code> prints, and runs them all in
+the one queue, against one CARLA session (and, with <code>autoware.launcher</code>, a
+fresh Autoware per case):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Every lanelet case of both cut-in scenarios</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># 10 cases per scenario drawn from the ODD</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">10</span><span class="w"> </span>+sweep.odd_sample.strategy<span class="o">=</span>coverage
+</code></pre></div>
+<p>Scenarios that draw from one ODD go on from each other's draws rather than
+each draw the same cases: with <code>strategy: coverage</code> a later scenario aims at
+what the earlier ones left uncovered (see
+<a href="../odd/#sampling-scenarios-from-the-odd">Sampling scenarios from the ODD</a>).</p>
+<p>A scenario with more than one case is listed as <code>name#k</code> in the summary, and
+<code>batch_results.json</code> gives each case its <code>overrides</code>. <code>hydra/sweeper=...</code> may
+be given but is not needed: the batch is the sweeper.</p>
 <h3 id="selecting-a-published-hd-map">Selecting a Published HD Map<a class="headerlink" href="#selecting-a-published-hd-map" title="Permanent link">&para;</a></h3>
 <p>A map group can name a git repository instead of local files, and the map is
 fetched into <code>~/autoware_data/maps</code> on first use -- the same directory
 Autoware's own setup downloads maps into, so a machine that has run it clones
 nothing:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Town10HD_Opt, as published for CARLA 0.10, pinned to a commit. The built-in</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># scenario configs name Nishishinjuku lanelets, so place the ego on Town10's.</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>ego.spawn_lanelet_id<span class="o">=</span><span class="m">324</span><span class="w"> </span>ego.spawn_s<span class="o">=</span><span class="m">10</span>.0<span class="w"> </span>ego.goal_lanelet_id<span class="o">=</span><span class="m">5650</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># Any repository, any revision</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span>map.source<span class="o">=</span><span class="s1">'git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># A map directory on this machine, read in place</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span>map.directory<span class="o">=</span>/path/to/autoware_maps/Town10HD_Opt
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Town10HD_Opt, as published for CARLA 0.10, pinned to a commit. The built-in</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># scenario configs name Nishishinjuku lanelets, so place the ego on Town10's.</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>ego.spawn_lanelet_id<span class="o">=</span><span class="m">324</span><span class="w"> </span>ego.spawn_s<span class="o">=</span><span class="m">10</span>.0<span class="w"> </span>ego.goal_lanelet_id<span class="o">=</span><span class="m">5650</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># Any repository, any revision</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span>map.source<span class="o">=</span><span class="s1">'git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># A map directory on this machine, read in place</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span>map.directory<span class="o">=</span>/path/to/autoware_maps/Town10HD_Opt
 </code></pre></div>
 <p>See <a href="../maps/">HD Maps from a Git Repository</a>.</p>
 <h3 id="lanelet-constraint-sweeping">Lanelet Constraint Sweeping<a class="headerlink" href="#lanelet-constraint-sweeping" title="Permanent link">&para;</a></h3>
@@ -2908,14 +2964,14 @@ config into one job per lanelet that matches a set of constraints,
 optionally deriving per-job parameters via "bindings". Each scenario
 YAML may declare its own <code>sweep:</code> section (see
 <code>traffic_light_compliance.yaml</code> for an example).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># satisfies the scenario's `sweep.constraints`.</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># Resume a sweep from job number N (1-indexed; 0 disables).</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span>hydra/sweeper<span class="o">=</span>lanelet_constraint<span class="w"> </span>sweep.resume_from<span class="o">=</span><span class="m">10</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># satisfies the scenario's `sweep.constraints`.</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># Resume a sweep from job number N (1-indexed; 0 disables).</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span>hydra/sweeper<span class="o">=</span>lanelet_constraint<span class="w"> </span>sweep.resume_from<span class="o">=</span><span class="m">10</span>
 </code></pre></div>
 <p>Sweeps write results under <code>multirun/YYYY-MM-DD/HH-MM-SS/&lt;job-index&gt;/</code>,
 not <code>outputs/</code>. The result viewer scans both directories.</p>
@@ -2923,8 +2979,8 @@ not <code>outputs/</code>. The result viewer scans both directories.</p>
 out over a cluster), use <code>scenario-expand</code>. It takes the same arguments as
 <code>scenario</code> and prints JSON with one list of Hydra overrides per concrete
 scenario. These are the same cases, in the same order, that the sweeper runs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-expand<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># {"scenario": "...", "cases": [["ego.spawn_lanelet_id=5", "ego.spawn_s=18.62..."], ...]}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-expand<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># {"scenario": "...", "cases": [["ego.spawn_lanelet_id=5", "ego.spawn_s=18.62..."], ...]}</span>
 </code></pre></div>
 <p>A scenario without a <code>sweep:</code> section is already concrete, so it expands to a
 single empty case. Only the Lanelet2 map is needed, not a CARLA server.</p>
@@ -2934,59 +2990,61 @@ that matches its pattern, each with the ego's spawn and goal and the match
 itself (<code>scenario.route.*</code>); see
 <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</p>
 <h3 id="resume-from-a-specific-scenario">Resume from a Specific Scenario<a class="headerlink" href="#resume-from-a-specific-scenario" title="Permanent link">&para;</a></h3>
-<p>When running large batches, you can skip already-completed scenarios:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Resume from the 3rd scenario (0-based index)</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">2</span>
+<p>When running large batches, you can skip already-completed scenarios.
+<code>--resume-from N</code> starts at the <em>N</em>th scenario (1-indexed, as for a sweep);
+in a <code>--multirun</code> batch it counts the expanded cases:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Resume from the 3rd scenario</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">3</span>
 </code></pre></div>
 <h3 id="overriding-configuration-parameters">Overriding Configuration Parameters<a class="headerlink" href="#overriding-configuration-parameters" title="Permanent link">&para;</a></h3>
 <p>Any nested Hydra parameter can be overridden from the command line:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Select a different map</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Connect to a remote CARLA server</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">3000</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Change ego vehicle type and speed</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">  </span>ego.vehicle_type<span class="o">=</span>vehicle.tesla.model3<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">  </span>ego.initial_speed_kmh<span class="o">=</span><span class="m">30</span>.0
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="c1"># Override scenario-specific parameters</span>
-<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>scenario.timeout_seconds<span class="o">=</span><span class="m">15</span>.0
-<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>
-<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="c1"># Change Traffic Manager port</span>
-<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>traffic_manager.port<span class="o">=</span><span class="m">8200</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Select a different map</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Connect to a remote CARLA server</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">3000</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="c1"># Change ego vehicle type and speed</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">  </span>ego.vehicle_type<span class="o">=</span>vehicle.tesla.model3<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">  </span>ego.initial_speed_kmh<span class="o">=</span><span class="m">30</span>.0
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="c1"># Override scenario-specific parameters</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>scenario.timeout_seconds<span class="o">=</span><span class="m">15</span>.0
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="c1"># Change Traffic Manager port</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>traffic_manager.port<span class="o">=</span><span class="m">8200</span>
 </code></pre></div>
 <h3 id="hydra-configuration-system">Hydra Configuration System<a class="headerlink" href="#hydra-configuration-system" title="Permanent link">&para;</a></h3>
 <p>Configuration files are located in <code>src/autoware_carla_scenario/examples/conf/</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>conf/
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>├── config.yaml              # Root config (defines defaults and top-level overrides)
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>├── server/
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>│   └── localhost.yaml       # Server connection settings
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>├── ego/
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>│   └── default.yaml         # Ego vehicle settings
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>├── entity/
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>│   └── default.yaml         # Entity spawn and ground projection settings
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>├── traffic_manager/
-<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>│   └── default.yaml         # CARLA Traffic Manager settings
-<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>├── map/
-<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>│   └── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
-<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>└── scenario/
-<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    ├── intersection_passing/
-<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    │   ├── straight.yaml
-<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    │   ├── left_turn.yaml
-<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    │   ├── right_turn.yaml
-<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>    │   └── straight_3npc.yaml
-<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>    ├── lane_change/
-<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>    │   ├── left.yaml
-<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>    │   └── right.yaml
-<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>    ├── lane_change_fail/
-<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>    │   ├── left.yaml
-<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>    │   └── right.yaml
-<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>    ├── temporary_stop/
-<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>    │   └── temporary_stop.yaml
-<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>    └── traffic_light_compliance/
-<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>        └── traffic_light_compliance.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>conf/
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>├── config.yaml              # Root config (defines defaults and top-level overrides)
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>├── server/
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>│   └── localhost.yaml       # Server connection settings
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>├── ego/
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>│   └── default.yaml         # Ego vehicle settings
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>├── entity/
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>│   └── default.yaml         # Entity spawn and ground projection settings
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>├── traffic_manager/
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>│   └── default.yaml         # CARLA Traffic Manager settings
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>├── map/
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>│   └── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>└── scenario/
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>    ├── intersection_passing/
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>    │   ├── straight.yaml
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>    │   ├── left_turn.yaml
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>    │   ├── right_turn.yaml
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>    │   └── straight_3npc.yaml
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>    ├── lane_change/
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>    │   ├── left.yaml
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    │   └── right.yaml
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    ├── lane_change_fail/
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>    │   ├── left.yaml
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>    │   └── right.yaml
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>    ├── temporary_stop/
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>    │   └── temporary_stop.yaml
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>    └── traffic_light_compliance/
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>        └── traffic_light_compliance.yaml
 </code></pre></div>
 <h4 id="root-configuration-configyaml">Root Configuration (<code>config.yaml</code>)<a class="headerlink" href="#root-configuration-configyaml" title="Permanent link">&para;</a></h4>
 <p>Defines the default config group composition:</p>
@@ -3218,7 +3276,7 @@ itself (<code>scenario.route.*</code>); see
 </tbody>
 </table>
 <p>Map paths can use environment variables with Hydra's OmegaConf resolver:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}</span>
 </code></pre></div>
 <h3 id="supported-scenarios">Supported Scenarios<a class="headerlink" href="#supported-scenarios" title="Permanent link">&para;</a></h3>
 <h4 id="intersection-passing">Intersection Passing<a class="headerlink" href="#intersection-passing" title="Permanent link">&para;</a></h4>
@@ -3304,11 +3362,11 @@ itself (<code>scenario.route.*</code>); see
 </tbody>
 </table>
 <p><strong>NPC vehicle configuration:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">npc_vehicles</span><span class="p">:</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle.mini.cooper</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">initial_speed_kmh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">npc_vehicles</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle.mini.cooper</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">initial_speed_kmh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
 </code></pre></div>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to GREEN
@@ -3515,15 +3573,15 @@ overridden). Its attributes are sampled on every tick and written, with the
 scenario's own cover items, to <code>{ScenarioName}_coverage.json</code>.
 <code>scenario-coverage outputs/</code> merges those files into a report. See
 <a href="../odd/">ODD</a> and <a href="../coverage/">Coverage</a>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.yaml
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>--markdown<span class="w"> </span>coverage.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.yaml
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>--markdown<span class="w"> </span>coverage.md
 </code></pre></div>
 <p>Before running, <code>scenario-odd route</code> plans each scenario's ego route on the
 Lanelet2 map (no CARLA server) and reports which parts of it are outside the
 ODD, which are undecided until run time, the metres it is expected to cover
 in each bucket, and the buckets no route reaches
 (<a href="../odd/#checking-a-planned-route">Checking a planned route</a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left
 </code></pre></div>
 <h3 id="output-files">Output Files<a class="headerlink" href="#output-files" title="Permanent link">&para;</a></h3>
 <p>Each scenario run generates output in <code>outputs/YYYY-MM-DD/HH-MM-SS/</code>:</p>
@@ -3558,16 +3616,16 @@ in each bucket, and the buckets no route reaches
 </tbody>
 </table>
 <p><strong>Result JSON format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"All pass conditions satisfied"</span><span class="p">,</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.42</span><span class="p">,</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">  </span><span class="nt">"condition_statuses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 5 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">},</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 12 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"All pass conditions satisfied"</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.42</span><span class="p">,</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">"condition_statuses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 5 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">},</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 12 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="p">}</span>
 </code></pre></div>
 <h3 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h3>
 <table>
@@ -3593,11 +3651,11 @@ in each bucket, and the buckets no route reaches
 <p>By default CARLA's TrafficManager drives the ego. To hand it to an external driving
 policy over the <code>egodriver</code> gRPC contract instead, start the policy server and select
 the <code>carla_driver</code> entity:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># 1. Start the policy (in its own environment)</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>uv<span class="w"> </span>run<span class="w"> </span>carla-driver-interface<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>route_follower<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="c1"># 2. Run any scenario against it</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.address<span class="o">=</span>localhost:50051
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># 1. Start the policy (in its own environment)</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>uv<span class="w"> </span>run<span class="w"> </span>carla-driver-interface<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>route_follower<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># 2. Run any scenario against it</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.address<span class="o">=</span>localhost:50051
 </code></pre></div>
 <p><code>ego.entity</code> accepts:</p>
 <table>
@@ -3623,15 +3681,15 @@ the <code>carla_driver</code> entity:</p>
 </tbody>
 </table>
 <p>Common overrides:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Query the policy every simulation tick instead of every other one</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy_timestep_s<span class="o">=</span><span class="m">0</span>.05
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># Pin the rig origin offset when the derived value looks wrong (CARLA 0.9.x)</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.rear_axle_offset_m<span class="o">=</span>-1.4
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># Send a smaller, cheaper camera frame</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">    </span>driver.cameras.0.image_width<span class="o">=</span><span class="m">480</span><span class="w"> </span>driver.cameras.0.image_height<span class="o">=</span><span class="m">302</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Query the policy every simulation tick instead of every other one</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy_timestep_s<span class="o">=</span><span class="m">0</span>.05
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1"># Pin the rig origin offset when the derived value looks wrong (CARLA 0.9.x)</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.rear_axle_offset_m<span class="o">=</span>-1.4
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># Send a smaller, cheaper camera frame</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">    </span>driver.cameras.0.image_width<span class="o">=</span><span class="m">480</span><span class="w"> </span>driver.cameras.0.image_height<span class="o">=</span><span class="m">302</span>
 </code></pre></div>
 <p>See <a href="../driver_interface/">External Driver Interface</a> for the full reference.</p>
 <hr />
@@ -3646,20 +3704,20 @@ the <code>carla_driver</code> entity:</p>
 <li>Writes the detected IDs to the YAML configuration's <code>no_3d_model_lanelet_ids</code> field</li>
 </ol>
 <h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Basic detection using map config YAML</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1"># Connect to a remote CARLA server</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--host<span class="w"> </span><span class="m">192</span>.168.1.100<span class="w"> </span>--port<span class="w"> </span><span class="m">3000</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># Increase ray search range for hilly terrain</span>
-<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--ray-upper<span class="w"> </span><span class="m">10</span>.0<span class="w"> </span>--ray-lower<span class="w"> </span><span class="m">10</span>.0
-<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>
-<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="c1"># Longer timeout for slow connections</span>
-<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--timeout<span class="w"> </span><span class="m">30</span>.0
-<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>
-<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="c1"># Debug logging</span>
-<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>-v
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Basic detection using map config YAML</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># Connect to a remote CARLA server</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--host<span class="w"> </span><span class="m">192</span>.168.1.100<span class="w"> </span>--port<span class="w"> </span><span class="m">3000</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># Increase ray search range for hilly terrain</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--ray-upper<span class="w"> </span><span class="m">10</span>.0<span class="w"> </span>--ray-lower<span class="w"> </span><span class="m">10</span>.0
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="c1"># Longer timeout for slow connections</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--timeout<span class="w"> </span><span class="m">30</span>.0
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="c1"># Debug logging</span>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>-v
 </code></pre></div>
 <h3 id="command-line-options">Command-Line Options<a class="headerlink" href="#command-line-options" title="Permanent link">&para;</a></h3>
 <table>
@@ -3726,9 +3784,9 @@ the <code>carla_driver</code> entity:</p>
 </table>
 <h3 id="input-yaml-requirements">Input YAML Requirements<a class="headerlink" href="#input-yaml-requirements" title="Permanent link">&para;</a></h3>
 <p>The YAML file must contain at minimum:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NishishinjukuMap</span><span class="w">        </span><span class="c1"># CARLA map name</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.xodr</span><span class="w">  </span><span class="c1"># Path to OpenDRIVE file</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.osm</span><span class="w">  </span><span class="c1"># Path to Lanelet2 file</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NishishinjukuMap</span><span class="w">        </span><span class="c1"># CARLA map name</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.xodr</span><span class="w">  </span><span class="c1"># Path to OpenDRIVE file</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.osm</span><span class="w">  </span><span class="c1"># Path to Lanelet2 file</span>
 </code></pre></div>
 <h3 id="integration-with-scenario-runner">Integration with Scenario Runner<a class="headerlink" href="#integration-with-scenario-runner" title="Permanent link">&para;</a></h3>
 <p>The detected lanelet IDs are stored in the map config's <code>no_3d_model_lanelet_ids</code> field. The scenario runner's sweep feature uses this list to exclude problematic lanelets from automatic spawn point selection.</p>
@@ -3742,14 +3800,14 @@ the <code>carla_driver</code> entity:</p>
 <li>Provides an API for triggering scenario runs and monitoring progress in real time</li>
 </ol>
 <h3 id="usage_1">Usage<a class="headerlink" href="#usage_1" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Start with default settings (0.0.0.0:9000, current directory)</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Custom host and port</span>
-<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="nv">VIEWER_HOST</span><span class="o">=</span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="nv">VIEWER_PORT</span><span class="o">=</span><span class="m">8080</span><span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
-<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># Specify results directory</span>
-<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>/path/to/scenario/outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Start with default settings (0.0.0.0:9000, current directory)</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="c1"># Custom host and port</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="nv">VIEWER_HOST</span><span class="o">=</span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="nv">VIEWER_PORT</span><span class="o">=</span><span class="m">8080</span><span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="c1"># Specify results directory</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>/path/to/scenario/outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
 </code></pre></div>
 <p>Then open <code>http://localhost:9000</code> (or the configured host/port) in a browser.</p>
 <h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h3>
@@ -3850,19 +3908,19 @@ the <code>carla_driver</code> entity:</p>
 </tbody>
 </table>
 <p><strong>Run request body format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="p">{</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span><span class="nt">"sweeper"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">{</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span><span class="nt">"sweeper"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Progress SSE event format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">{</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
-<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
-<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="p">{</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Where <code>status</code> is one of: <code>"running"</code>, <code>"idle"</code>, or <code>"done"</code>.</p>
 <hr />
@@ -3956,39 +4014,39 @@ the <code>carla_driver</code> entity:</p>
 <hr />
 <h2 id="common-use-cases">Common Use Cases<a class="headerlink" href="#common-use-cases" title="Permanent link">&para;</a></h2>
 <h3 id="use-case-1-run-a-single-scenario">Use Case 1: Run a Single Scenario<a class="headerlink" href="#use-case-1-run-a-single-scenario" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Start CARLA server first, then:</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># Start CARLA server first, then:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
 </code></pre></div>
 <h3 id="use-case-2-run-all-scenarios-for-a-map">Use Case 2: Run All Scenarios for a Map<a class="headerlink" href="#use-case-2-run-all-scenarios-for-a-map" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <h3 id="use-case-3-test-on-a-remote-carla-server">Use Case 3: Test on a Remote CARLA Server<a class="headerlink" href="#use-case-3-test-on-a-remote-carla-server" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">2000</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">2000</span>
 </code></pre></div>
 <h3 id="use-case-4-detect-missing-3d-models-before-running-scenarios">Use Case 4: Detect Missing 3D Models Before Running Scenarios<a class="headerlink" href="#use-case-4-detect-missing-3d-models-before-running-scenarios" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># 1. Detect lanelets without ground geometry</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="c1"># 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="c1"># 3. Now run scenarios — sweep will skip these lanelets</span>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1"># 1. Detect lanelets without ground geometry</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="c1"># 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="c1"># 3. Now run scenarios — sweep will skip these lanelets</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <h3 id="use-case-5-browse-results-in-the-web-ui">Use Case 5: Browse Results in the Web UI<a class="headerlink" href="#use-case-5-browse-results-in-the-web-ui" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1"># 1. Run scenarios</span>
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
-<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
-<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="c1"># 2. Launch the viewer pointing to the outputs directory</span>
-<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>
-<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># 1. Run scenarios</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="c1"># 2. Launch the viewer pointing to the outputs directory</span>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
 </code></pre></div>
 <h3 id="use-case-6-resume-a-failed-batch">Use Case 6: Resume a Failed Batch<a class="headerlink" href="#use-case-6-resume-a-failed-batch" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Original batch run (5 scenarios, failed at index 3)</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="c1"># Resume from the 4th scenario (0-based index 3)</span>
-<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">3</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Original batch run (5 scenarios, failed at the 4th)</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="c1"># Resume from the 4th scenario</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">4</span>
 </code></pre></div>
 <hr />
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -4049,7 +4107,7 @@ the <code>carla_driver</code> entity:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:57:07 UTC"><span class="timeago" datetime="2026-10-11T07:57:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:57:07 UTC">2026-10-11</span>
   </span>
 
     
