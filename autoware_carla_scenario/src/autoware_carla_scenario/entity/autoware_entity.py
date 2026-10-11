@@ -454,9 +454,7 @@ class AutowareEgoEntity(EgoVehicle):
         offset = self._base_link_offset()
         initial_pose = self._resolve_initial_pose().moved_forward(offset)
         goal_pose = self._goal_pose.moved_forward(offset)
-        waypoint_poses = tuple(
-            pose.moved_forward(offset) for pose in self._waypoint_poses
-        )
+        waypoint_poses = [pose.moved_forward(offset) for pose in self._waypoint_poses]
         logger.info(
             "Autoware's base_link is %.3f m along the ego from its origin; "
             "initial pose (%.2f, %.2f), goal (%.2f, %.2f) in the map frame",
