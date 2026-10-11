@@ -17,6 +17,10 @@ API is checked against `typesafe_carla <https://github.com/hakuturu583/typesafe_
 the statically typed CARLA client the framework runs on: scenarios import it
 as ``import typesafe_carla.carla as carla``, which is its CPython package at
 run time and its Codon library for the check.
+
+:func:`typecheck_library` (``scenario-check --library``) compiles the
+framework's own source the same way, the modules ``library.py`` lists as
+checked.
 """
 
 from .check import (
@@ -26,6 +30,7 @@ from .check import (
     available_toolchain,
     find_supported_codon,
     model_dir,
+    typecheck_library,
     typecheck_odd,
     typecheck_scenario,
 )
@@ -47,6 +52,7 @@ __all__ = [
     "find_codon",
     "find_supported_codon",
     "model_dir",
+    "typecheck_library",
     "typecheck_odd",
     "typecheck_scenario",
 ]

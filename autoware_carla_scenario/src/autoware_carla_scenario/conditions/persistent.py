@@ -28,6 +28,11 @@ class PersistentCondition(BaseCondition):
         ValueError: If *duration* is not positive.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _condition: BaseCondition
+    _duration: float
+    _true_start: Optional[float]
+
     def __init__(
         self, condition: BaseCondition, duration: float, *, label: str | None = None
     ) -> None:

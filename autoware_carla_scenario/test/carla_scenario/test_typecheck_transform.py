@@ -89,6 +89,67 @@ def test_parameters_and_returns_are_rewritten_in_place() -> None:
     assert "    x = 3" in out
 
 
+def test_a_required_keyword_after_a_default_gets_a_placeholder_default() -> None:
+    out = _transform(
+        """
+        def f(a: float = 0.0, *, label: str, n: int = 1, tag) -> None:
+            pass
+
+        def g(a: float, *, label: str) -> None:
+            pass
+        """
+    )
+    assert (
+        "def f(a: float = 0.0, *_acs_kw, label: str = _acs_Required(), n: int = 1, "
+        "tag = _acs_Required()) -> None:"
+    ) in out
+    assert "def g(a: float, *_acs_kw, label: str) -> None:" in out
+
+
+def test_an_empty_collection_default_takes_the_type_of_its_field() -> None:
+    out = _transform(
+        """
+        @dataclass
+        class Result:
+            statuses: list[Status] = field(default_factory=list)
+            details: dict[str, Any] = field(default_factory=dict)
+            names: set[str] = field(default_factory=list)
+        """
+    )
+    assert "    statuses: list[Status] = list[Status]()" in out
+    assert "    details: dict[str, Any] = {}" in out  # Codon cannot express Any
+    assert "    names: set[str] = []" in out  # not the annotation's collection
+
+
+def test_an_annotation_naming_a_class_defined_further_down_is_dropped() -> None:
+    out = _transform(
+        """
+        class Absolute:
+            vector: Relative  # a declaration is kept
+
+            def __add__(self, other: Relative) -> Absolute:
+                return self
+
+            def __sub__(self, other: "list[Relative]") -> "Relative":
+                return other[0]
+
+
+        class Relative:
+            def __add__(self, other: Absolute) -> Relative:
+                return self
+
+
+        def total(a: Absolute, r: Relative) -> Relative:
+            return r
+        """
+    )
+    assert "    vector: Relative  # a declaration is kept" in out
+    assert "    def __add__(self, other) -> Absolute:" in out
+    assert "    def __sub__(self, other):" in out
+    assert "    def __add__(self, other: Absolute) -> Relative:" in out
+    assert "def total(a: Absolute, r: Relative) -> Relative:" in out
+
+
 def test_every_line_stays_where_it_was() -> None:
     source = textwrap.dedent(
         """
@@ -115,7 +176,7 @@ def test_every_line_stays_where_it_was() -> None:
     )
     assert "dataclass(" not in out.replace("import dataclass", "")
     assert "    ids: list[int] = ([460, 265])" in out
-    assert "    npcs: list[NpcVehicleConfig] = []" in out
+    assert "    npcs: list[NpcVehicleConfig] = list[NpcVehicleConfig]()" in out
     assert "    ground: GroundProjectionConfig = GroundProjectionConfig()" in out
     assert "    limit: Optional[float] = None" in out
 
@@ -137,6 +198,114 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "c = [460, 265]" in out
     assert "d = [only(1)]" in out
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
+
+
+def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
+    source = textwrap.dedent(
+        """
+        @unique
+        class Turn(str, Enum):
+            LEFT = "left"
+            RIGHT = (
+                "right"
+            )
+
+            def opposite(self) -> Turn:
+                return self
+        class Level(enum.Enum):
+            LOW = auto()
+            HIGH = auto()
+            _ignored = 3
+        class Kind(Enum):
+            A = 4
+            B = auto()
+        class Mixed(Enum):
+            A = 1
+            B = "b"
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@unique" not in out
+    assert "class Turn(Enum[str]):" in out
+    assert "    LEFT: ClassVar[Turn] = Turn('LEFT', \"left\")" in out
+    assert "    RIGHT: ClassVar[Turn] = Turn('RIGHT', \"right\")" in out
+    assert "    def opposite(self) -> Turn:" in out
+    assert "class Level(enum.Enum[int]):" in out
+    assert "    HIGH: ClassVar[Level] = Level('HIGH', 2)" in out
+    assert "    _ignored = 3" in out
+    assert "    B: ClassVar[Kind] = Kind('B', 5)" in out
+    # Values of two types: left as written, for Codon to report.
+    assert "class Mixed(Enum):" in out
+
+
+def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
+    out = _transform("class Mode(StrEnum):\n    FAST = auto()\n")
+    assert "class Mode(StrEnum[str]):" in out
+    assert "FAST: ClassVar[Mode] = Mode('FAST', 'fast')" in out
+
+
+def test_an_exception_derives_statically() -> None:
+    out = _transform(
+        """
+        class Mismatch(ValueError):
+            pass
+        class Worse(Mismatch):
+            pass
+        class Remote(errors.TransportError):
+            pass
+        class Plain(Base):
+            pass
+        """
+    )
+    assert "class Mismatch(Static[ValueError]):" in out
+    assert "class Worse(Static[Mismatch]):" in out
+    assert "class Remote(Static[errors.TransportError]):" in out
+    assert "class Plain(Base):" in out
+
+
+def test_abstractmethod_is_dropped() -> None:
+    source = textwrap.dedent(
+        """
+        import abc
+        from abc import ABC, abstractmethod
+
+        class Bridge(ABC):
+            @abstractmethod
+            def is_ready(self) -> bool:
+                \"\"\"Whether it is ready.\"\"\"
+
+            @abc.abstractmethod
+            def close(self) -> None:
+                pass
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@" not in out
+    assert "    def is_ready(self) -> bool:" in out
+    assert "class Bridge(ABC):" in out
+
+
+def test_a_classmethod_becomes_a_staticmethod_of_its_class() -> None:
+    source = textwrap.dedent(
+        """
+        class Pose:
+            @classmethod
+            def origin(cls) -> Pose:
+                return cls(0.0)
+
+            @classmethod
+            def at(cls, x: float | None, *, y: float = 0.0) -> Pose:
+                return cls.make(cls(x))
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@classmethod" not in out
+    assert "    def origin() -> Pose:\n        return Pose(0.0)" in out
+    assert "    def at(x: Optional[float], *_acs_kw, y: float = 0.0) -> Pose:" in out
+    assert "        return Pose.make(Pose(x))" in out
 
 
 # ---------------------------------------------------------------------------

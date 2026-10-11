@@ -21,6 +21,12 @@ class str:
         return self
 
 
+def _acs_value(T: type) -> T:
+    """A T, for the library check's calls (typecheck/library_driver.py):
+    read through a null pointer, which is fine, as nothing compiled is run."""
+    return Ptr[T]()[0]
+
+
 def _keyword_only(extra, where: Literal[str]):
     if static.len(extra) > 0:
         compile_error(where + " is keyword-only")

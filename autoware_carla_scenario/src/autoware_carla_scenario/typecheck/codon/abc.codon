@@ -1,0 +1,11 @@
+# Python's abc, for the checker (docs/typecheck.md). Codon has no abstract
+# classes: ABC is an empty base and abstractmethod leaves the method as it
+# is, so a subclass that overrides one is checked like any other override.
+
+
+class ABC:
+    pass
+
+
+def abstractmethod(f):
+    return f
