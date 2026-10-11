@@ -255,8 +255,15 @@ stands in for it in the check's workspace:
 - another **checked** module: its own (rewritten) source;
 - any other module: its **model**, the `codon/autoware_carla_scenario/` module
   of the public package it belongs to (`coordinate.poses` is modelled by
-  `coordinate.codon`). A module with no model (`utils.config`) cannot be
-  imported by a checked module until it is checked itself.
+  `coordinate.codon`), or, for a module of a package that is itself checked,
+  a model of that module alone (`utils/traffic_light.codon`). A module with no
+  model (`utils.config`) cannot be imported by a checked module until it is
+  checked itself.
+
+A model module that stands in for unchecked code (`coordinate.codon` for
+`transform.py` and `map_manager.py`) declares only what the checked modules
+and scenarios use of it: `MapManager` there is `get_instance()` and the
+`road_network` it reads, not the class's whole API.
 
 A checked module is compiled under a name of its own
 (`_acs_lib.autoware_carla_scenario__coordinate__frames`), since Codon reads
@@ -266,6 +273,15 @@ source file. A type a checked module defines is not the type the model
 declares under the same name, so a checked module cannot hand its own value to
 a model function that wants the model's: check modules bottom-up, before the
 modules that use them.
+
+Where the model's functions take the types a checked module defines (the
+poses, which `to_opendrive` takes and returns), the model's own declarations
+of them live in a model module of their own (`_poses.codon`), which
+`REPLACED_MODELS` in `typecheck/library.py` names with the modules it
+models. Once those are all checked, the library check compiles that model
+module as a re-export of their definitions, so the model and the checked
+modules share one `Lanelet2Pose`. A name the model declares that none of the
+checked modules defines is reported.
 
 ### Conditions: the checked base and the model
 
@@ -365,3 +381,15 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate/frames.py` does for `poses.py`. Set class attributes in the
   class body (`FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2`)
   rather than from a function run after the class.
+- **Codon does not narrow an `Optional`** after `if x is None: return`. Where
+  the narrowed value goes into something typed (a tuple the function
+  returns), assign it to an annotated local first (`od: OpenDrivePose = x`),
+  which Codon unwraps.
+- **One `except` clause per exception type**: Codon 0.19 does not take a
+  tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
+  to `raise X` by the check; `raise X from exc` compiles as it is.
+- **No `frozenset`** and no variable-length tuple (`tuple[X, ...]`, which the
+  check drops from an annotation): use a `set` or a `list` where nothing
+  relies on the immutability.
+- **`dict.get` takes its default**: Codon's has no one-argument form. Test
+  `key in d` and index instead of `d.get(key)`.
