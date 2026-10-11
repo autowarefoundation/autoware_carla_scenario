@@ -1,0 +1,14 @@
+# Model of autoware_carla_scenario.driver.egodriver_client (docs/typecheck.md),
+# which imports grpc and carla_driver_interface's protocol. The checked driver
+# package re-exports EgoDriverGrpcClient, and only the name is needed: no
+# checked module builds or uses one. Its constructor is declared as Python's,
+# and any call to it fails the check, as its config (the checked
+# DriverClientConfig) is not in the model: a scenario cannot build one that the
+# run would then refuse.
+
+
+class EgoDriverGrpcClient:
+    def __init__(self, config, channel=None):
+        compile_error("EgoDriverGrpcClient is not modelled: the static check "
+                      "cannot build one (typecheck/codon/autoware_carla_scenario/"
+                      "driver/egodriver_client.codon)")

@@ -15,6 +15,8 @@ from .base import BaseAction, TickTiming
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..traffic.driven import BackendDriven
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,13 +88,27 @@ class TurnAction(BaseAction):
             logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
             return
 
-        entity.turn_at_junction(
-            world,
-            self._direction,
-            search_distance=self._search_distance,
-            waypoint_step=self._waypoint_step,
-            post_junction_distance=self._post_junction_distance,
-        )
+        if TYPE_CHECKING:
+            # Codon calls a method a subclass overrides (AutowareEgoEntity's)
+            # through a dispatch thunk, which takes no keyword argument
+            # (docs/typecheck.md): the check calls BackendDriven's own, and
+            # checks each override on its own, through its class.
+            BackendDriven.turn_at_junction(
+                entity,
+                world,
+                self._direction,
+                search_distance=self._search_distance,
+                waypoint_step=self._waypoint_step,
+                post_junction_distance=self._post_junction_distance,
+            )
+        else:
+            entity.turn_at_junction(
+                world,
+                self._direction,
+                search_distance=self._search_distance,
+                waypoint_step=self._waypoint_step,
+                post_junction_distance=self._post_junction_distance,
+            )
 
 
 def _fail_if_pedestrian(entity_name: str) -> None:

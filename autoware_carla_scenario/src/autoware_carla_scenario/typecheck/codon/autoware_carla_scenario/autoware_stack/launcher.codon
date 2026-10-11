@@ -1,0 +1,30 @@
+# Model of autoware_carla_scenario.autoware_stack.launcher (docs/typecheck.md),
+# which imports subprocess: what the checked AutowareEgoEntity calls of the
+# launcher it is given, start(), poll() and stop(), and the episode start()
+# returns. AutowareLauncher is a Protocol in Python, which cannot be
+# instantiated, so its constructor fails the check.
+
+from .._tc import _keyword_only
+
+
+@tuple
+class AutowareEpisode:
+    index: int
+    name: str
+    bridge_address: str
+
+
+class AutowareLauncher:
+    def __init__(self):
+        compile_error("AutowareLauncher is a Protocol: implement start(), poll() "
+                      "and stop() in a class of your own")
+
+    def start(self, *_kw, name: str, bridge_address: str) -> AutowareEpisode:
+        _keyword_only(_kw, "AutowareLauncher.start(): name and bridge_address")
+        raise NotImplementedError()
+
+    def poll(self) -> Optional[int]:
+        raise NotImplementedError()
+
+    def stop(self) -> None:
+        raise NotImplementedError()

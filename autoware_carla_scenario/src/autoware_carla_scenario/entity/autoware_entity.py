@@ -44,8 +44,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -54,6 +53,7 @@ if TYPE_CHECKING:
     from ..autoware_stack.launcher import AutowareLauncher
     from ..coordinate import GroundProjectionConfig, Lanelet2Pose
     from ..scenario_base import EgoConfig
+    from ..traffic.base import LaneChangeDirection, TurnDirection
 
 from ..autoware_bridge.base import AutowareBridgeConfig
 from ..constants import EGO_ROLE_NAME
@@ -139,6 +139,21 @@ class AutowareEgoEntity(EgoVehicle):
     #: engages: without one it never reports ready.
     requires_goal: bool = True
 
+    _config: AutowareBridgeConfig
+    _bridge: AutowareBridge
+    _launcher: Optional[AutowareLauncher]
+    _episode_name: str
+    _stack_running: bool
+    _boot_started: Optional[float]
+    _termination_reason: Optional[str]
+    _initial_pose: Optional[BridgePose]
+    _goal_pose: Optional[BridgePose]
+    _waypoint_poses: list[BridgePose]
+    _configured: bool
+    _ready: bool
+    _ready_ticks: int
+    _termination_requested: bool
+
     def __init__(
         self,
         config: Optional["AutowareBridgeConfig"] = None,
@@ -159,7 +174,7 @@ class AutowareEgoEntity(EgoVehicle):
         self._termination_reason: Optional[str] = None
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
-        self._waypoint_poses: tuple = ()
+        self._waypoint_poses = []
         self._configured: bool = False
         self._ready: bool = False
         self._ready_ticks: int = 0
@@ -203,7 +218,7 @@ class AutowareEgoEntity(EgoVehicle):
         """
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
-        self._waypoint_poses = tuple(waypoints)
+        self._waypoint_poses = list(waypoints)
 
     def route_to(
         self,
@@ -274,8 +289,14 @@ class AutowareEgoEntity(EgoVehicle):
 
         snapped_waypoints = [_snap(pose, "Routing via") for pose in waypoints]
         snapped_goal = _snap(goal, "Routing to")
+        # An if statement, not a conditional expression: Codon narrows no
+        # Optional, and unwraps one assigned to an annotated local.
+        initial: Optional["BridgePose"] = None
+        if initial_pose is not None:
+            known: CarlaWorldPose = initial_pose
+            initial = to_map_frame(known)
         self.set_mission(
-            None if initial_pose is None else to_map_frame(initial_pose),
+            initial,
             to_map_frame(snapped_goal),
             [to_map_frame(pose) for pose in snapped_waypoints],
         )
@@ -318,14 +339,15 @@ class AutowareEgoEntity(EgoVehicle):
     # Manoeuvres
     # ------------------------------------------------------------------
 
-    def change_lane(self, world: "carla.World", direction) -> None:  # noqa: ANN001
+    def change_lane(
+        self, world: "carla.World", direction: "LaneChangeDirection"
+    ) -> None:
         """Refuse a TrafficManager manoeuvre: nothing here is driven by it.
 
         Autoware plans and executes its own manoeuvres; a lane change is
         something its planner decides, not something the scenario forces on it.
         Send it somewhere with :meth:`route_to` and let it work out the lanes.
         """
-        del world
         logger.warning(
             "%s: a lane change was asked for, but this entity is not driven by "
             "the TrafficManager, so forcing one there would do nothing. Route it instead.",
@@ -341,7 +363,6 @@ class AutowareEgoEntity(EgoVehicle):
         TrafficManager does not touch it -- while the action reported progress
         and completion, which is worse than refusing.
         """
-        del world, speed_kmh
         logger.warning(
             "%s: a speed was set, but this entity is not driven by the "
             "TrafficManager, so the command would go to an actor it does not "
@@ -349,9 +370,10 @@ class AutowareEgoEntity(EgoVehicle):
             type(self).__name__,
         )
 
-    def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
+    def turn_at_junction(
+        self, world: "carla.World", direction: "TurnDirection", **kwargs: Any
+    ) -> None:
         """Refuse a TrafficManager route: nothing here is driven by it."""
-        del world, direction, kwargs
         logger.warning(
             "%s: a turn was asked for, but this entity is not driven by the "
             "TrafficManager, so setting a route there would do nothing.",
@@ -421,7 +443,6 @@ class AutowareEgoEntity(EgoVehicle):
             RuntimeError: If the ego actor has not been attached yet.
             ValueError: If the goal pose is missing.
         """
-        del world
         if self.actor is None:
             raise RuntimeError(
                 "AutowareEgoEntity.on_scenario_start called before spawn()/attach"
@@ -471,8 +492,15 @@ class AutowareEgoEntity(EgoVehicle):
         # Waypoints only when there are some, so a bridge implementing the
         # two-argument configure() it was written against keeps working for
         # every mission that names none.
+        # Codon calls configure(), which bridges override, through a dispatch
+        # thunk, which fills in no default and does not wrap a list in the
+        # Optional it takes (docs/typecheck.md): the check passes an Optional.
         if waypoint_poses:
-            self._bridge.configure(initial_pose, goal_pose, waypoint_poses)
+            waypoints: Optional[list["BridgePose"]] = waypoint_poses
+            self._bridge.configure(initial_pose, goal_pose, waypoints)
+        elif TYPE_CHECKING:
+            no_waypoints: Optional[list["BridgePose"]] = None
+            self._bridge.configure(initial_pose, goal_pose, no_waypoints)
         else:
             self._bridge.configure(initial_pose, goal_pose)
         self._configured = True
@@ -534,9 +562,11 @@ class AutowareEgoEntity(EgoVehicle):
                 actual.position.y,
             )
             return actual
-        offset = math.dist(
-            (expected.position.x, expected.position.y),
-            (actual.position.x, actual.position.y),
+        # math.hypot of the differences, which is math.dist's own computation:
+        # Codon's math has no dist().
+        offset = math.hypot(
+            expected.position.x - actual.position.x,
+            expected.position.y - actual.position.y,
         )
         if offset > _INITIAL_POSE_TOLERANCE_M:
             logger.warning(
@@ -561,7 +591,6 @@ class AutowareEgoEntity(EgoVehicle):
         ready this is a no-op.  If Autoware is not ready within
         ``ready_timeout_ticks``, the entity requests early termination.
         """
-        del world, elapsed
         if self._termination_requested or not self._configured:
             return
         if self._stack_running:
@@ -599,7 +628,6 @@ class AutowareEgoEntity(EgoVehicle):
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Stop this scenario's Autoware, then close the bridge.  Never raises."""
-        del world
         if self._launcher is not None:
             try:
                 self._launcher.stop()

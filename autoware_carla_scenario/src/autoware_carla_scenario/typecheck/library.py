@@ -65,6 +65,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.traffic_signal_controller",
     "autoware_carla_scenario.actions.turn",
     "autoware_carla_scenario.actions.walk_straight",
+    "autoware_carla_scenario.autoware_bridge",
     "autoware_carla_scenario.autoware_bridge._proto",
     "autoware_carla_scenario.autoware_bridge.base",
     "autoware_carla_scenario.autoware_bridge.fake",
@@ -110,11 +111,14 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.poses",
     "autoware_carla_scenario.coordinate.snap",
     "autoware_carla_scenario.coordinate.traffic_light",
+    "autoware_carla_scenario.driver",
     "autoware_carla_scenario.driver.base",
     "autoware_carla_scenario.driver.control",
     "autoware_carla_scenario.driver.geometry",
     "autoware_carla_scenario.driver.observation",
+    "autoware_carla_scenario.entity",
     "autoware_carla_scenario.entity._policy_warmup",
+    "autoware_carla_scenario.entity.autoware_entity",
     "autoware_carla_scenario.entity._spawn",
     "autoware_carla_scenario.entity.ego",
     "autoware_carla_scenario.entity.pedestrian_entity",
@@ -290,7 +294,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.authoring.uv_tool": "imports subprocess, shutil",
     "autoware_carla_scenario.authoring.validator": "reaches pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.wheelhouse": "imports pathlib, jinja2, packaging, tomllib, tomli, subprocess, shutil, tempfile, platform",
-    "autoware_carla_scenario.autoware_bridge": "re-exports autoware_bridge.grpc_server (grpc, concurrent)",
     "autoware_carla_scenario.autoware_bridge._proto.autoware_bridge_pb2": "imports google",
     "autoware_carla_scenario.autoware_bridge._proto.autoware_bridge_pb2_grpc": "imports grpc",
     "autoware_carla_scenario.autoware_bridge.grpc_server": "imports grpc, concurrent",
@@ -319,7 +322,6 @@ EXCLUDED: dict[str, str] = {
     ),
     "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",
-    "autoware_carla_scenario.driver": "re-exports driver.egodriver_client (grpc, google, atexit)",
     "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, atexit, and carla_driver_interface's contract, policies, server and protocol, which its model (geometry only) does not declare",
     "autoware_carla_scenario.driver.hdmap_export": "imports pathlib, roadgen, shutil, tempfile, json, hashlib",
     "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface.protocol (the protobuf messages), which its model (geometry only) does not declare",
@@ -330,8 +332,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.routes": "imports fastapi, starlette, anyio",
     "autoware_carla_scenario.editor.scenario_map": "reaches pydantic models through authoring.models; imports editor.map_preview (pathlib, json)",
     "autoware_carla_scenario.editor.service": "imports pathlib, yaml, shutil, tempfile, zipfile, contextlib",
-    "autoware_carla_scenario.entity": "re-exports entity.carla_driver_entity (carla_driver_interface.protocol, grpc, uuid) and entity.autoware_entity, which are not checked and which the model does not declare",
-    "autoware_carla_scenario.entity.autoware_entity": "imports autoware_stack.launcher (subprocess), which is neither checked nor modelled",
     "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, driver.egodriver_client (grpc) and driver.renderer, which are not checked, and uuid",
     "autoware_carla_scenario.examples": "re-exports examples.run (pathlib, omegaconf, hydra, json) and the registry (pathlib, omegaconf, importlib)",
     "autoware_carla_scenario.examples.expand": "imports json, sys, the registry (pathlib, omegaconf, importlib) and sweeper.expand (omegaconf)",
@@ -402,6 +402,9 @@ EXCLUDED: dict[str, str] = {
 #: Without it, a checked module handing its own pose to a model function
 #: (``to_opendrive``) would hand the wrong type.
 REPLACED_MODELS: dict[str, tuple[str, ...]] = {
+    # So the checked AutowareEgoEntity hands the pose the model's to_map_frame
+    # returns to the checked AutowareBridge.configure().
+    "_bridge_pose": ("autoware_carla_scenario.autoware_bridge.base",),
     # So a scenario hands the GroundProjectionConfig it imports from the
     # top-level package (the model) to the checked VehicleEntityConfig (#99).
     "_ground_projection": ("autoware_carla_scenario.coordinate.snap",),
@@ -428,6 +431,11 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # BaseScenario holds an EgoVehicle (`ego_entity`), and EgoVehicle.spawn()
     # takes an EgoConfig.
     "autoware_carla_scenario.entity.ego": ("autoware_carla_scenario.scenario_base",),
+    # AutowareEgoEntity.spawn() overrides EgoVehicle.spawn(), so it takes the
+    # same EgoConfig, the model's.
+    "autoware_carla_scenario.entity.autoware_entity": (
+        "autoware_carla_scenario.scenario_base",
+    ),
 }
 
 

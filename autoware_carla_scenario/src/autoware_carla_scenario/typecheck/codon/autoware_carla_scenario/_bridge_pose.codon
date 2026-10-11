@@ -1,0 +1,32 @@
+# Model of autoware_carla_scenario.autoware_bridge.base's map-frame pose
+# (docs/typecheck.md): what coordinate.codon's to_map_frame returns. The library
+# check compiles the checked source in its place (REPLACED_MODELS,
+# typecheck/library.py), so the checked AutowareEgoEntity hands the pose
+# to_map_frame returns to the checked AutowareBridge.configure().
+#
+# Frozen dataclasses in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run. Only what a pose is read for is declared.
+
+
+@tuple
+class Vector3:
+    x: float
+    y: float
+    z: float
+
+
+@tuple
+class Quaternion:
+    w: float
+    x: float
+    y: float
+    z: float
+
+
+@tuple
+class BridgePose:
+    position: Vector3
+    rotation: Quaternion
+
+    def moved_forward(self, distance: float) -> BridgePose:
+        raise NotImplementedError()
