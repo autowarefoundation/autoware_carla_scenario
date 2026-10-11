@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .conditions.base import find_actor_in_list
 from .constants import EGO_ROLE_NAME
@@ -86,7 +86,7 @@ class Measure:
     """
 
     key: str
-    read: Callable[["carla.World"], Any]
+    read: Callable[[carla.World], Optional[float]]
     unit: str = ""
     text: str = ""
 
@@ -110,9 +110,15 @@ class _Around:
     speed: float
 
 
-#: What was read for which world at which frame: (id(world), frame), and the
-#: road users around the ego then.
-_CACHE: dict[str, Any] = {"at": None, "around": None}
+class _Cache:
+    """What was read for which world at which frame: (id(world), frame), and
+    the road users around the ego then."""
+
+    at: Optional[tuple[int, int]] = None
+    around: Optional[list[_Around]] = None
+
+
+_CACHE = _Cache()
 #: Pedestrian actor id -> how far ahead of the ego it was when it set off.
 _SET_OFF: dict[int, float] = {}
 
@@ -127,9 +133,11 @@ def _frame_of(world: "carla.World") -> Optional[int]:
 def _around(world: "carla.World") -> Optional[list[_Around]]:
     """Every other vehicle and pedestrian, in the ego's frame; once per frame."""
     frame = _frame_of(world)
-    at = None if frame is None else (id(world), frame)
-    if at is not None and at == _CACHE["at"]:
-        return _CACHE["around"]
+    at: Optional[tuple[int, int]] = None
+    if frame is not None:
+        at = (id(world), int(frame))
+    if at is not None and _CACHE.at is not None and at == _CACHE.at:
+        return _CACHE.around
     found: Optional[list[_Around]]
     try:
         actors = list(world.get_actors())
@@ -137,11 +145,11 @@ def _around(world: "carla.World") -> Optional[list[_Around]]:
         found = None if ego is None else _relative_to(ego, actors)
     except Exception:
         found = None
-    _CACHE["at"], _CACHE["around"] = at, found
+    _CACHE.at, _CACHE.around = at, found
     return found
 
 
-def _relative_to(ego: Any, actors: list[Any]) -> list[_Around]:
+def _relative_to(ego: "carla.Actor", actors: "list[carla.Actor]") -> list[_Around]:
     transform = ego.get_transform()
     here = transform.location
     yaw = math.radians(transform.rotation.yaw)
@@ -151,7 +159,9 @@ def _relative_to(ego: Any, actors: list[Any]) -> list[_Around]:
     found: list[_Around] = []
     for actor in actors:
         kind = actor.type_id
-        if actor.id == ego.id or not kind.startswith(("vehicle.", "walker.")):
+        if actor.id == ego.id or not (
+            kind.startswith("vehicle.") or kind.startswith("walker.")
+        ):
             continue
         at = actor.get_location()
         dx, dy = at.x - here.x, at.y - here.y
@@ -205,12 +215,16 @@ def _crossing_pedestrian(world: "carla.World") -> Optional[_Around]:
 
 def _vehicle_ahead_gap_m(world: "carla.World") -> Optional[float]:
     ahead = _vehicle_ahead(world)
-    return None if ahead is None else ahead.ahead
+    if ahead is None:
+        return None
+    return ahead.ahead
 
 
 def _vehicle_ahead_relative_speed_kph(world: "carla.World") -> Optional[float]:
     ahead = _vehicle_ahead(world)
-    return None if ahead is None else ahead.closing * _KMH_PER_MS
+    if ahead is None:
+        return None
+    return ahead.closing * _KMH_PER_MS
 
 
 def _crossing_pedestrian_gap_m(world: "carla.World") -> Optional[float]:
@@ -224,7 +238,9 @@ def _crossing_pedestrian_gap_m(world: "carla.World") -> Optional[float]:
 
 def _crossing_pedestrian_speed_ms(world: "carla.World") -> Optional[float]:
     pedestrian = _crossing_pedestrian(world)
-    return None if pedestrian is None else pedestrian.speed
+    if pedestrian is None:
+        return None
+    return pedestrian.speed
 
 
 #: The measures every scenario has, by key.
@@ -268,7 +284,7 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
 # The running scenario
 # ---------------------------------------------------------------------------
 
-_MEASURED: dict[str, Any] = {"scenario": None}
+_MEASURED: dict[str, Optional["BaseScenario"]] = {"scenario": None}
 
 
 def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
@@ -277,7 +293,7 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     The runner sets the scenario it runs, and clears it when the run ends.
     """
     _MEASURED["scenario"] = scenario
-    _CACHE["at"], _CACHE["around"] = None, None
+    _CACHE.at, _CACHE.around = None, None
     _SET_OFF.clear()
 
 
@@ -286,7 +302,7 @@ def measured_scenario() -> Optional["BaseScenario"]:
     return _MEASURED["scenario"]
 
 
-def read_measure(key: str, world: "carla.World") -> Any:
+def read_measure(key: str, world: "carla.World") -> Optional[float]:
     """The running scenario's measure *key*, or the built-in one outside a run.
 
     ``None`` when there is nothing to read, the key is not measured, or the
@@ -295,9 +311,9 @@ def read_measure(key: str, world: "carla.World") -> Any:
     scenario = _MEASURED["scenario"]
     if scenario is not None:
         return scenario.measure(key, world)
-    measure = BUILT_IN_MEASURES.get(key)
-    if measure is None:
+    if key not in BUILT_IN_MEASURES:
         return None
+    measure = BUILT_IN_MEASURES[key]
     try:
         return measure.read(world)
     except Exception:

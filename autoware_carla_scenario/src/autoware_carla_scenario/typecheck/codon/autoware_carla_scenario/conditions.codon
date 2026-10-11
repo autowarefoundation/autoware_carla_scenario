@@ -176,6 +176,13 @@ def find_actor_by_role_name(world: carla.World, role_name) -> Optional[carla.Act
     raise NotImplementedError()
 
 
+def find_actor_in_list(actors: List[carla.Actor], role_name) -> Optional[carla.Actor]:
+    # str(), as in Python: a checked module's EntityRole (the library check)
+    # is not the model's, and both name a role the same way.
+    name: str = str(role_name)
+    raise NotImplementedError()
+
+
 class AlwaysTrueCondition(BaseCondition):
     def __init__(self, *_kw, label: str = "always_true"):
         _keyword_only(_kw, "AlwaysTrueCondition(): label")

@@ -14,13 +14,16 @@ temperatures as well.  A taxonomy can add units with OpenODD's
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Mapping, Optional
 
 __all__ = ["UNITS", "UnitError", "Units", "convert", "normalize_unit"]
 
 
 class UnitError(ValueError):
     """A unit that is unknown, or that cannot be converted into another."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 #: unit -> (unit type, scale, offset) to the unit type's base unit.
@@ -104,21 +107,36 @@ def _unit_type(name: str) -> str:
 class Units:
     """A table of units: the built-in ones, and those a taxonomy adds."""
 
+    _table: dict[str, tuple[str, float, float]]
+
     def __init__(self) -> None:
         self._table: dict[str, tuple[str, float, float]] = dict(_BUILTIN)
 
-    def add_conversions(self, conversion: Mapping[str, Any]) -> None:
+    def add_conversions(
+        self,
+        conversion: Mapping[
+            str,
+            Optional[
+                Mapping[str, Optional[Mapping[str, Optional[Mapping[str, float]]]]]
+            ],
+        ],
+    ) -> None:
         """Add the units of an OpenODD ``conversion:`` block.
 
         ``conversion: {<unit type>: {<from>: {<to>: {scale, offset}}}}``
         reads "a value in *from* is ``value * scale + offset`` in *to*".  A
         unit known already anchors its type, so the others join it.
         """
+        # A section left empty in the YAML is None: skipped, as an empty one.
         for unit_type, sources in conversion.items():
-            for src, targets in (sources or {}).items():
-                for dst, spec in (targets or {}).items():
-                    scale = float((spec or {}).get("scale", 1.0))
-                    offset = float((spec or {}).get("offset", 0.0))
+            if not sources:
+                continue
+            for src, targets in sources.items():
+                if not targets:
+                    continue
+                for dst, spec in targets.items():
+                    scale = float(spec.get("scale", 1.0)) if spec else 1.0
+                    offset = float(spec.get("offset", 0.0)) if spec else 0.0
                     src_n, dst_n = normalize_unit(str(src)), normalize_unit(str(dst))
                     if src_n not in self._table and dst_n not in self._table:
                         # Neither is known: make *src* the base of the type.
@@ -141,8 +159,8 @@ class Units:
 
     def unit_type(self, unit: str) -> Optional[str]:
         """The unit type *unit* measures, or ``None`` if it is unknown."""
-        entry = self._table.get(normalize_unit(unit))
-        return entry[0] if entry else None
+        key = normalize_unit(unit)
+        return self._table[key][0] if key in self._table else None
 
     def convert(self, value: float, from_unit: str, to_unit: str) -> float:
         """*value* in *from_unit*, expressed in *to_unit*.
