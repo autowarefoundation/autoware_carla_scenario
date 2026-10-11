@@ -45,6 +45,12 @@ class TestOr:
         assert rewrite_or("x = a or []\n") == "x = (_acs_or_empty(a))\n"
         assert rewrite_or("x = a or {}\n") == "x = (_acs_or_empty(a))\n"
 
+    def test_a_condition_spanning_lines_keeps_its_colon_and_line_count(self) -> None:
+        source = "if a or (\n    b and c\n):\n    pass\n"
+        out = rewrite_or(source)
+        compile(out, "<rewritten>", "exec")
+        assert out.count("\n") == source.count("\n")
+
     def test_any_other_fallback_is_evaluated_lazily(self) -> None:
         assert rewrite_or("x = a or f()\n") == "x = (_acs_or(a, lambda: f()))\n"
 

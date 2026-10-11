@@ -29,3 +29,4 @@ Sized = object
 Container = object
 IO = File
 TextIO = File
+FrozenSet = Set

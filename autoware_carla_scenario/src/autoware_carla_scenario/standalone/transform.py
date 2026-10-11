@@ -172,16 +172,21 @@ def rewrite_or(source: str) -> str:
         edits = _Edits(source.encode().splitlines(keepends=True))
         for node in targets:
             parts = [edits.text(*edits.node_span(v)) for v in node.values]
+            span = edits.node_span(node)
+            # the line breaks the operands lose stay inside the parentheses:
+            # after them, they would push what follows (an `if`'s colon) down
+            lost = edits.text(*span).count("\n") - sum(p.count("\n") for p in parts)
+            close = "\n" * max(lost, 0) + ")"
             text = parts[-1]
             last = node.values[-1]
             if len(parts) == 2 and _empty_literal(last):
                 # `x or []`: an empty literal has no element type of its own
                 # in Codon; the result is x's type, made empty
-                edits.replace(*edits.node_span(node), f"(_acs_or_empty({parts[0]}))")
+                edits.replace(*span, f"(_acs_or_empty({parts[0]}){close}")
                 continue
             for part in reversed(parts[:-1]):
                 text = f"_acs_or({part}, lambda: {text})"
-            edits.replace(*edits.node_span(node), f"({text})")
+            edits.replace(*span, f"({text}{close}")
         source = edits.apply()
 
 
@@ -852,6 +857,24 @@ class TransformError(ValueError):
     """A construct the standalone rewrite cannot give Codon."""
 
 
+_ALIAS_GENERICS = {"Union", "Optional", "List", "Dict", "Tuple", "Set", "Callable"}
+
+
+def _type_aliases(tree: ast.Module, edits: _Edits) -> None:
+    """``Event = Union[A, "B"]`` -> ``Union[A, B]``: Codon evaluates a type
+    alias, and a string in it is not a type."""
+    for stmt in tree.body:
+        if not (
+            isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Subscript)
+            and _dotted(stmt.value.value) in _ALIAS_GENERICS
+        ):
+            continue
+        for node in ast.walk(stmt.value):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                edits.replace(*edits.node_span(node), node.value)
+
+
 def _type_checking_names(
     tree: ast.Module, edits: _Edits, kept: frozenset[int] = frozenset()
 ) -> set[str]:
@@ -958,6 +981,7 @@ def rewrite_for_runtime(
     if unavailable is not None:
         dropped |= _unavailable_names(tree, unavailable)
     touched = _drop_annotations(tree, edits, dropped)
+    _type_aliases(tree, edits)
     _carla_enum_annotations(tree, edits)
     _declare_attributes(tree, edits, dropped, context)
     if context is not None:
