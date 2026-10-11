@@ -2078,8 +2078,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 113 of
-the package's 225 modules (50%; about 20,600 of 68,800 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 117 of
+the package's 225 modules (52%; about 22,100 of 68,900 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -2092,8 +2092,11 @@ the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), the camera and
-LiDAR sensors (<code>sensor</code>), and the six example scenarios. 56
+scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), the camera
+and LiDAR sensors (<code>sensor</code>), the six example scenarios, and the external
+driver's configs and client interface, trajectory follower and observations
+(<code>driver.base</code>, <code>driver.control</code>, <code>driver.observation</code>, over
+<code>driver.geometry</code>). 61
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
@@ -2104,8 +2107,10 @@ over as <code>Any</code> (<code>set_scenario_route()</code>), the six members of
 the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
 <code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
-(<code>_refusing_vertex_times</code>), and <code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs. The 112 <code>EXCLUDED</code> modules fall in
+(<code>_refusing_vertex_times</code>), <code>signals.build_controllers()</code>, which reads
+the authoring package's pydantic specs, the driver configs'
+<code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
+<code>encode_frame_jpeg()</code> (cv2). The 108 <code>EXCLUDED</code> modules fall in
 three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: lanelet2, pyxodr,
@@ -2275,6 +2280,34 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>coordinate</code> annotates with pyxodr's own class under <code>TYPE_CHECKING</code>
   (<code>utils/traffic_light.py</code>) and takes the network <code>MapManager</code> returns.
   Nothing else of pyxodr is there.</li>
+<li><strong>carla_driver_interface's geometry is modelled</strong>:
+  <code>codon/carla_driver_interface/geometry.codon</code> declares the <code>Pose</code> and
+  <code>Trajectory</code> the driver modules use (and <code>waypoints_to_proto</code>, which
+  <code>driver.geometry</code> re-exports, with its protobuf result left untyped), with
+  the package's fields, signatures and types, the arrays as Codon's
+  (<code>position: np.ndarray[np.float64, 1]</code>). Its scipy-typed constructor
+  (<code>from_rotation</code>) and the protobuf conversions (<code>from_proto</code>, <code>to_proto</code>,
+  <code>to_proto_at_time</code>) are not there. <code>test_typecheck_model.py</code> compares the
+  model with the installed package. Like every top-level directory of
+  <code>codon/</code> (<code>pyxodr</code>, <code>pathlib</code>, ...), it is a model of a module that is not
+  the framework's: <code>_shims()</code> lists it, so the library check and the scenario
+  check let <code>import carla_driver_interface...</code> through, and Codon compiles
+  the import against the model. <code>MODELLED_IMPORTS</code>, which redirects one
+  framework module's import of another, does not concern it. A scenario may
+  therefore use <code>Pose</code> and <code>Trajectory</code> of <code>carla_driver_interface.geometry</code>
+  now; a name the model lacks fails its check (<code>Pose.to_proto()</code> has no
+  attribute), and so does any other module of the package (<code>no module named
+  'carla_driver_interface.protocol'</code>).</li>
+<li><strong>No <code>bytes</code></strong>: Codon 0.19 has none, and reads a <code>b"..."</code> literal as a
+  <code>str</code>, so the check reads an annotation naming <code>bytes</code> as <code>str</code>
+  (<code>DriveOutcome.debug_info: bytes = b""</code>).</li>
+<li><strong><code>dataclasses.fields()</code> is not in the shim</strong>: a function that reads a
+  dataclass's fields from its class takes a free-form mapping anyway, so it
+  is <code>UNCALLED</code> and imports <code>fields</code> inside it (<code>ControlConfig.from_mapping</code>).</li>
+<li><strong>Codon's numpy appends an array of the same dimensions</strong>:
+  <code>np.append(yaws, yaws[-1:])</code>, not <code>np.append(yaws, yaws[-1])</code>, which numpy
+  answers the same. Nor does Codon unpack an array into arguments
+  (<code>f(*row)</code>): pass <code>row[0], row[1], row[2]</code>.</li>
 <li><strong>numpy is Codon's own</strong>, so <code>import numpy as np</code> compiles
   (<code>utils/powertrain.py</code>). Codon compares no <code>np.float32</code> with a Python
   <code>float</code>: convert the float (<code>x &lt;= np.float32(max_rpm)</code>), which is what
@@ -2666,7 +2699,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 17:24:10 UTC"><span class="timeago" datetime="2026-10-11T17:24:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 17:24:10 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 18:56:14 UTC"><span class="timeago" datetime="2026-10-11T18:56:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 18:56:14 UTC">2026-10-11</span>
   </span>
 
     
