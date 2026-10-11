@@ -122,7 +122,7 @@ Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).
 
-A scenario that imports a module with no model (numpy, or a framework module
+A scenario that imports a module with no model (lanelet2, or a framework module
 outside the public API) is refused with a message naming the module.
 
 ## Writing a scenario that type-checks
@@ -227,8 +227,9 @@ defines anything.
 `CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every
 other module to the reason it is not. `"not yet checked (#45)"` marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(`"imports numpy, lanelet2"`: a package or a standard module Codon cannot
-compile). Every module of the package except `typecheck/` is in exactly one of
+(`"imports lanelet2, json"`: a package or a standard module Codon cannot
+compile). numpy is not one: Codon ships its own, and a module's numpy calls
+compile. Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
 
 `UNCALLED` names the few public functions and methods of a checked module the
@@ -255,19 +256,22 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 96 of
-the package's 225 modules (43%; about 16,800 of 68,700 lines) are `CHECKED`:
+Every module but four of the example scenarios now has an entry other than
+`"not yet checked (#45)"`. 102 of the package's 225 modules (45%; about
+18,400 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
 actions, the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities and the entity registry, `BaseScenario`,
+NPC vehicle and pedestrian entities, the entity registry and the policy
+warm-up with the Chaos powertrain model, `BaseScenario`,
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units and the CARLA-only helpers, the traffic-light lookups included. 56
+units, the CARLA-only helpers, the traffic-light lookups included, and the
+scenario configs (`scenario_config`, `examples.configs`). 56
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -279,19 +283,24 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 129 `EXCLUDED` modules fall into
-three groups:
+the authoring package's pydantic specs. The 123 `EXCLUDED` modules are the
+six example scenarios, which import the checked `examples.configs` (the
+scenario check compiles each as a scenario, against the model), and three
+groups. Four of the examples are not checked yet; `cut_in` and
+`intersection_passing` pass the check alone but not in the full run, where
+the model's `GroundProjectionConfig`, which they import from the top-level
+package, meets `scenario_config`'s checked one, a different type to Codon
+(#99). The three groups:
 
-- **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
+- **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
   than its shim's `Path`). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
-- **About 20 build on an excluded module**: the example scenarios, through
-  `examples.configs`; the route frame and route poses (`route.frame`,
-  `route.positions`, through lanelet2), the traffic backend registry, the
-  SUMO backend and the authoring compiler.
+- **About 15 build on an excluded module**: the route frame and route
+  poses (`route.frame`, `route.positions`, through lanelet2), the traffic
+  backend registry, the SUMO backend and the authoring compiler.
 - **About 10 hold values Codon has no type for**: `Any` (`coverage.items`,
   `odd.model`), a callable of any value as a parameter
   (`trajectory.resolve`'s position resolvers), or a class
@@ -466,6 +475,13 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
   (`utils/traffic_light.py`) and takes the network `MapManager` returns.
   Nothing else of pyxodr is there.
+- **numpy is Codon's own**, so `import numpy as np` compiles
+  (`utils/powertrain.py`). Codon compares no `np.float32` with a Python
+  `float`: convert the float (`x <= np.float32(max_rpm)`), which is what
+  numpy 2 does anyway (NEP 50), so nothing changes at run time. Codon's
+  `ndarray` needs its dtype and dimension count, so a parameter annotated
+  with a bare `np.ndarray` or numpy.typing's `NDArray[...]` does not
+  translate.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
@@ -555,6 +571,15 @@ What Codon 0.19 needs that Python does not, beyond
   as a dunder method, so its body is checked. A `field(init=False)` set there
   is given an empty value of its type (`list[float]()`) by the check, so the
   constructor leaves it out as Python's does.
+- **A dataclass field may hold a union or a free-form mapping**: the library
+  check constructs a dataclass once per member of a union field
+  (`ScenarioRunConfig.scenario`, one of six scenario configs), as it calls a
+  function once per member of a union parameter. A field with a default whose
+  annotation names `Any` (`SweepConfig.constraints: dict[str, Any]`, a Hydra
+  mapping of any values) keeps its declaration, its empty default is built as
+  that type (`dict[str, Any]()`), and the check's constructor call leaves it
+  out, passing the fields after it by keyword. A `default_factory=list` on a
+  `List[int]` field is built as a `List[int]` as on a `list[int]` one.
 - **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
   its fields, is checked as `self.name = value`: Codon 0.19 has no
   `object.__setattr__`.

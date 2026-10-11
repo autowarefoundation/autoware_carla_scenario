@@ -50,6 +50,16 @@ __all__ = [
 NOT_YET_CHECKED = "not yet checked (#45)"
 _NOT_YET = NOT_YET_CHECKED
 
+#: The reason of an example scenario that passes the check alone but not in
+#: the full run, where the model's types meet the checked modules' (#99).
+_MODEL_MEETS_CHECKED = (
+    "passes the GroundProjectionConfig it imports from the top-level package "
+    "(the package model, in the check) to the checked VehicleEntityConfig: "
+    "alone it passes, but in the full run the model's type meets "
+    "scenario_config's checked one, a different type to Codon (#99); the "
+    "scenario check compiles it as a scenario, against the model"
+)
+
 #: Modules compiled from their real source, by dotted name (a package by its
 #: own name, for its ``__init__.py``).
 CHECKED: tuple[str, ...] = (
@@ -70,12 +80,14 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.autoware_bridge.fake",
     "autoware_carla_scenario.autoware_bridge.ros_bridge",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api",
+    "autoware_carla_scenario.conditions",
     "autoware_carla_scenario.conditions.action_state",
     "autoware_carla_scenario.conditions.always_true",
     "autoware_carla_scenario.conditions.and_condition",
     "autoware_carla_scenario.conditions.base",
     "autoware_carla_scenario.conditions.collision",
     "autoware_carla_scenario.conditions.comparison",
+    "autoware_carla_scenario.conditions.composition",
     "autoware_carla_scenario.conditions.composition.acceleration",
     "autoware_carla_scenario.conditions.composition.base",
     "autoware_carla_scenario.conditions.composition.distance_measure",
@@ -107,6 +119,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.poses",
     "autoware_carla_scenario.coordinate.snap",
     "autoware_carla_scenario.coordinate.traffic_light",
+    "autoware_carla_scenario.entity._policy_warmup",
     "autoware_carla_scenario.entity._spawn",
     "autoware_carla_scenario.entity.ego",
     "autoware_carla_scenario.entity.pedestrian_entity",
@@ -114,6 +127,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity.vehicle_entity",
     "autoware_carla_scenario.entity_role",
     "autoware_carla_scenario.examples.conf",
+    "autoware_carla_scenario.examples.configs",
     "autoware_carla_scenario.kinematics",
     "autoware_carla_scenario.kinematics.acceleration",
     "autoware_carla_scenario.kinematics.angle",
@@ -133,6 +147,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.maps.source",
     "autoware_carla_scenario.measures",
     "autoware_carla_scenario.scenario_base",
+    "autoware_carla_scenario.scenario_config",
     "autoware_carla_scenario.odd.scenario_measure",
     "autoware_carla_scenario.odd.units",
     "autoware_carla_scenario.signals",
@@ -147,6 +162,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.trajectory.model",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.opendrive",
+    "autoware_carla_scenario.utils.powertrain",
     "autoware_carla_scenario.utils.traffic_light",
     "autoware_carla_scenario.utils.vehicles",
 )
@@ -239,7 +255,7 @@ UNCALLED: dict[str, str] = {
 
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
-    "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, numpy, grpc and pytest ones included",
+    "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, grpc and pytest ones included",
     "autoware_carla_scenario.actions.background_traffic": "imports yaml",
     "autoware_carla_scenario.actions.follow_trajectory": "imports carla_driver_interface",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (subprocess, shutil)",
@@ -269,15 +285,13 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_stack.devcontainer": "imports pathlib, yaml, json",
     "autoware_carla_scenario.autoware_stack.docker": "imports pathlib, subprocess, shlex",
     "autoware_carla_scenario.autoware_stack.launcher": "imports pathlib, subprocess, shutil, signal",
-    "autoware_carla_scenario.camera_recorder": "imports numpy, pathlib, ffmpeg, subprocess, queue",
+    "autoware_carla_scenario.camera_recorder": "imports pathlib, ffmpeg, subprocess, queue",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, shutil, json, argparse, urllib, http, email, tarfile, platform",
-    "autoware_carla_scenario.conditions": "re-exports conditions.composition, whose temporary_stop imports numpy",
-    "autoware_carla_scenario.conditions.composition": "re-exports composition.temporary_stop (numpy)",
-    "autoware_carla_scenario.conditions.composition.temporary_stop": "imports numpy, to sum the length of pyxodr's reference line (a numpy array the model does not have)",
-    "autoware_carla_scenario.coordinate.map_manager": "imports numpy, lanelet2, pyxodr, pathlib",
+    "autoware_carla_scenario.conditions.composition.temporary_stop": "walks lanelet2's lanelet layer and routing graph and pyxodr's reference lines (`Road.reference_line`, an `np.ndarray` of unknown dtype and dimension count) through MapManager, which the model keeps opaque or does not declare, and hands `to_opendrive()` an `AnyPose` that only an isinstance check narrows, which Codon does not narrow",
+    "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2, pyxodr, pathlib",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
     "autoware_carla_scenario.coordinate.stop_line": "imports lanelet2",
-    "autoware_carla_scenario.coordinate.transform": "imports numpy, lanelet2, autoware_lanelet2_extension_python",
+    "autoware_carla_scenario.coordinate.transform": "imports lanelet2, autoware_lanelet2_extension_python",
     "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which import pathlib, json",
     "autoware_carla_scenario.coverage.cod": "imports pathlib, yaml, csv",
     "autoware_carla_scenario.coverage.collector": "imports pathlib, json",
@@ -289,14 +303,14 @@ EXCLUDED: dict[str, str] = {
     ),
     "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",
-    "autoware_carla_scenario.driver": "re-exports driver.base and driver.control (numpy), driver.egodriver_client (grpc)",
-    "autoware_carla_scenario.driver.base": "imports numpy",
-    "autoware_carla_scenario.driver.control": "imports numpy",
-    "autoware_carla_scenario.driver.egodriver_client": "imports numpy, grpc, google, carla_driver_interface, atexit",
+    "autoware_carla_scenario.driver": "re-exports driver.base and driver.control (driver.geometry, carla_driver_interface), driver.egodriver_client (grpc)",
+    "autoware_carla_scenario.driver.base": "imports sensor.carla_camera and sensor.carla_lidar (queue), utils.config (reads dataclass fields off a `type`) and driver.geometry (carla_driver_interface), and takes `Mapping[str, Any]` and `NDArray[np.float64]` (numpy.typing), which the check does not translate",
+    "autoware_carla_scenario.driver.control": "imports driver.geometry (carla_driver_interface), `ControlConfig.from_mapping` takes `Mapping[str, Any]`, and its arrays are `np.ndarray` without the dtype and dimension count Codon's ndarray needs",
+    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google, carla_driver_interface, atexit",
     "autoware_carla_scenario.driver.geometry": "imports carla_driver_interface",
     "autoware_carla_scenario.driver.hdmap_export": "imports pathlib, roadgen, shutil, tempfile, json, hashlib",
-    "autoware_carla_scenario.driver.observation": "imports numpy, cv2",
-    "autoware_carla_scenario.driver.renderer": "imports numpy, carla_driver_interface",
+    "autoware_carla_scenario.driver.observation": "imports cv2",
+    "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface",
     "autoware_carla_scenario.editor": "imports pathlib, uvicorn",
     "autoware_carla_scenario.editor.app": "imports pathlib, fastapi",
     "autoware_carla_scenario.editor.forms": "imports authoring.registry, which is not checked and has no model; parses form values typed Any",
@@ -305,19 +319,17 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.scenario_map": "reaches pydantic models through authoring.models; imports editor.map_preview (pathlib, json)",
     "autoware_carla_scenario.editor.service": "imports pathlib, yaml, shutil, tempfile, zipfile, contextlib",
     "autoware_carla_scenario.entity": "re-exports entity.carla_driver_entity (carla_driver_interface, uuid) and entity.autoware_entity, which are not checked and which the model does not declare",
-    "autoware_carla_scenario.entity._policy_warmup": "imports utils.powertrain (numpy)",
-    "autoware_carla_scenario.entity.autoware_entity": "imports autoware_stack.launcher (subprocess) and driver.observation (numpy), which are neither checked nor modelled",
+    "autoware_carla_scenario.entity.autoware_entity": "imports autoware_stack.launcher (subprocess) and driver.observation (cv2), which are neither checked nor modelled",
     "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface, uuid",
     "autoware_carla_scenario.examples": "re-exports examples.run (pathlib, omegaconf, hydra, json) and the registry (pathlib, omegaconf, importlib)",
-    "autoware_carla_scenario.examples.configs": "ScenarioRunConfig.scenario, the scenario group of the Hydra root config, is a union of the six scenario configs, which Codon cannot express (and Codon 0.19 crashes on a union-typed attribute); Hydra reads the union, so it stays",
-    "autoware_carla_scenario.examples.cut_in": "imports examples.configs, which cannot be checked (its own reason) and has no model; the scenario check compiles it as a scenario, against the model",
+    "autoware_carla_scenario.examples.cut_in": _MODEL_MEETS_CHECKED,
     "autoware_carla_scenario.examples.expand": "imports json, sys, the registry (pathlib, omegaconf, importlib) and sweeper.expand (omegaconf)",
-    "autoware_carla_scenario.examples.intersection_passing": "imports examples.configs, which cannot be checked (its own reason) and has no model; the scenario check compiles it as a scenario, against the model",
-    "autoware_carla_scenario.examples.lane_change": "imports examples.configs, which cannot be checked (its own reason) and has no model; the scenario check compiles it as a scenario, against the model",
-    "autoware_carla_scenario.examples.pedestrian_dart_out": "imports examples.configs, which cannot be checked (its own reason) and has no model; the scenario check compiles it as a scenario, against the model",
+    "autoware_carla_scenario.examples.intersection_passing": _MODEL_MEETS_CHECKED,
+    "autoware_carla_scenario.examples.lane_change": _NOT_YET,
+    "autoware_carla_scenario.examples.pedestrian_dart_out": _NOT_YET,
     "autoware_carla_scenario.examples.run": "imports pathlib, omegaconf, hydra, json",
-    "autoware_carla_scenario.examples.temporary_stop": "imports examples.configs, which cannot be checked (its own reason) and has no model; the scenario check compiles it as a scenario, against the model",
-    "autoware_carla_scenario.examples.traffic_light_compliance": "imports examples.configs, which cannot be checked (its own reason) and has no model; the scenario check compiles it as a scenario, against the model",
+    "autoware_carla_scenario.examples.temporary_stop": _NOT_YET,
+    "autoware_carla_scenario.examples.traffic_light_compliance": _NOT_YET,
     "autoware_carla_scenario.maps": "re-exports maps.cache (subprocess, json) and maps.config (pathlib)",
     "autoware_carla_scenario.maps.cache": "imports pathlib, subprocess, shutil, tempfile, json, hashlib",
     "autoware_carla_scenario.maps.catalogue": "imports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib), which are not checked and have no model",
@@ -348,13 +360,12 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.route.search": "imports route.geometry (lanelet2) and sweeper.constraints, which are neither checked nor modelled, and walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",
     "autoware_carla_scenario.scaffold.generator": "imports pathlib, argparse, keyword",
-    "autoware_carla_scenario.scenario_config": "imports omegaconf",
     "autoware_carla_scenario.scenario_queue": "imports pathlib, tqdm, pytest",
     "autoware_carla_scenario.scenario_runner": "imports pathlib, shutil",
-    "autoware_carla_scenario.sensor": "re-exports sensor.base, sensor.carla_camera and sensor.carla_lidar (numpy)",
-    "autoware_carla_scenario.sensor.base": "imports numpy",
-    "autoware_carla_scenario.sensor.carla_camera": "imports numpy, queue",
-    "autoware_carla_scenario.sensor.carla_lidar": "imports numpy, queue",
+    "autoware_carla_scenario.sensor": "re-exports sensor.base, sensor.carla_camera and sensor.carla_lidar (queue)",
+    "autoware_carla_scenario.sensor.base": "`CameraSensorBase` assigns `_config` and `_attached` without declaring them at class level, and returns `NDArray` (numpy.typing), which the check does not translate",
+    "autoware_carla_scenario.sensor.carla_camera": "imports queue",
+    "autoware_carla_scenario.sensor.carla_lidar": "imports queue",
     "autoware_carla_scenario.server": "imports pathlib, dotenv, subprocess, signal, atexit",
     "autoware_carla_scenario.sweeper": "re-exports sweeper.bindings and sweeper.constraints (lanelet2), sweeper.expand (omegaconf)",
     "autoware_carla_scenario.sweeper.bindings": "imports lanelet2",
@@ -378,7 +389,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.scanner": "imports pathlib, yaml, json",
     "autoware_carla_scenario.ui.sweep_resolver": "imports pathlib, omegaconf, hydra",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
-    "autoware_carla_scenario.utils.powertrain": "imports numpy",
     "autoware_carla_scenario.utils.stop_line": "imports lanelet2",
 }
 

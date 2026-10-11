@@ -29,8 +29,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, List
 
-from omegaconf import MISSING
-
 from .traffic.config import TrafficConfig, TrafficManagerBackendConfig
 
 __all__ = [
@@ -49,6 +47,12 @@ __all__ = [
     "TrafficConfig",
     "TrafficManagerBackendConfig",
 ]
+
+#: OmegaConf's mandatory-value marker (``omegaconf.MISSING``), spelled out so
+#: that this module does not import omegaconf, which the library check
+#: (docs/typecheck.md) cannot compile.  OmegaConf recognises the marker by
+#: value (``value == "???"``), not by identity.
+MISSING: Any = "???"
 
 
 # ---------------------------------------------------------------------------

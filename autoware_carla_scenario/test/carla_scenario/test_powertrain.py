@@ -30,6 +30,24 @@ def test_the_torque_curve_is_read_as_chaos_samples_it() -> None:
     assert max(graph) == pytest.approx(0.999, abs=1e-3)
 
 
+@pytest.mark.parametrize("max_rpm", [6500.0, 5920.351, 3729.927, 2568.895])
+def test_the_torque_curve_steps_and_compares_in_float32(max_rpm: float) -> None:
+    """UE steps a float32 up to ``max_rpm``, compared in float32 as numpy 2 does.
+
+    At these top rpms the last float32 step lands just above ``max_rpm`` and at
+    its float32: compared in float64 the curve would lose its last sample.
+    """
+    physics = mkz_physics()
+    physics.max_rpm = max_rpm
+    graph = ChaosPowertrain.from_physics_control(physics).torque_graph
+    assert len(graph) == 21
+    step, x, float64_samples = np.float32(max_rpm / 20), np.float32(0.0), 0
+    while float(x) <= max_rpm:
+        float64_samples += 1
+        x = np.float32(x + step)
+    assert max_rpm == 6500.0 or float64_samples == 20
+
+
 def test_released_pedals_engine_brake_in_gear() -> None:
     """Measured: 8.33 -> 7.83 m/s over a second in first, throttle and brake at zero."""
     assert mkz_powertrain().acceleration(_KMH30, 0.0, 0.0, 1) == pytest.approx(
