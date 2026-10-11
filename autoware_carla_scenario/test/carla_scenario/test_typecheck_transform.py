@@ -89,6 +89,35 @@ def test_parameters_and_returns_are_rewritten_in_place() -> None:
     assert "    x = 3" in out
 
 
+def test_an_annotation_naming_a_class_defined_further_down_is_dropped() -> None:
+    out = _transform(
+        """
+        class Absolute:
+            vector: Relative  # a declaration is kept
+
+            def __add__(self, other: Relative) -> Absolute:
+                return self
+
+            def __sub__(self, other: "list[Relative]") -> "Relative":
+                return other[0]
+
+
+        class Relative:
+            def __add__(self, other: Absolute) -> Relative:
+                return self
+
+
+        def total(a: Absolute, r: Relative) -> Relative:
+            return r
+        """
+    )
+    assert "    vector: Relative  # a declaration is kept" in out
+    assert "    def __add__(self, other) -> Absolute:" in out
+    assert "    def __sub__(self, other):" in out
+    assert "    def __add__(self, other: Absolute) -> Relative:" in out
+    assert "def total(a: Absolute, r: Relative) -> Relative:" in out
+
+
 def test_every_line_stays_where_it_was() -> None:
     source = textwrap.dedent(
         """

@@ -12,9 +12,6 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
-
 
 class CoordinateFrame(Enum):
     """Identifier for a coordinate reference frame."""
@@ -64,3 +61,10 @@ def frame_of(pose: Lanelet2Pose | OpenDrivePose | CarlaWorldPose) -> CoordinateF
         f"Cannot determine coordinate frame for {type(pose).__name__}; "
         f"expected a pose type with a FRAME class variable."
     )
+
+
+# Last, not first: poses.py imports CoordinateFrame from here, and Codon (for
+# which TYPE_CHECKING is true) resolves the cycle only once CoordinateFrame is
+# defined (docs/typecheck.md, "Making a module compile").
+if TYPE_CHECKING:
+    from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose  # noqa: E402

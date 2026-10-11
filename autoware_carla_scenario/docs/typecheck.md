@@ -130,8 +130,10 @@ outside the public API) is refused with a message naming the module.
 A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites `X | None` into
 `Optional[X]`, drops `@dataclass` and resolves `field(...)` defaults, accepts
-keyword-only parameters, and gives a list of different conditions the type
-`list[BaseCondition]`). What a scenario has to do itself:
+keyword-only parameters, gives a list of different conditions the type
+`list[BaseCondition]`, and drops a parameter or return annotation naming a
+class the module defines further down, which Codon cannot name yet). What a
+scenario has to do itself:
 
 - **Declare the attributes it assigns on `self`**, at class level, with their
   type:
@@ -272,3 +274,40 @@ What Codon 0.19 needs that Python does not, beyond
   `abc`, ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging` and `__future__` shims of
   `codon/` are.
+- **Operators take the operand types they accept**, not `object`. Annotate
+  `other` with the class (`def __add__(self, other: FrenetVelocity)`) and a
+  scalar with `float`, and keep the `isinstance` guard that returns
+  `NotImplemented`: Python still runs it, and Codon, which decides
+  `isinstance` when it compiles, drops it.
+- **An operator whose result depends on the operand** (`Absolute - Absolute
+  -> Relative`, `Absolute - Relative -> Absolute`) keeps its `@overload`
+  stubs, for mypy, and spells the union out on the implementation:
+
+  ```python
+  @overload
+  def __sub__(self, other: AbsoluteVelocity) -> RelativeVelocity: ...
+  @overload
+  def __sub__(self, other: RelativeVelocity) -> AbsoluteVelocity: ...
+  def __sub__(
+      self, other: AbsoluteVelocity | RelativeVelocity
+  ) -> Union[RelativeVelocity, AbsoluteVelocity]:
+      if isinstance(other, AbsoluteVelocity):
+          return RelativeVelocity(...)
+      if isinstance(other, RelativeVelocity):
+          return AbsoluteVelocity(...)
+      return NotImplemented
+  ```
+
+  The check calls the implementation once per member, and Codon compiles
+  only the `isinstance` branch of that member, so each call has one result
+  type; the `Union` return annotation is dropped. Two classes whose methods
+  take each other are fine: an annotation naming the later one is dropped
+  from the earlier one's signatures, and the check still calls with it.
+- **Two checked modules that import each other**: Codon reads
+  `TYPE_CHECKING` as true, so an import made only for annotations is still
+  an import cycle, and Codon resolves a cycle only with the names already
+  defined. Put that `if TYPE_CHECKING:` import at the end of its module
+  (`# noqa: E402`), after the names the other module imports, as
+  `coordinate/frames.py` does for `poses.py`. Set class attributes in the
+  class body (`FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2`)
+  rather than from a function run after the class.
