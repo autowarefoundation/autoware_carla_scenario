@@ -15,6 +15,8 @@ the author wrote:
 * ``@dataclass`` is removed (a Codon class with annotated fields already gets
   the dataclass ``__init__``), and each ``field(default=...)`` /
   ``field(default_factory=...)`` is replaced by its default.
+* ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
+  ``abc`` shim's ``ABC`` is an empty base).
 * A parameter or return annotation naming a class the module defines further
   down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
   dropped: Codon 0.19 cannot name a class in a signature before its
@@ -105,6 +107,9 @@ _DROPPED_CLASS_DECORATORS = {
     "enum.unique",
 }
 _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
+#: Function decorators dropped: Codon 0.19 rejects a decorated method, and
+#: the method compiles the same without them.
+_DROPPED_FUNCTION_DECORATORS = {"abstractmethod", "abc.abstractmethod"}
 
 #: Enum bases (``enum.X`` too), and the value type a base implies.
 _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
@@ -403,6 +408,9 @@ class _Rewriter(ast.NodeVisitor):
         for decorator in node.decorator_list:
             if classmethod_ and _dotted(decorator) == "classmethod":
                 self.edits.replace(*self.edits.node_span(decorator), "staticmethod")
+            elif _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS:
+                start, end = self.edits.node_span(decorator)
+                self.edits.replace(start - 1, end, "")  # with its "@"
             else:
                 self.visit(decorator)
         if classmethod_ and self._class_name is not None:
