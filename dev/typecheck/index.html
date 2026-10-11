@@ -2079,10 +2079,10 @@ function or method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module but four of the example scenarios now has an entry other than
-<code>"not yet checked (#45)"</code>. 102 of the package's 225 modules (45%; about
-18,400 of 68,700 lines) are <code>CHECKED</code>:
+<code>"not yet checked (#45)"</code>. 103 of the package's 225 modules (46%; about
+18,800 of 68,700 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
-nearly every condition, the action base with the environment, traffic-signal,
+every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
 actions, the logical scenario's route search and matches (<code>route.model</code>) and
 the scenario's route (<code>route.active</code>),
@@ -2105,7 +2105,7 @@ the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <cod
 <code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
 (<code>_refusing_vertex_times</code>), and <code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs. The 123 <code>EXCLUDED</code> modules are the
+the authoring package's pydantic specs. The 122 <code>EXCLUDED</code> modules are the
 six example scenarios, which import the checked <code>examples.configs</code> (the
 scenario check compiles each as a scenario, against the model), and three
 groups. Four of the examples are not checked yet; <code>cut_in</code> and
@@ -2305,6 +2305,14 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   backend its <code>**kwargs</code> only in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>
   (see below), and the check calls each backend's <code>turn_at_junction()</code>
   through its class instead.</li>
+<li><strong>A list of a subclass is not a list of its base</strong>: Codon 0.19 refuses a
+  <code>list[EntityLanePositionCondition]</code> where a <code>list[BaseCondition]</code> is
+  expected, and <code>extend()</code> does not upcast either. Build the list in a local
+  declared <code>list[BaseCondition]</code>, appending each element
+  (<code>composition/temporary_stop.py</code>). An element of a <code>Sequence[AnyPose]</code> is
+  a <code>Union</code> of poses; the model's <code>_expect_pose</code> takes one, reading its
+  members with <code>static.vars_types(pose, with_index=True)</code> (without
+  <code>with_index</code>, Codon 0.19 does not bind the loop variable).</li>
 <li><strong>A class cannot be named before it is defined or imported</strong>, in a
   signature or a class-level declaration, and an import cycle resolves only
   with the names already defined. Two classes whose signatures name each
@@ -2628,7 +2636,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 14:16:19 UTC"><span class="timeago" datetime="2026-10-11T14:16:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 14:16:19 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 14:44:38 UTC"><span class="timeago" datetime="2026-10-11T14:44:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 14:44:38 UTC">2026-10-11</span>
   </span>
 
     
