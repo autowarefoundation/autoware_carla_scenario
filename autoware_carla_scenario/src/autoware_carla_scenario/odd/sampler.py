@@ -44,6 +44,13 @@ when the ODD admits no combination of those does it fall back to any bucket,
 the less covered the likelier.  Situations (modules covered as situations,
 ``docs/odd.md``) that are still holes are aimed at first, one case each: a
 case meant for one draws only combinations under which the situation can hold.
+
+A batch of several scenarios draws from one ODD scenario by scenario, each
+with a sampler of its own.  Given the cases the earlier scenarios drew
+(``drawn``, kept per ODD by :class:`OddDraws`), a sampler counts their buckets
+as planned and their situations as aimed at, as if it had drawn them itself,
+and draws from a random stream of its own: the next scenario goes on where the
+last left off instead of drawing the same cases again.
 """
 
 from __future__ import annotations
@@ -66,6 +73,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_KNOBS",
+    "OddDraws",
     "OddKnob",
     "OddSample",
     "OddSampler",
@@ -232,6 +240,40 @@ def _render(value: Any) -> str:
     return str(value)
 
 
+def _definition(odd: OddDefinition) -> dict[str, Any]:
+    """The ODD as a coverage file defines it: its modules and its cover items."""
+    return {**odd.describe(), "items": [i.describe() for i in odd.cover_items()]}
+
+
+class OddDraws:
+    """The cases drawn so far in a batch, per ODD.
+
+    Each scenario of a batch draws with a sampler of its own; this is what
+    they hand on.  Two ODDs are one when they define the same modules and
+    cover items, so a scenario on another ODD starts afresh.
+    """
+
+    def __init__(self) -> None:
+        self._drawn: list[tuple[dict[str, Any], list[OddSample]]] = []
+
+    def of(self, odd: OddDefinition) -> list[OddSample]:
+        """The cases drawn from *odd* so far, in the order they were drawn."""
+        definition = _definition(odd)
+        for known, samples in self._drawn:
+            if known == definition:
+                return list(samples)
+        return []
+
+    def add(self, odd: OddDefinition, samples: Iterable[OddSample]) -> None:
+        """Record *samples*, drawn from *odd*."""
+        definition = _definition(odd)
+        for known, drawn in self._drawn:
+            if known == definition:
+                drawn.extend(samples)
+                return
+        self._drawn.append((definition, list(samples)))
+
+
 #: The suffix a coverage report gives an item defined differently in
 #: different runs (``odd.environment.rain#2``).
 _VARIANT = re.compile(r"#\d+$")
@@ -307,6 +349,11 @@ class OddSampler:
             :func:`~autoware_carla_scenario.coverage.report.load_and_merge`.
             Only read by the ``coverage`` strategy.
         max_tries: Combinations drawn per case before giving up on it.
+        drawn: The cases drawn from this ODD by earlier samplers of the
+            batch (:meth:`OddDraws.of`).  Their buckets count as planned and
+            their situations as aimed at, and the random stream is derived
+            from *seed* and how many there are, so the cases drawn here are
+            not theirs again.  Empty, the sampler is as if it were the first.
 
     Raises:
         ValueError: If no attribute of the ODD can be drawn, a knob names an
@@ -324,6 +371,7 @@ class OddSampler:
         strategy: str = "uniform",
         coverage: Any = None,
         max_tries: int = 200,
+        drawn: Sequence[OddSample] = (),
     ) -> None:
         if strategy not in ("uniform", "coverage"):
             raise ValueError(
@@ -331,7 +379,9 @@ class OddSampler:
             )
         self.odd = odd
         self.strategy = strategy
-        self._rng = random.Random(seed)
+        # After earlier draws, a stream of its own: the same seed would draw
+        # the same values again.
+        self._rng = random.Random(f"{seed}/{len(drawn)}" if drawn else seed)
         self._max_tries = max_tries
         knobs = dict(knobs or {})
         by_name = {a.name: a for a in odd.attributes}
@@ -374,7 +424,7 @@ class OddSampler:
                 "controls, or given a knob"
             )
 
-        drawn = {axis.attribute.name for axis in self._axes}
+        sampled = {axis.attribute.name for axis in self._axes}
         #: Situation -> whether the knobs alone decide it: every attribute it
         #: tests is drawn, and it refers to no other module.
         self._decided: dict[str, bool] = {}
@@ -384,7 +434,7 @@ class OddSampler:
             conditions = module._conditions()
             tested = {a.name for c in conditions for a in c._attributes()}
             refers = any(c._references() for c in conditions)
-            self._decided[module.name] = not refers and tested <= drawn
+            self._decided[module.name] = not refers and tested <= sampled
 
         self._amount: dict[tuple[str, str], float] = {}
         self._situation_holes: list[str] = []
@@ -392,6 +442,13 @@ class OddSampler:
             self._read_coverage(coverage)
         #: Cases drawn per (attribute, bucket) so far in this batch.
         self._planned: dict[tuple[str, str], int] = {}
+        for sample in drawn:
+            for name, label in sample.buckets.items():
+                key = (name, label)
+                self._planned[key] = self._planned.get(key, 0) + 1
+        # A situation an earlier case was aimed at is not aimed at again.
+        aimed = {sample.situation for sample in drawn}
+        self._situation_holes = [s for s in self._situation_holes if s not in aimed]
 
     # -- setup -----------------------------------------------------------
 
@@ -669,6 +726,7 @@ def sampler_from_config(
     odd: Union[str, OddDefinition, None] = None,
     controls: Optional[Mapping[str, Any]] = None,
     base_dir: Optional[Path] = None,
+    drawn: Optional[OddDraws] = None,
 ) -> tuple[OddSampler, Optional[int]]:
     """An :class:`OddSampler` and the case count, from a ``sweep.odd_sample`` mapping.
 
@@ -680,6 +738,10 @@ def sampler_from_config(
     the scenario measures its parameters set; the ODD's mapping of its
     attributes onto measures joins the two.  ``knobs`` in the sweep are keyed
     by the ODD's attributes and replace both for that sweep.
+
+    *drawn*, in a batch, holds the cases the earlier scenarios drew; the
+    sampler goes on from those drawn from its ODD (``OddSampler(drawn=...)``).
+    The caller records its own cases in it once drawn.
 
     Raises:
         ValueError: On an unknown field.
@@ -709,6 +771,7 @@ def sampler_from_config(
         seed=int(raw.get("seed", 0)),
         strategy=strategy,
         coverage=coverage,
+        drawn=drawn.of(definition) if drawn is not None else (),
     )
     count = raw.get("count")
     return sampler, None if count is None else int(count)

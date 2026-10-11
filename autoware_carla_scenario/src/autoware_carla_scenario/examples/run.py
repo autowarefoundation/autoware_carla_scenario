@@ -15,6 +15,9 @@ Usage examples::
     uv run scenario scenario='intersection_passing/*'
 
     # Glob patterns also work with ? and [
+
+    # Run every case of their sweeps (lanelets, routes, ODD samples) in one batch
+    uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=10
     uv run scenario scenario='intersection_passing/left_*'
 
     # Select a different map
@@ -642,18 +645,77 @@ def _compose_config(scenario_name: str, overrides: list[str]) -> DictConfig:
     return cfg
 
 
+#: One run of a batch: the scenario's config name and the overrides it runs
+#: with -- the command line's, after those of its sweep case, if any.
+BatchCase = tuple[str, list[str]]
+
+
+def _has_sweep(cfg: DictConfig) -> bool:
+    """Whether *cfg* is a logical scenario: one with a sweep to expand."""
+    sweep = OmegaConf.select(cfg, "sweep")
+    return sweep is not None and any(
+        OmegaConf.select(sweep, key) for key in ("constraints", "route", "odd_sample")
+    )
+
+
+def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[BatchCase]:
+    """Every concrete case of *scenario_names*, in order: each scenario's sweep
+    expanded the way the lanelet sweeper expands it (``sweep.constraints``,
+    ``sweep.route``, ``sweep.odd_sample``), a scenario without one as itself.
+
+    Scenarios that draw from one ODD go on from each other's draws: a later
+    one aims at what the earlier ones left uncovered (``strategy: coverage``)
+    and does not draw their values again."""
+    from ..odd.sampler import OddDraws  # noqa: PLC0415
+    from ..sweeper.expand import expand_config  # noqa: PLC0415 -- loads Lanelet2
+
+    drawn = OddDraws()
+    cases: list[BatchCase] = []
+    for name in scenario_names:
+        expanded = expand_config(
+            _compose_config(name, overrides), overrides, drawn=drawn
+        )
+        logger.info("%s: %d case(s)", name, len(expanded))
+        cases.extend((name, case) for case in expanded)
+    return cases
+
+
+def _case_labels(cases: list[BatchCase]) -> list[str]:
+    """A name per case for the summary: the scenario's, numbered ``#k`` when
+    its sweep gave it more than one case."""
+    totals: dict[str, int] = {}
+    for name, _ in cases:
+        totals[name] = totals.get(name, 0) + 1
+    seen: dict[str, int] = {}
+    labels: list[str] = []
+    for name, _ in cases:
+        seen[name] = seen.get(name, 0) + 1
+        labels.append(f"{name}#{seen[name]}" if totals[name] > 1 else name)
+    return labels
+
+
 def _write_batch_result_json(
     names: list[str],
     results: list[ScenarioResult],
     output_dir: Path,
+    overrides: list[list[str]] | None = None,
 ) -> Path:
-    """Write a machine-readable JSON summary to *output_dir* and return the path."""
+    """Write a machine-readable JSON summary to *output_dir* and return the path.
+
+    *overrides*, one list per result, are what each case ran with beyond the
+    command line's (its sweep case).
+    """
     import json  # noqa: PLC0415
 
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "batch_results.json"
     json_results = [
-        {"scenario": name, **result.to_dict()} for name, result in zip(names, results)
+        {
+            "scenario": name,
+            **({"overrides": overrides[i]} if overrides is not None else {}),
+            **result.to_dict(),
+        }
+        for i, (name, result) in enumerate(zip(names, results))
     ]
     json_path.write_text(
         json.dumps(json_results, indent=2, ensure_ascii=False),
@@ -666,6 +728,7 @@ def _print_summary(
     names: list[str],
     results: list[ScenarioResult],
     output_dir: Path = Path("scenario_outputs"),
+    overrides: list[list[str]] | None = None,
 ) -> bool:
     """Print a formatted result table and return ``True`` if all passed.
 
@@ -689,7 +752,7 @@ def _print_summary(
                 padded = cs.label.ljust(max_label_len)
                 print(f"    [{mark}] {padded} : {cs.message}")  # noqa: T201
 
-    json_path = _write_batch_result_json(names, results, output_dir)
+    json_path = _write_batch_result_json(names, results, output_dir, overrides)
     print(thin)  # noqa: T201
     print(f"Result JSON: {json_path}")  # noqa: T201
 
@@ -705,6 +768,9 @@ def _log_batch_plan(
     scenario_names: list[str],
     configs: list[DictConfig],
     overrides: list[str],
+    *,
+    labels: list[str] | None = None,
+    case_overrides: list[list[str]] | None = None,
 ) -> None:
     """Log which YAML configs will be loaded and their resolved parameters."""
     sep = "=" * 60
@@ -720,8 +786,12 @@ def _log_batch_plan(
     for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
         yaml_path = _find_scenario_yaml(name)
         logger.info(thin)
-        logger.info("[%d/%d] %s", i, len(scenario_names), name)
+        logger.info(
+            "[%d/%d] %s", i, len(scenario_names), labels[i - 1] if labels else name
+        )
         logger.info("  config file : %s", yaml_path)
+        if case_overrides and case_overrides[i - 1]:
+            logger.info("  sweep case  : %s", " ".join(case_overrides[i - 1]))
         logger.info("  map         : %s", cfg.map.name)
         logger.info("  server      : %s:%s", cfg.server.host, cfg.server.port)
         logger.info("  TM port     : %s", cfg.traffic_manager.port)
@@ -767,10 +837,53 @@ def run_batch(
     scenario_names: list[str],
     overrides: list[str],
     *,
+    expand: bool = False,
+    resume_from: int = 0,
     build_scenario_fn: BuildScenarioFn | None = None,
 ) -> None:
-    """Compose configs, build scenarios, and run them in a single queue."""
-    configs = [_compose_config(name, overrides) for name in scenario_names]
+    """Compose configs, build scenarios, and run them in a single queue.
+
+    With *expand* (``--multirun``) each scenario's sweep is expanded and every
+    case is run; without it a scenario runs once, as configured. *resume_from*
+    is the 1-based case to start at, as for the lanelet sweeper.
+    """
+    if expand:
+        cases = _expand_batch(scenario_names, overrides)
+    else:
+        cases = [(name, list(overrides)) for name in scenario_names]
+    # Labelled before resuming, so a case keeps the name it had in the run
+    # being resumed.
+    labels = _case_labels(cases)
+    # What each case runs with beyond the command line: its sweep case.
+    case_overrides = [case[: len(case) - len(overrides)] for _, case in cases]
+    if resume_from > 1:
+        skip = min(resume_from - 1, len(cases))
+        logger.info(
+            "Resuming from case %d -- skipping %d/%d case(s).",
+            resume_from,
+            skip,
+            len(cases),
+        )
+        cases, labels, case_overrides = (
+            cases[skip:],
+            labels[skip:],
+            case_overrides[skip:],
+        )
+    if not cases:
+        print("Error: no scenario case left to run")  # noqa: T201
+        sys.exit(1)
+    configs = [_compose_config(name, case) for name, case in cases]
+
+    if not expand:
+        swept = [name for name, cfg in zip(labels, configs) if _has_sweep(cfg)]
+        if swept:
+            logger.warning(
+                "%s ha%s a sweep (sweep.constraints, sweep.route or "
+                "sweep.odd_sample) that a batch runs once, as configured; add "
+                "--multirun to run every case of it",
+                ", ".join(swept),
+                "s" if len(swept) == 1 else "ve",
+            )
 
     # Validate all configs share the same map (shared CARLA server constraint).
     map_names = {str(cfg.map.name) for cfg in configs}
@@ -802,13 +915,19 @@ def run_batch(
         sys.exit(1)
 
     # Log detailed execution plan before building anything.
-    _log_batch_plan(scenario_names, configs, overrides)
+    _log_batch_plan(
+        [name for name, _ in cases],
+        configs,
+        overrides,
+        labels=labels,
+        case_overrides=case_overrides,
+    )
 
     # Build (and statically check) every scenario before anything reads the
     # config values or fetches the map, so a bad value is refused first.
     scenarios: list[BaseScenario] = []
-    for i, (name, cfg) in enumerate(zip(scenario_names, configs), 1):
-        logger.info("Building scenario [%d/%d]: %s", i, len(scenario_names), name)
+    for i, (name, cfg) in enumerate(zip(labels, configs), 1):
+        logger.info("Building scenario [%d/%d]: %s", i, len(labels), name)
         _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
         scenarios.append(scenario)
 
@@ -853,12 +972,17 @@ def run_batch(
             timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
         )
 
-    logger.info("All %d scenario(s) built. Starting execution...", len(scenario_names))
+    logger.info("All %d scenario(s) built. Starting execution...", len(labels))
 
     with queue:
         results = queue.run_all()
 
-    all_passed = _print_summary(scenario_names, results, output_dir=output_dir)
+    all_passed = _print_summary(
+        labels,
+        results,
+        output_dir=output_dir,
+        overrides=case_overrides if expand else None,
+    )
     sys.exit(0 if all_passed else 1)
 
 
@@ -1164,6 +1288,14 @@ def main() -> None:
 
     scenario_value, remaining = _extract_scenario_override(sys.argv)
     if scenario_value is not None and _is_glob_pattern(scenario_value):
+        # --multirun runs every case of each scenario's sweep in the batch's
+        # one queue; the sweeper it would pick is the batch itself.
+        expand = _is_multirun()
+        remaining = [
+            arg
+            for arg in remaining
+            if arg not in ("--multirun", "-m") and not arg.startswith("hydra/sweeper=")
+        ]
         logging.basicConfig(
             level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
         )
@@ -1174,7 +1306,7 @@ def main() -> None:
             scenario_names,
         )
         try:
-            run_batch(scenario_names, remaining)
+            run_batch(scenario_names, remaining, expand=expand, resume_from=resume_from)
         except ScenarioTypeError as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
