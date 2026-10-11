@@ -607,6 +607,7 @@ controls:
     key: scenario.npc_initial_speed_kmh
     offset: ${ego.initial_speed_kmh}   # its speed less the ego's
     range: [-15.0, 15.0]
+    limits: [0.0, null]                # a speed: never below zero, however slow the ego
 ```
 
 | Field | Meaning |
@@ -616,6 +617,7 @@ controls:
 | `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
 | `scale`, `offset` | A numeric value drawn in the unit is written as `value * scale + offset` (`scale` not zero) |
 | `integer` | Write an integer. A rounded numeric value that falls in another bucket is drawn again |
+| `limits` | Numeric: `[low, high]` the **written** value must lie in, `null` for an open end -- what the key takes, whatever `offset` comes to. A bucket only values outside it would reach is not drawn |
 
 `{measure: key}` is short for `{measure: {key: key}}`. The ODD's attribute
 and the measure share a unit: the binding takes the measure's.

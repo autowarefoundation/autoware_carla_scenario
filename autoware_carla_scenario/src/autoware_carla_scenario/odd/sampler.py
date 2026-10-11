@@ -87,6 +87,15 @@ def _range(value: Any) -> tuple[float, float]:
     return float(value[0]), float(value[1])
 
 
+def _limits(value: Any) -> tuple[float, float]:
+    """``[low, high]`` with ``None`` for an open end."""
+    if len(value) != 2:
+        raise ValueError(f"limits are [low, high], not {list(value)!r}")
+    low = -math.inf if value[0] is None else float(value[0])
+    high = math.inf if value[1] is None else float(value[1])
+    return low, high
+
+
 @dataclass(frozen=True)
 class OddKnob:
     """How a run sets an ODD attribute: the Hydra override that does it.
@@ -111,6 +120,11 @@ class OddKnob:
             values the scenario can bring about.  Buckets are drawn only
             where they meet it, and only the part that does -- a cut-in
             closer than its vehicles allow, say, is not drawn.
+        limits: ``[low, high]`` the written value must lie in (``None`` for
+            an open end): what the key accepts, whatever the offset.  A
+            speed written as the ego's plus a relative speed cannot go below
+            zero however slow the ego is, so ``limits: [0, null]`` keeps the
+            relative speeds that would need a negative one from being drawn.
     """
 
     key: str
@@ -119,6 +133,21 @@ class OddKnob:
     offset: float = 0.0
     integer: bool = False
     range: Optional[tuple[float, float]] = None
+    limits: Optional[tuple[float, float]] = None
+
+    @property
+    def reach(self) -> Optional[tuple[float, float]]:
+        """``range`` within what ``limits`` lets be written, in the attribute's unit.
+
+        ``None`` when neither is given; an empty one has ``low > high``.
+        """
+        if self.limits is None:
+            return self.range
+        ends = sorted((edge - self.offset) / self.scale for edge in self.limits)
+        low, high = ends[0], ends[1]
+        if self.range is not None:
+            low, high = max(low, self.range[0]), min(high, self.range[1])
+        return low, high
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -130,6 +159,11 @@ class OddKnob:
             if not low <= high:
                 raise ValueError(f"OddKnob({self.key}): range must be [low, high]")
             object.__setattr__(self, "range", (low, high))
+        if self.limits is not None:
+            low, high = _limits(self.limits)
+            if not low <= high:
+                raise ValueError(f"OddKnob({self.key}): limits must be [low, high]")
+            object.__setattr__(self, "limits", (low, high))
         for label, value in self.values.items():
             if _is_range(value):
                 low, high = _range(value)
@@ -216,7 +250,15 @@ def knobs_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob]:
             continue
         if not isinstance(spec, Mapping):
             raise ValueError(f"knob {name}: expected a key or a mapping, got {spec!r}")
-        unknown = set(spec) - {"key", "values", "scale", "offset", "integer", "range"}
+        unknown = set(spec) - {
+            "key",
+            "values",
+            "scale",
+            "offset",
+            "integer",
+            "range",
+            "limits",
+        }
         if unknown:
             raise ValueError(f"knob {name}: unknown fields {sorted(unknown)}")
         if "key" not in spec:
@@ -228,6 +270,7 @@ def knobs_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob]:
             offset=float(spec.get("offset", 0.0)),
             integer=bool(spec.get("integer", False)),
             range=None if spec.get("range") is None else _range(spec["range"]),
+            limits=None if spec.get("limits") is None else _limits(spec["limits"]),
         )
     return knobs
 
@@ -377,13 +420,16 @@ class OddSampler:
         index = item.labels.index(label)
         low, high = item.edges[index], item.edges[index + 1]
         closed = index == len(item.labels) - 1
-        if knob.range is not None:
-            if knob.range[1] < high:
-                high, closed = knob.range[1], True
-            low = max(low, knob.range[0])
+        reach = knob.reach
+        if reach is not None:
+            if reach[0] > reach[1]:
+                return None
+            if reach[1] < high:
+                high, closed = reach[1], True
+            low = max(low, reach[0])
             # A bucket the range only touches at an edge is not one the
             # scenario can drive in; a range that is one point is that point.
-            single = knob.range[0] == knob.range[1]
+            single = reach[0] == reach[1]
             if low > high or (low == high and not single):
                 return None
             if low == high and item.bucket_of(low) != label:
@@ -533,6 +579,10 @@ class OddSampler:
         written: Any = float(drawn) * knob.scale + knob.offset
         if knob.integer:
             written = int(round(written))
+        if knob.limits is not None and not (
+            knob.limits[0] <= float(written) <= knob.limits[1]
+        ):
+            return None
         # What a run will read back, which must still be in the bucket drawn.
         value = (float(_render(written)) - knob.offset) / knob.scale
         if not math.isfinite(value) or item.bucket_of(value) != label:
