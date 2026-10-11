@@ -247,10 +247,14 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         self,
         initial_pose: BridgePose,
         goal: BridgePose,
-        waypoints: Sequence[BridgePose] = (),
+        waypoints: Optional[Sequence[BridgePose]] = None,
     ) -> None:
         with self._lock:
-            self._mission = (initial_pose, goal, tuple(waypoints))
+            self._mission = (
+                initial_pose,
+                goal,
+                tuple(waypoints) if waypoints is not None else (),
+            )
         logger.info(
             "AutowareBridge mission configured (%d waypoint(s)); awaiting Autoware readiness",
             len(self._mission[2]),

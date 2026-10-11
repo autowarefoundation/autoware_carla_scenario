@@ -43,12 +43,12 @@ class FakeAutowareBridge(AutowareBridge):
         self,
         initial_pose: BridgePose,
         goal: BridgePose,
-        waypoints: list[BridgePose] = [],
+        waypoints: Optional[list[BridgePose]] = None,
     ) -> None:
         self.calls.append("configure")
         self.configured_initial_pose = initial_pose
         self.configured_goal = goal
-        self.configured_waypoints = list(waypoints)
+        self.configured_waypoints = list(waypoints) if waypoints is not None else []
 
     def is_ready(self) -> bool:
         self.calls.append("is_ready")

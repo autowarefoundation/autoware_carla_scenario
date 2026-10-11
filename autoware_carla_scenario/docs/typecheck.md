@@ -392,8 +392,10 @@ What Codon 0.19 needs that Python does not, beyond
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
-  `AutowareBridge.configure()` takes `waypoints: list[BridgePose] = []`, in
-  the base class and in every override, and its caller passes a list.
+  `AutowareBridge.configure()` takes `waypoints: Optional[list[BridgePose]]
+  = None` in the base class and in the checked `FakeAutowareBridge`, and its
+  caller passes a list. (`None`, not `[]`: a mutable default is shared by
+  every call.)
 - **No `**` in a dict display** (`{"a": 1, **other}`): Codon's parser fails on
   it, even in a function it never compiles. Build the dict, then
   `update()` it.
