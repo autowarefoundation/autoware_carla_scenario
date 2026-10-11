@@ -256,8 +256,9 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 96 of
-the package's 225 modules (43%; about 17,200 of 68,700 lines) are `CHECKED`:
+Every module but four of the example scenarios now has an entry other than
+`"not yet checked (#45)"`. 98 of the package's 225 modules (44%; about
+17,800 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -268,7 +269,8 @@ NPC vehicle and pedestrian entities, the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`,
 the traffic backend interface with the TrafficManager backend, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units and the CARLA-only helpers, the traffic-light lookups included. 54
+units, the CARLA-only helpers, the traffic-light lookups included, and the
+scenario configs (`scenario_config`, `examples.configs`). 54
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -280,18 +282,23 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 129 `EXCLUDED` modules fall into
-three groups:
+the authoring package's pydantic specs. The 127 `EXCLUDED` modules are the
+six example scenarios, which import the checked `examples.configs` (the
+scenario check compiles each as a scenario, against the model), and three
+groups. Four of the examples are not checked yet; `cut_in` and
+`intersection_passing` pass the check alone but not in the full run, where
+the model's `GroundProjectionConfig`, which they import from the top-level
+package, meets `scenario_config`'s checked one, a different type to Codon
+(#99). The three groups:
 
 - **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
-- **About 20 build on an excluded module**: the example scenarios, through
-  `examples.configs`; the route frame and route poses (`route.frame`,
-  `route.positions`, through lanelet2), the traffic backend registry, the
-  SUMO backend and the authoring compiler.
+- **About 15 build on an excluded module**: the route frame and route
+  poses (`route.frame`, `route.positions`, through lanelet2), the traffic
+  backend registry, the SUMO backend and the authoring compiler.
 - **About 10 hold values Codon has no type for**: `Any` (`coverage.items`,
   `odd.model`), a callable of any value as a parameter
   (`trajectory.resolve`'s position resolvers), or a class
@@ -552,6 +559,15 @@ What Codon 0.19 needs that Python does not, beyond
   as a dunder method, so its body is checked. A `field(init=False)` set there
   is given an empty value of its type (`list[float]()`) by the check, so the
   constructor leaves it out as Python's does.
+- **A dataclass field may hold a union or a free-form mapping**: the library
+  check constructs a dataclass once per member of a union field
+  (`ScenarioRunConfig.scenario`, one of six scenario configs), as it calls a
+  function once per member of a union parameter. A field with a default whose
+  annotation names `Any` (`SweepConfig.constraints: dict[str, Any]`, a Hydra
+  mapping of any values) keeps its declaration, its empty default is built as
+  that type (`dict[str, Any]()`), and the check's constructor call leaves it
+  out, passing the fields after it by keyword. A `default_factory=list` on a
+  `List[int]` field is built as a `List[int]` as on a `list[int]` one.
 - **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
   its fields, is checked as `self.name = value`: Codon 0.19 has no
   `object.__setattr__`.

@@ -131,11 +131,22 @@ def test_an_empty_collection_default_takes_the_type_of_its_field() -> None:
             statuses: list[Status] = field(default_factory=list)
             details: dict[str, Any] = field(default_factory=dict)
             names: set[str] = field(default_factory=list)
+            ids: List[int] = field(default_factory=list)
+            scores: typing.Dict[str, float] = field(default_factory=dict)
+            tags: Set[str] = field(default_factory=set)
+            loose: dict[str, Any] = field(default_factory=list)
         """
     )
     assert "    statuses: list[Status] = list[Status]()" in out
-    assert "    details: dict[str, Any] = {}" in out  # Codon cannot express Any
+    # Codon cannot express Any, but the class keeps the declaration as
+    # written, and its default is built as one (the typing shim's empty Any).
+    assert "    details: dict[str, Any] = dict[str, Any]()" in out
     assert "    names: set[str] = []" in out  # not the annotation's collection
+    # The typing spellings of the generics, as their builtins.
+    assert "    ids: List[int] = List[int]()" in out
+    assert "    scores: typing.Dict[str, float] = typing.Dict[str, float]()" in out
+    assert "    tags: Set[str] = Set[str]()" in out
+    assert "    loose: dict[str, Any] = []" in out  # not the annotation's either
 
 
 def test_an_annotation_naming_a_class_defined_further_down_is_dropped() -> None:

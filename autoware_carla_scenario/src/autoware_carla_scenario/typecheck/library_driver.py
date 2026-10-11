@@ -40,6 +40,7 @@ from .transform import (
     _ENUM_BASES,
     _dotted,
     _is_none,
+    _names_any,
     _union_members,
     codon_annotation,
     uncalled_nodes,
@@ -289,7 +290,15 @@ class _Renderer:
                 )
 
     def _dataclass_init(self, node: ast.ClassDef) -> None:
-        """The generated ``__init__`` of a dataclass: one value per field."""
+        """The generated ``__init__`` of a dataclass: one value per field.
+
+        A field annotated with a union (``A | B``) is given each member in
+        turn, as a union parameter is.  A field with a default whose
+        annotation names ``Any`` (``dict[str, Any]``, a free-form Hydra
+        mapping) is left out of the call, as the model leaves it out of its
+        class, and the fields after it are passed by keyword; the checked
+        class keeps it, with a default of its type (``_field_default``).
+        """
         fields: list[ast.arg] = []
         for stmt in node.body:
             if not (
@@ -310,18 +319,22 @@ class _Renderer:
                 for kw in value.keywords
             ):
                 continue
+            if value is not None and _names_any(stmt.annotation):
+                fields.append(_LEFT_OUT)
+                continue
             arg = ast.arg(stmt.target.id, stmt.annotation)
             arg.lineno = stmt.lineno
             fields.append(arg)
-        choices = []
+        positional: list[ast.arg] = []
+        keyword: list[ast.arg] = []
+        choices: list[list[str]] = []
+        left_out = False
         for arg in fields:
-            text = (
-                codon_annotation(arg.annotation, class_level=True)
-                or callable_annotation(arg.annotation)
-                if arg.annotation is not None
-                else None
-            )
-            if text is None:
+            if arg is _LEFT_OUT:
+                left_out = True
+                continue
+            texts = self._field_types(arg.annotation)
+            if texts is None:
                 self.problems.append(
                     (
                         arg.lineno,
@@ -330,8 +343,38 @@ class _Renderer:
                     )
                 )
                 return
-            choices.append([text])
-        self._emit_calls(node.name, f"{node.name}.__init__", fields, [], choices)
+            choices.append(texts)
+            # Past a field left out, the fields are passed by keyword.
+            (keyword if left_out else positional).append(arg)
+        self._emit_calls(
+            node.name, f"{node.name}.__init__", positional, keyword, choices
+        )
+
+    @staticmethod
+    def _field_types(annotation: ast.expr | None) -> list[str] | None:
+        """The Codon types to construct a dataclass field with, or ``None``."""
+        if annotation is None:
+            return None
+        text = codon_annotation(annotation, class_level=True) or callable_annotation(
+            annotation
+        )
+        if text is not None:
+            return [text]
+        members = _union_members(annotation)
+        if members is None:
+            return None
+        texts = [
+            codon_annotation(m, class_level=True) or callable_annotation(m)
+            for m in members
+            if not _is_none(m)
+        ]
+        if not texts or any(t is None for t in texts):
+            return None
+        return [t for t in texts if t is not None]
+
+
+#: Stands for a dataclass field the constructor call leaves out.
+_LEFT_OUT = ast.arg("_acs_left_out")
 
 
 def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
