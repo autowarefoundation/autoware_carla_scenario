@@ -162,7 +162,14 @@ class BackendDriven(DrivenEntity):
         self, world: "carla.World", direction: TurnDirection, **kwargs: Any
     ) -> None:
         """Go *direction* at the next junction ahead."""
-        self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
+        if TYPE_CHECKING:
+            # Codon calls a method a subclass overrides through a dispatch
+            # thunk, which cannot call one that takes ``**kwargs``
+            # (docs/typecheck.md): the check resolves the backend and stops
+            # there, and checks each backend's turn_at_junction() on its own.
+            self._resolve_backend()
+        else:
+            self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Stop the backend driving this vehicle; the caller drives it now."""

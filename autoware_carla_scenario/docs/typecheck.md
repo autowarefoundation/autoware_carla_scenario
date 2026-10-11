@@ -228,32 +228,37 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 72 of
-the package's 219 modules (33%; about 11,300 of 66,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 85 of
+the package's 225 modules (38%; about 13,700 of 68,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
-nearly every condition, the action base with the environment and
-traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
-traffic backend interface with the TrafficManager backend, the measures, the
-ODD units and the CARLA-only helpers. 39 functions and methods of those
-modules are `UNCALLED`, most of them a condition's `get_details()`, the rest
-what takes a traffic backend's options node (`Mapping[str, Any]`). The 147
-`EXCLUDED` modules fall into three groups:
+nearly every condition, the action base with the environment, traffic-signal,
+signal-controller, lane-change, set-speed, turn and walk-straight actions,
+the signal-controller registry, the ego, NPC vehicle and pedestrian entities
+and the entity registry, `BaseScenario`, the traffic backend interface with
+the TrafficManager backend, the Autoware bridge interface and its fake, the
+measures, the ODD units and the CARLA-only helpers, the traffic-light lookups
+included. 47 functions and methods of those modules are `UNCALLED`: most of
+them a condition's `get_details()` or a backend's `describe()`, what takes a
+traffic backend's options node (`Mapping[str, Any]`), and the six members of
+`BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`: the
+constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
+`register_route_to_goal()`, which also registers the unchecked
+`RoutingAction`) or on cover expressions of any value (`register_cover()`).
+The 140 `EXCLUDED` modules fall into three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
-- **About 30 build on an excluded module**: the entity actions, through
-  `entity.registry`; the example scenarios, through `examples.configs`;
-  the signal controllers, the SUMO backend and the authoring compiler.
-- **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
-  which holds an entity of any kind, `coverage.items`, `odd.model`), a class
-  or a callable of any value as a parameter (`scenario_base`'s `ego_type`,
-  callbacks and measure expressions), a union-typed attribute, which crashes
-  Codon 0.19 (`RelativeLanePose.entity_ref`), a variable-length tuple
-  (`route.model`), or a class as a value (`utils.config`, which
-  `traffic.config` imports only in its uncalled `from_mapping()`).
+- **About 20 build on an excluded module**: the example scenarios, through
+  `examples.configs`; the `signals` package, the traffic backend registry,
+  the SUMO backend and the authoring compiler.
+- **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
+  `odd.model`), a union-typed attribute, which crashes Codon 0.19
+  (`RelativeLanePose.entity_ref`), a variable-length tuple (`route.model`,
+  `actions.routing`'s waypoints), or a class as a value (`utils.config`,
+  which `traffic.config` imports only in its uncalled `from_mapping()`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -275,8 +280,9 @@ def _acs_library_check():
 
 `_acs_value(T)` is a `T` Codon cannot tell from a real one; nothing compiled
 is ever run. A parameter annotated with a union (`Lanelet2Pose |
-OpenDrivePose`) is called once with each member, so the body is checked for
-every type it accepts. A parameter with no annotation, or one Codon cannot
+OpenDrivePose`, or `Union[BaseAction, Callable[[carla.World], None]]`) is
+called once with each member, so the body is checked for every type it
+accepts. A parameter with no annotation, or one Codon cannot
 express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
 gives the check nothing to call with and is reported as a problem of the
 module, at its line: annotate it with the type its callers pass. The one
@@ -305,6 +311,15 @@ stands in for it in the check's workspace:
   a model of that module alone (`utils/traffic_light.codon`). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
+
+Two checked modules that import each other can each need the other's types
+the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
+Measure]` at class level, and `measures` declares the running scenario
+(`_MEASURED: dict[str, Optional[BaseScenario]]`) as a global, so neither can
+be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
+cycle: the module it names (`measures`, `entity.ego`) imports the other
+(`scenario_base`) through its model, as it did before that one was checked.
+Its types are the model's, which never meet the checked module's.
 
 A model module that stands in for unchecked code (`coordinate.codon` for
 `transform.py` and `map_manager.py`) declares only what the checked modules
@@ -341,7 +356,9 @@ from the model's. The two are different types that never meet:
   model-only `_acs_condition` marker) are unchanged;
 - the **library check** compiles the checked conditions against the checked
   base. A checked module that hands a condition to a model function (an
-  action, `scenario_base`) cannot do so until that module is checked too;
+  unchecked action) cannot do so until that module is checked too
+  (`scenario_base` is checked, and imports `BaseCondition` from
+  `conditions.base` for that);
   `_acs_list` gives a list display of checked conditions the type of its
   first element, so a display mixing two checked condition classes waits for
   the same.
@@ -354,9 +371,10 @@ record its last result for the UI, is in `UNCALLED`: the check sees each
 `BaseCondition`, so it imports it from `conditions.base` rather than from the
 `conditions` package, which the model stands in for until it is checked. Its
 `BaseAction` and `ActionState` are again not the model's, so
-`conditions.action_state` watches checked actions. An action that hands a
-condition from an unchecked module to its base (`SetSpeedAction`'s default
-`SpeedCondition`) waits for that module.
+`conditions.action_state` watches checked actions. An action that hands its
+base a condition of its own making imports that condition from its checked
+module too (`SetSpeedAction`'s default `SpeedCondition` from
+`conditions.composition.speed`); one whose module is not checked waits for it.
 
 ### Making a module compile
 
@@ -394,16 +412,29 @@ What Codon 0.19 needs that Python does not, beyond
   `typing.TYPE_CHECKING` is a compile-time true, so Codon compiles only the
   first branch of `if TYPE_CHECKING: ... else: ...`. The `logging` shim's
   methods take `exc_info` as a `bool`.
+- **pyxodr's road network is the model's**: `codon/pyxodr/` names the
+  `RoadNetwork` that `coordinate.codon` declares (what the framework reads of
+  it, down to the XML elements), so a module that may not import
+  `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
+  (`utils/traffic_light.py`) and takes the network `MapManager` returns.
+  Nothing else of pyxodr is there.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
+  `AutowareBridge.configure()` takes `waypoints: Optional[list[BridgePose]]
+  = None` in the base class and in the checked `FakeAutowareBridge`, and its
+  caller passes a list. (`None`, not `[]`: a mutable default is shared by
+  every call.)
 - **A call to an overridden method passes every argument, by position, of
   the parameter's own type**: Codon 0.19 calls it through a dispatch thunk,
   which fills in no default, takes no keyword argument and no `**kwargs`,
   and does not upcast. Hand a subclass over through a local of the
   parameter's type (`entity: DrivenEntity = self`, as `traffic/driven.py`
-  does). A method that passes its `**kwargs` on to one
-  (`BackendDriven.turn_at_junction()`) goes in `UNCALLED`.
+  does). A thunk cannot call a method that takes `**kwargs` at all:
+  `BackendDriven.turn_at_junction()`, which `actions.turn` calls, hands the
+  backend its `**kwargs` only in the `else` branch of `if TYPE_CHECKING:`
+  (see below), and the check calls each backend's `turn_at_junction()`
+  through its class instead.
 - **A class cannot be named before it is defined or imported**, in a
   signature or a class-level declaration, and an import cycle resolves only
   with the names already defined. Two classes whose signatures name each
@@ -520,6 +551,12 @@ What Codon 0.19 needs that Python does not, beyond
   variable-length tuple (`tuple[X, ...]`, which the check drops from an
   annotation) has no such stand-in: use a `list` where nothing relies on the
   immutability.
+- **No star-unpacking into a tuple display** (`(*a, *b)`): Codon wants a
+  tuple after `*`. Concatenate the lists (`a + b`).
+- **A default does not name a class attribute** (`random_seed: int =
+  DEFAULT_RANDOM_SEED` in a method of the class defining it): Python
+  evaluates it once, when the class is created, and Codon cannot name it
+  there. Write the value, with a comment naming the attribute.
 - **No `del` of a parameter** (`del world, goal` to mark it unused): Codon
   reads it as a call on the value. Leave the parameter unused.
 - **An `Optional` attribute is assigned without an annotation**: with one
@@ -537,6 +574,28 @@ What Codon 0.19 needs that Python does not, beyond
 - **`getattr(x, name, None)`** for an attribute a value may lack at run time
   (a mock in a test) becomes `try: v = x.name` / `except AttributeError:`,
   which reads the attribute once, as `getattr` did.
+- **`hasattr` on an `Optional` is decided on the `Optional`**, which has
+  none of its value's attributes: assign the value to an annotated local
+  after the `None` test (`walker: PedestrianEntity = entity`) and ask that.
+- **An entity looked up by role is looked up by kind**:
+  `find_entity_by_role_name` returns an entity of any kind (`Optional[Any]`),
+  so a checked module asks `entity.registry` for the kind it acts on,
+  `find_vehicle_entity` (a `BackendDriven`: an NPC vehicle or the ego) or
+  `find_pedestrian_entity`. An object of neither kind (a test double) is
+  registered as both, so at run time every lookup still finds it; keep a
+  `hasattr` test where the code relied on `getattr(entity, name, None)`.
+  Where the code called a method the other kind lacks, look the other kind
+  up when the lookup misses and raise the `AttributeError` the call raised
+  (`LaneChangeAction`, `TurnAction` and `SetSpeedAction` on a pedestrian),
+  so a wrong kind still fails rather than reading as an entity not found.
+- **An entity is registered by kind, too**: `register_entity` picks the kind
+  with `isinstance(entity, BackendDriven)`, which Codon decides by the
+  static type and does not match for a subclass (a `VehicleEntity`), so a
+  checked caller calls `register_vehicle_entity` (through a `BackendDriven`
+  local, which upcasts) or `register_pedestrian_entity`. `BaseScenario`
+  calls them under an `isinstance` test on its parameter's own class, which
+  Codon decides as true, and hands anything else (a test double) to
+  `register_entity`, so at run time it is registered as before.
 - **`dict.get` takes its default**: Codon's has no one-argument form. Test
   `key in d` and index instead of `d.get(key)`.
 - **No sign in an f-string format spec**: Codon's parser rejects
@@ -547,7 +606,10 @@ What Codon 0.19 needs that Python does not, beyond
   naming one of typesafe_carla's integer enumerations
   (`carla.TrafficLightState`, `carla.LaneType`, ...) as `int`, so keep the
   CARLA name (the authoring code generator reads it), and compare with
-  `get_state()` rather than look a member up by value.
+  `get_state()` rather than look a member up by value. A member's name is
+  found through the enumeration's `names` (`for name, member in
+  carla.TrafficLightState.names.items()`), which both APIs have, as
+  `utils/traffic_light.py` does.
 - **A sensor callback gets a `carla.SensorData` in the check**, where the
   CPython API hands it the measurement itself (a `carla.CollisionEvent`).
   Listen through a method that converts only when it has to
@@ -558,7 +620,9 @@ What Codon 0.19 needs that Python does not, beyond
   `tuple[int, ...]` parameter or field gives the check nothing to call with.
   Turning it into a list changes what the class does (a frozen dataclass's
   hash, its equality with a tuple), so such a module stays in `EXCLUDED`
-  (`route.model`).
+  (`route.model`). A function that only *returns* one, built with
+  `tuple(iterable)`, compiles: the check drops the `tuple[X, ...]` return
+  annotation (`signals.registry.registered_signal_controllers()`).
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked

@@ -737,6 +737,71 @@ def test_a_point_range_is_that_point() -> None:
     assert sampler.sample(1)[0].overrides == ["k=12.0"]
 
 
+def test_limits_keep_what_is_written_to_what_the_key_takes() -> None:
+    """A speed written as the ego's plus a relative one stays a speed."""
+    speed = OddAttribute(
+        "dynamic.lead_relative_speed",
+        scenario_measure("vehicle_ahead_relative_speed_kph"),
+        unit="km/h",
+        buckets=[-30, -15, -5, 5, 15],
+    )
+    knob = OddKnob(
+        "scenario.npc_initial_speed_kmh",
+        offset=5.0,
+        range=(-15.0, 15.0),
+        limits=(0.0, math.inf),
+    )
+    sampler = OddSampler(
+        OddDefinition("speed", [speed]),
+        controls={"vehicle_ahead_relative_speed_kph": knob},
+        seed=0,
+    )
+
+    cases = sampler.sample(60)
+
+    # An ego at 5 km/h leaves no lead 15 to 5 km/h slower than it.
+    assert {c.buckets["dynamic.lead_relative_speed"] for c in cases} == {
+        "[-5, 5)",
+        "[5, 15]",
+    }
+    written = [float(c.overrides[0].split("=")[1]) for c in cases]
+    assert all(0.0 <= w <= 20.0 for w in written)
+    assert knob.reach == (-5.0, 15.0)
+
+
+def test_limits_from_config_take_an_open_end() -> None:
+    knobs = knobs_from_mapping({"x": {"key": "k", "limits": [0, None]}})
+
+    assert knobs["x"].limits == (0.0, math.inf)
+    with pytest.raises(ValueError, match="limits must be"):
+        knobs_from_mapping({"x": {"key": "k", "limits": [5, 1]}})
+
+
+def test_a_slow_ego_draws_no_negative_cut_in_speed() -> None:
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    controls = scenario_controls(
+        _compose_config("cut_in/left", ["ego.initial_speed_kmh=5.0"])
+    )
+    sampler, _ = sampler_from_config(
+        {"count": 40, "seed": 1}, odd=_relative_speed_odd(), controls=controls
+    )
+
+    for case in sampler.sample(40):
+        assert float(case.overrides[0].split("=")[1]) >= 0.0
+
+
+def _relative_speed_odd() -> OddDefinition:
+    speed = OddAttribute(
+        "dynamic.lead_relative_speed",
+        scenario_measure("vehicle_ahead_relative_speed_kph"),
+        unit="km/h",
+        buckets=[-15, -5, 5, 15],
+    )
+    return OddDefinition("speed", [speed])
+
+
 def test_controls_of_measures_the_odd_does_not_map_are_unused() -> None:
     sampler, _ = sampler_from_config(
         {"count": 1},
