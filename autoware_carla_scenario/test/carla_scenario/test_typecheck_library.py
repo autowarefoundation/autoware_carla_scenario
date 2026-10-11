@@ -1019,6 +1019,8 @@ class Frames:
         self._frames.put(frame)
         self._frames.put(frame, True, 1.0)
         self._frames.put(frame, block=False, timeout=None)
+        self._frames.put(frame, True, 1)
+        self._frames.put(frame, timeout=2)
         try:
             self._frames.put_nowait(frame)
         except queue.Full:
@@ -1037,6 +1039,7 @@ class Frames:
                 break
         self._frames.get(True, timeout)
         self._frames.get(block=False)
+        self._frames.get(timeout=1)
         return frame
 
     def size(self) -> int:
@@ -1063,8 +1066,15 @@ def test_the_queue_shim_takes_what_cpython_takes(
         ("self._frames.get_nowait()", "self._frames.get_nowait(True)"),
         ("self._frames.get(True, timeout)", "self._frames.get(True, timeout, 1)"),
         ("self._frames.qsize() + ", "self._frames.peek() + "),
+        ("self._frames.get(timeout=1)", 'self._frames.get(timeout="1")'),
     ],
-    ids=["unknown-keyword", "get_nowait-argument", "get-arguments", "no-method"],
+    ids=[
+        "unknown-keyword",
+        "get_nowait-argument",
+        "get-arguments",
+        "no-method",
+        "timeout-type",
+    ],
 )
 def test_the_queue_shim_refuses_what_cpython_refuses(
     right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

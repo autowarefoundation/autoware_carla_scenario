@@ -37,6 +37,11 @@ class Queue[T]:
             raise Full()
         self._items.append(item)
 
+    # CPython takes a timeout of int seconds too, which Codon does not turn
+    # into an Optional[float]: an overload takes it.
+    def put(self, item: T, block: bool = True, timeout: int = 0) -> None:
+        self.put(item, block, float(timeout))
+
     def put_nowait(self, item: T) -> None:
         self.put(item, False)
 
@@ -44,6 +49,9 @@ class Queue[T]:
         if self.empty():
             raise Empty()
         return self._items.pop(0)
+
+    def get(self, block: bool = True, timeout: int = 0) -> T:
+        return self.get(block, float(timeout))
 
     def get_nowait(self) -> T:
         return self.get(False)
