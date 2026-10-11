@@ -750,7 +750,10 @@ What Codon 0.19 needs that Python does not, beyond
   `__init__` takes it from there.
 - **A dataclass derived from a dataclass** is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
-  base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`).
+  base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`). Of two
+  bases that both bring fields, Python takes the last one's first and Codon
+  0.19 the first one's, so such a constructor is a problem: list it as
+  `UNCALLED`.
 - **No variable-length tuples beyond attributes**: Codon's tuples have a
   fixed length. A class-level `tuple[X, ...]` and `tuple(x)` are checked as
   lists (above), but a tuple built otherwise (a display grown in a loop,

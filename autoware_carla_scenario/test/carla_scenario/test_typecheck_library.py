@@ -542,6 +542,62 @@ def test_a_dataclass_is_constructed_with_the_fields_of_its_bases_first() -> None
     )
 
 
+_MIXED_DATACLASSES = """
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Size:
+    width: int = 0
+
+
+@dataclass
+class Name:
+    label: str = ""
+
+
+class Plain(Size):
+    pass
+
+
+@dataclass
+class Through(Plain):
+    depth: float = 0.0
+
+
+@dataclass
+class Hidden(Size):
+    width: int = field(default=1, init=False)
+    depth: float = 0.0
+
+
+@dataclass
+class Both(Size, Name):
+    depth: float = 0.0
+"""
+
+
+def test_a_dataclass_takes_its_base_fields_as_python_does() -> None:
+    import dataclasses
+
+    namespace: dict[str, object] = {}
+    exec(_MIXED_DATACLASSES, namespace)  # noqa: S102 - the source above
+    checks = render_library_checks(ast.parse(_MIXED_DATACLASSES))
+    calls = [c.strip() for c in checks.source.splitlines() if "_acs_value(" in c]
+    # Through a plain class derived from a dataclass, and without a field
+    # redefined with init=False, as Python's constructor takes them.
+    assert "Through(_acs_value(int), _acs_value(float))" in calls
+    assert "Hidden(_acs_value(float))" in calls
+    for name, count in [("Through", 2), ("Hidden", 1)]:
+        cls = namespace[name]
+        assert dataclasses.is_dataclass(cls)
+        assert len([f for f in dataclasses.fields(cls) if f.init]) == count
+    # Python takes Name's field first, Codon 0.19 Size's: no call, a problem.
+    assert not any(c.startswith("Both(") for c in calls)
+    line = _MIXED_DATACLASSES.splitlines().index("class Both(Size, Name):") + 1
+    assert [n for n, message in checks.problems if "Both" in message] == [line]
+
+
 def test_an_uncalled_function_is_left_out() -> None:
     checks = render_library_checks(
         ast.parse(_MODULE), ["angle", "Vector.norm", "Config.__init__", "generic"]

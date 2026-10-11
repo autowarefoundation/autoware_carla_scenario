@@ -306,9 +306,21 @@ class _Renderer:
         class keeps it, with a default of its type (``_field_default``).
 
         The fields of a dataclass base class come first, as in Python's
-        constructor and Codon's, a field redefined keeping its place.
+        constructor and Codon's, a field redefined keeping its place.  Of
+        several bases with fields, Python takes the last one's first and
+        Codon 0.19 the first one's: such a constructor is a problem.
         """
         fields = self._fields(node, set())
+        if fields is None:
+            self.problems.append(
+                (
+                    node.lineno,
+                    f"{node.name}: Codon 0.19 orders the fields of several "
+                    "dataclass bases otherwise than Python; list "
+                    f"`{node.name}.__init__` as UNCALLED",
+                )
+            )
+            return
         positional: list[ast.arg] = []
         keyword: list[ast.arg] = []
         choices: list[list[str]] = []
@@ -334,19 +346,26 @@ class _Renderer:
             node.name, f"{node.name}.__init__", positional, keyword, choices
         )
 
-    def _fields(self, node: ast.ClassDef, seen: set[str]) -> dict[str, ast.arg]:
+    def _fields(self, node: ast.ClassDef, seen: set[str]) -> dict[str, ast.arg] | None:
         """The fields of the dataclass *node*, its bases' first, by name.
 
         A field the call leaves out is an ``ast.arg`` named
-        :data:`_LEFT_OUT`.
+        :data:`_LEFT_OUT`.  ``None`` when more than one base brings fields
+        (Python and Codon 0.19 order them differently).
         """
         seen = seen | {node.name}
         fields: dict[str, ast.arg] = {}
-        for base_node in node.bases:
-            base = self.classes.get((_dotted(base_node) or "").rsplit(".", 1)[-1])
-            if base is None or base.name in seen or not _is_dataclass(base):
-                continue
-            fields.update(self._fields(base, seen))
+        inherited: list[dict[str, ast.arg]] = []
+        for base in [b for n in node.bases for b in self._dataclasses_of(n, seen)]:
+            base_fields = self._fields(base, seen)
+            if base_fields is None:
+                return None
+            if base_fields:
+                inherited.append(base_fields)
+        if len(inherited) > 1:
+            return None
+        for base_fields in inherited:
+            fields.update(base_fields)
         for stmt in node.body:
             if not (
                 isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
@@ -365,6 +384,8 @@ class _Renderer:
                 and kw.value.value is False
                 for kw in value.keywords
             ):
+                # Not in the constructor, even redefining a base's field.
+                fields.pop(stmt.target.id, None)
                 continue
             name = stmt.target.id
             if value is not None and _names_any(stmt.annotation):
@@ -374,6 +395,23 @@ class _Renderer:
             arg.lineno = stmt.lineno
             fields[name] = arg
         return fields
+
+    def _dataclasses_of(
+        self, base_node: ast.expr, seen: set[str]
+    ) -> list[ast.ClassDef]:
+        """The dataclasses whose fields the base class *base_node* brings.
+
+        The base itself if it is a dataclass; for a plain class, the
+        dataclasses it derives from, as Python finds the fields through it.
+        """
+        base = self.classes.get((_dotted(base_node) or "").rsplit(".", 1)[-1])
+        if base is None or base.name in seen:
+            return []
+        if _is_dataclass(base):
+            return [base]
+        return [
+            b for n in base.bases for b in self._dataclasses_of(n, seen | {base.name})
+        ]
 
     @staticmethod
     def _field_types(annotation: ast.expr | None) -> list[str] | None:
