@@ -122,7 +122,7 @@ Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).
 
-A scenario that imports a module with no model (pyxodr, or a framework module
+A scenario that imports a module with no model (lanelet2, or a framework module
 outside the public API) is refused with a message naming the module.
 
 ## Writing a scenario that type-checks
@@ -227,7 +227,7 @@ defines anything.
 `CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every
 other module to the reason it is not. `"not yet checked (#45)"` marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(`"imports lanelet2, pyxodr"`: a package or a standard module Codon cannot
+(`"imports lanelet2, pathlib"`: a package or a standard module Codon cannot
 compile). numpy is not one: Codon ships its own, and a module's numpy calls
 compile. Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
