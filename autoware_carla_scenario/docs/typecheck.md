@@ -241,10 +241,14 @@ def _acs_library_check():
 is ever run. A parameter annotated with a union (`Lanelet2Pose |
 OpenDrivePose`) is called once with each member, so the body is checked for
 every type it accepts. A parameter with no annotation, or one Codon cannot
-express (`Any`, `object`, `Callable`, ...), gives the check nothing to call
-with and is reported as a problem of the module, at its line: annotate it with
-the type its callers pass. The one exception is `other: object` in `__eq__`
-and `__ne__`, which Python requires; it is called with the class itself.
+express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
+gives the check nothing to call with and is reported as a problem of the
+module, at its line: annotate it with the type its callers pass. The one
+exception is `other: object` in `__eq__` and `__ne__`, which Python requires;
+it is called with the class itself. A `Callable` whose argument and result
+types Codon can express (`Callable[[carla.World], Optional[float]]`, a
+dataclass field too) is called with a value of Codon's `Callable` type, which
+a function of that signature converts to.
 
 ### Checked modules and the model
 
@@ -319,6 +323,16 @@ What Codon 0.19 needs that Python does not, beyond
   `hasattr` when it compiles, so the branch for a type without the attribute
   is never compiled.
 - An exception's `__init__` passes one message string to `super().__init__`.
+  An exception class with nothing in its body but a docstring needs that
+  `__init__` written out (`def __init__(self, message: str) -> None:`).
+- **`key in d` and `d[key]` instead of `d.get(key)`**: Codon's `dict.get`
+  wants a default of the value's type. Likewise `if not x: continue` instead
+  of `(x or {})`, `s.startswith(a) or s.startswith(b)` instead of
+  `s.startswith((a, b))`, and `if x is None: return None` / `return x.attr`
+  instead of `None if x is None else x.attr`.
+- **A dict of values of different types** (`{"at": None, "around": None}`
+  read back as a tuple and a list) becomes a small class with one declared
+  attribute per key.
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
   `pathlib`, ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc` and `__future__` shims of
@@ -406,3 +420,16 @@ What Codon 0.19 needs that Python does not, beyond
 - **`getattr(x, name, None)`** for an attribute a value may lack at run time
   (a mock in a test) becomes `try: v = x.name` / `except AttributeError:`,
   which reads the attribute once, as `getattr` did.
+- **`dict.get` takes its default**: Codon's has no one-argument form. Test
+  `key in d` and index instead of `d.get(key)`.
+- **No variable-length tuples**: Codon's tuples have a fixed length, so a
+  `tuple[int, ...]` parameter or field gives the check nothing to call with.
+  Turning it into a list changes what the class does (a frozen dataclass's
+  hash, its equality with a tuple), so such a module stays in `EXCLUDED`
+  (`route.model`).
+- **A name the model lacks at the boundary**: when a checked module imports a
+  name of a modelled package that the model does not declare
+  (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in
+  the model module. When the package does not export it, add it to
+  `_BOUNDARY` in `test_typecheck_model.py`, so it is compared with the Python
+  class as an exported name is.

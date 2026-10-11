@@ -22,7 +22,7 @@ attribute measured by key *k* is drawn by the running scenario's control of
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Optional
 
 from ..measures import BUILT_IN_MEASURES, read_measure
 
@@ -35,6 +35,8 @@ __all__ = ["ScenarioMeasure", "scenario_measure"]
 class ScenarioMeasure:
     """The probe that reads the running scenario's measure :attr:`key`."""
 
+    key: str
+
     def __init__(self, key: str) -> None:
         if not key:
             raise ValueError("scenario_measure(): key must not be empty")
@@ -43,10 +45,11 @@ class ScenarioMeasure:
     @property
     def unit(self) -> str:
         """The unit of a built-in measure; ``""`` for a scenario's own."""
-        built_in = BUILT_IN_MEASURES.get(self.key)
-        return "" if built_in is None else built_in.unit
+        if self.key not in BUILT_IN_MEASURES:
+            return ""
+        return BUILT_IN_MEASURES[self.key].unit
 
-    def __call__(self, world: "carla.World") -> Any:
+    def __call__(self, world: "carla.World") -> Optional[float]:
         return read_measure(self.key, world)
 
     def __eq__(self, other: object) -> bool:
