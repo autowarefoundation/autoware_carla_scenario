@@ -1,0 +1,19 @@
+# Model of autoware_carla_scenario.coordinate.snap's GroundProjectionConfig
+# (docs/typecheck.md), re-exported by coordinate.codon. The library check
+# compiles the checked source in its place (REPLACED_MODELS,
+# typecheck/library.py), so every model module that takes one (scenario_base,
+# actions, entity) takes the checked GroundProjectionConfig, the one the
+# checked VehicleEntityConfig holds and a scenario imports from the top-level
+# package (#99).
+
+
+class GroundProjectionConfig:
+    ray_distance_upper: float
+    ray_distance_lower: float
+    z_log_threshold: float
+
+    def __init__(self, ray_distance_upper: float = 5.0, ray_distance_lower: float = 5.0,
+                 z_log_threshold: float = 0.01):
+        self.ray_distance_upper = ray_distance_upper
+        self.ray_distance_lower = ray_distance_lower
+        self.z_log_threshold = z_log_threshold
