@@ -226,6 +226,34 @@ To check one more module:
    behave exactly as it did.
 3. Run `uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py`.
 
+### What is checked of the framework
+
+Every module now has an entry other than `"not yet checked (#45)"`. 63 of
+the package's 217 modules (29%; about 9,100 of 66,500 lines) are `CHECKED`:
+the kinematics, the coordinate frames and poses, the condition base and
+nearly every condition, the action base with the environment and
+traffic-signal actions, the measures, the ODD units and the CARLA-only
+helpers. 30 functions and methods of those modules are `UNCALLED`, almost all
+of them a condition's `get_details()`. The 154 `EXCLUDED` modules fall into
+three groups:
+
+- **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
+  lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
+  the tooling around a run (the editor, the UI, authoring, the sweeper, the
+  map cache, the Autoware launcher) and everything that reads Lanelet2.
+- **About 30 build on an excluded module**: the entity actions, through
+  `entity.registry`; the example scenarios, through `examples.configs`;
+  the signal controllers, the traffic backends and the authoring compiler.
+- **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
+  `coverage.items`, `odd.model`), a union-typed attribute, which crashes
+  Codon 0.19 (`VehicleEntityConfig.role_name`, which also keeps
+  `scenario_base` out), a variable-length tuple (`route.model`), or a class
+  as a value (`utils.config`).
+
+The scenario check is not limited by this: it compiles every scenario against
+the model, which declares the whole public API.
+
 ### What is compiled
 
 Codon checks a function only when something calls it, so the check appends a
