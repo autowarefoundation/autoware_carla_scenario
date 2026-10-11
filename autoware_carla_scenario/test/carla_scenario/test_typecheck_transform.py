@@ -203,6 +203,29 @@ def test_an_exception_derives_statically() -> None:
     assert "class Plain(Base):" in out
 
 
+def test_abstractmethod_is_dropped() -> None:
+    source = textwrap.dedent(
+        """
+        import abc
+        from abc import ABC, abstractmethod
+
+        class Bridge(ABC):
+            @abstractmethod
+            def is_ready(self) -> bool:
+                \"\"\"Whether it is ready.\"\"\"
+
+            @abc.abstractmethod
+            def close(self) -> None:
+                pass
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@" not in out
+    assert "    def is_ready(self) -> bool:" in out
+    assert "class Bridge(ABC):" in out
+
+
 def test_a_classmethod_becomes_a_staticmethod_of_its_class() -> None:
     source = textwrap.dedent(
         """

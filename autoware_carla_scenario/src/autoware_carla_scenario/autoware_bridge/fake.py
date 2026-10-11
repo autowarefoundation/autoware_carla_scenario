@@ -7,9 +7,8 @@ configurable number of polls, so an :class:`AutowareEgoEntity` can be driven to
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from .base import AutowareBridge, BridgePose
 

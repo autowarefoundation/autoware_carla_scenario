@@ -389,6 +389,36 @@ def test_a_wrong_module_is_refused_at_its_line(
 
 
 @needs_codon
+def test_an_abstract_base_class_and_its_subclass_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = """
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+
+class Bridge(ABC):
+    @abstractmethod
+    def is_ready(self) -> bool:
+        \"\"\"Whether it is ready.\"\"\"
+
+    def close(self) -> None:
+        pass
+
+
+class Fake(Bridge):
+    polls: int = 0
+
+    def is_ready(self) -> bool:
+        self.polls += 1
+        return self.polls > 1
+"""
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
 def test_a_module_importing_what_codon_cannot_compile_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

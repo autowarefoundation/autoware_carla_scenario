@@ -269,6 +269,11 @@ What Codon 0.19 needs that Python does not, beyond
   is never compiled.
 - An exception's `__init__` passes one message string to `super().__init__`.
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
-  `abc`, ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging` and `__future__` shims of
-  `codon/` are.
+  `pathlib`, ...) are not available to a checked module; the `typing`,
+  `dataclasses`, `enum`, `logging`, `abc` and `__future__` shims of
+  `codon/` are. `collections.abc` is not: import `Sequence` and the other
+  abstract collections from `typing`. `@abstractmethod` is dropped, since
+  Codon 0.19 cannot decorate a method; `ABC` is an empty base.
+- **An overridden method takes concrete types**: Codon 0.19 cannot call a
+  method a subclass overrides when one of its parameters is generic, which an
+  abstract collection (`Sequence[X]`) or an unannotated parameter is.
