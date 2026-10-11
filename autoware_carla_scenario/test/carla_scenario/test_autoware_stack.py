@@ -18,7 +18,12 @@ from pathlib import Path
 
 import pytest
 
+from autoware_carla_scenario.autoware_stack.bridge_node import (
+    bridge_package_dir,
+    host_python_root,
+)
 from autoware_carla_scenario.autoware_stack import (
+    DEPENDENCY_IMAGE_REPOSITORY,
     STACK_LABEL,
     AutowareLauncher,
     AutowareStackError,
@@ -106,8 +111,19 @@ def _install(ws: Path, *, scenario: bool) -> None:
     )
     lib.mkdir(parents=True, exist_ok=True)
     (lib / "carla_autoware").write_text("")
-    if scenario:
-        (lib / "scenario_bridge").write_text("")
+    launch = (
+        ws
+        / "install"
+        / "autoware_carla_interface"
+        / "share"
+        / "autoware_carla_interface"
+        / "launch"
+    )
+    launch.mkdir(parents=True, exist_ok=True)
+    arg = '<arg name="scenario_mode" default="false"/>' if scenario else ""
+    (launch / "autoware_carla_interface.launch.xml").write_text(
+        f"<launch>{arg}</launch>"
+    )
 
 
 def test_devcontainer_image_and_mount_come_from_compose(tmp_path: Path) -> None:
@@ -254,16 +270,33 @@ with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
 
 if args[0] == "ps":
     print(os.environ.get("FAKE_DOCKER_PS", ""))
+elif args[:2] == ["image", "inspect"]:
+    if "--format" in args:
+        print("sha256:" + args[-1].replace("/", "_"))
+    else:
+        tags = os.environ.get("FAKE_DOCKER_IMAGES", "").split()
+        sys.exit(0 if args[-1] in tags else 1)
 elif args[0] == "run":
     script = args[-1]
+    if "apt-get install" in script:
+        if "rosdep install" in script:
+            print("#All required rosdeps installed successfully")
+        else:
+            print("Setting up python3-grpcio")
+        sys.exit(int(os.environ.get("FAKE_DOCKER_ROSDEP_EXIT", "0")))
     if "colcon build" in script:
         ws = os.environ["FAKE_DOCKER_WS"]
         lib = os.path.join(ws, "install", "autoware_carla_interface", "lib",
                            "autoware_carla_interface")
         os.makedirs(lib, exist_ok=True)
         open(os.path.join(ws, "install", "setup.bash"), "w").close()
-        if os.environ.get("FAKE_DOCKER_SCENARIO") == "1":
-            open(os.path.join(lib, "scenario_bridge"), "w").close()
+        share = os.path.join(ws, "install", "autoware_carla_interface", "share",
+                             "autoware_carla_interface", "launch")
+        os.makedirs(share, exist_ok=True)
+        arg = ('<arg name="scenario_mode"/>'
+               if os.environ.get("FAKE_DOCKER_SCENARIO") == "1" else "")
+        with open(os.path.join(share, "autoware_carla_interface.launch.xml"), "w") as f:
+            f.write("<launch>" + arg + "</launch>")
         print("Summary: 1 package finished")
         sys.exit(int(os.environ.get("FAKE_DOCKER_BUILD_EXIT", "0")))
     # A stack: runs until it is told to stop, as ros2 launch does.
@@ -304,6 +337,7 @@ def _docker_launcher(ws: Path, docker: Path, **kwargs) -> DockerAutowareLauncher
         docker=str(docker),
         mounts={},
         stop_timeout_s=2.0,
+        rosdep=False,
     )
     options.update(kwargs)
     return DockerAutowareLauncher(DockerAutowareConfig(**options))  # type: ignore[arg-type]
@@ -320,9 +354,12 @@ def test_docker_launcher_builds_an_unbuilt_workspace(
 
     launcher.prepare(log_dir=tmp_path / "out")
 
-    build = next(c for c in calls() if c[0] == "run")
+    build = next(c for c in calls() if c[0] == "run" and "colcon build" in c[-1])
     assert f"{ws}:/home/aw/autoware" in build
-    assert "ghcr.io/autowarefoundation/autoware:universe-devel-cuda-jazzy" in build
+    # Built in the image the stack runs in: the dev container's, with what the
+    # stack needs installed.
+    (tag,) = _dependency_tags(calls())
+    assert tag in build
     assert "colcon build --symlink-install" in build[-1]
     assert (tmp_path / "out" / "autoware-build.log").read_text().startswith("Summary")
     # A build container is removed whatever happened to it.
@@ -413,9 +450,18 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
         assert f"HOST_UID={os.getuid()}" in run
         assert "AUTOWARE_BRIDGE_ADDRESS=localhost:50052" in run
         assert run[-3:-1] == ["bash", "-c"]
+        # The framework's scenario_bridge node, mounted from this package, runs
+        # beside the launch.
+        assert (
+            f"{bridge_package_dir()}:/opt/autoware_carla_scenario/python/"
+            "autoware_carla_scenario/autoware_bridge:ro"
+        ) in run
         assert run[-1] == (
-            "source /home/aw/autoware/install/setup.bash && exec ros2 launch "
-            "autoware_launch e2e_simulator.launch.xml "
+            "source /home/aw/autoware/install/setup.bash && "
+            '(PYTHONPATH=/opt/autoware_carla_scenario/python"${PYTHONPATH:+:$PYTHONPATH}" '
+            "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge --ros-args "
+            "-p bridge_address:=localhost:50052 -p use_sim_time:=true &) && "
+            "exec ros2 launch autoware_launch e2e_simulator.launch.xml "
             "bridge_address:=localhost:50052"
         )
         assert ["rm", "--force", name] in calls()
@@ -517,8 +563,10 @@ def test_an_image_override_keeps_the_dev_containers_mount(
     _wait_for(lambda: len(_stack_runs(calls())) == 1)
     launcher.stop()
 
+    deps = next(c for c in calls() if c[0] == "run" and "apt-get install" in c[-1])
+    assert "example/autoware:mine" in deps
     run = _stack_runs(calls())[0]
-    assert "example/autoware:mine" in run
+    assert _dependency_tags(calls())[0] in run
     assert f"{ws}:/home/aw/autoware" in run
     assert "CMAKE_CUDA_ARCHITECTURES=86;89" in run
 
@@ -552,3 +600,173 @@ def test_a_stack_dies_with_the_process_that_started_it(tmp_path: Path) -> None:
         _wait_for(lambda: not _alive(stack))
     finally:
         job.kill()
+
+
+# ---------------------------------------------------------------------------
+# The workspace's dependencies, installed into an image of their own
+# ---------------------------------------------------------------------------
+
+
+def _dependency_tags(calls: list[list[str]]) -> list[str]:
+    return [c[-1] for c in calls if c[0] == "commit"]
+
+
+def test_the_workspaces_dependencies_go_into_an_image_the_stack_runs_in(
+    tmp_path: Path, fake_docker
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    (ws / "src" / "pkg").mkdir(parents=True)
+    (ws / "src" / "pkg" / "package.xml").write_text("<exec_depend>a</exec_depend>")
+    launcher = _docker_launcher(ws, docker, rosdep=True)
+
+    launcher.prepare(log_dir=tmp_path / "out")
+    launcher.start(name="x", bridge_address="localhost:1")
+    _wait_for(lambda: len(_stack_runs(calls())) == 1)
+    launcher.stop()
+
+    rosdep = next(c for c in calls() if c[0] == "run" and "rosdep install" in c[-1])
+    # Made from the dev container's image, and kept to be committed.
+    assert "ghcr.io/autowarefoundation/autoware:universe-devel-cuda-jazzy" in rosdep
+    assert "--rm" not in rosdep
+    (tag,) = _dependency_tags(calls())
+    assert tag.startswith(f"{DEPENDENCY_IMAGE_REPOSITORY}:")
+    assert tag in _stack_runs(calls())[0]
+    assert "python3-grpcio python3-protobuf" in rosdep[-1]
+    assert any(c[0] == "rm" and c[-1].endswith("-deps") for c in calls())
+    assert "rosdeps installed" in (tmp_path / "out" / "autoware-deps.log").read_text()
+
+
+def test_the_dependency_image_is_made_once_per_set_of_package_xmls(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    (ws / "src" / "pkg").mkdir(parents=True)
+    xml = ws / "src" / "pkg" / "package.xml"
+    xml.write_text("<exec_depend>a</exec_depend>")
+    _docker_launcher(ws, docker, rosdep=True).prepare()
+    (tag,) = _dependency_tags(calls())
+
+    # Made already: used as it is.
+    monkeypatch.setenv("FAKE_DOCKER_IMAGES", tag)
+    _docker_launcher(ws, docker, rosdep=True).prepare()
+    assert _dependency_tags(calls()) == [tag]
+
+    # A dependency added: made again, under another tag.
+    xml.write_text("<exec_depend>a</exec_depend><exec_depend>b</exec_depend>")
+    _docker_launcher(ws, docker, rosdep=True).prepare()
+    tags = _dependency_tags(calls())
+    assert len(tags) == 2 and tags[1] != tag
+
+
+def test_a_failed_rosdep_install_is_refused(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    monkeypatch.setenv("FAKE_DOCKER_ROSDEP_EXIT", "1")
+
+    with pytest.raises(AutowareStackError, match="Installing the dependencies"):
+        _docker_launcher(ws, docker, rosdep=True).prepare()
+    assert _dependency_tags(calls()) == []
+    assert any(c[0] == "rm" and c[-1].endswith("-deps") for c in calls())
+
+
+def test_without_rosdep_the_image_still_gets_the_bridges_packages(
+    tmp_path: Path, fake_docker
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    _docker_launcher(ws, docker, rosdep=False).prepare()
+
+    deps = next(c for c in calls() if c[0] == "run" and "apt-get install" in c[-1])
+    assert "python3-grpcio python3-protobuf" in deps[-1]
+    assert "rosdep" not in deps[-1]
+
+
+def test_a_built_workspace_without_scenario_mode_is_refused(
+    tmp_path: Path, fake_docker
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=False)
+
+    with pytest.raises(AutowareStackError, match="takes no scenario_mode"):
+        _docker_launcher(ws, docker).prepare()
+
+
+def test_command_launcher_fills_in_the_scenario_bridge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    out = tmp_path / "bridge.txt"
+    launcher = CommandAutowareLauncher(
+        ["bash", "-c", f"echo {{scenario_bridge}} > {out}"],
+        bridge_parameters={"use_sim_time": True, "auto_engage": False},
+    )
+    launcher.prepare()
+    launcher.start(name="x", bridge_address="localhost:7")
+    _wait_for(lambda: launcher.poll() is not None)
+    launcher.stop()
+
+    written = out.read_text()
+    assert "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge" in written
+    assert "-p bridge_address:=localhost:7" in written
+    assert "-p use_sim_time:=true -p auto_engage:=false" in written
+
+
+def test_the_host_python_root_holds_the_bridge_package_alone(tmp_path: Path) -> None:
+    """Another Python imports the bridge from it without the framework's own package."""
+    import site
+
+    root = host_python_root(tmp_path)
+    assert host_python_root(tmp_path) == root  # kept, not made again
+    code = (
+        "import sys; "
+        "import autoware_carla_scenario.autoware_bridge.ros_bridge.client; "
+        "import autoware_carla_scenario as p; "
+        "print(p.__file__, 'typesafe_carla' in sys.modules)"
+    )
+    # -S: no site-packages, so not the framework installed in this venv; only
+    # grpc and protobuf from its site directory, put after the root.
+    path = os.pathsep.join([str(root), *site.getsitepackages()])
+    done = subprocess.run(
+        [sys.executable, "-S", "-c", code],
+        env={**os.environ, "PYTHONPATH": path},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # A namespace package: no __init__ of the framework's was run.
+    assert done.stdout.split() == ["None", "False"]
+
+
+def test_a_symlink_install_is_read_through_the_workspace_mount(
+    tmp_path: Path, fake_docker
+) -> None:
+    """``--symlink-install`` links install/ to the sources by their container paths."""
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=False)
+    source = ws / "src" / "autoware_carla_interface" / "launch"
+    source.mkdir(parents=True)
+    (source / "autoware_carla_interface.launch.xml").write_text(
+        '<launch><arg name="scenario_mode"/></launch>'
+    )
+    installed = (
+        ws
+        / "install"
+        / "autoware_carla_interface"
+        / "share"
+        / "autoware_carla_interface"
+        / "launch"
+        / "autoware_carla_interface.launch.xml"
+    )
+    installed.unlink()
+    installed.symlink_to(
+        "/home/aw/autoware/src/autoware_carla_interface/launch/"
+        "autoware_carla_interface.launch.xml"
+    )
+
+    launcher = _docker_launcher(ws, docker)
+    launcher.prepare()
+    assert launcher.has_scenario_support()

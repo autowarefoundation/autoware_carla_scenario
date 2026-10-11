@@ -293,12 +293,15 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         for name in ("launch", "colcon_args", "docker_args", "ros_domain_ids"):
             if name in options:
                 options[name] = tuple(options[name] or ())
+        if "bridge_parameters" in options:
+            options["bridge_parameters"] = dict(options["bridge_parameters"] or {})
         launcher = DockerAutowareLauncher(DockerAutowareConfig(**options))
     elif kind == "command":
         launcher = CommandAutowareLauncher(
             tuple(str(arg) for arg in settings.get("command") or ()),
             env={str(k): str(v) for k, v in (settings.get("env") or {}).items()},
             stop_timeout_s=float(settings.get("stop_timeout_s", 20.0)),
+            bridge_parameters=dict(settings.get("bridge_parameters") or {}),
         )
     else:
         msg = (
