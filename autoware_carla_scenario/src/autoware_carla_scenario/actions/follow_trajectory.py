@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 from ..action_state import ActionState
 from ..conditions import BaseCondition
 from ..conditions.base import ScenarioResult
 from ..coordinate.poses import CarlaWorldPose
-from ..entity.registry import find_entity_by_role_name
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..trajectory.model import (
     ReferenceContext,
@@ -32,8 +32,11 @@ from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
+    from carla_driver_interface.geometry import Trajectory as _Plan
 
     from ..driver.control import ControlConfig, TrajectoryFollower
+    from ..entity.pedestrian_entity import PedestrianEntity
+    from ..traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +197,34 @@ class FollowTrajectoryAction(BaseAction):
     #: moves the entity by being executed again on every tick of the run.
     REISSUES_BY_DEFAULT = True
 
+    _entity_name: Union[EntityRole, str]
+    _trajectory: Trajectory
+    _time_reference: Optional[TrajectoryTiming]
+    _following_mode: TrajectoryFollowingMode
+    _initial_distance_offset: float
+    _control_config: Optional[ControlConfig]
+    _hidden_outside: bool
+    _appear_on_start: bool
+    _given_speed: Optional[float]
+    _gated: bool
+    _timeline: Optional[DepartureTimeline]
+    _waiting: bool
+    _held_at: Optional[int]
+    _progress: float
+    _last_here: float
+    _resolved: Optional[ResolvedTrajectory]
+    _elapsed: float
+    _finished: bool
+    _warned_missing: bool
+    _start_time: float
+    _clock_shift: float
+    _distance: float
+    _speed: float
+    _follower: Optional[TrajectoryFollower]
+    _released: bool
+    _hidden: bool
+    _begun: bool
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -234,12 +265,18 @@ class FollowTrajectoryAction(BaseAction):
             raise ValueError("initial_distance_offset must not be negative")
         if speed is not None and not speed >= 0.0:
             raise ValueError("speed must not be negative")
+        # An if statement, not a conditional expression: Codon does not take
+        # a subclass for an Optional of its base there (docs/typecheck.md).
+        ending: Optional[BaseCondition] = until
+        if ending is None:
+            end: BaseCondition = _TrajectoryEnd(self, label)
+            ending = end
         super().__init__(
             label=label,
             condition=condition,
             timing=timing,
             once=once,
-            until=until if until is not None else _TrajectoryEnd(self, label),
+            until=ending,
         )
         self._entity_name = entity_name
         self._trajectory = trajectory
@@ -252,13 +289,13 @@ class FollowTrajectoryAction(BaseAction):
         self._given_speed = None if speed is None else float(speed)
         # Departure conditions other than times: the timeline engine.
         self._gated = trajectory.is_gated
-        self._timeline: Optional[DepartureTimeline] = None
+        self._timeline = None
         self._waiting = False
-        self._held_at: Optional[int] = None
+        self._held_at = None
         self._progress = 0.0
         self._last_here = 0.0
 
-        self._resolved: Optional[ResolvedTrajectory] = None
+        self._resolved = None
         self._elapsed = 0.0
         # Per run.
         self._finished = False
@@ -267,7 +304,7 @@ class FollowTrajectoryAction(BaseAction):
         self._clock_shift = 0.0
         self._distance = 0.0
         self._speed = 0.0
-        self._follower: Optional["TrajectoryFollower"] = None
+        self._follower = None
         self._released = False
         self._hidden = False
         self._begun = False
@@ -320,19 +357,40 @@ class FollowTrajectoryAction(BaseAction):
                 # Placed against where the reference entities are now, at
                 # every start of a run rather than once for all of them.
                 self._resolved = None
-        entity = find_entity_by_role_name(self._entity_name)
-        if entity is None:
+        # The entity of any kind the role names: a vehicle first, then a
+        # pedestrian, as find_entity_by_role_name finds it.  Looked up by
+        # kind, so the static check knows its type (docs/typecheck.md).
+        vehicle = find_vehicle_entity(self._entity_name)
+        if vehicle is not None:
+            driven: BackendDriven = vehicle
+            self._move(world, driven)
+            return
+        pedestrian = find_pedestrian_entity(self._entity_name)
+        if pedestrian is None:
             logger.warning(
                 "FollowTrajectoryAction: entity '%s' not found", str(self._entity_name)
             )
             return
-        actor = getattr(entity, "actor", None)
-        if actor is None:
+        walking: PedestrianEntity = pedestrian
+        self._move(world, walking)
+
+    def _move(
+        self, world: "carla.World", entity: Union[BackendDriven, PedestrianEntity]
+    ) -> None:
+        """Move the *entity* :meth:`execute` found one tick along the trajectory."""
+        # `hasattr`, which Codon decides by the static type: BackendDriven, the
+        # mixin, declares no actor (the entities it is mixed into do).  At run
+        # time it reads the actor as getattr(entity, "actor", None) did.
+        maybe_actor: Optional[carla.Actor] = None
+        if hasattr(entity, "actor"):
+            maybe_actor = entity.actor
+        if maybe_actor is None:
             logger.warning(
                 "FollowTrajectoryAction: '%s' has no actor", str(self._entity_name)
             )
             return
-        if getattr(entity, "use_autopilot", True) is False:
+        actor: carla.Actor = maybe_actor
+        if hasattr(entity, "use_autopilot") and entity.use_autopilot is False:
             logger.warning(
                 "FollowTrajectoryAction: '%s' is driven by an external stack and "
                 "cannot also follow a trajectory",
@@ -367,7 +425,7 @@ class FollowTrajectoryAction(BaseAction):
                 _stop(actor, walker)
             logger.info(
                 "FollowTrajectoryAction: '%s' reached the end of %r",
-                self._entity_name,
+                str(self._entity_name),
                 self._trajectory.name,
             )
 
@@ -382,14 +440,15 @@ class FollowTrajectoryAction(BaseAction):
         placed against where its reference entity is now; one not (yet) in the
         world puts the start off to a later tick.
         """
-        from ..trajectory.resolve import resolve_trajectory, road_height  # noqa: PLC0415
-
         try:
-            return resolve_trajectory(
-                self._trajectory,
-                road_height(world.get_map()),
-                reference=self._reference_pose,
-            )
+            if TYPE_CHECKING:
+                # trajectory.resolve is neither checked nor modelled, so Codon
+                # cannot compile _resolve_in_world (UNCALLED).  The check
+                # compiles the reference lookup that resolver calls back.
+                self._reference_pose(None)
+                return None
+            else:
+                return _resolve_in_world(self._trajectory, world, self._reference_pose)
         except _ReferenceMissing as missing:
             # Once a run: the action waits for it every tick, indefinitely.
             if not self._warned_missing:
@@ -406,14 +465,21 @@ class FollowTrajectoryAction(BaseAction):
         self, entity_ref: Optional[Union[EntityRole, str]]
     ) -> CarlaWorldPose:
         """Where a relative vertex's reference entity is now."""
-        name = self._entity_name if entity_ref is None else entity_ref
-        entity = find_entity_by_role_name(name)
-        actor = getattr(entity, "actor", None) if entity is not None else None
+        # The lookup takes the role as a string, as str(role) is what it keys
+        # on anyway; one string, as Codon has no one type for either.
+        name = str(self._entity_name) if entity_ref is None else str(entity_ref)
+        actor = _entity_actor(name)
         if actor is None:
-            raise _ReferenceMissing(str(name))
-        return CarlaWorldPose.from_carla_transform(actor.get_transform())
+            raise _ReferenceMissing(name)
+        found: carla.Actor = actor
+        return CarlaWorldPose.from_carla_transform(found.get_transform())
 
-    def _begin(self, world: "carla.World", entity: Any, actor: Any) -> None:
+    def _begin(
+        self,
+        world: "carla.World",
+        entity: Union[BackendDriven, PedestrianEntity],
+        actor: "carla.Actor",
+    ) -> None:
         """Start a run: take the entity over and set the clock or the distance."""
         assert self._resolved is not None
         self._begun = True
@@ -460,9 +526,17 @@ class FollowTrajectoryAction(BaseAction):
         if self._gated:
             self._begin_timeline()
         if not self._released:
-            release = getattr(entity, "release_from_traffic", None)
-            if release is not None:
-                release(world)
+            if TYPE_CHECKING:
+                # Codon decides hasattr by the static type: a vehicle has the
+                # method, a pedestrian does not.
+                if hasattr(entity, "release_from_traffic"):
+                    entity.release_from_traffic(world)
+            else:
+                # At run time an entity may also have it as None, which
+                # releases nothing (Codon has no getattr default).
+                release = getattr(entity, "release_from_traffic", None)
+                if release is not None:
+                    release(world)
             self._released = True
         if self._following_mode is TrajectoryFollowingMode.FOLLOW and not _is_walker(
             actor
@@ -472,10 +546,12 @@ class FollowTrajectoryAction(BaseAction):
 
             self._follower = TrajectoryFollower(
                 self._control_config,
-                ChaosPowertrain.from_physics_control(actor.get_physics_control()),
+                ChaosPowertrain.from_physics_control(
+                    _as_vehicle(actor).get_physics_control()
+                ),
             )
 
-    def _appear(self, actor: Any) -> None:
+    def _appear(self, actor: "carla.Actor") -> None:
         """Put *actor* where the run starts, facing along the path, at speed."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -496,7 +572,7 @@ class FollowTrajectoryAction(BaseAction):
         heading = math.radians(sample.yaw)
         direction = carla.Vector3D(math.cos(heading), math.sin(heading), 0.0)
         if walker:
-            actor.apply_control(
+            _as_walker(actor).apply_control(
                 carla.WalkerControl(direction=direction, speed=_walker_speed(speed))
             )
         else:
@@ -519,7 +595,7 @@ class FollowTrajectoryAction(BaseAction):
         now = self._trajectory_time()
         return now < self._resolved.start_time or now >= self._resolved.end_time
 
-    def _hide(self, actor: Any, sample: TrajectorySample) -> None:
+    def _hide(self, actor: "carla.Actor", sample: TrajectorySample) -> None:
         """Park *actor* under where *sample* is, out of the simulation."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -533,7 +609,7 @@ class FollowTrajectoryAction(BaseAction):
             )
         )
 
-    def _show(self, actor: Any) -> None:
+    def _show(self, actor: "carla.Actor") -> None:
         """Bring a hidden *actor* back into the simulation."""
         if self._hidden:
             actor.set_simulate_physics(True)
@@ -576,7 +652,7 @@ class FollowTrajectoryAction(BaseAction):
         self._distance += self._speed * _tick_seconds(world)
         return sample
 
-    def _drive(self, world: "carla.World", actor: Any) -> None:
+    def _drive(self, world: "carla.World", actor: "carla.Actor") -> None:
         """One tick of ``FOLLOW`` mode for a vehicle."""
         from carla_driver_interface.geometry import Pose  # noqa: PLC0415
 
@@ -599,7 +675,9 @@ class FollowTrajectoryAction(BaseAction):
                 import typesafe_carla.carla as carla  # noqa: PLC0415
 
                 self._follower.reset()
-                actor.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+                _as_vehicle(actor).apply_control(
+                    carla.VehicleControl(throttle=0.0, brake=1.0)
+                )
                 return
             if self._finished:
                 return
@@ -613,7 +691,13 @@ class FollowTrajectoryAction(BaseAction):
         )
         velocity = actor.get_velocity()
         angular = actor.get_angular_velocity()
-        control = actor.get_control()
+        control = _as_vehicle(actor).get_control()
+        # A control without a gear (a test double) reads as gear 0, as
+        # getattr(control, "gear", 0) did; Codon has no getattr default.
+        try:
+            gear = control.gear
+        except AttributeError:
+            gear = 0
         command = self._follower.step(
             plan,
             # The plan's frame is CARLA's with y flipped: right-handed, as the
@@ -628,11 +712,11 @@ class FollowTrajectoryAction(BaseAction):
             _tick_seconds(world),
             yaw_rate_rps=-math.radians(angular.z),
             now_us=int(round(self._elapsed * 1e6)),
-            gear=int(getattr(control, "gear", 0)),
+            gear=int(gear),
         )
-        actor.apply_control(command.to_carla_control())
+        _as_vehicle(actor).apply_control(command.to_carla_control())
 
-    def _plan(self, here: float) -> Any:
+    def _plan(self, here: float) -> "_Plan":
         """The path ahead of *here*, timed on the scenario clock, for the controller."""
         from carla_driver_interface.geometry import Pose  # noqa: PLC0415
         from carla_driver_interface.geometry import Trajectory as Plan  # noqa: PLC0415
@@ -678,7 +762,7 @@ class FollowTrajectoryAction(BaseAction):
         )
         return origin + reference.offset + vertex_time * reference.scale
 
-    def _walk(self, world: "carla.World", actor: Any) -> None:
+    def _walk(self, world: "carla.World", actor: "carla.Actor") -> None:
         """One tick of ``FOLLOW`` mode for a pedestrian."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -708,7 +792,7 @@ class FollowTrajectoryAction(BaseAction):
         norm = math.hypot(dx, dy)
         if norm < 1e-6:
             speed, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
-        actor.apply_control(
+        _as_walker(actor).apply_control(
             carla.WalkerControl(
                 direction=carla.Vector3D(dx / norm, dy / norm, 0.0),
                 speed=_walker_speed(speed),
@@ -849,8 +933,10 @@ class FollowTrajectoryAction(BaseAction):
             if timeline.end_kind == "end":
                 self._finished = True
                 return resolved.at_vertex(index)
-            condition = timeline.vertex(timeline.end_vertex).gate
-            assert condition is not None
+            # Read by a function: Codon narrows an Optional local after an
+            # assert or a None test, so the next lap's assignment of the
+            # Optional to it fails (docs/typecheck.md).
+            condition = _gate_at(timeline, timeline.end_vertex)
             if not self._gate_opens(world, condition, index):
                 self._waiting = True
                 self._held_at = index
@@ -912,9 +998,10 @@ class FollowTrajectoryAction(BaseAction):
             index = timeline.index(k)
             at = timeline.distance(k)
             stop = here + (at - progress)
-            condition = timeline.vertex(k).gate
-            if condition is None:
+            if timeline.vertex(k).gate is None:
                 return stop  # a segment it has no speed for: never reached
+            # Read by a function, as in _timeline_sample (docs/typecheck.md).
+            condition = _gate_at(timeline, k)
             if progress >= at - tolerance:
                 if not self._gate_opens(world, condition, index):
                     self._waiting = True
@@ -942,7 +1029,7 @@ class FollowTrajectoryAction(BaseAction):
             timeline.depart(departure)
         return None
 
-    def _timeline_plan(self, here: float, stop: Optional[float]) -> Any:
+    def _timeline_plan(self, here: float, stop: Optional[float]) -> "_Plan":
         """The path ahead of *here*, stamped from the timeline, for the controller."""
         from carla_driver_interface.geometry import Pose  # noqa: PLC0415
         from carla_driver_interface.geometry import Trajectory as Plan  # noqa: PLC0415
@@ -987,7 +1074,9 @@ class FollowTrajectoryAction(BaseAction):
             previous_us = stamp_us
         return plan
 
-    def _walk_timeline(self, world: "carla.World", actor: Any, here: float) -> None:
+    def _walk_timeline(
+        self, world: "carla.World", actor: "carla.Actor", here: float
+    ) -> None:
         """One ``FOLLOW`` tick for a pedestrian on a gated trajectory."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -999,7 +1088,7 @@ class FollowTrajectoryAction(BaseAction):
             world, here, _WALKER_GATE_TOLERANCE_M, math.hypot(velocity.x, velocity.y)
         )
         if self._held_at is not None or self._finished:
-            actor.apply_control(
+            _as_walker(actor).apply_control(
                 carla.WalkerControl(direction=carla.Vector3D(1.0, 0.0, 0.0), speed=0.0)
             )
             return
@@ -1023,12 +1112,19 @@ class FollowTrajectoryAction(BaseAction):
         norm = math.hypot(dx, dy)
         if norm < 1e-6:
             speed, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
-        actor.apply_control(
+        _as_walker(actor).apply_control(
             carla.WalkerControl(
                 direction=carla.Vector3D(dx / norm, dy / norm, 0.0),
                 speed=_walker_speed(speed),
             )
         )
+
+
+def _gate_at(timeline: DepartureTimeline, k: int) -> BaseCondition:
+    """The condition vertex number *k* waits for, which it has."""
+    condition = timeline.vertex(k).gate
+    assert condition is not None
+    return condition
 
 
 def _approach_m(speed: float, tolerance: float) -> float:
@@ -1066,6 +1162,8 @@ def _brake_to(stop: float, distances: list[float], stamps: list[float]) -> list[
 class _ReferenceMissing(Exception):
     """A relative vertex's reference entity is not in the world."""
 
+    name: str
+
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.name = name
@@ -1073,6 +1171,8 @@ class _ReferenceMissing(Exception):
 
 class _TrajectoryEnd(BaseCondition):
     """Satisfied once the action it watches has reached the end of its trajectory."""
+
+    _action: FollowTrajectoryAction
 
     def __init__(self, action: FollowTrajectoryAction, label: str) -> None:
         super().__init__(label=f"{label}_end")
@@ -1093,8 +1193,77 @@ class _TrajectoryEnd(BaseCondition):
 # ---------------------------------------------------------------------------
 
 
-def _is_walker(actor: Any) -> bool:
-    return str(getattr(actor, "type_id", "")).startswith("walker.")
+def _is_walker(actor: "carla.Actor") -> bool:
+    # A type id read once, and "" for an actor without one (a test double),
+    # as getattr(actor, "type_id", "") did; Codon has no getattr default.
+    try:
+        type_id = actor.type_id
+    except AttributeError:
+        type_id = ""
+    return str(type_id).startswith("walker.")
+
+
+def _as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
+    """*actor* as the vehicle a control or a physics control is read from.
+
+    At run time that is *actor* itself, which typesafe_carla's Python API
+    takes as it is.  Its Codon library has the controls on a ``carla.Vehicle``
+    only, which the check gets with the checked conversion: Codon reads
+    ``TYPE_CHECKING`` as a compile-time true (docs/typecheck.md), and Python
+    as false.
+    """
+    if TYPE_CHECKING:
+        return actor.as_vehicle()
+    else:
+        return actor
+
+
+def _as_walker(actor: "carla.Actor") -> "carla.Walker":
+    """*actor* as the walker a ``WalkerControl`` is applied to (:func:`_as_vehicle`)."""
+    if TYPE_CHECKING:
+        return actor.as_walker()
+    else:
+        return actor
+
+
+def _entity_actor(name: str) -> Optional["carla.Actor"]:
+    """The actor of the entity *name* names, a vehicle first, or ``None``.
+
+    What ``getattr(find_entity_by_role_name(name), "actor", None)`` read,
+    looked up by kind (docs/typecheck.md).
+    """
+    vehicle = find_vehicle_entity(name)
+    if vehicle is not None:
+        driven: BackendDriven = vehicle
+        # Codon decides hasattr by the static type: BackendDriven declares no
+        # actor, the entities it is mixed into do.
+        if hasattr(driven, "actor"):
+            return driven.actor
+        return None
+    pedestrian = find_pedestrian_entity(name)
+    if pedestrian is None:
+        return None
+    walker: PedestrianEntity = pedestrian
+    if hasattr(walker, "actor"):
+        return walker.actor
+    return None
+
+
+def _resolve_in_world(
+    trajectory: Trajectory,
+    world: "carla.World",
+    reference: Callable[[Optional[Union[EntityRole, str]]], CarlaWorldPose],
+) -> ResolvedTrajectory:
+    """*trajectory* in CARLA world coordinates, on the road of *world*'s map.
+
+    Imports :mod:`~autoware_carla_scenario.trajectory.resolve` (lanelet2)
+    here, which the library check cannot compile: it is ``UNCALLED``.
+    """
+    from ..trajectory.resolve import resolve_trajectory, road_height  # noqa: PLC0415
+
+    return resolve_trajectory(
+        trajectory, road_height(world.get_map()), reference=reference
+    )
 
 
 def _tick_seconds(world: "carla.World") -> float:
@@ -1116,7 +1285,7 @@ def _walker_speed(speed_mps: float) -> float:
     return walker_speed_command(min(max(speed_mps, 0.0), _UE5_WALKER_MAX_SPEED_MS))
 
 
-def _place(actor: Any, sample: TrajectorySample, walker: bool) -> None:
+def _place(actor: "carla.Actor", sample: TrajectorySample, walker: bool) -> None:
     """Put *actor* at *sample*, moving with the sample's velocity.
 
     The velocity goes with the pose so that what reads the actor's speed -- a
@@ -1141,7 +1310,7 @@ def _place(actor: Any, sample: TrajectorySample, walker: bool) -> None:
             if speed > 1e-6
             else carla.Vector3D(1.0, 0.0, 0.0)
         )
-        actor.apply_control(
+        _as_walker(actor).apply_control(
             carla.WalkerControl(direction=direction, speed=_walker_speed(speed))
         )
         return
@@ -1149,14 +1318,14 @@ def _place(actor: Any, sample: TrajectorySample, walker: bool) -> None:
     actor.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, sample.yaw_rate))
 
 
-def _stop(actor: Any, walker: bool) -> None:
+def _stop(actor: "carla.Actor", walker: bool) -> None:
     """Leave *actor* standing where the trajectory ended."""
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     if walker:
-        actor.apply_control(
+        _as_walker(actor).apply_control(
             carla.WalkerControl(direction=carla.Vector3D(1.0, 0.0, 0.0), speed=0.0)
         )
         return
     actor.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
-    actor.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+    _as_vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))

@@ -57,6 +57,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions._departures",
     "autoware_carla_scenario.actions.base",
     "autoware_carla_scenario.actions.environment",
+    "autoware_carla_scenario.actions.follow_trajectory",
     "autoware_carla_scenario.actions.lane_change",
     "autoware_carla_scenario.actions.routing",
     "autoware_carla_scenario.actions.set_speed",
@@ -206,6 +207,7 @@ _YAML = (
 #: imports what Codon has nothing for (``json``) and only that function uses.
 #: Everything else in the module still is.
 UNCALLED: dict[str, str] = {
+    "autoware_carla_scenario.actions.follow_trajectory._resolve_in_world": "resolves the trajectory with trajectory.resolve, imported inside it, which is neither checked nor modelled (lanelet2 through trajectory.relative_lane and route.positions; its callables of a union parameter); FollowTrajectoryAction._resolve calls it in the `else` branch of `if TYPE_CHECKING:` and the check compiles the reference lookup it is handed (_reference_pose) instead",
     "autoware_carla_scenario.conditions.action_state.ActionStateCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.and_condition.AndCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.base.BaseCondition.__init_subclass__": "wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for",
@@ -273,7 +275,6 @@ UNCALLED: dict[str, str] = {
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, grpc and pytest ones included",
     "autoware_carla_scenario.actions.background_traffic": "imports yaml",
-    "autoware_carla_scenario.actions.follow_trajectory": "looks its entity up with find_entity_by_role_name (an entity of any kind, `Optional[Any]`), and declares none of the attributes it assigns at class level; its driver.control import is checked now",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (subprocess, shutil)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler",

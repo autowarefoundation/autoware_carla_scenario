@@ -28,9 +28,20 @@ from autoware_carla_scenario import (
     TrajectoryVertex,
 )
 from autoware_carla_scenario.action_state import ActionState
-from autoware_carla_scenario.actions.follow_trajectory import HIDDEN_DEPTH_M
+from autoware_carla_scenario.actions.follow_trajectory import (
+    HIDDEN_DEPTH_M,
+    _entity_actor,
+    _ReferenceMissing,
+    _TrajectoryEnd,
+)
+from autoware_carla_scenario.conditions import AlwaysTrueCondition
 from autoware_carla_scenario.driver.control import ControlConfig, steer_angle
-from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
+from autoware_carla_scenario.entity.registry import (
+    register_entity,
+    register_pedestrian_entity,
+    register_vehicle_entity,
+    unregister_entity,
+)
 
 from ._vehicle_physics import mkz_physics, mkz_powertrain
 
@@ -448,3 +459,177 @@ class TestFollow:
         _run(action, entity.actor, 5.0, driven=True)
         assert entity.actor.speed == pytest.approx(5.0, abs=0.5)
         assert entity.actor.teleports == 0
+
+
+# ---------------------------------------------------------------------------
+# Who: the lookup by kind and what an entity or actor may lack
+# ---------------------------------------------------------------------------
+
+
+class _Bare:
+    """An entity with an actor and nothing else: no autopilot flag, no release."""
+
+    def __init__(self, actor: Any) -> None:
+        self.actor = actor
+
+
+class _Raising:
+    """An entity whose actor property fails with something else than a lookup."""
+
+    @property
+    def actor(self) -> Any:
+        raise RuntimeError("the simulator is gone")
+
+
+class _NoTypeId(_Actor):
+    """An actor that has no type id at all."""
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "type_id":
+            raise AttributeError(name)
+        return super().__getattribute__(name)
+
+
+class _GearlessControl:
+    """A vehicle control as a test double reads it back: no gear."""
+
+    def __init__(self) -> None:
+        self.throttle = 0.0
+        self.brake = 0.0
+        self.steer = 0.0
+
+
+class TestLookup:
+    def test_a_vehicle_found_only_as_a_vehicle_is_moved(self) -> None:
+        npc = _Entity(_Actor())
+        register_vehicle_entity("npc7", npc)  # type: ignore[arg-type]
+        try:
+            action = FollowTrajectoryAction("npc7", _line(), TrajectoryTiming())
+            _run(action, npc.actor, 0.5)
+        finally:
+            unregister_entity("npc7")
+        assert npc.actor.x == pytest.approx(5.0)
+        assert npc.released == 1
+
+    def test_a_pedestrian_found_only_as_a_pedestrian_is_moved(self) -> None:
+        walker = _Entity(_Actor(type_id="walker.pedestrian.0001"))
+        register_pedestrian_entity("walker7", walker)  # type: ignore[arg-type]
+        try:
+            action = FollowTrajectoryAction("walker7", _line(), TrajectoryTiming())
+            _run(action, walker.actor, 0.5)
+        finally:
+            unregister_entity("walker7")
+        assert walker.actor.x > 4.0
+        assert walker.actor.walker_controls[-1].speed > 0.0
+        assert walker.released == 1
+
+    def test_nobody_is_warned_about_and_waited_for(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        action = FollowTrajectoryAction("nobody", _line(), TrajectoryTiming())
+        with caplog.at_level("WARNING"):
+            action.tick(_World(), 0.0)
+        assert any("'nobody' not found" in r.getMessage() for r in caplog.records)
+        assert not action.finished
+
+    @pytest.mark.parametrize("entity", [object(), _Bare(None)])
+    def test_an_entity_without_an_actor_is_warned_about(
+        self, entity: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        register_entity("npc8", entity)
+        try:
+            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            with caplog.at_level("WARNING"):
+                action.tick(_World(), 0.0)
+        finally:
+            unregister_entity("npc8")
+        assert any("'npc8' has no actor" in r.getMessage() for r in caplog.records)
+        assert not action.finished
+
+    def test_an_actor_property_failing_otherwise_is_not_swallowed(self) -> None:
+        register_entity("npc8", _Raising())
+        try:
+            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            with pytest.raises(RuntimeError, match="simulator is gone"):
+                action.tick(_World(), 0.0)
+            with pytest.raises(RuntimeError, match="simulator is gone"):
+                _entity_actor("npc8")
+        finally:
+            unregister_entity("npc8")
+
+    def test_an_entity_with_no_autopilot_flag_or_release_is_moved(self) -> None:
+        bare = _Bare(_Actor())
+        register_entity("npc8", bare)
+        try:
+            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            _run(action, bare.actor, 0.5)
+        finally:
+            unregister_entity("npc8")
+        assert bare.actor.x == pytest.approx(5.0)
+
+    def test_an_entity_whose_release_is_none_is_moved(self) -> None:
+        bare = _Bare(_Actor())
+        bare.release_from_traffic = None  # type: ignore[attr-defined]
+        register_entity("npc8", bare)
+        try:
+            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            _run(action, bare.actor, 0.5)
+        finally:
+            unregister_entity("npc8")
+        assert bare.actor.x == pytest.approx(5.0)
+
+    def test_an_actor_without_a_type_id_is_a_vehicle(self) -> None:
+        bare = _Bare(_NoTypeId())
+        register_entity("npc8", bare)
+        try:
+            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            _run(action, bare.actor, 0.5)
+        finally:
+            unregister_entity("npc8")
+        assert bare.actor.x == pytest.approx(5.0)
+        assert bare.actor.z == pytest.approx(0.0)  # not lifted by its middle
+        assert bare.actor.walker_controls == []
+
+    def test_a_control_without_a_gear_is_driven(self, entity: _Entity) -> None:
+        entity.actor.control = _GearlessControl()
+        entity.actor.vx = entity.actor.speed = 5.0
+        action = FollowTrajectoryAction(
+            "npc1",
+            _line(length=200.0, duration=None),
+            following_mode=TrajectoryFollowingMode.FOLLOW,
+        )
+        _run(action, entity.actor, 1.0, driven=True)
+        assert entity.actor.x > 3.0
+        assert isinstance(entity.actor.control, carla.VehicleControl)
+
+    def test_a_reference_is_found_as_a_vehicle_or_a_pedestrian(
+        self, entity: _Entity
+    ) -> None:
+        walker = _Entity(_Actor(x=7.0, y=-3.0, type_id="walker.pedestrian.0001"))
+        register_pedestrian_entity("walker7", walker)  # type: ignore[arg-type]
+        try:
+            action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+            own = action._reference_pose(None)
+            other = action._reference_pose("walker7")
+            assert _entity_actor("walker7") is walker.actor
+        finally:
+            unregister_entity("walker7")
+        assert (own.x, own.y) == pytest.approx((0.0, 0.0))
+        assert (other.x, other.y) == pytest.approx((7.0, -3.0))
+        assert _entity_actor("walker7") is None
+        with pytest.raises(_ReferenceMissing):
+            action._reference_pose("walker7")
+
+
+class TestUntil:
+    def test_the_default_ends_at_the_end_of_the_trajectory(self) -> None:
+        action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+        assert isinstance(action._until, _TrajectoryEnd)
+        assert action._until.label == "follow_trajectory_end"
+
+    def test_a_given_condition_is_kept(self) -> None:
+        until = AlwaysTrueCondition()
+        action = FollowTrajectoryAction(
+            "npc1", _line(), TrajectoryTiming(), until=until
+        )
+        assert action._until is until
