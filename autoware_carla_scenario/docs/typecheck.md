@@ -256,9 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module but four of the example scenarios now has an entry other than
-`"not yet checked (#45)"`. 103 of the package's 225 modules (46%; about
-18,800 of 68,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 109 of
+the package's 225 modules (48%; about 19,900 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -271,7 +270,8 @@ the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (`scenario_config`, `examples.configs`). 56
+scenario configs (`scenario_config`, `examples.configs`) and the six example
+scenarios. 56
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -283,14 +283,8 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 122 `EXCLUDED` modules are the
-six example scenarios, which import the checked `examples.configs` (the
-scenario check compiles each as a scenario, against the model), and three
-groups. Four of the examples are not checked yet; `cut_in` and
-`intersection_passing` pass the check alone but not in the full run, where
-the model's `GroundProjectionConfig`, which they import from the top-level
-package, meets `scenario_config`'s checked one, a different type to Codon
-(#99). The three groups:
+the authoring package's pydantic specs. The 116 `EXCLUDED` modules fall in
+three groups:
 
 - **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -805,7 +799,10 @@ What Codon 0.19 needs that Python does not, beyond
   in a model module of their own (`_vehicle_entity.codon`), which
   `REPLACED_MODELS` replaces with `entity._spawn` and
   `entity.vehicle_entity`: the model's `EgoConfig` then holds the checked
-  `SpawnLocation`.
+  `SpawnLocation`. Likewise `GroundProjectionConfig` (`_ground_projection.codon`,
+  replaced with `coordinate.snap`): the example scenarios import it from the
+  top-level package, which is the model, and hand it both to the model's
+  `BaseScenario` and to the checked `VehicleEntityConfig` (#99).
 - **A name the model lacks at the boundary**: when a checked module imports a
   name of a modelled package that the model does not declare
   (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in

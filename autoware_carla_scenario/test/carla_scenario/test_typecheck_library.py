@@ -270,6 +270,18 @@ def test_the_vehicle_entity_model_re_exports_the_checked_spawn_and_vehicle() -> 
     ]
 
 
+def test_the_ground_projection_model_re_exports_the_checked_config() -> None:
+    # So a scenario's GroundProjectionConfig, imported from the top-level
+    # package (the model), is the one the checked VehicleEntityConfig holds.
+    (snap,) = REPLACED_MODELS["_ground_projection"]
+    problems: list = []
+    out = replaced_models(_trees(snap), problems)
+    assert problems == []
+    assert out["_ground_projection"].splitlines() == [
+        f"from {workspace_module(snap)} import GroundProjectionConfig",
+    ]
+
+
 def test_a_model_is_replaced_only_once_all_its_modules_are_checked() -> None:
     frames, _poses = REPLACED_MODELS["_poses"]
     problems: list = []
