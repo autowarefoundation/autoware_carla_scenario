@@ -357,7 +357,16 @@ What Codon 0.19 needs that Python does not, beyond
   name instead.
 - **An attribute holds one type**: one assigned a union (`EntityRole | str`)
   is stored converted where every use converts it anyway
-  (`self._entity_name = str(entity_name)`).
+  (`self._entity_name = str(entity_name)`). Codon 0.19 crashes on an
+  attribute declared with a union ("union already sealed"), so where the
+  union is what the class holds (a public dataclass field such as
+  `VehicleEntityConfig.role_name`), the module stays in `EXCLUDED`.
+- **Annotate a local that starts as `None`** (`spawn_points:
+  Optional[list[carla.Transform]] = None`): Codon types it by its first
+  assignment, and on a branch it then compiles alone it can crash without a
+  diagnostic. A function that imports a name locally (`import
+  typesafe_carla.carla as carla`) makes it local to the whole function, so an
+  annotation naming it needs that import above it.
 - **Operators take the operand types they accept**, not `object`. Annotate
   `other` with the class (`def __add__(self, other: FrenetVelocity)`) and a
   scalar with `float`, and keep the `isinstance` guard that returns

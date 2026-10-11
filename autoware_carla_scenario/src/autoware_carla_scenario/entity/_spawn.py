@@ -39,7 +39,7 @@ def spawn_vehicle_actor(
     world: "carla.World",
     vehicle_type: str,
     role_name: str,
-    spawn_location: SpawnLocation,
+    spawn_location: Union[SpawnTransform, SpawnPointIndex],
     *,
     od_pose: Optional["OpenDrivePose"] = None,
     spawn_retry_max_count: int = 0,
@@ -83,6 +83,8 @@ def spawn_vehicle_actor(
         RuntimeError: If the actor could not be placed at the location
             even after all retry attempts.
     """
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
     bp_lib = world.get_blueprint_library()
 
     # Validate blueprint \u2013 bp_lib.find() raises an opaque C++ exception when
@@ -96,7 +98,7 @@ def spawn_vehicle_actor(
 
     # Resolve spawn transform.  Only fetch spawn points when needed so that
     # the explicit-transform path avoids the get_map() RPC call.
-    spawn_points = None
+    spawn_points: Optional[list[carla.Transform]] = None
     if isinstance(spawn_location, SpawnPointIndex):
         spawn_points = world.get_map().get_spawn_points()
         if spawn_location.value >= len(spawn_points):
@@ -131,8 +133,6 @@ def spawn_vehicle_actor(
     # Lanelet2 and OpenDRIVE geometries disagree, move the retries back to the
     # OpenDRIVE lane -- possibly the opposing one -- before offsetting them.
     if actor is None and spawn_retry_max_count > 0 and od_pose is not None:
-        import typesafe_carla.carla as carla  # noqa: PLC0415
-
         base_transform = resolved_transform
         yaw_rad = math.radians(base_transform.rotation.yaw)
         sin_yaw = math.sin(yaw_rad)
@@ -211,10 +211,12 @@ def spawn_vehicle_actor(
     if actor is None:
         if spawn_points is None:
             spawn_points = world.get_map().get_spawn_points()
+        # Codon does not narrow the Optional; an annotated local unwraps it.
+        known_points: list[carla.Transform] = spawn_points
         suggestions = "\n".join(
             f"  [{i}] x={sp.location.x:.1f}, y={sp.location.y:.1f}, "
             f"z={sp.location.z:.1f}"
-            for i, sp in enumerate(spawn_points[:5])
+            for i, sp in enumerate(known_points[:5])
         )
         raise RuntimeError(
             f"Failed to spawn vehicle '{role_name}' at "
