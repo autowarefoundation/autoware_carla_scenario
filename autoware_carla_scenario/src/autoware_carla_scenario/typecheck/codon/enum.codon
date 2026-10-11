@@ -12,7 +12,10 @@
 # (`Color["RED"]`) and iterating over the class are not modelled.
 
 
-class Enum[T]:
+class Enum:
+    # The type of the values (Codon's generic parameter, in a form Python
+    # can parse too: `class Enum[T]` needs Python 3.12).
+    T: type
     _name_: str
     _value_: T
 
