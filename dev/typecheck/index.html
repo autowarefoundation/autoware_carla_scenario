@@ -2078,12 +2078,12 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 117 of
-the package's 225 modules (52%; about 22,100 of 68,900 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 118 of
+the package's 225 modules (52%; about 23,400 of 69,100 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
-every condition, the action base with the environment, traffic-signal,
-signal-controller, lane-change, routing, set-speed, turn and walk-straight
-actions, the logical scenario's route search and matches (<code>route.model</code>) and
+every condition, the action base with the environment, follow-trajectory,
+traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
+walk-straight actions, the logical scenario's route search and matches (<code>route.model</code>) and
 the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the entity registry and the policy
@@ -2096,7 +2096,7 @@ scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), 
 and LiDAR sensors (<code>sensor</code>), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (<code>driver.base</code>, <code>driver.control</code>, <code>driver.observation</code>, over
-<code>driver.geometry</code>). 61
+<code>driver.geometry</code>). 62
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
@@ -2107,10 +2107,12 @@ over as <code>Any</code> (<code>set_scenario_route()</code>), the six members of
 the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
 <code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
-(<code>_refusing_vertex_times</code>), <code>signals.build_controllers()</code>, which reads
+(<code>_refusing_vertex_times</code>), what resolves a followed trajectory with the
+unchecked <code>trajectory.resolve</code> (<code>follow_trajectory._resolve_in_world()</code>),
+<code>signals.build_controllers()</code>, which reads
 the authoring package's pydantic specs, the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 108 <code>EXCLUDED</code> modules fall in
+<code>encode_frame_jpeg()</code> (cv2). The 107 <code>EXCLUDED</code> modules fall in
 three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: lanelet2, pyxodr,
@@ -2550,6 +2552,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong><code>hasattr</code> on an <code>Optional</code> is decided on the <code>Optional</code></strong>, which has
   none of its value's attributes: assign the value to an annotated local
   after the <code>None</code> test (<code>walker: PedestrianEntity = entity</code>) and ask that.
+- <strong>An <code>Optional</code> local tested in a loop</strong> (<code>assert x is not None</code>, or <code>if x
+  is None: return</code>) is left the unwrapped type for the next lap, whose
+  assignment of the <code>Optional</code> then fails ("'BaseCondition' does not match
+  expected type 'Optional[BaseCondition]'"). Read the value through a function
+  that returns it unwrapped (<code>follow_trajectory._gate_at()</code>), and test the
+  <code>Optional</code> expression itself where the loop needs the test.
+- <strong>A call into a module Codon cannot compile, from a function it must</strong>: a
+  function <code>UNCALLED</code> names is still compiled when a checked function calls
+  it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
+  first branch what it is handed (<code>FollowTrajectoryAction._resolve()</code> hands
+  <code>_resolve_in_world()</code>, which imports <code>trajectory.resolve</code>, its reference
+  lookup, which the first branch calls instead).
 - <strong>An entity looked up by role is looked up by kind</strong>:
   <code>find_entity_by_role_name</code> returns an entity of any kind (<code>Optional[Any]</code>),
   so a checked module asks <code>entity.registry</code> for the kind it acts on,
@@ -2699,7 +2713,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 18:56:14 UTC"><span class="timeago" datetime="2026-10-11T18:56:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 18:56:14 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 21:05:11 UTC"><span class="timeago" datetime="2026-10-11T21:05:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 21:05:11 UTC">2026-10-11</span>
   </span>
 
     
