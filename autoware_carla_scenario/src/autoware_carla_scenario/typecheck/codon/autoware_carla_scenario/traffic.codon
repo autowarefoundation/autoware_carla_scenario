@@ -6,16 +6,9 @@
 # traffic.traffic_manager and the package itself from their source
 # (typecheck/library.py), and this module stands in for the modules of the
 # package it does not: traffic.context (pathlib) and traffic.registry
-# (importlib, omegaconf). It also declares TrafficBackend and BackendDriven,
-# with what the checked modules ask of them (scenario_base hands a registered
-# entity to TrafficBackend.adopt; the checked actions ask the manoeuvres of
-# the vehicle entity.registry finds), for a library check that compiles those
-# modules without traffic.base and traffic.driven
-# (scenario-check --library <module>).
+# (importlib, omegaconf).
 
 import typesafe_carla.carla as carla
-
-from .constants import DEFAULT_TM_PORT
 
 
 @tuple
@@ -31,37 +24,6 @@ class LaneChangeDirection:
     value: str
     LEFT: ClassVar[LaneChangeDirection] = LaneChangeDirection("left")
     RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")
-
-
-# Stands in for traffic.base and traffic.driven when the library check
-# compiles a module that names them (entity.ego, scenario_base) without them
-# (scenario-check --library <module>).
-class TrafficBackend:
-    def adopt(self, entity) -> None:
-        pass
-
-
-class BackendDriven:
-    def __init__(self):
-        pass
-
-    def set_traffic_backend(self, backend: TrafficBackend) -> None:
-        pass
-
-    def set_client(self, client: carla.Client, tm_port: int = DEFAULT_TM_PORT) -> None:
-        pass
-
-    def change_lane(self, world: carla.World, direction: LaneChangeDirection) -> None:
-        raise NotImplementedError()
-
-    def lane_change_finished(self, world: carla.World) -> bool:
-        raise NotImplementedError()
-
-    def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
-        raise NotImplementedError()
-
-    def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
-        raise NotImplementedError()
 
 
 # traffic.context: a path is its str here, as in scenario_config.codon.
