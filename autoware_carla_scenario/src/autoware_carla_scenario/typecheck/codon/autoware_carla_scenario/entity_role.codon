@@ -41,6 +41,16 @@ def _expect_role(role) -> EntityRole:
         compile_error("expected an EntityRole or a str (a role name)")
 
 
+def _expect_role_name(role) -> str:
+    """A Union[EntityRole, str] argument stored as its string (an entity config's role_name)."""
+    if isinstance(role, EntityRole):
+        return str(role)
+    elif isinstance(role, str):
+        return role
+    else:
+        compile_error("expected an EntityRole or a str (a role name)")
+
+
 def _expect_optional_role(role) -> Optional[EntityRole]:
     """A Union[EntityRole, str, None] argument."""
     if isinstance(role, None):

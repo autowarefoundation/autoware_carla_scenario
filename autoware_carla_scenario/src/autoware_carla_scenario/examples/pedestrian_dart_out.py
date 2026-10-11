@@ -124,7 +124,7 @@ class PedestrianDartOutScenario(BaseScenario):
         )
         pedestrian = PedestrianEntity(
             PedestrianEntityConfig(
-                role_name=PEDESTRIAN_ROLE,
+                role_name=str(PEDESTRIAN_ROLE),
                 spawn_location=SpawnTransform(lifted),
                 walker_type=cfg.walker_type,
             )

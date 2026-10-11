@@ -24,6 +24,9 @@ the author wrote:
 * An annotation naming one of CARLA's integer enumerations
   (``carla.TrafficLightState``) becomes ``int``: typesafe_carla's Codon
   library has each as a value whose members are ``int``, not as a type.
+* ``frozenset``, which Codon 0.19 lacks, is checked as a ``set``: a call
+  ``frozenset(...)`` becomes ``set(...)`` and an annotation
+  ``frozenset[X]`` / ``FrozenSet[X]`` becomes ``Set[X]``.
 * A bare ``*`` in a signature (keyword-only parameters) becomes ``*_acs_kw``.
 * A list display of two or more elements that are not all literals, e.g.
   ``[ElapsedTimeCondition(...), SpeedCondition(...)]``, becomes
@@ -82,7 +85,6 @@ _CONCRETE_GENERICS = {
     "Dict",
     "set",
     "Set",
-    "frozenset",
     "tuple",
     "Tuple",
     "ClassVar",
@@ -104,6 +106,9 @@ _ABSTRACT_GENERICS = {
     "MutableMapping",
     "AbstractSet",
 }
+#: Python's immutable set, which Codon 0.19 lacks: checked as a ``Set`` (the
+#: check only types it; nothing compiled is run, so nothing can mutate it).
+_FROZENSET_NAMES = {"frozenset", "FrozenSet", "typing.FrozenSet"}
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
 #: CARLA's integer enumerations, which typesafe_carla's Codon library has as
 #: values, not types (``TrafficLightState = _TrafficLightState()``, each member
@@ -300,6 +305,11 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         return None if inner_text is None else f"Optional[{inner_text}]"
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
+    if base_name in _FROZENSET_NAMES:
+        if not subscript:
+            return None  # a bare frozenset: the element type is unknown
+        inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
+        return None if inner_text is None else f"Set[{inner_text}]"
     if not subscript:
         module, _, name = base_name.rpartition(".")
         if module in _CARLA_MODULES and name in _CARLA_INT_ENUMS:
@@ -656,6 +666,13 @@ class _Rewriter(ast.NodeVisitor):
             # `raise X from None`, which Codon 0.19 cannot type: `raise X`.
             _, end = self.edits.node_span(node.exc)
             self.edits.replace(end, self.edits.node_span(node)[1], "")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name) and node.func.id == "frozenset":
+            # Codon 0.19 has no frozenset: build a set, which types the same.
+            start, end = self.edits.node_span(node.func)
+            self.edits.replace(start, end, "set")
         self.generic_visit(node)
 
     def visit_List(self, node: ast.List) -> None:

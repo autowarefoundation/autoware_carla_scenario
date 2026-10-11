@@ -95,7 +95,7 @@ class EgoConfig(VehicleEntityConfig):
         waypoint_poses: Optional[Sequence[Lanelet2Pose]] = None,
     ) -> None:
         super().__init__(
-            role_name=EGO_ROLE_NAME,
+            role_name=str(EGO_ROLE_NAME),
             spawn_location=spawn_location,
             vehicle_type=vehicle_type,
             initial_speed_kmh=initial_speed_kmh,
