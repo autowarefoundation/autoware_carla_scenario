@@ -4,15 +4,18 @@
 at the scenario's start, serves the scenario's mission (initial pose, goal,
 waypoints) on the `AutowareBridge` gRPC server, and waits for Autoware to
 report it is localized, routed, engaged and driving before the scenario clock
-starts. Autoware's side of the bridge is the `scenario_bridge` node of
-`autoware_carla_interface`
-([autowarefoundation/autoware_universe#13319](https://github.com/autowarefoundation/autoware_universe/pull/13319)).
+starts. Autoware's side of the bridge is the framework's own `scenario_bridge`
+ROS 2 node (`autoware_carla_scenario.autoware_bridge.ros_bridge`): run in
+Autoware's ROS 2 environment, it pulls the mission and drives localization,
+routing and engaging through the AD API. Autoware itself only has to follow the
+scenario's world, ego and clock, which `autoware_carla_interface` does with
+`scenario_mode:=true`.
 
 Who starts Autoware is `autoware.launcher.type`:
 
 | Value | Who starts Autoware |
 | --- | --- |
-| `none` (default) | Someone else: launched by hand, or by Autoware's own `with_scenario` launch, for one scenario |
+| `none` (default) | Someone else, by hand, with the `scenario_bridge` node ([Starting Autoware yourself](#starting-autoware-yourself)) |
 | `docker` | The framework, from a local Autoware workspace, in that workspace's dev container |
 | `command` | The framework, by running `autoware.launcher.command` on this host |
 
@@ -28,14 +31,15 @@ is what makes a batch or a sweep of Autoware scenarios meaningful.
 The workspace is the one you already build in: a clone of
 [`autowarefoundation/autoware`](https://github.com/autowarefoundation/autoware)
 with Autoware's sources in `src/`, checked out on a branch whose
-`autoware_carla_interface` has `scenario_bridge`.
+`autoware_carla_interface` launch takes `scenario_mode`, which the launch is
+given:
 
 ```bash
 uv run scenario 'scenario=intersection_passing/*' map=town10hd_opt \
   ego.entity=autoware \
   autoware.launcher.type=docker \
   autoware.launcher.workspace=$HOME/autoware \
-  'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt","simulator_type:=carla","bridge_address:={bridge_address}"]'
+  'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt","simulator_type:=carla","scenario_mode:=true"]'
 ```
 
 What happens:
@@ -46,13 +50,24 @@ What happens:
       Compose service it names -- the same image and the same path
       (`/home/aw/autoware`) VS Code uses. colcon writes absolute paths into
       `install/`, so a workspace built in VS Code runs here, and the reverse.
+    - What the stack needs is installed into an image of its own, made from
+      the dev container's and tagged `autoware-carla-scenario-deps:<digest>`:
+      the `scenario_bridge` node's `python3-grpcio` and `python3-protobuf`,
+      and the workspace's dependencies (`rosdep install --from-paths src`).
+      A dev container gets the dependencies a branch added since its image
+      was built by someone running `rosdep install` in it; a fresh container
+      per scenario does not, so the launcher does it once, and again only
+      when a `package.xml` or the dev container's image changes
+      (`autoware.launcher.rosdep=false` leaves the workspace's out). The
+      output goes to `autoware-deps.log`.
     - The workspace is built (`colcon build` in that image) when
       `autoware.launcher.build` says so: `auto` builds it only when
       `install/setup.bash` is missing, `always` before every batch, `never`
       leaves building to you. The output goes to `autoware-build.log`.
-    - A workspace whose `autoware_carla_interface` has no `scenario_bridge` --
-      one built from a branch without scenario support -- is refused here,
-      not after the first scenario has timed out waiting for it.
+    - A workspace whose `autoware_carla_interface` launch takes no
+      `scenario_mode` -- one built from a branch without scenario support --
+      is refused here, not after the first scenario has timed out waiting for
+      it.
     - Containers left behind by a run of yours that was killed (they carry the
       `autoware_carla_scenario.stack=uid-<your uid>` label) are removed.
       Another user's are left alone, but two of your own batches on one host
@@ -60,11 +75,13 @@ What happens:
       bridge's, the ROS graph) would not allow them anyway.
 2. **For each scenario**, once the ego is spawned and the mission served:
     `docker run --rm --network host` of the dev container image, the workspace
-    mounted where it was built, `source install/setup.bash && exec ros2 launch
-    <autoware.launcher.launch>`. `{bridge_address}` in the launch arguments
-    becomes the bridge's address, which the launch has to hand to
-    `scenario_bridge`. The stack's output goes to
-    `autoware-<n>-<scenario>.log` in the run's output directory.
+    mounted where it was built, `source install/setup.bash`, then the
+    `scenario_bridge` node in the background -- this package's
+    `autoware_bridge` directory is mounted read-only into the container for
+    it, with the bridge's address and `autoware.launcher.bridge_parameters` --
+    and `exec ros2 launch <autoware.launcher.launch>`. The stack's output,
+    the node's included, goes to `autoware-<n>-<scenario>.log` in the run's
+    output directory.
 3. **While the stack starts** (until `scenario_bridge` first reaches the
     bridge), the world ticks at about real time and the wait is measured in
     wall-clock seconds, `autoware.boot_timeout_s`. Once it has reached the
@@ -93,6 +110,8 @@ A stack that exits during a scenario ends it: the result's message says
 | `image` | `null` | An image to use instead of the dev container's |
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never` |
+| `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, ... |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
@@ -138,11 +157,33 @@ ODD, aimed at what earlier runs left uncovered, add a `sweep.odd_sample`
 process group stopped with `SIGINT`, then `SIGTERM`, then `SIGKILL`. It is
 sent `SIGTERM` if the process that started it dies -- a sweeper job killed at
 its timeout -- so it does not outlive the job. `{bridge_address}`, `{index}` and `{name}`
-are filled in, and the address is in `AUTOWARE_BRIDGE_ADDRESS` too:
+are filled in, and the address is in `AUTOWARE_BRIDGE_ADDRESS` too.
+`{scenario_bridge}` is a shell command that runs the `scenario_bridge` node with
+that address and `autoware.launcher.bridge_parameters`, for the command to run
+beside the launch in Autoware's ROS 2 environment:
 
 ```bash
 uv run scenario ego.entity=autoware autoware.launcher.type=command \
-  'autoware.launcher.command=[bash,-c,"source ~/autoware/install/setup.bash && exec ros2 launch autoware_launch e2e_simulator.launch.xml bridge_address:={bridge_address} ..."]'
+  'autoware.launcher.command=[bash,-c,"source ~/autoware/install/setup.bash && ({scenario_bridge} &) && exec ros2 launch autoware_launch e2e_simulator.launch.xml scenario_mode:=true ..."]'
+```
+
+The node runs on the ROS 2 distribution's own `python3`, which needs
+`python3-grpcio` and `python3-protobuf`. It imports nothing of the framework
+but `autoware_carla_scenario.autoware_bridge`: `{scenario_bridge}` puts a
+directory on `PYTHONPATH` that holds that package alone
+(`~/.cache/autoware_carla_scenario/ros_bridge/`).
+
+## Starting Autoware yourself
+
+With `autoware.launcher.type=none`, start Autoware with `scenario_mode:=true`
+and the node beside it, once the scenario is waiting for Autoware:
+
+```bash
+source ~/autoware/install/setup.bash
+PYTHONPATH=$(uv run python -c "from autoware_carla_scenario.autoware_stack.bridge_node import host_python_root; print(host_python_root())") \
+  python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge \
+  --ros-args -p bridge_address:=localhost:50052 -p use_sim_time:=true &
+ros2 launch autoware_launch e2e_simulator.launch.xml simulator_type:=carla scenario_mode:=true ...
 ```
 
 ## From Python
@@ -162,7 +203,7 @@ launcher = DockerAutowareLauncher(
         launch=(
             "autoware_launch",
             "e2e_simulator.launch.xml",
-            "bridge_address:={bridge_address}",
+            "scenario_mode:=true",
         ),
     )
 )
@@ -175,4 +216,5 @@ The queue prepares the launcher when it starts and closes it when it stops;
 `AutowareEgoEntity` starts and stops a stack per scenario. Any object with
 `prepare` / `start` / `poll` / `stop` / `close`
 (`autoware_carla_scenario.autoware_stack.AutowareLauncher`) can stand in for
-the two launchers that ship.
+the two launchers that ship; it starts the `scenario_bridge` node with the
+stack (`autoware_carla_scenario.autoware_stack.bridge_node` builds its command).

@@ -3,9 +3,8 @@
 A Scenario Package is a uv project, and that is what makes it reproducible:
 ``[tool.uv.sources]`` points the framework at an exact commit and ``uv.lock``
 pins everything under it.  It is also what makes it unusable where scenarios
-actually run.  Autoware's ``scenario_bridge`` installs a scenario into a venv
-built from ``python3-venv`` and ``python3-pip`` -- both rosdep-resolvable --
-and has no ``uv``, no ``git`` and, on a vehicle, no network.  Handing that
+actually run: a venv built from ``python3-venv`` and ``python3-pip`` -- both
+rosdep-resolvable -- with no ``uv``, no ``git`` and, on a vehicle, no network.  Handing that
 environment a uv project asks it for all three; handing it the package's wheel
 alone is no better, because ``[tool.uv.sources]`` is not written into wheel
 metadata, so pip goes looking on PyPI for a framework at a commit that is not
