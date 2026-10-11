@@ -295,22 +295,34 @@ unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 the authoring package's pydantic specs, the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
 `encode_frame_jpeg()` (cv2). The 103 `EXCLUDED` modules fall in
-three groups:
+three groups. Many fit more than one (72 import what Codon cannot compile,
+46 build on an excluded module and 30 hold values Codon has no type for), so
+each is counted once, in the first group that fits it:
 
-- **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
+- **72 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
-  than its shim's `Path`). This is
+  than its shim's `Path`), at module level or inside a function the check
+  calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher) and everything that reads Lanelet2.
-- **About 15 build on an excluded module**: the route frame and route
-  poses (`route.frame`, `route.positions`, through lanelet2), the traffic
-  backend registry, the SUMO backend and the authoring compiler.
-- **About 10 hold values Codon has no type for**: `Any` (`coverage.items`,
-  `odd.model`), a callable of any value as a parameter
-  (`trajectory.resolve`'s position resolvers), or a class
-  as a value (`utils.config`, which `traffic.config` and `traffic.sumo.config`
-  import only in their uncalled `from_mapping()`).
+  map cache, the Autoware launcher, the scenario runner and queue) and
+  everything that reads Lanelet2. A reason names `pathlib` only where the
+  module uses more of it than the shim declares.
+- **26 build on an excluded module**, and import nothing Codon lacks
+  themselves: they import a module that is neither checked nor modelled, or
+  names that its package's model does not declare. Among them are the
+  packages that re-export one (`authoring`, `maps`, `odd`, `sweeper`,
+  `coverage`, `autoware_stack`, `examples`, `scaffold`), `declarative`, the
+  authoring compiler, builders and validator, the
+  map catalogue and config, the route frame, poses and search
+  (`route.frame`, `route.positions`, `route.search`, through lanelet2),
+  `odd.model` and `odd.sampler` (over `coverage.items`) and
+  `trajectory.resolve`; 11 of the 26 also hold values Codon has no type for.
+- **5 hold values Codon has no type for**, and nothing else keeps them out:
+  `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
+  field defaults), a callable of any value (`traffic.registry`'s backend
+  factories), or a class as a value (`utils.config`, which `traffic.config`
+  and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
