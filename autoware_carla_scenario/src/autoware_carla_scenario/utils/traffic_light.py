@@ -11,10 +11,14 @@ network is the singleton's.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
+    from pyxodr.road_objects.network import RoadNetwork
 
 
-def traffic_light_state_name(state: Any) -> str:
+def traffic_light_state_name(state: "carla.TrafficLightState") -> str:
     """Return the member name ("Red", "Green", ...) of a traffic light state.
 
     typesafe_carla's ``TrafficLight.get_state()`` and ``.state`` give a plain
@@ -25,13 +29,22 @@ def traffic_light_state_name(state: Any) -> str:
     import typesafe_carla.carla as carla  # noqa: PLC0415 -- this helper is CARLA-side by definition
 
     try:
-        return carla.TrafficLightState(int(state)).name
-    except (TypeError, ValueError):
+        value = int(state)
+    except TypeError:
         return "Unknown"
+    except ValueError:
+        return "Unknown"
+    # The member of that value, by name: ``TrafficLightState(value).name``
+    # without calling the enumeration, which typesafe_carla's Codon library
+    # has as a value, not a type (docs/typecheck.md).
+    for name, member in carla.TrafficLightState.names.items():
+        if int(member) == value:
+            return name
+    return "Unknown"
 
 
 def lanelet2_traffic_light_id_to_opendrive_controller_id(
-    road_network: Any,
+    road_network: "RoadNetwork",
     lanelet2_tl_id: int,
 ) -> Optional[int]:
     """Return the OpenDRIVE controller ID for a Lanelet2 traffic light ID.
@@ -55,7 +68,9 @@ def lanelet2_traffic_light_id_to_opendrive_controller_id(
     return None
 
 
-def get_signal_ids_for_controller(road_network: Any, controller_id: int) -> list[str]:
+def get_signal_ids_for_controller(
+    road_network: "RoadNetwork", controller_id: int
+) -> list[str]:
     """Return the signal IDs controlled by an OpenDRIVE controller.
 
     Parses ``<control signalId="...">`` children of the ``<controller>``
@@ -68,9 +83,10 @@ def get_signal_ids_for_controller(road_network: Any, controller_id: int) -> list
     root = road_network.root
     for ctrl_elem in root.iter("controller"):
         if ctrl_elem.get("id") == str(controller_id):
-            return [
-                c.get("signalId")
-                for c in ctrl_elem.iter("control")
-                if c.get("signalId") is not None
-            ]
+            signal_ids: list[str] = []
+            for c in ctrl_elem.iter("control"):
+                signal_id = c.get("signalId")
+                if signal_id is not None:
+                    signal_ids.append(signal_id)
+            return signal_ids
     return []
