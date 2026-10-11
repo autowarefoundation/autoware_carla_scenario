@@ -189,7 +189,12 @@ def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
     counter = 1
     while any(
         (output_dir / f"{stem}{suffix}").exists()
-        for suffix in ("_result.json", ".trajectory.jsonl", "_coverage.json")
+        for suffix in (
+            "_result.json",
+            ".trajectory.jsonl",
+            "_coverage.json",
+            "_odd.tar.gz",
+        )
     ):
         stem = f"{scenario_name}-{counter}"
         counter += 1

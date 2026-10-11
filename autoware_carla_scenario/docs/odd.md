@@ -25,6 +25,35 @@ are measured, judged and reported the same way:
 OpenODD also maps its model to OpenSCENARIO DSL (chapter 9, model to DSL only)
 and to tables (chapter 8). Neither is read here.
 
+The reading, judging, versioning and sampling are
+[openodd](https://github.com/hakuturu583/openodd_py) (`openodd-py`, a Rust
+core with a Python API), which knows nothing of CARLA. This framework is its
+**backend** (`autoware_carla_scenario.odd.backend`): the built-in probes a
+binding file names, `measure:` keys read from the running scenario, and the
+knobs that set the weather and the sun. Importing `autoware_carla_scenario.odd`
+makes it openodd's default backend, so `openodd.load_odd_binding()` and
+`autoware_carla_scenario.odd.load_odd_binding()` read the same.
+
+### Versions of an ODD
+
+OpenODD 1.0 defines no version of an ODD; openodd builds one on what it does
+define ([its versioning profile](https://github.com/hakuturu583/openodd_py/blob/main/docs/versioning.md)):
+
+- the **revision** is the SHA-256 of the files the ODD was read from -- the
+  binding file, the OpenODD files it names and every file they `IMPORT` -- by
+  name and content. The same files are the same revision on any machine and
+  from any repository or commit; any change to any of them is a new one;
+- the **version** is what the root modules (those under `ODD:`) declare in
+  their `METADATA` (`version: 2.1.0`);
+- the **structure** is the digest of the ODD as built (modules, buckets, the
+  buckets outside it), for an ODD written in Python, which has no files.
+
+All three are written to every coverage file (the ODD's `revision`,
+`version`, `structure`), so coverage can be told apart by the ODD it was
+measured against. `OddDefinition.archive()` packs the files into a
+deterministic `.tar.gz` that `openodd.load_odd_archive()` reads back exactly;
+a run writes it beside its coverage file (`{ScenarioName}_odd.tar.gz`).
+
 ## Concepts
 
 The model and its semantics follow OpenODD 1.0 (chapters 6 and 7).
@@ -364,8 +393,8 @@ probes:
   credentials it is configured with. Prompts are turned off, and the `ext::`
   transport is refused.
 - Repositories and checkouts are cached in
-  `$AUTOWARE_CARLA_SCENARIO_ODD_CACHE` (default
-  `~/.cache/autoware_carla_scenario/openodd`). A full commit id checked out
+  `$AUTOWARE_CARLA_SCENARIO_ODD_CACHE` when it is set, else openodd's
+  `$OPENODD_CACHE` (default `~/.cache/openodd`). A full commit id checked out
   once is read from the cache without the network; a tag or a branch is
   fetched on every load, to learn which commit it names now. Pin a commit for
   runs that must be reproducible.
@@ -572,10 +601,10 @@ uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
 ```
 
 The same seed, ODD, knobs, coverage and scenarios, in the same order, give
-the same cases. Two ODDs are one when their definitions -- name, buckets
-and modules, as a coverage file records them -- are the same, however the
-command line names them (a registered name, a YAML path); a scenario on
-another ODD starts afresh.
+the same cases, on any machine (openodd's sampler draws from ChaCha8 seeded
+with the seed's SHA-256). Two ODDs are one when they are built alike (their
+`structure`), however the command line names them (a registered name, a YAML
+path); a scenario on another ODD starts afresh.
 
 or in the scenario's YAML:
 

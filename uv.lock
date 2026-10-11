@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -167,6 +167,7 @@ dependencies = [
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "omegaconf" },
     { name = "opencv-python-headless" },
+    { name = "openodd-py" },
     { name = "packaging" },
     { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
@@ -208,6 +209,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },
+    { name = "openodd-py", git = "https://github.com/hakuturu583/openodd_py?rev=f3191eada79314ceea07b85fbbc0c6060ea93be7" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -2760,6 +2762,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/95/dd/ed1191c9dc91abcc9f752b499b7928aacabf10567bb2c2535944d848af18/opencv_python_headless-4.11.0.86-cp37-abi3-win32.whl", hash = "sha256:f447d8acbb0b6f2808da71fddd29c1cdd448d2bc98f72d9bb78a7a898fc9621b", size = 29324425, upload-time = "2025-01-16T13:52:49.048Z" },
     { url = "https://files.pythonhosted.org/packages/86/8a/69176a64335aed183529207ba8bc3d329c2999d852b4f3818027203f50e6/opencv_python_headless-4.11.0.86-cp37-abi3-win_amd64.whl", hash = "sha256:6c304df9caa7a6a5710b91709dd4786bf20a74d57672b3c31f7033cc638174ca", size = 39402386, upload-time = "2025-01-16T13:52:56.418Z" },
 ]
+
+[[package]]
+name = "openodd-py"
+version = "0.1.0"
+source = { git = "https://github.com/hakuturu583/openodd_py?rev=f3191eada79314ceea07b85fbbc0c6060ea93be7#f3191eada79314ceea07b85fbbc0c6060ea93be7" }
 
 [[package]]
 name = "opentelemetry-api"

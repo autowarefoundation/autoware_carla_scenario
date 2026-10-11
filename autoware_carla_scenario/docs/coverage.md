@@ -353,6 +353,9 @@ coverage file only.
     "roots": ["root"],
     "modules": [{"name": "roads", "include_and": ["scenery.location in [urban]"], "...": "..."}],
     "unmeasured": [],
+    "structure": "c591ab74...",
+    "revision": "3a5ba08a...",
+    "version": "2.1.0",
     "ticks": {"inside": 512, "assumed": 8, "outside": 40},
     "seconds": {"inside": 25.6, "assumed": 0.4, "outside": 2.0},
     "module_ticks": {"roads": {"failed_ticks": 40, "missing_ticks": 8}},
@@ -360,6 +363,12 @@ coverage file only.
   }
 }
 ```
+
+The ODD's `structure`, `revision` (an ODD read from files) and `version`
+(what its root modules declare) say which ODD the run was measured against;
+see [Versions of an ODD](odd.md#versions-of-an-odd). The merge is
+[openodd](https://github.com/hakuturu583/openodd_py)'s, which reads this
+schema as its own (`openodd.coverage/1`).
 
 ## Not yet supported
 

@@ -1386,3 +1386,12 @@ class TestSituations:
     def test_a_situation_is_not_a_bound_in_the_module_table(self) -> None:
         doc = self._run(self._odd(), [(2, 30.0)])
         assert set(doc["odd"]["module_ticks"]) == {"roads"}
+
+
+def test_the_unit_spellings_codon_checks_are_openodds() -> None:
+    import openodd
+
+    from autoware_carla_scenario.odd import unit_names
+
+    for alias in [*unit_names._ALIASES, "KPH", " m/s ", "km/h", "furlong", ""]:
+        assert unit_names.normalize_unit(alias) == openodd.normalize_unit(alias), alias

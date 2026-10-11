@@ -67,3 +67,8 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring a running CARLA server",
 ]
+
+[tool.uv.sources]
+# Until openodd-py is on PyPI: built from its repository at a pinned commit
+# (needs a Rust toolchain). uv sources are not part of the published metadata.
+openodd-py = { git = "https://github.com/hakuturu583/openodd_py", rev = "f3191eada79314ceea07b85fbbc0c6060ea93be7" }

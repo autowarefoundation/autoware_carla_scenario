@@ -10,7 +10,7 @@ the ego's planned route against it on the Lanelet2 map alone.  See
 ``docs/odd.md``.
 """
 
-from . import probes
+from . import backend, probes
 from .openodd import OpenOddError, load_odd_binding, load_odd_file, load_openodd
 from .sources import GitSource, GitSourceError
 from .model import (
@@ -74,6 +74,7 @@ from .registry import (
 )
 
 __all__ = [
+    "backend",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",

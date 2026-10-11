@@ -57,6 +57,9 @@ dependencies = [
     # requires this to read a request body as a form -- urlencoded included.
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
+    # ASAM OpenODD: reading, judging, versioning and sampling ODDs, and merging
+    # coverage (a Rust core). This package is its CARLA backend (odd/backend.py).
+    "openodd-py>=0.1.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",

@@ -46,12 +46,20 @@ if TYPE_CHECKING:
 
     from ..odd.model import OddDefinition, OddVerdict
 
-__all__ = ["COVERAGE_SCHEMA", "CoverageCollector", "CROSS_SEPARATOR"]
+__all__ = [
+    "COVERAGE_SCHEMA",
+    "CoverageCollector",
+    "CROSS_SEPARATOR",
+    "ODD_ARCHIVE_SUFFIX",
+]
 
 logger = logging.getLogger(__name__)
 
 #: Written to every coverage file, so a reader can refuse one it does not know.
 COVERAGE_SCHEMA = "autoware_carla_scenario.coverage/1"
+
+#: Beside a run's coverage file, the transmission archive of its ODD.
+ODD_ARCHIVE_SUFFIX = "_odd.tar.gz"
 
 #: Joins the bucket labels of a cross-coverage cell.
 CROSS_SEPARATOR = " / "
@@ -454,7 +462,12 @@ class CoverageCollector:
         }
 
     def write(self, path: Path, scenario: str) -> None:
-        """Write the coverage file; a failure is logged, never raised."""
+        """Write the coverage file; a failure is logged, never raised.
+
+        An ODD read from files is written beside it too, as its transmission
+        archive (``<Name>_odd.tar.gz``, openodd's ``OddDefinition.archive()``):
+        the exact files the run was measured against, by their revision.
+        """
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -462,6 +475,15 @@ class CoverageCollector:
             )
         except Exception:
             logger.warning("coverage: could not write %s", path, exc_info=True)
+        if self._odd is None:
+            return
+        try:
+            archive = self._odd.odd.archive()
+            if archive is not None:
+                stem = path.name.removesuffix(".json").removesuffix("_coverage")
+                (path.parent / f"{stem}{ODD_ARCHIVE_SUFFIX}").write_bytes(archive)
+        except Exception:
+            logger.warning("coverage: could not write the ODD's archive", exc_info=True)
 
     # ------------------------------------------------------------------
 

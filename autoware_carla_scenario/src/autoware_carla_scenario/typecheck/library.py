@@ -158,7 +158,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.sensor.carla_camera",
     "autoware_carla_scenario.sensor.carla_lidar",
     "autoware_carla_scenario.odd.scenario_measure",
-    "autoware_carla_scenario.odd.units",
+    "autoware_carla_scenario.odd.unit_names",
     "autoware_carla_scenario.signals",
     "autoware_carla_scenario.signals.controller",
     "autoware_carla_scenario.signals.registry",
@@ -314,13 +314,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which import pathlib, json",
     "autoware_carla_scenario.coverage.cod": "imports pathlib, yaml, csv",
     "autoware_carla_scenario.coverage.collector": "imports pathlib, json",
-    "autoware_carla_scenario.coverage.items": (
-        "samples values of any type (value_label, bucket_of and a cover "
-        "expression take or return Any: an enum, a bool, a number or a label), "
-        "and keeps an event that is a SamplingEvent or a condition, a Union "
-        "field Codon 0.19 cannot hold"
-    ),
-    "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
+    "autoware_carla_scenario.coverage.items": "re-exports openodd's cover items (a Rust extension)",
+    "autoware_carla_scenario.coverage.report": "re-exports openodd's coverage merge (a Rust extension); imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",
     "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, atexit, and carla_driver_interface's contract, policies, server and protocol, which its model (geometry only) does not declare",
     "autoware_carla_scenario.driver.hdmap_export": "imports pathlib, roadgen, shutil, tempfile, json, hashlib",
@@ -347,18 +342,16 @@ EXCLUDED: dict[str, str] = {
         "yaml), odd.sources (pathlib, subprocess), odd.registry (importlib) and "
         "odd.sampler (`Any`)"
     ),
+    "autoware_carla_scenario.odd.backend": "imports openodd (a Rust extension) and os",
     "autoware_carla_scenario.odd.cli": "imports json, argparse",
-    "autoware_carla_scenario.odd.model": (
-        "evaluates attribute values of any type (Mapping[str, Any] of numbers, "
-        "labels, None, UNDECIDED and buckets; three-valued verdicts mixed with "
-        'the "inactive" label), and builds on coverage.items, which is not checked'
-    ),
-    "autoware_carla_scenario.odd.openodd": "imports pathlib, yaml",
+    "autoware_carla_scenario.odd.model": "re-exports openodd's model (a Rust extension)",
+    "autoware_carla_scenario.odd.openodd": "re-exports openodd's reader (a Rust extension)",
     "autoware_carla_scenario.odd.probes": "imports lanelet2",
     "autoware_carla_scenario.odd.registry": "imports importlib",
     "autoware_carla_scenario.odd.route": "imports lanelet2",
-    "autoware_carla_scenario.odd.sampler": "holds and takes values of `Any` (`OddSample.values`, `OddSampler`'s coverage, the `Mapping[str, Any]` config nodes of `knobs_from_mapping()` and `sampler_from_config()`), which Codon cannot express",
-    "autoware_carla_scenario.odd.sources": "imports pathlib, subprocess, shutil, tempfile, tarfile, hashlib, fcntl, io, contextlib",
+    "autoware_carla_scenario.odd.sampler": "wraps openodd's sampler (a Rust extension) and reads `Mapping[str, Any]` config nodes (`sampler_from_config()`), which Codon cannot express",
+    "autoware_carla_scenario.odd.sources": "re-exports openodd's git sources (a Rust extension)",
+    "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest",
     "autoware_carla_scenario.registry": "imports pathlib, omegaconf, importlib",
     "autoware_carla_scenario.route.frame": "imports route.geometry and trajectory.relative_lane, which use lanelet2, and holds lanelet2's map, routing graph and lanelets (`Any`)",
