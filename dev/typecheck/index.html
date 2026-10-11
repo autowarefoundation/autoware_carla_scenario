@@ -2079,8 +2079,8 @@ function or method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module but four of the example scenarios now has an entry other than
-<code>"not yet checked (#45)"</code>. 103 of the package's 225 modules (46%; about
-18,800 of 68,700 lines) are <code>CHECKED</code>:
+<code>"not yet checked (#45)"</code>. 107 of the package's 225 modules (48%; about
+19,600 of 68,800 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -2093,7 +2093,8 @@ the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (<code>scenario_config</code>, <code>examples.configs</code>). 56
+scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), and the camera
+and LiDAR sensors (<code>sensor</code>). 56
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
@@ -2105,7 +2106,7 @@ the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <cod
 <code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
 (<code>_refusing_vertex_times</code>), and <code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs. The 122 <code>EXCLUDED</code> modules are the
+the authoring package's pydantic specs. The 118 <code>EXCLUDED</code> modules are the
 six example scenarios, which import the checked <code>examples.configs</code> (the
 scenario check compiles each as a scenario, against the model), and three
 groups. Four of the examples are not checked yet; <code>cut_in</code> and
@@ -2256,8 +2257,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   attribute per key.</li>
 <li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>importlib</code>,
   ...) are not available to a checked module; the <code>typing</code>,
-  <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code>, <code>pathlib</code>, <code>urllib.parse</code> and
-  <code>__future__</code> shims of <code>codon/</code> are. <code>pathlib</code> declares <code>Path(*parts)</code>,
+  <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code>, <code>queue</code>, <code>pathlib</code>,
+  <code>urllib.parse</code> and <code>__future__</code> shims of <code>codon/</code> are. <code>pathlib</code> declares <code>Path(*parts)</code>,
   <code>/</code>, <code>str()</code>, <code>==</code>, <code>hash()</code>, <code>expanduser()</code>, <code>resolve()</code> and
   <code>Path.home()</code>, and nothing that touches the file system; like Python's, it
   builds and joins a <code>Path</code> with a <code>str</code> or a <code>Path</code> only (an <code>Optional</code> of
@@ -2287,7 +2288,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   numpy 2 does anyway (NEP 50), so nothing changes at run time. Codon's
   <code>ndarray</code> needs its dtype and dimension count, so a parameter annotated
   with a bare <code>np.ndarray</code> or numpy.typing's <code>NDArray[...]</code> does not
-  translate.</li>
+  translate; numpy's shape-typed array does (see <em>An array is typed by its
+  shape</em> below).</li>
 <li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.
@@ -2561,6 +2563,34 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (<code>if hasattr(data, "as_collision"): data = data.as_collision()</code>, as
   <code>conditions/collision.py</code> does): Codon decides <code>hasattr</code> when it compiles,
   and the CPython measurement has no <code>as_&lt;kind&gt;()</code>.
+  The camera and the LiDAR (<code>sensor/</code>) listen the same way, with
+  <code>as_image()</code> and <code>as_lidar()</code>. A bound method of another object (a
+  queue's <code>put</code>) is no listener: wrap it in a method of the sensor.
+- <strong>An array is typed by its shape</strong>: Codon's numpy types an array by its
+  dtype and its number of dimensions (<code>np.ndarray[np.float32, 2]</code>), which
+  numpy.typing's <code>NDArray[np.float32]</code> does not say, and Codon has no
+  <code>numpy.typing</code>. Annotate with numpy's shape-typed array instead,
+  <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code> (two dimensions),
+  which mypy reads as precisely and the check translates; a shape of
+  <code>tuple[int, ...]</code> or <code>Any</code>, and <code>NDArray</code>, are dropped. An annotation
+  broken over lines keeps its line breaks inside its brackets, so
+  <code>newest: Optional[\n    ...\n] = None</code> still compiles.
+- <strong>A measurement's <code>raw_data</code> is a view</strong> in typesafe_carla's Codon library,
+  and Codon's <code>np.frombuffer</code> takes the bytes: read
+  <code>np.frombuffer(image.raw_data.tobytes(), ...)</code> under <code>if TYPE_CHECKING:</code>
+  and the CPython <code>raw_data</code> in the <code>else</code> branch, which copies nothing.
+- <strong><code>queue.Queue[T]</code></strong> is the <code>queue</code> shim's, with CPython's signatures
+  (<code>Queue(maxsize=0)</code>, <code>put(item, block=True, timeout=None)</code>, <code>get(block=True,
+  timeout=None)</code>, <code>put_nowait</code>, <code>get_nowait</code>, <code>empty</code>, <code>full</code>, <code>qsize</code>, and
+  the <code>Empty</code> and <code>Full</code> exceptions). Declare the queue's item type at class
+  level (<code>_frame_queue: queue.Queue[carla.Image]</code>); <code>queue.Queue()</code> in
+  <code>__init__</code> takes it from there.
+- <strong>A dataclass derived from a dataclass</strong> is constructed with its base's
+  fields first, as Python's constructor and Codon's take them, wherever the
+  base is checked (<code>CarlaCameraSensorConfig(CameraSensorConfig)</code>). Of two
+  bases that both bring fields, Python takes the last one's first and Codon
+  0.19 the first one's, so such a constructor is a problem: list it as
+  <code>UNCALLED</code>.
 - <strong>No variable-length tuples beyond attributes</strong>: Codon's tuples have a
   fixed length. A class-level <code>tuple[X, ...]</code> and <code>tuple(x)</code> are checked as
   lists (above), but a tuple built otherwise (a display grown in a loop,
@@ -2636,7 +2666,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 14:44:38 UTC"><span class="timeago" datetime="2026-10-11T14:44:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 14:44:38 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 16:36:23 UTC"><span class="timeago" datetime="2026-10-11T16:36:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 16:36:23 UTC">2026-10-11</span>
   </span>
 
     
