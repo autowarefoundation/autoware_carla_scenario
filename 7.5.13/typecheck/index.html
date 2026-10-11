@@ -1,0 +1,2436 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/7.5.13/typecheck/">
+      
+      
+        <link rel="prev" href="../odd/">
+      
+      
+        <link rel="next" href="../docker/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Static Check - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#static-check-codon" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Static Check
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../autoware/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Autoware as the Ego
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../odd/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autoware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../odd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#running-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running it
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-it-runs-the-typecheck-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When it runs: the typecheck key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing Codon and typesafe_carla
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-checked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is checked
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What is checked">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-scenario-that-type-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a scenario that type-checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-the-framework-itself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking the framework itself
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checking the framework itself">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-manifest-typechecklibrarypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The manifest: typecheck/library.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-checked-of-the-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is checked of the framework
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-compiled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is compiled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-modules-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checked modules and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conditions-the-checked-base-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions: the checked base and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#making-a-module-compile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Making a module compile
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#running-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running it
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-it-runs-the-typecheck-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When it runs: the typecheck key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing Codon and typesafe_carla
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-checked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is checked
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What is checked">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-scenario-that-type-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a scenario that type-checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-the-framework-itself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking the framework itself
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checking the framework itself">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-manifest-typechecklibrarypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The manifest: typecheck/library.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-checked-of-the-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is checked of the framework
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-compiled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is compiled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-modules-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checked modules and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conditions-the-checked-base-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions: the checked base and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#making-a-module-compile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Making a module compile
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="static-check-codon">Static Check (Codon)<a class="headerlink" href="#static-check-codon" title="Permanent link">&para;</a></h1>
+<p>Before a scenario runs, the runner compiles it with
+<a href="https://github.com/exaloop/codon">Codon</a>, a statically typed compiler for
+Python syntax, and refuses it when it does not compile. A misspelled method, a
+<code>str</code> where a <code>float</code> belongs, a condition missing its <code>label</code>, a turn direction
+passed where a lane-change direction is expected, or a YAML value of the wrong
+type is reported with the file and line it is on, before CARLA is started:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>$ uv run scenario scenario=intersection_passing/straight scenario.timeout_seconds=fast
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>autoware_carla_scenario.examples.intersection_passing.IntersectionPassingScenario: static check failed:
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  scenario.timeout_seconds: error: 'str' does not match expected type 'float'
+</code></pre></div>
+<p>The scenario still runs as Python, exactly as before: the check compiles the
+same source, never runs what it compiled, and changes nothing at run time.
+The CARLA API a scenario calls is
+<a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>, the statically
+typed CARLA client this framework runs on. A scenario imports it as
+<code>import typesafe_carla.carla as carla</code>: at run time that is typesafe_carla's
+CPython package, and for the check it is typesafe_carla's Codon library, so
+the same names are checked that run.</p>
+<h2 id="running-it">Running it<a class="headerlink" href="#running-it" title="Permanent link">&para;</a></h2>
+<p>The runner checks every scenario registered with <code>register_scenario()</code> when
+it builds it, so a run, a batch (<code>scenario='lane_change/*'</code>) and every job of a
+sweep are checked before anything starts. To check without running anything:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w">                                   </span><span class="c1"># every scenario config</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'lane_change/*'</span><span class="w"> </span>scenario.timeout_seconds<span class="o">=</span><span class="m">20</span>
+</code></pre></div>
+<p><code>scenario-check</code> composes each config exactly as the runner does, so the same
+overrides apply. It exits with 0 when every scenario passed, 1 when one
+failed, and 2 when there is no Codon compiler. A scenario package can make
+the same check in its own tests, with no simulator:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_scenario</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_my_scenario_compiles</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">typecheck_scenario</span><span class="p">(</span><span class="n">MyScenario</span><span class="p">,</span> <span class="n">MyScenarioConfig</span><span class="p">,</span> <span class="p">{</span><span class="s2">"timeout_seconds"</span><span class="p">:</span> <span class="mf">10.0</span><span class="p">})</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="when-it-runs-the-typecheck-key">When it runs: the <code>typecheck</code> key<a class="headerlink" href="#when-it-runs-the-typecheck-key" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auto</code> (default)</td>
+<td>Check when a Codon compiler is installed; warn and run unchecked when none is.</td>
+</tr>
+<tr>
+<td><code>required</code></td>
+<td>Refuse to run without a Codon compiler.</td>
+</tr>
+<tr>
+<td><code>off</code></td>
+<td>Do not check.</td>
+</tr>
+</tbody>
+</table>
+<p>Set it like any other key (<code>uv run scenario ... typecheck=required</code>) or with
+<code>AUTOWARE_CARLA_SCENARIO_TYPECHECK</code>, which takes precedence. A scenario
+registered with <code>register_scenario_builder()</code> (a custom builder, such as the
+packages the Scenario Editor exports) is not checked: only its builder knows
+how it is constructed.</p>
+<h3 id="installing-codon-and-typesafe_carla">Installing Codon and typesafe_carla<a class="headerlink" href="#installing-codon-and-typesafe_carla" title="Permanent link">&para;</a></h3>
+<p>The check needs typesafe_carla (the <code>typesafe-carla</code> package, from PyPI) and
+the Codon compiler it pins (<code>typesafe-carla-toolchain</code>, 0.19, which
+typesafe-carla depends on). Both ship for Linux x86_64 and aarch64, and both are
+run-time dependencies of the framework anyway: typesafe_carla is its CARLA
+client (see <a href="../installation/">installation</a>).</p>
+<p>The checker finds Codon the way typesafe_carla's <code>typesafe-codon</code> launcher
+does (it calls typesafe_carla's own lookup), so one setup serves both:
+<code>$TYPESAFE_CODON</code> (a <code>codon</code> executable), the <code>typesafe-carla-toolchain</code>
+package, <code>$CODON_DIR/bin/codon</code>, <code>~/.codon/bin/codon</code>, then <code>codon</code> on <code>PATH</code>.
+It runs it with the launcher's environment (<code>CODON_DIR</code>, and <code>LD_LIBRARY_PATH</code>
+for the bundled runtime).
+The check is written for Codon 0.19: a Codon of another release series counts
+as no Codon at all, so <code>auto</code> warns and <code>required</code> refuses. So does a missing
+typesafe-carla.</p>
+<h2 id="what-is-checked">What is checked<a class="headerlink" href="#what-is-checked" title="Permanent link">&para;</a></h2>
+<p>The checker copies the scenario's own modules (the module defining the
+scenario class, its config class, and every module of the same package they
+import) into a scratch directory, next to a typed model of the framework, and
+compiles a small program that does what the runner does:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">config</span> <span class="o">=</span> <span class="n">MyScenarioConfig</span><span class="p">()</span>          <span class="c1"># then one line per YAML value:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">config</span><span class="o">.</span><span class="n">timeout_seconds</span> <span class="o">=</span> <span class="mf">10.0</span>        <span class="c1">#   scenario.timeout_seconds</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">scenario</span> <span class="o">=</span> <span class="n">MyScenario</span><span class="p">(</span><span class="n">ego</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="o">=...</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=...</span><span class="p">)</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">scenario</span><span class="o">.</span><span class="n">setup</span><span class="p">()</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">done</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">scenario</span><span class="o">.</span><span class="n">is_done</span><span class="p">()</span>
+</code></pre></div>
+<p>Codon checks a function only when something calls it, so what is checked is
+everything <code>setup()</code> and <code>is_done()</code> reach: the calls into the framework, the
+scenario's own helpers, and, through <code>register_pass_condition()</code> and the
+other <code>register_*</code> methods, the <code>check()</code> of a custom condition and the
+<code>execute()</code> of a custom action.</p>
+<p>An ODD written in Python (<a href="../odd/">ODD</a>) is checked the same way: the program
+calls its builder (<code>odd: OddDefinition = urban_odd()</code>). Every attribute's
+probe is then called with a world, and every condition must come from an
+attribute. The runner checks the ODD named by the <code>odd</code> key under the same
+<code>typecheck</code> mode, and <code>scenario-odd check</code> does it without running anything.</p>
+<h3 id="the-model">The model<a class="headerlink" href="#the-model" title="Permanent link">&para;</a></h3>
+<p><code>autoware_carla_scenario/typecheck/codon/</code> holds Codon declarations of
+everything a scenario imports from <code>autoware_carla_scenario</code>: the conditions,
+actions, poses and coordinate functions, entities, <code>BaseScenario</code>, the shared
+config dataclasses, with their static types. The CARLA API is not modelled:
+the checker puts typesafe_carla's Codon library next to the model, the way
+<code>typesafe-codon</code> puts it on <code>CODON_PATH</code>, and <code>import typesafe_carla.carla as
+carla</code> (the import the runtime uses) resolves to it, so a scenario is checked
+against the whole typed CARLA API.
+typesafe_carla's Python-API compatibility shortcuts (such as calling a
+<code>Vehicle</code> method on a plain <code>Actor</code>) compile, as they do outside strict mode.
+Nothing in the model runs; <code>test_typecheck_model.py</code> keeps every declaration
+in step with the Python definition of the same name (parameter names, order,
+defaults, keyword-only parameters, methods, enum members).</p>
+<p>A scenario that imports a module with no model (numpy, or a framework module
+outside the public API) is refused with a message naming the module.</p>
+<h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
+<p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
+places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
+<code>Optional[X]</code>, drops <code>@dataclass</code> and resolves <code>field(...)</code> defaults, accepts
+keyword-only parameters, required ones after a default included, gives a list of different conditions the type
+<code>list[BaseCondition]</code>, and drops a parameter or return annotation naming a
+class the module defines further down, which Codon cannot name yet). What a
+scenario has to do itself:</p>
+<ul>
+<li><strong>Declare the attributes it assigns on <code>self</code></strong>, at class level, with their
+  type:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">_config</span><span class="p">:</span> <span class="n">MyScenarioConfig</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="o">=</span><span class="n">spawn_pose</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="n">ground_projection</span><span class="p">)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">MyScenarioConfig</span><span class="p">()</span>
+</code></pre></div>
+<p>A bare annotation is ignored by Python, so this changes nothing when the
+  scenario runs; Codon needs it to type an attribute of a subclass. The check
+  names each undeclared attribute and suggests its type.
+- <strong>Use only the public API</strong> from <code>autoware_carla_scenario</code> and its listed
+  subpackages, and the <code>BaseScenario</code> attributes meant for subclasses
+  (<code>ego_config</code>, <code>ego_entity</code>, <code>world</code>, <code>_ground_projection</code>, ...).
+- <strong>Pass numbers of the declared type.</strong> An <code>int</code> is accepted for a <code>float</code>,
+  but not inside a container: a <code>list[float]</code> parameter wants <code>[1.0, 2.0]</code>.
+  YAML values are converted for you.
+- <strong>Convert nested mappings in the config.</strong> The runner passes a YAML mapping
+  to the config class as a <code>dict</code>, so a field annotated with a dataclass
+  (<code>goal: Goal</code>) holds one at run time unless the config's <code>__post_init__</code>
+  turns it into a <code>Goal</code>, as the built-in configs do for their NPC lists.
+  The check builds the config the same way and refuses an unconverted
+  mapping at its <code>scenario.&lt;key&gt;</code>.</p>
+<p>Annotations Codon cannot express (<code>Union</code> of two types, <code>Any</code>, <code>Callable</code>,
+<code>Sequence</code>, <code>type[...]</code>) are dropped from parameters, which become generic:
+Codon then checks each call with the arguments it is given.</p>
+<p>The checker also rewrites what Codon spells differently: an <code>Enum</code> class (its
+members become instances with a <code>name</code> and a typed <code>value</code>; a lookup by value,
+<code>ActionState("completeState")</code>, takes a value of that type and is typed but
+not resolved to the member; looking a member up by name and iterating over the
+class are not modelled), a class deriving from an exception, a <code>@classmethod</code>
+(a static method of its class: <code>cls</code> names the class it is defined in), and an
+annotation naming one of CARLA's integer enumerations
+(<code>carla.TrafficLightState</code>), which typesafe_carla's Codon library has as a
+value whose members are <code>int</code>, not as a type: it becomes <code>int</code>.</p>
+<h2 id="checking-the-framework-itself">Checking the framework itself<a class="headerlink" href="#checking-the-framework-itself" title="Permanent link">&para;</a></h2>
+<p>The scenario check trusts the model: it never compiles the framework's own
+source. The library check does, a module at a time, as each is made to
+compile:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w">                                   </span><span class="c1"># every checked module</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w"> </span>autoware_carla_scenario.kinematics.vector
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_library</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">typecheck_library</span><span class="p">()</span>  <span class="c1"># the modules typecheck/library.py lists as checked</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
+</code></pre></div>
+<p><code>test_typecheck_library.py</code> makes the same check in the test suite.</p>
+<h3 id="the-manifest-typechecklibrarypy">The manifest: <code>typecheck/library.py</code><a class="headerlink" href="#the-manifest-typechecklibrarypy" title="Permanent link">&para;</a></h3>
+<p><code>CHECKED</code> lists the modules compiled from their source; <code>EXCLUDED</code> maps every
+other module to the reason it is not. <code>"not yet checked (#45)"</code> marks a module
+nobody has made compile yet; any other reason names what keeps a module out
+(<code>"imports numpy, lanelet2"</code>: a package or a standard module Codon cannot
+compile). Every module of the package except <code>typecheck/</code> is in exactly one of
+the two, which the test suite checks, so <strong>a new module needs an entry</strong>.</p>
+<p><code>UNCALLED</code> names the few public functions and methods of a checked module the
+check leaves out (<code>module.Class.method</code>), each with its reason: one whose job
+Codon cannot express, in a module that otherwise compiles. Today that is
+what builds a condition's details (<code>get_details()</code>, <code>to_summary_dict()</code>,
+<code>to_dict()</code>: a <code>dict[str, Any]</code> of mixed value types) and what serialises
+them (<code>ScenarioResult.to_json()</code>, with <code>json</code>). Codon compiles a function
+only when something calls it, so neither its body nor an import made inside
+it is compiled: a module that needs a standard module Codon lacks for one
+function imports it inside that function (<code>import json</code> in <code>to_json()</code>) and
+lists the function here. A test checks that every entry names a public
+function or method of a checked module.</p>
+<p>To check one more module:</p>
+<ol>
+<li>Move its entry from <code>EXCLUDED</code> to <code>CHECKED</code>.</li>
+<li>Run <code>uv run scenario-check --library</code> and fix what it reports, in the
+   module. Only annotations and Codon-friendly rewrites: the module must
+   behave exactly as it did.</li>
+<li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
+</ol>
+<h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 63 of
+the package's 217 modules (29%; about 9,100 of 66,500 lines) are <code>CHECKED</code>:
+the kinematics, the coordinate frames and poses, the condition base and
+nearly every condition, the action base with the environment and
+traffic-signal actions, the measures, the ODD units and the CARLA-only
+helpers. 30 functions and methods of those modules are <code>UNCALLED</code>, almost all
+of them a condition's <code>get_details()</code>. The 154 <code>EXCLUDED</code> modules fall into
+three groups:</p>
+<ul>
+<li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
+  lacks (<code>pathlib</code>, <code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>). This is
+  the tooling around a run (the editor, the UI, authoring, the sweeper, the
+  map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
+<li><strong>About 30 build on an excluded module</strong>: the entity actions, through
+  <code>entity.registry</code>; the example scenarios, through <code>examples.configs</code>;
+  the signal controllers, the traffic backends and the authoring compiler.</li>
+<li><strong>About 15 hold values Codon has no type for</strong>: <code>Any</code> (<code>entity.registry</code>,
+  <code>coverage.items</code>, <code>odd.model</code>), a union-typed attribute, which crashes
+  Codon 0.19 (<code>VehicleEntityConfig.role_name</code>, which also keeps
+  <code>scenario_base</code> out), a variable-length tuple (<code>route.model</code>), or a class
+  as a value (<code>utils.config</code>).</li>
+</ul>
+<p>The scenario check is not limited by this: it compiles every scenario against
+the model, which declares the whole public API.</p>
+<h3 id="what-is-compiled">What is compiled<a class="headerlink" href="#what-is-compiled" title="Permanent link">&para;</a></h3>
+<p>Codon checks a function only when something calls it, so the check appends a
+function to each checked module that calls every public function and every
+method of every public class (constructors, static and class methods,
+properties and dunder methods included) with a value of each parameter's
+annotated type:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_acs_library_check</span><span class="p">():</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">normalize_angle_deg</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">Vector3</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">)</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">))</span>
+</code></pre></div>
+<p><code>_acs_value(T)</code> is a <code>T</code> Codon cannot tell from a real one; nothing compiled
+is ever run. A parameter annotated with a union (<code>Lanelet2Pose |
+OpenDrivePose</code>) is called once with each member, so the body is checked for
+every type it accepts. A parameter with no annotation, or one Codon cannot
+express (<code>Any</code>, <code>object</code>, <code>Callable[..., R]</code>, <code>Callable[[Any], Any]</code>, ...),
+gives the check nothing to call with and is reported as a problem of the
+module, at its line: annotate it with the type its callers pass. The one
+exception is <code>other: object</code> in <code>__eq__</code> and <code>__ne__</code>, which Python requires;
+it is called with the class itself. A <code>Callable</code> whose argument and result
+types Codon can express (<code>Callable[[carla.World], Optional[float]]</code>, a
+dataclass field too) is called with a value of Codon's <code>Callable</code> type, which
+a function of that signature converts to.</p>
+<h3 id="checked-modules-and-the-model">Checked modules and the model<a class="headerlink" href="#checked-modules-and-the-model" title="Permanent link">&para;</a></h3>
+<p>The checked modules are compiled next to the same model the scenario check
+uses. Every import of the framework in a checked module is pointed at what
+stands in for it in the check's workspace:</p>
+<ul>
+<li>another <strong>checked</strong> module: its own (rewritten) source;</li>
+<li>any other module: its <strong>model</strong>, the <code>codon/autoware_carla_scenario/</code> module
+  of the public package it belongs to (<code>coordinate.poses</code> is modelled by
+  <code>coordinate.codon</code>), or, for a module of a package that is itself checked,
+  a model of that module alone (<code>utils/traffic_light.codon</code>). A module with no
+  model (<code>utils.config</code>) cannot be imported by a checked module until it is
+  checked itself.</li>
+</ul>
+<p>A model module that stands in for unchecked code (<code>coordinate.codon</code> for
+<code>transform.py</code> and <code>map_manager.py</code>) declares only what the checked modules
+and scenarios use of it: <code>MapManager</code> there is <code>get_instance()</code> and the
+<code>road_network</code> it reads, not the class's whole API.</p>
+<p>A checked module is compiled under a name of its own
+(<code>_acs_lib.autoware_carla_scenario__coordinate__frames</code>), since Codon reads
+the workspace's packages only from <code>.codon</code> files and names a file in its
+errors by its base name alone; errors are reported at the line of the real
+source file. A type a checked module defines is not the type the model
+declares under the same name, so a checked module cannot hand its own value to
+a model function that wants the model's: check modules bottom-up, before the
+modules that use them.</p>
+<p>Where the model's functions take the types a checked module defines (the
+poses, which <code>to_opendrive</code> takes and returns), the model's own declarations
+of them live in a model module of their own (<code>_poses.codon</code>), which
+<code>REPLACED_MODELS</code> in <code>typecheck/library.py</code> names with the modules it
+models. Once those are all checked, the library check compiles that model
+module as a re-export of their definitions, so the model and the checked
+modules share one <code>Lanelet2Pose</code>. A name the model declares that none of the
+checked modules defines is reported.</p>
+<h3 id="conditions-the-checked-base-and-the-model">Conditions: the checked base and the model<a class="headerlink" href="#conditions-the-checked-base-and-the-model" title="Permanent link">&para;</a></h3>
+<p><code>conditions.base</code> is checked, so the checked conditions derive from the real
+<code>BaseCondition</code> (<code>_acs_lib.autoware_carla_scenario__conditions__base</code>), not
+from the model's. The two are different types that never meet:</p>
+<ul>
+<li>the <strong>scenario check</strong> compiles a scenario against the model only; no
+  checked module is in its workspace, and the model's <code>BaseCondition</code>,
+  <code>_expect_condition</code> and <code>_acs_list</code> (which recognises a condition by the
+  model-only <code>_acs_condition</code> marker) are unchanged;</li>
+<li>the <strong>library check</strong> compiles the checked conditions against the checked
+  base. A checked module that hands a condition to a model function (an
+  action, <code>scenario_base</code>) cannot do so until that module is checked too;
+  <code>_acs_list</code> gives a list display of checked conditions the type of its
+  first element, so a display mixing two checked condition classes waits for
+  the same.</li>
+</ul>
+<p><code>BaseCondition.__init_subclass__</code>, which wraps every subclass's <code>check()</code> to
+record its last result for the UI, is in <code>UNCALLED</code>: the check sees each
+<code>check()</code> as written.</p>
+<p><code>actions.base</code> is checked the same way: a checked action takes the checked
+<code>BaseCondition</code>, so it imports it from <code>conditions.base</code> rather than from the
+<code>conditions</code> package, which the model stands in for until it is checked. Its
+<code>BaseAction</code> and <code>ActionState</code> are again not the model's, so
+<code>conditions.action_state</code> watches checked actions. An action that hands a
+condition from an unchecked module to its base (<code>SetSpeedAction</code>'s default
+<code>SpeedCondition</code>) waits for that module.</p>
+<h3 id="making-a-module-compile">Making a module compile<a class="headerlink" href="#making-a-module-compile" title="Permanent link">&para;</a></h3>
+<p>What Codon 0.19 needs that Python does not, beyond
+<a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
+<ul>
+<li><strong>Annotate what the check calls</strong>: every public parameter, with a type
+  Codon can express. Spell a union out (<code>Lanelet2Pose | OpenDrivePose</code>) rather
+  than through an alias (<code>AnyPose</code>); a union with <code>object</code> or <code>Any</code> in it
+  gives nothing to call with.</li>
+<li><strong>Declare attributes</strong> on any class in a hierarchy (exceptions included)
+  and on a class with <code>__slots__</code>, at class level (<code>_value: str</code>).</li>
+<li><strong><code>hasattr()</code> instead of <code>getattr(x, name, default)</code></strong>: Codon decides
+  <code>hasattr</code> when it compiles, so the branch for a type without the attribute
+  is never compiled.</li>
+<li>An exception's <code>__init__</code> passes one message string to <code>super().__init__</code>.
+  An exception class with nothing in its body but a docstring needs that
+  <code>__init__</code> written out (<code>def __init__(self, message: str) -&gt; None:</code>).</li>
+<li><strong><code>key in d</code> and <code>d[key]</code> instead of <code>d.get(key)</code></strong>: Codon's <code>dict.get</code>
+  wants a default of the value's type. Likewise <code>if not x: continue</code> instead
+  of <code>(x or {})</code>, <code>s.startswith(a) or s.startswith(b)</code> instead of
+  <code>s.startswith((a, b))</code>, and <code>if x is None: return None</code> / <code>return x.attr</code>
+  instead of <code>None if x is None else x.attr</code>.</li>
+<li><strong>A dict of values of different types</strong> (<code>{"at": None, "around": None}</code>
+  read back as a tuple and a list) becomes a small class with one declared
+  attribute per key.</li>
+<li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>importlib</code>,
+  <code>pathlib</code>, ...) are not available to a checked module; the <code>typing</code>,
+  <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code> and <code>__future__</code> shims of
+  <code>codon/</code> are. <code>collections.abc</code> is not: import <code>Sequence</code> and the other
+  abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
+  Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base.
+  <code>typing.Any</code> imports, and every annotation naming it is dropped.</li>
+<li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
+  method a subclass overrides when one of its parameters is generic, which an
+  abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.</li>
+<li><strong>No <code>**</code> in a dict display</strong> (<code>{"a": 1, **other}</code>): Codon's parser fails on
+  it, even in a function it never compiles. Build the dict, then
+  <code>update()</code> it.</li>
+<li><strong><code>dict.get()</code> takes a default</strong> in Codon, of the value type. Where
+  "absent" has no value of that type, test membership:
+  <code>d[k] if k in d else None</code>.</li>
+<li><strong>CARLA's containers are not lists.</strong> <code>world.get_actors()</code> is a
+  <code>carla.ActorList</code>; a parameter that takes it or a list is
+  <code>Union[carla.ActorList, list[carla.Actor]]</code>, and the check calls it with
+  each.</li>
+<li><strong>Codon cannot hash a class</strong>: <code>hash((MyClass, x))</code> names the class by its
+  name instead.</li>
+<li><strong>An attribute holds one type</strong>: one assigned a union (<code>EntityRole | str</code>)
+  is stored converted where every use converts it anyway
+  (<code>self._entity_name = str(entity_name)</code>). Codon 0.19 crashes on an
+  attribute declared with a union ("union already sealed"), so where the
+  union is what the class holds (a public dataclass field such as
+  <code>VehicleEntityConfig.role_name</code>), the module stays in <code>EXCLUDED</code>.</li>
+<li><strong>Annotate a local that starts as <code>None</code></strong> (<code>spawn_points:
+  Optional[list[carla.Transform]] = None</code>): Codon types it by its first
+  assignment, and on a branch it then compiles alone it can crash without a
+  diagnostic. A function that imports a name locally (<code>import
+  typesafe_carla.carla as carla</code>) makes it local to the whole function, so an
+  annotation naming it needs that import above it.</li>
+<li><strong>Operators take the operand types they accept</strong>, not <code>object</code>. Annotate
+  <code>other</code> with the class (<code>def __add__(self, other: FrenetVelocity)</code>) and a
+  scalar with <code>float</code>, and keep the <code>isinstance</code> guard that returns
+  <code>NotImplemented</code>: Python still runs it, and Codon, which decides
+  <code>isinstance</code> when it compiles, drops it.</li>
+<li><strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
+  -&gt; Relative</code>, <code>Absolute - Relative -&gt; Absolute</code>) keeps its <code>@overload</code>
+  stubs, for mypy, and spells the union out on the implementation:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nd">@overload</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nd">@overload</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
+</code></pre></div>
+<p>The check calls the implementation once per member, and Codon compiles
+  only the <code>isinstance</code> branch of that member, so each call has one result
+  type; the <code>Union</code> return annotation is dropped. Two classes whose methods
+  take each other are fine: an annotation naming the later one is dropped
+  from the earlier one's signatures, and the check still calls with it.
+- <strong>Two checked modules that import each other</strong>: Codon reads
+  <code>TYPE_CHECKING</code> as true, so an import made only for annotations is still
+  an import cycle, and Codon resolves a cycle only with the names already
+  defined. Put that <code>if TYPE_CHECKING:</code> import at the end of its module
+  (<code># noqa: E402</code>), after the names the other module imports, as
+  <code>coordinate/frames.py</code> does for <code>poses.py</code>. Set class attributes in the
+  class body (<code>FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2</code>)
+  rather than from a function run after the class.
+- <strong>Codon does not narrow an <code>Optional</code></strong> after <code>if x is None: return</code>. Where
+  the narrowed value goes into something typed (a tuple the function
+  returns), assign it to an annotated local first (<code>od: OpenDrivePose = x</code>),
+  which Codon unwraps.
+- <strong>Codon does not narrow a union either</strong>, with <code>is</code> or <code>isinstance</code>, and an
+  attribute holding a union (<code>Union[Sequence[int], TrafficLightTarget,
+  None]</code>) reaches every use as the union. Store it split by kind
+  (<code>_all_lights: bool</code>, <code>_lanelet2_ids: Optional[Sequence[int]]</code>), deciding
+  the kind once in <code>__init__</code>, where <code>isinstance</code> on the parameter is decided
+  when Codon compiles.
+- <strong>A default of a subclass for an <code>Optional</code> of its base</strong> goes through an
+  <code>if</code> statement, not a conditional expression: <code>x if x is not None else
+  Sub()</code> is refused (<code>Optional[Base]</code> is not <code>Optional[Sub]</code>).
+- <strong>A dict has no truth value</strong> in Codon: <code>if not d:</code> is <code>if len(d) == 0:</code>.
+- <strong>No <code>setattr(obj, name, value)</code> with a name known only at run time</strong>:
+  spell the assignments out (<code>actions/environment.py</code>).
+- <strong>One <code>except</code> clause per exception type</strong>: Codon 0.19 does not take a
+  tuple (<code>except (KeyError, ValueError):</code>). <code>raise X from None</code> is rewritten
+  to <code>raise X</code> by the check; <code>raise X from exc</code> compiles as it is.
+- <strong>No <code>frozenset</code></strong> and no variable-length tuple (<code>tuple[X, ...]</code>, which the
+  check drops from an annotation): use a <code>set</code> or a <code>list</code> where nothing
+  relies on the immutability.
+- <strong>An <code>Optional</code> attribute is assigned without an annotation</strong>: with one
+  declared at class level (<code>_lane_id: Optional[int]</code>), Codon refuses
+  <code>self._lane_id: Optional[int] = address.lane_id</code> (an <code>int</code> "does not match"
+  <code>Optional[int]</code>) but takes <code>self._lane_id = address.lane_id</code>, and
+  <code>X(...) if c else None</code> likewise only without the annotation.
+- <strong><code>x or []</code> with <code>x: Optional[list[T]]</code></strong> has no one type in Codon: start
+  from an annotated empty list and assign <code>x</code> under <code>if x:</code>.
+- <strong>A subclass goes into an <code>Optional</code> base parameter from a base-typed
+  variable</strong>: Codon does not upcast and wrap in one step, so
+  <code>super().__init__(child=PersistentCondition(...))</code> against
+  <code>child: BaseCondition | None</code> fails, and
+  <code>child: BaseCondition = PersistentCondition(...)</code> passed on compiles.
+- <strong><code>getattr(x, name, None)</code></strong> for an attribute a value may lack at run time
+  (a mock in a test) becomes <code>try: v = x.name</code> / <code>except AttributeError:</code>,
+  which reads the attribute once, as <code>getattr</code> did.
+- <strong><code>dict.get</code> takes its default</strong>: Codon's has no one-argument form. Test
+  <code>key in d</code> and index instead of <code>d.get(key)</code>.
+- <strong>No sign in an f-string format spec</strong>: Codon's parser rejects
+  <code>f"{x:+.1f}"</code>. Format the value first (<code>x.__format__("+.1f")</code>) and put the
+  string in the f-string.
+- <strong><code>carla.TrafficLightState</code> is a value in the check</strong>, not a type: its
+  members are ints, as <code>get_state()</code> returns. The check reads an annotation
+  naming one of typesafe_carla's integer enumerations
+  (<code>carla.TrafficLightState</code>, <code>carla.LaneType</code>, ...) as <code>int</code>, so keep the
+  CARLA name (the authoring code generator reads it), and compare with
+  <code>get_state()</code> rather than look a member up by value.
+- <strong>A sensor callback gets a <code>carla.SensorData</code> in the check</strong>, where the
+  CPython API hands it the measurement itself (a <code>carla.CollisionEvent</code>).
+  Listen through a method that converts only when it has to
+  (<code>if hasattr(data, "as_collision"): data = data.as_collision()</code>, as
+  <code>conditions/collision.py</code> does): Codon decides <code>hasattr</code> when it compiles,
+  and the CPython measurement has no <code>as_&lt;kind&gt;()</code>.
+- <strong>No variable-length tuples</strong>: Codon's tuples have a fixed length, so a
+  <code>tuple[int, ...]</code> parameter or field gives the check nothing to call with.
+  Turning it into a list changes what the class does (a frozen dataclass's
+  hash, its equality with a tuple), so such a module stays in <code>EXCLUDED</code>
+  (<code>route.model</code>).
+- <strong>A name the model lacks at the boundary</strong>: when a checked module imports a
+  name of a modelled package that the model does not declare
+  (<code>trajectory/__init__.py</code> re-exports <code>ResolvedTrajectory</code>), declare it in
+  the model module. When the package does not export it, add it to
+  <code>_BOUNDARY</code> in <code>test_typecheck_model.py</code>, so it is compared with the Python
+  class as an exported name is.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 05:06:28 UTC"><span class="timeago" datetime="2026-10-11T05:06:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 05:06:28 UTC">2026-10-11</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 3, 2026 06:41:45 UTC"><span class="timeago" datetime="2026-10-03T06:41:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 3, 2026 06:41:45 UTC">2026-10-03</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
