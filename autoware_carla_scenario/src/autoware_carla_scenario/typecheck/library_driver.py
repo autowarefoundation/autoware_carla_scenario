@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import ast
 import itertools
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
 from .driver import Driver
@@ -124,8 +124,14 @@ class LibraryChecks:
 
 
 class _Renderer:
-    def __init__(self, uncalled: Collection[str] = ()) -> None:
+    def __init__(
+        self,
+        uncalled: Collection[str] = (),
+        classes: Mapping[str, ast.ClassDef] | None = None,
+    ) -> None:
         self.uncalled = set(uncalled)
+        #: Classes by name, for the base classes of a dataclass.
+        self.classes: dict[str, ast.ClassDef] = dict(classes or {})
         self.lines = [
             "",
             "",
@@ -298,39 +304,29 @@ class _Renderer:
         mapping) is left out of the call, as the model leaves it out of its
         class, and the fields after it are passed by keyword; the checked
         class keeps it, with a default of its type (``_field_default``).
+
+        The fields of a dataclass base class come first, as in Python's
+        constructor and Codon's, a field redefined keeping its place.  Of
+        several bases with fields, Python takes the last one's first and
+        Codon 0.19 the first one's: such a constructor is a problem.
         """
-        fields: list[ast.arg] = []
-        for stmt in node.body:
-            if not (
-                isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
-            ):
-                continue
-            if (_dotted(stmt.annotation) or "").endswith("KW_ONLY"):
-                break  # keyword-only fields: not modelled, so not called
-            if isinstance(stmt.annotation, ast.Subscript) and (
-                _dotted(stmt.annotation.value) or ""
-            ).endswith("ClassVar"):
-                continue
-            value = stmt.value
-            if isinstance(value, ast.Call) and any(
-                kw.arg == "init"
-                and isinstance(kw.value, ast.Constant)
-                and kw.value.value is False
-                for kw in value.keywords
-            ):
-                continue
-            if value is not None and _names_any(stmt.annotation):
-                fields.append(_LEFT_OUT)
-                continue
-            arg = ast.arg(stmt.target.id, stmt.annotation)
-            arg.lineno = stmt.lineno
-            fields.append(arg)
+        fields = self._fields(node, set())
+        if fields is None:
+            self.problems.append(
+                (
+                    node.lineno,
+                    f"{node.name}: Codon 0.19 orders the fields of several "
+                    "dataclass bases otherwise than Python; list "
+                    f"`{node.name}.__init__` as UNCALLED",
+                )
+            )
+            return
         positional: list[ast.arg] = []
         keyword: list[ast.arg] = []
         choices: list[list[str]] = []
         left_out = False
-        for arg in fields:
-            if arg is _LEFT_OUT:
+        for arg in fields.values():
+            if arg.arg == _LEFT_OUT:
                 left_out = True
                 continue
             texts = self._field_types(arg.annotation)
@@ -349,6 +345,73 @@ class _Renderer:
         self._emit_calls(
             node.name, f"{node.name}.__init__", positional, keyword, choices
         )
+
+    def _fields(self, node: ast.ClassDef, seen: set[str]) -> dict[str, ast.arg] | None:
+        """The fields of the dataclass *node*, its bases' first, by name.
+
+        A field the call leaves out is an ``ast.arg`` named
+        :data:`_LEFT_OUT`.  ``None`` when more than one base brings fields
+        (Python and Codon 0.19 order them differently).
+        """
+        seen = seen | {node.name}
+        fields: dict[str, ast.arg] = {}
+        inherited: list[dict[str, ast.arg]] = []
+        for base in [b for n in node.bases for b in self._dataclasses_of(n, seen)]:
+            base_fields = self._fields(base, seen)
+            if base_fields is None:
+                return None
+            if base_fields:
+                inherited.append(base_fields)
+        if len(inherited) > 1:
+            return None
+        for base_fields in inherited:
+            fields.update(base_fields)
+        for stmt in node.body:
+            if not (
+                isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+            ):
+                continue
+            if (_dotted(stmt.annotation) or "").endswith("KW_ONLY"):
+                break  # keyword-only fields: not modelled, so not called
+            if isinstance(stmt.annotation, ast.Subscript) and (
+                _dotted(stmt.annotation.value) or ""
+            ).endswith("ClassVar"):
+                continue
+            value = stmt.value
+            if isinstance(value, ast.Call) and any(
+                kw.arg == "init"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is False
+                for kw in value.keywords
+            ):
+                # Not in the constructor, even redefining a base's field.
+                fields.pop(stmt.target.id, None)
+                continue
+            name = stmt.target.id
+            if value is not None and _names_any(stmt.annotation):
+                fields[name] = ast.arg(_LEFT_OUT, stmt.annotation)
+                continue
+            arg = ast.arg(name, stmt.annotation)
+            arg.lineno = stmt.lineno
+            fields[name] = arg
+        return fields
+
+    def _dataclasses_of(
+        self, base_node: ast.expr, seen: set[str]
+    ) -> list[ast.ClassDef]:
+        """The dataclasses whose fields the base class *base_node* brings.
+
+        The base itself if it is a dataclass; for a plain class, the
+        dataclasses it derives from, as Python finds the fields through it.
+        """
+        base = self.classes.get((_dotted(base_node) or "").rsplit(".", 1)[-1])
+        if base is None or base.name in seen:
+            return []
+        if _is_dataclass(base):
+            return [base]
+        return [
+            b for n in base.bases for b in self._dataclasses_of(n, seen | {base.name})
+        ]
 
     @staticmethod
     def _field_types(annotation: ast.expr | None) -> list[str] | None:
@@ -373,8 +436,15 @@ class _Renderer:
         return [t for t in texts if t is not None]
 
 
-#: Stands for a dataclass field the constructor call leaves out.
-_LEFT_OUT = ast.arg("_acs_left_out")
+#: The name of a dataclass field the constructor call leaves out.
+_LEFT_OUT = "_acs_left_out"
+
+
+def _is_dataclass(node: ast.ClassDef) -> bool:
+    return bool(
+        {_dotted(d.func if isinstance(d, ast.Call) else d) for d in node.decorator_list}
+        & _DATACLASS
+    )
 
 
 def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
@@ -392,15 +462,20 @@ def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
 
 
 def render_library_checks(
-    tree: ast.Module, uncalled: Collection[str] = ()
+    tree: ast.Module,
+    uncalled: Collection[str] = (),
+    classes: Mapping[str, ast.ClassDef] | None = None,
 ) -> LibraryChecks:
     """The function to append to the module *tree* is the source of.
 
     *uncalled* names the functions the check leaves out (``function`` or
     ``Class.method``; ``Class.__init__`` for the constructor, generated or
-    not), as :data:`.library.UNCALLED` lists them.
+    not), as :data:`.library.UNCALLED` lists them.  *classes* are the classes
+    of the other checked modules, by name: a dataclass derived from one of
+    them is constructed with its fields too.
     """
-    renderer = _Renderer(uncalled)
+    own = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    renderer = _Renderer(uncalled, {**(classes or {}), **own})
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not node.name.startswith("_"):

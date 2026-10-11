@@ -111,6 +111,15 @@ def test_the_sweep_of_the_frame_asked_for_is_taken_and_the_backlog_dropped(
     assert sweep is not None and sweep[0, 0] == 14.0
 
 
+def test_the_listener_hands_the_measurement_to_receive() -> None:
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    lidar._on_sensor_data(_measurement(7))  # type: ignore[arg-type]  # noqa: SLF001
+    # typesafe_carla's Codon library hands over the SensorData instead.
+    data = SimpleNamespace(as_lidar=lambda: _measurement(8))
+    lidar._on_sensor_data(data)  # type: ignore[arg-type]  # noqa: SLF001
+    assert [lidar._sweeps.get_nowait()[0] for _ in range(2)] == [7, 8]  # noqa: SLF001
+
+
 def test_attach_pins_one_revolution_per_tick() -> None:
     blueprint = SimpleNamespace(attributes={}, has_attribute=lambda name: True)
     blueprint.set_attribute = blueprint.attributes.__setitem__
