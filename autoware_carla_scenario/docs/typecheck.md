@@ -524,6 +524,14 @@ What Codon 0.19 needs that Python does not, beyond
   up when the lookup misses and raise the `AttributeError` the call raised
   (`LaneChangeAction`, `TurnAction` and `SetSpeedAction` on a pedestrian),
   so a wrong kind still fails rather than reading as an entity not found.
+- **An entity is registered by kind, too**: `register_entity` picks the kind
+  with `isinstance(entity, BackendDriven)`, which Codon decides by the
+  static type and does not match for a subclass (a `VehicleEntity`), so a
+  checked caller calls `register_vehicle_entity` (through a `BackendDriven`
+  local, which upcasts) or `register_pedestrian_entity`. `BaseScenario`
+  calls them under an `isinstance` test on its parameter's own class, which
+  Codon decides as true, and hands anything else (a test double) to
+  `register_entity`, so at run time it is registered as before.
 - **`dict.get` takes its default**: Codon's has no one-argument form. Test
   `key in d` and index instead of `d.get(key)`.
 - **No sign in an f-string format spec**: Codon's parser rejects

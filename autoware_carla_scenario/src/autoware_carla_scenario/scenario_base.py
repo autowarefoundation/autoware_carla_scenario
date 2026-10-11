@@ -19,7 +19,6 @@ from typing import (
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
-    from .entity.pedestrian_entity import PedestrianEntity
 
 import typesafe_carla.carla as carla
 
@@ -36,6 +35,8 @@ from .coordinate import (
     to_opendrive,
 )
 from .entity._spawn import SpawnLocation, SpawnTransform
+from .entity.pedestrian_entity import PedestrianEntity
+from .entity.registry import register_entity as _register_entity
 from .entity.registry import register_pedestrian_entity as _register_pedestrian_entity
 from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
@@ -669,9 +670,16 @@ class BaseScenario(ABC):
         # Also by role, so an action that names this entity can find it.  The
         # list above is walked to apply initial speeds; the registry answers
         # "who is 'npc1'?", which is what a scenario document asks.  Handed on
-        # as the vehicle it is (a typed local: the static check upcasts there).
-        driven: BackendDriven = entity
-        _register_vehicle_entity(entity.role_name, driven)
+        # as the vehicle it is (a typed local: the static check upcasts there);
+        # anything else (a duck-typed double) goes through register_entity,
+        # which keeps an object of neither kind as both, as it always has.
+        # Codon resolves isinstance() by the static type, so it compiles only
+        # the typed branch.
+        if isinstance(entity, VehicleEntity):
+            driven: BackendDriven = entity
+            _register_vehicle_entity(entity.role_name, driven)
+        else:
+            _register_entity(entity.role_name, entity)
         # And whatever drives it.  One of the two, never both: the backend is
         # what a run selected, and the client is what a scenario driven outside
         # a run -- no runner, so no backend -- has always meant instead.
@@ -695,7 +703,12 @@ class BaseScenario(ABC):
         Args:
             entity: A :class:`PedestrianEntity` spawned in :meth:`setup`.
         """
-        _register_pedestrian_entity(entity.role_name, entity)
+        # Typed for the static check; anything else as register_entity
+        # always kept it (see register_entity above).
+        if isinstance(entity, PedestrianEntity):
+            _register_pedestrian_entity(entity.role_name, entity)
+        else:
+            _register_entity(entity.role_name, entity)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.
