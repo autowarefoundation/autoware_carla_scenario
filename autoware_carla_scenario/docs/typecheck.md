@@ -228,14 +228,16 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 66 of
-the package's 217 modules (30%; about 9,600 of 66,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 72 of
+the package's 219 modules (33%; about 11,300 of 66,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment and
 traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
-measures, the ODD units and the CARLA-only helpers. 30 functions and methods
-of those modules are `UNCALLED`, almost all of them a condition's
-`get_details()`. The 151 `EXCLUDED` modules fall into three groups:
+traffic backend interface with the TrafficManager backend, the measures, the
+ODD units and the CARLA-only helpers. 39 functions and methods of those
+modules are `UNCALLED`, most of them a condition's `get_details()`, the rest
+what takes a traffic backend's options node (`Mapping[str, Any]`). The 147
+`EXCLUDED` modules fall into three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -244,13 +246,14 @@ of those modules are `UNCALLED`, almost all of them a condition's
   map cache, the Autoware launcher) and everything that reads Lanelet2.
 - **About 30 build on an excluded module**: the entity actions, through
   `entity.registry`; the example scenarios, through `examples.configs`;
-  the signal controllers, the traffic backends and the authoring compiler.
+  the signal controllers, the SUMO backend and the authoring compiler.
 - **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
   which holds an entity of any kind, `coverage.items`, `odd.model`), a class
   or a callable of any value as a parameter (`scenario_base`'s `ego_type`,
   callbacks and measure expressions), a union-typed attribute, which crashes
   Codon 0.19 (`RelativeLanePose.entity_ref`), a variable-length tuple
-  (`route.model`), or a class as a value (`utils.config`).
+  (`route.model`), or a class as a value (`utils.config`, which
+  `traffic.config` imports only in its uncalled `from_mapping()`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -282,6 +285,12 @@ it is called with the class itself. A `Callable` whose argument and result
 types Codon can express (`Callable[[carla.World], Optional[float]]`, a
 dataclass field too) is called with a value of Codon's `Callable` type, which
 a function of that signature converts to.
+
+A method with keyword-only parameters or `**kwargs` is called through its
+class (`TrafficBackend.start(_acs_value(TrafficBackend), ...,
+skip_actor_ids=...)`): Codon 0.19 calls a method a subclass may override
+through a dispatch thunk, which takes neither a keyword argument nor
+`**kwargs`, and the call through the class checks the same body.
 
 ### Checked modules and the model
 
@@ -379,11 +388,51 @@ What Codon 0.19 needs that Python does not, beyond
   `dataclasses`, `enum`, `logging`, `abc` and `__future__` shims of
   `codon/` are. `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
-  Codon 0.19 cannot decorate a method; `ABC` is an empty base.
+  Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
+  `typing.Protocol`, whose `@runtime_checkable` is dropped too.
   `typing.Any` imports, and every annotation naming it is dropped.
+  `typing.TYPE_CHECKING` is a compile-time true, so Codon compiles only the
+  first branch of `if TYPE_CHECKING: ... else: ...`. The `logging` shim's
+  methods take `exc_info` as a `bool`.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
+- **A call to an overridden method passes every argument, by position, of
+  the parameter's own type**: Codon 0.19 calls it through a dispatch thunk,
+  which fills in no default, takes no keyword argument and no `**kwargs`,
+  and does not upcast. Hand a subclass over through a local of the
+  parameter's type (`entity: DrivenEntity = self`, as `traffic/driven.py`
+  does). A method that passes its `**kwargs` on to one
+  (`BackendDriven.turn_at_junction()`) goes in `UNCALLED`.
+- **A class cannot be named before it is defined or imported**, in a
+  signature or a class-level declaration, and an import cycle resolves only
+  with the names already defined. Two classes whose signatures name each
+  other across modules (a backend's methods take the entity, the entity holds
+  the backend) need a base class the first module defines: the backends take
+  a `traffic.base.DrivenEntity`, which `traffic.driven.BackendDriven` derives
+  from.
+- **A part of a module that needs what Codon lacks moves out**: the
+  backend interface of `traffic/base.py` is checked, and `TrafficContext`,
+  which holds `pathlib.Path`s, lives in `traffic/context.py` (re-exported by
+  `base`), which the model (`traffic.codon`) stands in for.
+- **A `carla.Actor` where the CARLA API takes a `carla.Vehicle`**
+  (`TrafficManager.set_desired_speed()`): typesafe_carla's Python API takes
+  the actor as it is, and its Codon library wants the checked conversion.
+  Convert under `if TYPE_CHECKING:`, which Codon reads as true and Python as
+  false, so nothing changes at run time (`traffic_manager._vehicle()`):
+
+  ```python
+  if TYPE_CHECKING:
+      return actor.as_vehicle()
+  else:
+      return actor
+  ```
+- **An import of the framework inside an uncalled function** is left as
+  written: Codon does not compile it, so a checked module may import a
+  module with no model there (`traffic.config` imports `utils.config` in
+  `from_mapping()`).
+- **A CARLA container has no truth value in Codon**: `if not found:` on a
+  `carla.BlueprintLibrary` is `if len(found) == 0:`.
 - **No `**` in a dict display** (`{"a": 1, **other}`): Codon's parser fails on
   it, even in a function it never compiles. Build the dict, then
   `update()` it.

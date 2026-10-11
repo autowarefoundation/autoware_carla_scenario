@@ -28,10 +28,10 @@ something which is not driving them.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import DEFAULT_TM_PORT
-from .base import LaneChangeDirection, TrafficBackend, TurnDirection
+from .base import DrivenEntity, LaneChangeDirection, TrafficBackend, TurnDirection
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -54,11 +54,12 @@ def _clientless() -> TrafficBackend:
     if _CLIENTLESS_BACKEND is None:
         from .traffic_manager import TrafficManagerBackend  # noqa: PLC0415
 
-        _CLIENTLESS_BACKEND = TrafficManagerBackend()
+        backend: TrafficBackend = TrafficManagerBackend()
+        _CLIENTLESS_BACKEND = backend
     return _CLIENTLESS_BACKEND
 
 
-class BackendDriven:
+class BackendDriven(DrivenEntity):
     """Manoeuvres for a vehicle a traffic backend steers.
 
     Mixed into :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` and
@@ -90,14 +91,6 @@ class BackendDriven:
     #: The TrafficManager backend :meth:`set_client` stands for, built there
     #: because that call is the only thing that ever supplies its ingredient.
     _fallback_backend: Optional[TrafficBackend] = None
-
-    #: The lane a backend aimed this vehicle at, and the map it was read from.
-    #: Written by whichever backend performs the lane change and read by
-    #: whichever one judges it finished -- state of *this vehicle's* manoeuvre,
-    #: so it lives on the vehicle: a backend is shared by the whole run, and the
-    #: entity is the one thing there is exactly one of per manoeuvre.
-    _lane_change_target: Optional[Tuple[int, int]] = None
-    _lane_change_map: Optional[Any] = None
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Inject the backend that drives this entity.
@@ -135,25 +128,35 @@ class BackendDriven:
 
         self._tm_client = client
         self._tm_port = tm_port
-        self._fallback_backend = TrafficManagerBackend(
+        # Through a local of the base type: Codon does not upcast and wrap in
+        # an Optional in one step (docs/typecheck.md).
+        fallback: TrafficBackend = TrafficManagerBackend(
             TrafficManagerBackendConfig(port=tm_port), client=client
         )
+        self._fallback_backend = fallback
 
     # ------------------------------------------------------------------
     # Manoeuvres -- delegated, every one of them
     # ------------------------------------------------------------------
 
+    # Each manoeuvre hands the backend ``self`` through a local typed as the
+    # DrivenEntity the backend takes: Codon passes a subclass to a method a
+    # subclass overrides only once it is that type (docs/typecheck.md).
+
     def change_lane(self, world: "carla.World", direction: LaneChangeDirection) -> None:
         """Move one lane in *direction*."""
-        self._resolve_backend().change_lane(self, world, direction)
+        entity: DrivenEntity = self
+        self._resolve_backend().change_lane(entity, world, direction)
 
     def lane_change_finished(self, world: "carla.World") -> bool:
         """Whether the manoeuvre has settled."""
-        return self._resolve_backend().lane_change_finished(self, world)
+        entity: DrivenEntity = self
+        return self._resolve_backend().lane_change_finished(entity, world)
 
     def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
         """Aim for *speed_kmh* from now on."""
-        self._resolve_backend().set_desired_speed(self, world, speed_kmh)
+        entity: DrivenEntity = self
+        self._resolve_backend().set_desired_speed(entity, world, speed_kmh)
 
     def turn_at_junction(
         self, world: "carla.World", direction: TurnDirection, **kwargs: Any
@@ -163,7 +166,8 @@ class BackendDriven:
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Stop the backend driving this vehicle; the caller drives it now."""
-        self._resolve_backend().release(self, world)
+        entity: DrivenEntity = self
+        self._resolve_backend().release(entity, world)
 
     # ------------------------------------------------------------------
     # Internals

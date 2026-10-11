@@ -41,6 +41,7 @@ from .transform import (
     _is_none,
     _union_members,
     codon_annotation,
+    uncalled_nodes,
 )
 
 __all__ = [
@@ -182,6 +183,7 @@ class _Renderer:
         *,
         drop_first: bool,
         owner: str | None = None,
+        receiver: str | None = None,
     ) -> None:
         args = func.args
         positional = [*args.posonlyargs, *args.args][1 if drop_first else 0 :]
@@ -190,7 +192,12 @@ class _Renderer:
         if any(c is None for c in choices):
             return
         self._emit_calls(
-            head, where, positional, args.kwonlyargs, [c for c in choices if c]
+            head,
+            where,
+            positional,
+            args.kwonlyargs,
+            [c for c in choices if c],
+            receiver=receiver,
         )
 
     def _emit_calls(
@@ -200,9 +207,12 @@ class _Renderer:
         positional: list[ast.arg],
         keyword: list[ast.arg],
         choices: list[list[str]],
+        *,
+        receiver: str | None = None,
     ) -> None:
         for combo in _combinations(choices):
-            values = [f"_acs_value({t})" for t in combo[: len(positional)]]
+            values = [receiver] if receiver is not None else []
+            values += [f"_acs_value({t})" for t in combo[: len(positional)]]
             values += [
                 f"{a.arg}=_acs_value({t})"
                 for a, t in zip(keyword, combo[len(positional) :])
@@ -256,6 +266,18 @@ class _Renderer:
                 self.calls(method, f"{name}.{method.name}", where, drop_first=False)
             elif "classmethod" in kinds:
                 self.calls(method, f"{name}.{method.name}", where, drop_first=True)
+            elif method.args.kwonlyargs or method.args.kwarg is not None:
+                # Through the class: Codon 0.19 calls a method a subclass may
+                # override through a dispatch thunk, which takes neither a
+                # keyword argument nor **kwargs.
+                self.calls(
+                    method,
+                    f"{name}.{method.name}",
+                    where,
+                    drop_first=True,
+                    owner=name,
+                    receiver=f"_acs_value({name})",
+                )
             else:
                 self.calls(
                     method,
@@ -322,30 +344,6 @@ def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
     for i, c in enumerate(choices):
         for alternative in c[1:]:
             out.append(first[:i] + (alternative,) + first[i + 1 :])
-    return out
-
-
-def uncalled_nodes(
-    tree: ast.Module, uncalled: Collection[str]
-) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    """The definitions in *tree* of the functions *uncalled* names.
-
-    *uncalled* names a function as ``function`` or ``Class.method``; a name
-    with no definition in *tree* is ignored.
-    """
-    wanted = set(uncalled)
-    out: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name in wanted:
-                out.append(node)
-        elif isinstance(node, ast.ClassDef):
-            out += [
-                m
-                for m in node.body
-                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and f"{node.name}.{m.name}" in wanted
-            ]
     return out
 
 

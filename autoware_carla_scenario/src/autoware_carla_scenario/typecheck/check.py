@@ -797,7 +797,12 @@ def _library_files(
     for name in names:
         module = sources.modules[name]
         redirected, problems = redirect_imports(
-            module.text, name, module.is_package, target, every.__contains__
+            module.text,
+            name,
+            module.is_package,
+            target,
+            every.__contains__,
+            uncalled=_uncalled(name),
         )
         checks = render_library_checks(module.tree, _uncalled(name))
         for line, message in [*problems, *checks.problems]:

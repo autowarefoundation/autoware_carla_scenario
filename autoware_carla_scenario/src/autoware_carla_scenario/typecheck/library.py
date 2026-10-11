@@ -108,6 +108,11 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.kinematics.frames",
     "autoware_carla_scenario.kinematics.vector",
     "autoware_carla_scenario.tools",
+    "autoware_carla_scenario.traffic",
+    "autoware_carla_scenario.traffic.base",
+    "autoware_carla_scenario.traffic.config",
+    "autoware_carla_scenario.traffic.driven",
+    "autoware_carla_scenario.traffic.traffic_manager",
     "autoware_carla_scenario.kinematics.velocity",
     "autoware_carla_scenario.measures",
     "autoware_carla_scenario.odd.scenario_measure",
@@ -123,6 +128,18 @@ CHECKED: tuple[str, ...] = (
 
 #: The reason of a method that builds a dict of mixed value types.
 _DETAILS = "builds a dict[str, Any] of mixed value types, which Codon cannot express"
+
+#: The reason of a function that takes a backend's options node.
+_OPTIONS = (
+    "takes a backend's options as `Mapping[str, Any]`, a Hydra node of mixed "
+    "value types, which Codon cannot express"
+)
+#: The reason of a config built from such a node.
+_FROM_MAPPING = (
+    f"{_OPTIONS}, and checks its keys with utils.config, which reads a "
+    "dataclass's fields from its class (`type`); utils.config is imported "
+    "inside it, so it is not compiled"
+)
 
 #: Public functions and methods of checked modules the check does not call,
 #: by dotted name (``module.Class.method``), with the reason.  Codon compiles
@@ -161,6 +178,15 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.route_progress.RouteProgressCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.sticky.StickyCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.traffic_signal.TrafficSignalCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.traffic.build_none": _OPTIONS,
+    "autoware_carla_scenario.traffic.build_sumo": _OPTIONS,
+    "autoware_carla_scenario.traffic.build_traffic_manager": _OPTIONS,
+    "autoware_carla_scenario.traffic.base.TrafficBackend.describe": _DETAILS,
+    "autoware_carla_scenario.traffic.config.TrafficConfig.__init__": "takes a backend's options as `dict[str, Any]`, a dict of mixed value types, which Codon cannot express",
+    "autoware_carla_scenario.traffic.config.TrafficConfig.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.config.TrafficManagerBackendConfig.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.driven.BackendDriven.turn_at_junction": "passes `**kwargs` on to TrafficBackend.turn_at_junction, which subclasses override: Codon 0.19 calls such a method through a dispatch thunk, which takes no `**kwargs`",
+    "autoware_carla_scenario.traffic.traffic_manager.TrafficManagerBackend.describe": _DETAILS,
 }
 
 #: Every other module, with the reason it is not compiled.
@@ -303,16 +329,12 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.sweeper.map_loader": "imports lanelet2, pathlib",
     "autoware_carla_scenario.templating": "imports pathlib, jinja2",
     "autoware_carla_scenario.tools.detect_no_3d_model_lanelets": "imports lanelet2, pathlib, omegaconf, tqdm, shutil, argparse",
-    "autoware_carla_scenario.traffic": "imports traffic.base, which is neither checked nor modelled, and its backend factories take `Mapping[str, Any]` options",
-    "autoware_carla_scenario.traffic.base": "imports pathlib",
-    "autoware_carla_scenario.traffic.config": "imports utils.config, which is neither checked nor modelled, and holds a backend's options as `dict[str, Any]`",
-    "autoware_carla_scenario.traffic.driven": "imports traffic.base, which is neither checked nor modelled, and holds the map a lane change was read from as `Any`",
-    "autoware_carla_scenario.traffic.registry": "imports traffic.base, which is neither checked nor modelled, and registry (pathlib, omegaconf, importlib); a backend factory is a `Callable`",
+    "autoware_carla_scenario.traffic.context": "imports pathlib",
+    "autoware_carla_scenario.traffic.registry": "imports registry (pathlib, omegaconf, importlib), which is not checked, and holds backend factories, each a `Callable[[Mapping[str, Any]], TrafficBackend]`, which Codon cannot express; traffic.codon models it for the traffic package",
     "autoware_carla_scenario.traffic.sumo": "imports traffic.sumo.config (pathlib), which is neither checked nor modelled",
     "autoware_carla_scenario.traffic.sumo.backend": "imports pathlib, traci, sumolib, libsumo",
     "autoware_carla_scenario.traffic.sumo.config": "imports pathlib",
     "autoware_carla_scenario.traffic.sumo.network": "imports pathlib, roadgen, sumo, subprocess, shutil, tempfile, importlib, hashlib",
-    "autoware_carla_scenario.traffic.traffic_manager": "subclasses traffic.base.TrafficBackend, which is neither checked nor modelled, and drives duck-typed entities and CARLA handles (`Any`), read with getattr defaults",
     "autoware_carla_scenario.trajectory.authoring": "parses document values of `Any` (YAML rows, editor fields) into `dict[str, Any]`, which Codon cannot express",
     "autoware_carla_scenario.trajectory.model": "imports inspect (TrajectoryVertex.__init__.__signature__); TrajectoryVertex holds a position of any of ten pose types and takes `*args: Any, **kwargs: Any`, and RelativeLanePose.entity_ref is a union-typed field (EntityRole or str), which crashes Codon 0.19",
     "autoware_carla_scenario.trajectory.relative_lane": "imports lanelet2, autoware_lanelet2_extension_python",

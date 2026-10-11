@@ -4,7 +4,9 @@
 # checker cannot express in Codon is dropped (typecheck/transform.py), so the
 # abstract collections only appear here for class-level declarations.
 
-TYPE_CHECKING = True
+# A compile-time constant, so `if TYPE_CHECKING: ... else: ...` compiles only
+# its first branch, as a type checker reads it.
+TYPE_CHECKING: Literal[bool] = True
 
 Sequence = List
 MutableSequence = List
@@ -21,3 +23,14 @@ FrozenSet = Set
 # (typecheck/transform.py), so nothing is ever typed with this class.
 class Any:
     pass
+
+
+# A protocol is an empty base here, and the checker drops @runtime_checkable
+# (typecheck/transform.py): Codon checks each call with the type it is given,
+# so a protocol class is only ever a declaration.
+class Protocol:
+    pass
+
+
+def runtime_checkable(cls):
+    return cls

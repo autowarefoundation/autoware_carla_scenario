@@ -1,8 +1,14 @@
 # Model of the parts of autoware_carla_scenario.traffic a scenario names
 # (docs/typecheck.md): the manoeuvre directions. Traffic backends are the
-# runner's business and are not modelled; BackendDriven, the base of the
-# checked entities (entity.ego, entity.vehicle_entity), is declared for the
-# library check, without the manoeuvres, which nothing checked calls.
+# runner's business and are not modelled for a scenario.
+#
+# The library check compiles traffic.base, traffic.config, traffic.driven,
+# traffic.traffic_manager and the package itself from their source
+# (typecheck/library.py), and this module stands in for the modules of the
+# package it does not: traffic.context (pathlib) and traffic.registry
+# (importlib, omegaconf).
+
+import typesafe_carla.carla as carla
 
 
 @tuple
@@ -20,6 +26,53 @@ class LaneChangeDirection:
     RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")
 
 
+# Stands in for traffic.driven when the library check compiles a module that
+# derives from it (entity.ego) without traffic.driven itself
+# (scenario-check --library <module>).
 class BackendDriven:
     def __init__(self):
         pass
+
+
+# traffic.context: a path is its str here, as in scenario_config.codon.
+class TrafficContext:
+    client: Optional[carla.Client] = None
+    world: Optional[carla.World] = None
+    map_name: str = ""
+    xodr_path: Optional[str] = None
+    fixed_delta_seconds: float = 0.05
+    random_seed: int = 0
+    output_dir: str = "scenario_outputs"
+
+
+# traffic.registry: a factory takes a mapping of any values (Hydra's options
+# node), which Codon has no type for, so it is a parameter of any type.
+TRAFFIC_BACKEND_ENTRY_POINT_GROUP: str = "autoware_carla_scenario.traffic_backends"
+
+
+class TrafficBackendFactory:
+    pass
+
+
+def register_backend(name: str, factory) -> None:
+    pass
+
+
+def unregister_backend(name: str) -> None:
+    pass
+
+
+def available_backends() -> List[str]:
+    raise NotImplementedError()
+
+
+def get_backend_factory(name: str):
+    raise NotImplementedError()
+
+
+def build_backend(name: str, options = None):
+    raise NotImplementedError()
+
+
+def load_traffic_backend_plugins() -> None:
+    pass

@@ -1,5 +1,5 @@
 # The part of Python's logging a scenario calls, for the scenario checker
-# (docs/typecheck.md). Nothing here runs.
+# (docs/typecheck.md). Nothing here runs. `exc_info` takes a bool only.
 
 DEBUG = 10
 INFO = 20
@@ -14,22 +14,22 @@ class Logger:
     def __init__(self, name: str):
         self.name = name
 
-    def debug(self, msg, *args) -> None:
+    def debug(self, msg, *args, exc_info: bool = False) -> None:
         pass
 
-    def info(self, msg, *args) -> None:
+    def info(self, msg, *args, exc_info: bool = False) -> None:
         pass
 
-    def warning(self, msg, *args) -> None:
+    def warning(self, msg, *args, exc_info: bool = False) -> None:
         pass
 
-    def error(self, msg, *args) -> None:
+    def error(self, msg, *args, exc_info: bool = False) -> None:
         pass
 
-    def exception(self, msg, *args) -> None:
+    def exception(self, msg, *args, exc_info: bool = False) -> None:
         pass
 
-    def critical(self, msg, *args) -> None:
+    def critical(self, msg, *args, exc_info: bool = False) -> None:
         pass
 
     def setLevel(self, level: int) -> None:
