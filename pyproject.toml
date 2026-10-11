@@ -69,6 +69,13 @@ markers = [
 ]
 
 [tool.uv.sources]
-# Until openodd-py is on PyPI: built from its repository at a pinned commit
-# (needs a Rust toolchain). uv sources are not part of the published metadata.
-openodd-py = { git = "https://github.com/hakuturu583/openodd_py", rev = "f3191eada79314ceea07b85fbbc0c6060ea93be7" }
+# Until openodd-py is on PyPI: its prebuilt wheels from the v0.1.0 release
+# (abi3: one per platform serves every Python). uv sources are not part of the
+# published metadata.
+openodd-py = [
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", marker = "sys_platform == 'darwin'" },
+    # Anywhere else, built from the source distribution (needs Rust and a C toolchain).
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0.tar.gz", marker = "sys_platform != 'darwin' and (sys_platform != 'linux' or (platform_machine != 'x86_64' and platform_machine != 'aarch64'))" },
+]
