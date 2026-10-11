@@ -15,7 +15,10 @@ class Full(Static[Exception]):
         super().__init__("Full", message)
 
 
-class Queue[T]:
+class Queue:
+    # The type of the items (Codon's generic parameter, in a form Python
+    # can parse too: `class Queue[T]` needs Python 3.12).
+    T: type
     maxsize: int
     _items: List[T]
 
