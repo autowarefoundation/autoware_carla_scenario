@@ -38,6 +38,7 @@ from .coordinate import (
 from .entity._spawn import SpawnLocation, SpawnTransform
 from .entity.registry import register_entity as _register_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .measures import BUILT_IN_MEASURES, Measure
 from .traffic.base import TrafficBackend
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,7 @@ class BaseScenario(ABC):
         self._spectator_camera_config: Optional[SpectatorCameraConfig] = None
         self._cover_items: List[CoverItem] = []
         self._cross_items: List[CrossItem] = []
+        self._measures: dict[str, Measure] = dict(BUILT_IN_MEASURES)
 
     # ------------------------------------------------------------------
     # Ego construction
@@ -675,6 +677,88 @@ class BaseScenario(ABC):
     # ------------------------------------------------------------------
     # Coverage
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Measures
+    # ------------------------------------------------------------------
+
+    def register_measure(
+        self,
+        key: str,
+        read: Callable[["carla.World"], Any],
+        *,
+        unit: str = "",
+        text: str = "",
+    ) -> None:
+        """Measure *key* with *read*: add a measure, or replace a built-in one.
+
+        Every scenario has the built-in measures
+        (:data:`~autoware_carla_scenario.measures.BUILT_IN_MEASURES`), which read
+        the world generically.  A scenario that knows better -- which actor is
+        its cut-in vehicle -- replaces one under the same key, so an ODD that
+        maps its taxonomy onto the key reads the better value without knowing
+        the scenario.  A key of its own names something only it sets up.
+
+        Args:
+            key: The measure's key, e.g.
+                :data:`~autoware_carla_scenario.measures.VEHICLE_AHEAD_GAP_M`.
+            read: Reads it from the world; ``None`` when there is nothing to
+                read.
+            unit: The unit it is read in -- a built-in key's own unit when
+                replacing one.
+            text: A description.
+        """
+        if not key:
+            raise ValueError("register_measure(): key must not be empty")
+        from .odd.units import normalize_unit  # noqa: PLC0415
+
+        built_in = BUILT_IN_MEASURES.get(key)
+        if (
+            built_in is not None
+            and unit
+            and normalize_unit(unit) != normalize_unit(built_in.unit)
+        ):
+            raise ValueError(
+                f"register_measure({key}): the built-in measure is in "
+                f"{built_in.unit!r}, not {unit!r}"
+            )
+        if built_in is not None:
+            unit = built_in.unit
+        self._measures[key] = Measure(key, read, unit, text)
+
+    def _restore_measures(self) -> None:
+        """Back to the measures the scenario had before its first attempt.
+
+        Called by the runner before every attempt: the first remembers them,
+        so a measure ``setup()`` registered -- one reading that attempt's NPC,
+        say -- does not outlive it into a retry, while those registered in
+        ``__init__`` stay.
+        """
+        initial = getattr(self, "_initial_measures", None)
+        if initial is None:
+            self._initial_measures = dict(self._measures)
+        else:
+            self._measures = dict(initial)
+
+    def measure(self, key: str, world: "carla.World") -> Any:
+        """This scenario's measure *key* in *world*.
+
+        ``None`` when there is nothing to read, when the scenario does not
+        measure *key*, or when the measure raised.
+        """
+        found = self._measures.get(key)
+        if found is None:
+            return None
+        try:
+            return found.read(world)
+        except Exception:
+            logger.debug("measure %s raised", key, exc_info=True)
+            return None
+
+    @property
+    def measures(self) -> dict[str, Measure]:
+        """The scenario's measures, built-in and its own, by key."""
+        return dict(self._measures)
 
     def register_cover(
         self,

@@ -98,6 +98,7 @@ from .model import (
     module_holds,
     read_probe,
 )
+from .scenario_measure import scenario_measure
 from .registry import import_callable
 from .units import Units, UnitError, normalize_unit
 
@@ -382,6 +383,7 @@ def _as_list(value: Any) -> list[Any]:
 #: What a binding file may say about how a concept is measured.
 _BINDING_KEYS = {
     "probe",
+    "measure",
     "unit",
     "values",
     "buckets",
@@ -686,6 +688,18 @@ class _Reader:
 
     def unit_of(self, concept: _Concept) -> str:
         binding = self.bindings.get(concept.name, {})
+        if "measure" in binding:
+            # A measure is read in its own unit; one given must be it.
+            measured = normalize_unit(scenario_measure(str(binding["measure"])).unit)
+            if "unit" in binding and measured:
+                given = normalize_unit(str(binding["unit"]))
+                if given != measured:
+                    raise OpenOddError(
+                        f"{concept.name}: measure {binding['measure']} is in "
+                        f"{measured!r}, not {given!r}"
+                    )
+            if measured:
+                return measured
         if "unit" in binding:
             return normalize_unit(str(binding["unit"]))
         if "probe" in binding:
@@ -758,7 +772,13 @@ class _Reader:
     def attribute_of(self, concept: _Concept) -> OddAttribute:
         binding = self.bindings.get(concept.name, {})
         probe: Callable[[Any], Any]
-        if "probe" in binding:
+        if "probe" in binding and "measure" in binding:
+            raise OpenOddError(f"{concept.name}: give a probe or a measure, not both")
+        if "measure" in binding:
+            # The taxonomy mapped onto a scenario measure: the running
+            # scenario says how it is read.
+            probe = scenario_measure(str(binding["measure"]))
+        elif "probe" in binding:
             probe = _probe(str(binding["probe"]))[0]
         elif concept.definitions:
             probe = self.derived_probe(concept) or _missing

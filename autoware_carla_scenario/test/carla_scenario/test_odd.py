@@ -515,6 +515,12 @@ class TestProbes:
             "odd.dynamic.ego_speed": ["[35, 45)"],
             "odd.dynamic.traffic_density": ["low"],
             "odd.dynamic.pedestrian_nearby": ["true"],
+            # Scenario measures, in the ego's frame, which this world's ego
+            # cannot give (see test_measures.py).
+            "odd.dynamic.vehicle_ahead_gap": [],
+            "odd.dynamic.vehicle_ahead_relative_speed": [],
+            "odd.dynamic.crossing_pedestrian_gap": [],
+            "odd.dynamic.crossing_pedestrian_speed": [],
         }
 
     def test_lanelet_tags_come_first_when_a_map_is_loaded(

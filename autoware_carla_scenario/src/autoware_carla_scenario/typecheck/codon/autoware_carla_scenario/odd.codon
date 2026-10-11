@@ -231,3 +231,13 @@ def traffic_density(world: carla.World) -> Optional[str]:
 
 def pedestrian_nearby(world: carla.World) -> Optional[bool]:
     raise NotImplementedError()
+
+
+
+def scenario_measure(key: str):
+    """The probe reading the running scenario's measure *key* (Python's returns
+    a ScenarioMeasure; its values are the measure's, numbers for the built-in
+    ones)."""
+    def probe(world: carla.World) -> Optional[float]:
+        raise NotImplementedError()
+    return probe

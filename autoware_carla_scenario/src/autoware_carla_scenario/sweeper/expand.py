@@ -15,6 +15,11 @@ scenario per route of the map that matches, each with the ego's spawn and goal
 and the match itself (``scenario.route.*``) as overrides
 (:func:`expand_route`).
 
+``sweep.odd_sample`` draws the settings a run can be given -- the weather, the
+sun, scenario parameters -- from the ODD, aimed at what earlier runs left
+uncovered when asked to (:mod:`autoware_carla_scenario.odd.sampler`); with
+constraints or a route search too, each drawn case takes their cases in turn.
+
 A config without a sweep is already concrete and expands to itself (one empty
 override list). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
 these in one process; ``scenario-expand`` hands them to a caller that runs them
@@ -54,23 +59,79 @@ def _override_value(value: Any) -> str:
 
 
 def expand_sweep(
-    sweep: Mapping[Any, Any], lanelet_map: Any, arguments: Sequence[str] = ()
+    sweep: Mapping[Any, Any],
+    lanelet_map: Any,
+    arguments: Sequence[str] = (),
+    *,
+    odd: Any = None,
+    controls: Mapping[str, Any] | None = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
-    ``arguments`` are appended to every list. A lanelet whose binding cannot be
-    resolved is skipped (and logged).
+    ``arguments`` are appended to every list, so they win. A lanelet whose
+    binding cannot be resolved is skipped (and logged).
+
+    With ``sweep.odd_sample``, ``count`` cases are drawn from the ODD
+    (``odd_sample.odd``, else *odd*, the run's) and each is given the next
+    lanelet case or route match in turn -- or none, when the sweep has
+    neither. Without a ``count``, one case is drawn per lanelet case or match.  *controls* are
+    the scenario's (its config's ``controls``): what its parameters set.
 
     Raises:
-        ValueError: If ``sweep`` has no constraints.
+        ValueError: If ``sweep`` has none of constraints, a route search and
+            ``odd_sample``, or both constraints and a route search.
     """
+    odd_sample = sweep.get("odd_sample") or {}
     if sweep.get("route"):
         if sweep.get("constraints"):
             raise ValueError(
                 "sweep has both a route search and constraints; a scenario is "
                 "expanded by one of them"
             )
-        return expand_route(sweep["route"], lanelet_map, arguments)
+        base_cases = expand_route(sweep["route"], lanelet_map)
+    elif sweep.get("constraints"):
+        base_cases = _expand_lanelets(sweep, lanelet_map)
+    elif odd_sample:
+        base_cases = [[]]
+    else:
+        raise ValueError("sweep.constraints is empty; nothing to expand.")
+    if odd_sample and base_cases:
+        base_cases = _with_odd_samples(base_cases, odd_sample, odd, controls)
+    return [[*case, *arguments] for case in base_cases]
+
+
+def _with_odd_samples(
+    base_cases: list[list[str]],
+    odd_sample: Mapping[Any, Any],
+    odd: Any,
+    controls: Mapping[str, Any] | None = None,
+) -> list[list[str]]:
+    """``odd_sample.count`` cases (one per base case by default), each a base
+    case -- a lanelet or a route match -- and settings drawn from the ODD."""
+    from ..odd.sampler import sampler_from_config  # noqa: PLC0415
+
+    sampler, count = sampler_from_config(
+        {str(k): v for k, v in odd_sample.items()}, odd=odd, controls=controls
+    )
+    samples = sampler.sample(len(base_cases) if count is None else count)
+    logger.info(
+        "Drew %d case(s) from ODD %s over %s (%s)%s",
+        len(samples),
+        sampler.odd.name,
+        ", ".join(sampler.attributes),
+        sampler.strategy,
+        f"; aiming at situations {sampler.situation_holes}"
+        if sampler.situation_holes
+        else "",
+    )
+    return [
+        [*base_cases[i % len(base_cases)], *sample.overrides]
+        for i, sample in enumerate(samples)
+    ]
+
+
+def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[str]]:
+    """One override list per lanelet the constraints match, bindings applied."""
     constraints_cfg = sweep.get("constraints") or {}
     # Constraints are keyed by the target parameter (e.g. ego.spawn_lanelet_id);
     # each value is a list of constraint dicts.
@@ -109,7 +170,7 @@ def expand_sweep(
             if result.lanelet_id_override is not None:
                 overrides[0] = f"{target_key}={result.lanelet_id_override}"
         else:
-            cases.append([*overrides, *arguments])
+            cases.append(overrides)
     if not cases:
         logger.warning("All lanelets were skipped due to binding failures.")
     return cases
@@ -179,15 +240,32 @@ def expand_config(cfg: DictConfig, arguments: Sequence[str] = ()) -> list[list[s
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
     )
     if not isinstance(sweep, dict) or not (
-        sweep.get("constraints") or sweep.get("route")
+        sweep.get("constraints") or sweep.get("route") or sweep.get("odd_sample")
     ):
         return [list(arguments)]  # already concrete
+
+    odd = OmegaConf.select(cfg, "odd")
+    controls = scenario_controls(cfg)
+    if not (sweep.get("constraints") or sweep.get("route")):
+        # Drawing from the ODD alone needs no map.
+        return expand_sweep(sweep, None, arguments, odd=odd, controls=controls)
 
     from ..maps import resolve_map_paths  # noqa: PLC0415 -- clones a map on demand
     from .map_loader import load_map  # noqa: PLC0415
 
     lanelet_map = load_map(resolve_map_paths(OmegaConf.select(cfg, "map")))
-    return expand_sweep(sweep, lanelet_map, arguments)
+    return expand_sweep(sweep, lanelet_map, arguments, odd=odd, controls=controls)
 
 
-__all__ = ["expand_config", "expand_route", "expand_sweep"]
+def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
+    """The config's ``controls``, resolved: what the scenario's parameters set."""
+    node = OmegaConf.select(cfg, "controls")
+    if node is None:
+        return {}
+    controls = OmegaConf.to_container(node, resolve=True)
+    if not isinstance(controls, dict):
+        raise ValueError("controls: expected a mapping of measure -> control")
+    return {str(k): v for k, v in controls.items()}
+
+
+__all__ = ["expand_config", "expand_route", "expand_sweep", "scenario_controls"]

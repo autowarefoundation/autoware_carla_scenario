@@ -128,6 +128,10 @@ so raise it: launching Autoware alone can take most of two minutes. A job the
 sweeper kills at that limit leaves its container behind, and the next job's
 preparation removes it before its own stack starts.
 
+To draw the weather, the sun or scenario parameters of each case from the
+ODD, aimed at what earlier runs left uncovered, add a `sweep.odd_sample`
+([Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd)).
+
 ## Autoware on the host
 
 `autoware.launcher.type=command` runs a command of your own instead, as a
