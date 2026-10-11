@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,7 @@ from .toolchain import (
     find_codon,
     is_supported_version,
 )
-from .library import CHECKED, UNCALLED, package_modules
+from .library import CHECKED, REPLACED_MODELS, UNCALLED, package_modules
 from .library_driver import (
     render_library_checks,
     render_library_driver,
@@ -158,10 +158,15 @@ def _shims() -> frozenset[str]:
 
 @lru_cache(maxsize=1)
 def _model_modules() -> frozenset[str]:
+    # One module per public package (coordinate.codon), and the odd module of
+    # a checked package that is modelled on its own (utils/traffic_light.codon):
+    # the package itself is checked, so its __init__.codon models nothing.
     root = model_dir() / _PACKAGE
     names = {_PACKAGE}
     names.update(
-        f"{_PACKAGE}.{p.stem}" for p in root.glob("*.codon") if p.stem != "__init__"
+        ".".join([_PACKAGE, *p.relative_to(root).with_suffix("").parts])
+        for p in root.rglob("*.codon")
+        if p.stem != "__init__"
     )
     return frozenset(names)
 
@@ -860,8 +865,60 @@ def _build_library_workspace(
         ws.files[file.rel] = str(module.path)
         ws.appended[file.rel] = (file.offset, file.labels)
     (root / Path(files[0].rel).parent / "__init__.codon").write_text("")
+    for stem, text in replaced_models(sources.modules, problems).items():
+        (root / _PACKAGE / f"{stem}.codon").write_text(text)
     (root / DRIVER_MODULE).write_text(driver.source)
     return ws, problems
+
+
+def _top_level_names(tree: ast.Module) -> set[str]:
+    """The classes, functions and variables a module defines at top level."""
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+def replaced_models(
+    checked: Mapping[str, Any], problems: list[Diagnostic]
+) -> dict[str, str]:
+    """Model module stem -> its text in the library check (:data:`.library.REPLACED_MODELS`).
+
+    A model module all of whose modules are in *checked* (dotted name ->
+    anything with the module's ``tree``) becomes a re-export of each name it
+    declares, from the checked module that defines it.  A name no checked
+    module defines is added to *problems*: the model and the source disagree.
+    """
+    out: dict[str, str] = {}
+    for stem, modules in REPLACED_MODELS.items():
+        if not all(m in checked for m in modules):
+            continue
+        model = model_dir() / _PACKAGE / f"{stem}.codon"
+        imports: dict[str, list[str]] = {m: [] for m in modules}
+        defined = {m: _top_level_names(checked[m].tree) for m in modules}
+        for name in sorted(_top_level_names(ast.parse(model.read_text()))):
+            owner = next((m for m in modules if name in defined[m]), None)
+            if owner is None:
+                problems.append(
+                    Diagnostic(
+                        f"{name}, which the model declares, is defined by none "
+                        f"of {', '.join(modules)}",
+                        str(model),
+                    )
+                )
+                continue
+            imports[owner].append(name)
+        out[stem] = "".join(
+            f"from {workspace_module(m)} import {', '.join(names)}\n"
+            for m, names in imports.items()
+            if names
+        )
+    return out
 
 
 def typecheck_library(

@@ -20,7 +20,7 @@ from ..utils.traffic_light import (
     lanelet2_traffic_light_id_to_opendrive_controller_id as _controller_id_of,
 )
 from .map_manager import MapManager
-from .poses import AnyPose
+from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .transform import to_carla_location
 
 if TYPE_CHECKING:
@@ -29,9 +29,9 @@ if TYPE_CHECKING:
 
 def find_nearest_traffic_light(
     world: "carla.World",
-    location: Union[AnyPose, "carla.Location"],
+    location: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose, "carla.Location"],
     max_distance: float = 150.0,
-) -> Tuple[Optional["carla.TrafficLight"], float]:
+) -> Tuple[Optional["carla.Actor"], float]:
     """Return the nearest traffic light to *location* within *max_distance*.
 
     All ``traffic.traffic_light`` actors are retrieved from *world*
@@ -46,11 +46,13 @@ def find_nearest_traffic_light(
             farther than this are ignored.
 
     Returns:
-        A ``(traffic_light, distance)`` tuple.  If no traffic light is found
-        within *max_distance*, returns ``(None, float('inf'))``.
+        A ``(traffic_light, distance)`` tuple, the light being the
+        ``carla.Actor`` ``world.get_actors()`` lists (its
+        ``as_traffic_light()`` is the ``carla.TrafficLight``).  If no traffic
+        light is found within *max_distance*, returns ``(None, float('inf'))``.
     """
     loc = to_carla_location(location)
-    nearest: Optional["carla.TrafficLight"] = None
+    nearest: Optional["carla.Actor"] = None
     nearest_dist = float("inf")
 
     for actor in world.get_actors():
