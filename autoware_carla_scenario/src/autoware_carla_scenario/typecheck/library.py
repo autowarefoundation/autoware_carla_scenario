@@ -52,8 +52,15 @@ _NOT_YET = NOT_YET_CHECKED
 #: Modules compiled from their real source, by dotted name (a package by its
 #: own name, for its ``__init__.py``).
 CHECKED: tuple[str, ...] = (
+    "autoware_carla_scenario.action_state",
+    "autoware_carla_scenario.actions",
+    "autoware_carla_scenario.actions._departures",
+    "autoware_carla_scenario.actions.base",
+    "autoware_carla_scenario.actions.environment",
+    "autoware_carla_scenario.actions.traffic_signal",
     "autoware_carla_scenario.autoware_bridge._proto",
     "autoware_carla_scenario.autoware_bridge.base",
+    "autoware_carla_scenario.conditions.action_state",
     "autoware_carla_scenario.conditions.always_true",
     "autoware_carla_scenario.conditions.and_condition",
     "autoware_carla_scenario.conditions.base",
@@ -99,6 +106,7 @@ _DETAILS = "builds a dict[str, Any] of mixed value types, which Codon cannot exp
 #: imports what Codon has nothing for (``json``) and only that function uses.
 #: Everything else in the module still is.
 UNCALLED: dict[str, str] = {
+    "autoware_carla_scenario.conditions.action_state.ActionStateCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.and_condition.AndCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.base.BaseCondition.__init_subclass__": "wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for",
     "autoware_carla_scenario.conditions.base.BaseCondition.get_details": _DETAILS,
@@ -118,20 +126,14 @@ UNCALLED: dict[str, str] = {
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": _NOT_YET,
-    "autoware_carla_scenario.action_state": _NOT_YET,
-    "autoware_carla_scenario.actions": _NOT_YET,
-    "autoware_carla_scenario.actions._departures": _NOT_YET,
     "autoware_carla_scenario.actions.background_traffic": "imports yaml",
-    "autoware_carla_scenario.actions.base": _NOT_YET,
-    "autoware_carla_scenario.actions.environment": _NOT_YET,
     "autoware_carla_scenario.actions.follow_trajectory": "imports carla_driver_interface",
-    "autoware_carla_scenario.actions.lane_change": _NOT_YET,
-    "autoware_carla_scenario.actions.routing": _NOT_YET,
-    "autoware_carla_scenario.actions.set_speed": _NOT_YET,
-    "autoware_carla_scenario.actions.traffic_signal": _NOT_YET,
-    "autoware_carla_scenario.actions.traffic_signal_controller": _NOT_YET,
-    "autoware_carla_scenario.actions.turn": _NOT_YET,
-    "autoware_carla_scenario.actions.walk_straight": _NOT_YET,
+    "autoware_carla_scenario.actions.lane_change": "imports entity.registry, whose find_entity_by_role_name returns whatever entity was registered (`Optional[Any]`: a vehicle, a pedestrian or an ego) and is not in the model, and calls methods only some kinds of entity have; its default `until` is conditions.lane_change_settled's condition, which is not checked",
+    "autoware_carla_scenario.actions.routing": "imports entity.registry, whose find_entity_by_role_name returns whatever entity was registered (`Optional[Any]`: a vehicle, a pedestrian or an ego) and is not in the model, and calls methods only some kinds of entity have; holds its waypoints as a variable-length tuple and passes them as `**extra`",
+    "autoware_carla_scenario.actions.set_speed": "imports entity.registry, whose find_entity_by_role_name returns whatever entity was registered (`Optional[Any]`: a vehicle, a pedestrian or an ego) and is not in the model, and calls methods only some kinds of entity have; its default `until` is conditions.composition.speed's condition, which is not checked; reads the entity's actor with getattr(entity, 'actor', None)",
+    "autoware_carla_scenario.actions.traffic_signal_controller": "imports signals.registry, which is neither checked nor modelled",
+    "autoware_carla_scenario.actions.turn": "imports entity.registry, whose find_entity_by_role_name returns whatever entity was registered (`Optional[Any]`: a vehicle, a pedestrian or an ego) and is not in the model, and calls methods only some kinds of entity have",
+    "autoware_carla_scenario.actions.walk_straight": "imports entity.registry, whose find_entity_by_role_name returns whatever entity was registered (`Optional[Any]`: a vehicle, a pedestrian or an ego) and is not in the model, and calls methods only some kinds of entity have; reads the walk method with getattr(entity, 'walk_straight', None)",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (subprocess, shutil)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler",
@@ -159,7 +161,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.camera_recorder": "imports numpy, pathlib, ffmpeg, subprocess, queue",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, shutil, json, argparse, urllib, http, email, tarfile, platform",
     "autoware_carla_scenario.conditions": _NOT_YET,
-    "autoware_carla_scenario.conditions.action_state": "imports action_state, which is neither checked nor modelled; looks an ActionState up by value (`ActionState(state)`), which the enum shim does not model; and compares it with the model's BaseAction.state, a different ActionState until actions are checked",
     "autoware_carla_scenario.conditions.collision": _NOT_YET,
     "autoware_carla_scenario.conditions.composition": _NOT_YET,
     "autoware_carla_scenario.conditions.composition.acceleration": _NOT_YET,

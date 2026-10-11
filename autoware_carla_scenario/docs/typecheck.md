@@ -168,10 +168,14 @@ Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 Codon then checks each call with the arguments it is given.
 
 The checker also rewrites what Codon spells differently: an `Enum` class (its
-members become instances with a `name` and a typed `value`; looking a member
-up by value or name, and iterating over the class, are not modelled), a class
-deriving from an exception, and a `@classmethod` (a static method of its
-class: `cls` names the class it is defined in).
+members become instances with a `name` and a typed `value`; a lookup by value,
+`ActionState("completeState")`, takes a value of that type and is typed but
+not resolved to the member; looking a member up by name and iterating over the
+class are not modelled), a class deriving from an exception, a `@classmethod`
+(a static method of its class: `cls` names the class it is defined in), and an
+annotation naming one of CARLA's integer enumerations
+(`carla.TrafficLightState`), which typesafe_carla's Codon library has as a
+value whose members are `int`, not as a type: it becomes `int`.
 
 ## Checking the framework itself
 
@@ -304,6 +308,14 @@ from the model's. The two are different types that never meet:
 record its last result for the UI, is in `UNCALLED`: the check sees each
 `check()` as written.
 
+`actions.base` is checked the same way: a checked action takes the checked
+`BaseCondition`, so it imports it from `conditions.base` rather than from the
+`conditions` package, which the model stands in for until it is checked. Its
+`BaseAction` and `ActionState` are again not the model's, so
+`conditions.action_state` watches checked actions. An action that hands a
+condition from an unchecked module to its base (`SetSpeedAction`'s default
+`SpeedCondition`) waits for that module.
+
 ### Making a module compile
 
 What Codon 0.19 needs that Python does not, beyond
@@ -385,6 +397,18 @@ What Codon 0.19 needs that Python does not, beyond
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (`od: OpenDrivePose = x`),
   which Codon unwraps.
+- **Codon does not narrow a union either**, with `is` or `isinstance`, and an
+  attribute holding a union (`Union[Sequence[int], TrafficLightTarget,
+  None]`) reaches every use as the union. Store it split by kind
+  (`_all_lights: bool`, `_lanelet2_ids: Optional[Sequence[int]]`), deciding
+  the kind once in `__init__`, where `isinstance` on the parameter is decided
+  when Codon compiles.
+- **A default of a subclass for an `Optional` of its base** goes through an
+  `if` statement, not a conditional expression: `x if x is not None else
+  Sub()` is refused (`Optional[Base]` is not `Optional[Sub]`).
+- **A dict has no truth value** in Codon: `if not d:` is `if len(d) == 0:`.
+- **No `setattr(obj, name, value)` with a name known only at run time**:
+  spell the assignments out (`actions/environment.py`).
 - **One `except` clause per exception type**: Codon 0.19 does not take a
   tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
   to `raise X` by the check; `raise X from exc` compiles as it is.
