@@ -43,7 +43,7 @@ def setup(self) -> None:
     npc_od = to_opendrive(npc_pose)
     npc_snapped = snap_to_carla_road(npc_od, world, ground_projection=self._ground_projection)
     npc_entity = VehicleEntity(VehicleEntityConfig(
-        role_name=EntityRole.npc(1),
+        role_name=str(EntityRole.npc(1)),
         spawn_location=SpawnTransform(npc_snapped.to_carla_transform()),
         vehicle_type="vehicle.mini.cooper",
         initial_speed_kmh=0.0,
