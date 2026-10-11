@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from .base import (
+    DrivenEntity,
     LaneChangeDirection,
     LaneChanging,
     SettingSpeed,
@@ -62,6 +63,7 @@ from .registry import (
 
 __all__ = [
     "BackendDriven",
+    "DrivenEntity",
     "LaneChangeDirection",
     "LaneChanging",
     "SettingSpeed",

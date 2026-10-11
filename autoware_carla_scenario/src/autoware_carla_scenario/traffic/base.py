@@ -36,9 +36,21 @@ from __future__ import annotations
 
 import enum
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, ClassVar, Collection, Optional, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Collection,
+    Optional,
+    Protocol,
+    Tuple,
+    runtime_checkable,
+)
+
+from .context import TrafficContext
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +64,7 @@ __all__ = [
     "TrafficBackendError",
     "TrafficBackendUnavailable",
     "TrafficContext",
+    "DrivenEntity",
     "NullTrafficBackend",
 ]
 
@@ -120,11 +133,13 @@ class LaneChanging(Protocol):
     and asked whether it is done.
     """
 
-    def change_lane(self, world: Any, direction: "LaneChangeDirection") -> None:
+    def change_lane(
+        self, world: "carla.World", direction: "LaneChangeDirection"
+    ) -> None:
         """Move one lane in *direction*."""
         ...
 
-    def lane_change_finished(self, world: Any) -> bool:
+    def lane_change_finished(self, world: "carla.World") -> bool:
         """Whether the manoeuvre has settled."""
         ...
 
@@ -147,7 +162,7 @@ class SettingSpeed(Protocol):
     the action's *reissue* argument rather than here.
     """
 
-    def set_desired_speed(self, world: Any, speed_kmh: float) -> None:
+    def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
         """Aim for *speed_kmh* from now on."""
         ...
 
@@ -157,49 +172,33 @@ class TurningAtJunctions(Protocol):
     """What :class:`~autoware_carla_scenario.actions.turn.TurnAction` needs."""
 
     def turn_at_junction(
-        self, world: Any, direction: "TurnDirection", **kwargs: object
+        self, world: "carla.World", direction: "TurnDirection", **kwargs: object
     ) -> None:
         """Go *direction* at the next junction ahead."""
         ...
 
 
-# ---------------------------------------------------------------------------
-# The run a backend joins
-# ---------------------------------------------------------------------------
+class DrivenEntity:
+    """What a backend's manoeuvres take as the *entity* they steer.
 
+    The base of :class:`~autoware_carla_scenario.traffic.driven.BackendDriven`,
+    which the entities mix in, and defined here rather than there because the
+    interface below names it: it is the type of every *entity* parameter of
+    :class:`TrafficBackend`.  It holds the one thing a backend keeps on a
+    vehicle: the state of that vehicle's lane change.
 
-@dataclass(frozen=True)
-class TrafficContext:
-    """Everything a backend needs to know about the run it is joining.
-
-    Built once per scenario by :class:`~autoware_carla_scenario.ScenarioRunner`
-    and handed to :meth:`TrafficBackend.prepare` before anything is spawned, so
-    that a backend which has to start a process, derive a road network or refuse
-    the run entirely does so while failing is still cheap.
-
-    Attributes:
-        client: The CARLA client (``carla.Client``).  Typed loosely so this
-            module stays importable without CARLA.
-        world: The CARLA world the scenario runs in.
-        map_name: Name of the loaded map, as CARLA reports it.
-        xodr_path: The OpenDRIVE the world is running, when the run installed
-            one.  ``None`` when the map's roads came from CARLA's own assets and
-            nothing has read them back yet.
-        fixed_delta_seconds: The simulation step the runner applies.  A backend
-            that steps a second simulator matches its step length to this.
-        random_seed: The scenario's seed.  A backend with any randomness of its
-            own derives it from this, so a repeated run repeats.
-        output_dir: Where this run's artefacts go; a backend writes its own logs
-            under it rather than into the working directory.
+    A backend reads the vehicle's ``actor`` and ``role_name`` where the entity
+    has them (the entities define both) and tests for them with ``hasattr``,
+    so a stand-in that lacks one is answered as a vehicle with no actor yet.
     """
 
-    client: Any = None
-    world: Any = None
-    map_name: str = ""
-    xodr_path: Optional[Path] = None
-    fixed_delta_seconds: float = 0.05
-    random_seed: int = 0
-    output_dir: Path = field(default_factory=lambda: Path("scenario_outputs"))
+    #: The lane a backend aimed this vehicle at, and the map it was read from.
+    #: Written by whichever backend performs the lane change and read by
+    #: whichever one judges it finished -- state of *this vehicle's* manoeuvre,
+    #: so it lives on the vehicle: a backend is shared by the whole run, and the
+    #: entity is the one thing there is exactly one of per manoeuvre.
+    _lane_change_target: Optional[Tuple[int, int]] = None
+    _lane_change_map: Optional["carla.Map"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +260,7 @@ class TrafficBackend:
             context: The run this backend is joining.
         """
 
-    def adopt(self, entity: Any) -> None:
+    def adopt(self, entity: DrivenEntity) -> None:
         """Take note of an entity the scenario owns.
 
         Called for the ego and for every entity registered with
@@ -274,7 +273,9 @@ class TrafficBackend:
             entity: The entity joining the run.
         """
 
-    def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
+    def start(
+        self, world: "carla.World", *, skip_actor_ids: Collection[int] = ()
+    ) -> None:
         """Begin driving traffic.
 
         Called after the warm-up ticks and the init phase, immediately before
@@ -288,7 +289,7 @@ class TrafficBackend:
                 This is the one-authority-per-vehicle rule, passed as data.
         """
 
-    def tick(self, world: Any, elapsed: float) -> None:
+    def tick(self, world: "carla.World", elapsed: float) -> None:
         """Advance the backend by one simulation step.
 
         Called once per ``world.tick()``, right after it. A backend that rides
@@ -326,7 +327,7 @@ class TrafficBackend:
     # ------------------------------------------------------------------
 
     def change_lane(
-        self, entity: Any, world: Any, direction: LaneChangeDirection
+        self, entity: DrivenEntity, world: "carla.World", direction: LaneChangeDirection
     ) -> None:
         """Move *entity* one lane in *direction*.
 
@@ -337,7 +338,7 @@ class TrafficBackend:
         """
         self._unavailable("change_lane", entity)
 
-    def lane_change_finished(self, entity: Any, world: Any) -> bool:
+    def lane_change_finished(self, entity: DrivenEntity, world: "carla.World") -> bool:
         """Whether *entity*'s lane change has settled.
 
         ``False`` from a backend that never starts one is the honest answer, and
@@ -345,10 +346,11 @@ class TrafficBackend:
         never fires its reaction, and ending the run on a timer is the scenario
         timeout's job.
         """
-        del entity, world
         return False
 
-    def set_desired_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+    def set_desired_speed(
+        self, entity: DrivenEntity, world: "carla.World", speed_kmh: float
+    ) -> None:
         """Drive *entity* at *speed_kmh* from now on.
 
         The target only; a rate limit has already been applied by the caller,
@@ -361,17 +363,19 @@ class TrafficBackend:
             world: The CARLA world.
             speed_kmh: The speed to hold, in km/h.  Never negative.
         """
-        del world, speed_kmh
         self._unavailable("set_desired_speed", entity)
 
     def turn_at_junction(
-        self, entity: Any, world: Any, direction: TurnDirection, **kwargs: Any
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        direction: TurnDirection,
+        **kwargs: Any,
     ) -> None:
         """Send *entity* *direction* at the next junction ahead."""
-        del kwargs
         self._unavailable("turn_at_junction", entity)
 
-    def release(self, entity: Any, world: Any) -> None:
+    def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Stop driving *entity*: something else has taken it over.
 
         Called when a scenario action drives the vehicle itself -- a
@@ -388,7 +392,6 @@ class TrafficBackend:
             entity: The entity being taken over.
             world: The CARLA world.
         """
-        del entity, world
 
     # ------------------------------------------------------------------
     # Background traffic -- vehicles no scenario entity stands for
@@ -396,8 +399,8 @@ class TrafficBackend:
 
     def spawn_background(
         self,
-        world: Any,
-        transform: Any,
+        world: "carla.World",
+        transform: "carla.Transform",
         *,
         speed_kmh: float,
         blueprint: Optional[str] = None,
@@ -420,26 +423,25 @@ class TrafficBackend:
             ``None`` when it could not be placed (no lane there, the spot is
             taken, the backend has no traffic model).
         """
-        del world, transform, speed_kmh, blueprint
         logger.warning(
             "%s: %r cannot create background traffic", type(self).__name__, self.name
         )
         return None
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(
+        self, world: "carla.World"
+    ) -> dict[str, tuple[float, float]]:
         """Every live background vehicle, by handle, at its CARLA ``(x, y)``."""
-        del world
         return {}
 
-    def remove_background(self, world: Any, handle: str) -> None:
+    def remove_background(self, world: "carla.World", handle: str) -> None:
         """Take the background vehicle *handle* off the road."""
-        del world, handle
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _unavailable(self, what: str, entity: Any) -> None:
+    def _unavailable(self, what: str, entity: DrivenEntity) -> None:
         """Report an intent this backend cannot carry out, without raising."""
         logger.warning(
             "%s: %r cannot %s for %s; the vehicle keeps doing what it was doing",
@@ -450,10 +452,15 @@ class TrafficBackend:
         )
 
 
-def _entity_name(entity: Any) -> str:
+def _entity_name(entity: DrivenEntity) -> str:
     """Return the most identifying name an entity has, for a log line."""
-    role_name = getattr(entity, "role_name", None)
-    return str(role_name) if role_name is not None else type(entity).__name__
+    # hasattr rather than getattr with a default: Codon decides it when it
+    # compiles (docs/typecheck.md), and DrivenEntity itself has no role_name.
+    if hasattr(entity, "role_name"):
+        role_name = entity.role_name
+        if role_name is not None:
+            return str(role_name)
+    return type(entity).__name__
 
 
 class NullTrafficBackend(TrafficBackend):
@@ -473,7 +480,9 @@ class NullTrafficBackend(TrafficBackend):
 
     name: ClassVar[str] = "none"
 
-    def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
+    def start(
+        self, world: "carla.World", *, skip_actor_ids: Collection[int] = ()
+    ) -> None:
         """Drive nothing, and name what is being left undriven.
 
         A vehicle nobody drives is the point of this backend for an NPC and a
