@@ -21,7 +21,6 @@ import math
 from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .base import EgoObservation
 from .geometry import Pose, Trajectory
@@ -55,12 +54,16 @@ _MAX_PLAUSIBLE_AXLE_OFFSET_M: float = 5.0
 _MIN_ROUTE_POINTS: int = 2
 
 
-def to_local_vector(x: float, y: float, z: float) -> NDArray[np.float64]:
+def to_local_vector(
+    x: float, y: float, z: float
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Return a CARLA world *polar* vector in the right-handed local frame."""
     return np.array([x, -y, z], dtype=np.float64)
 
 
-def _to_local_axial(x: float, y: float, z: float) -> NDArray[np.float64]:
+def _to_local_axial(
+    x: float, y: float, z: float
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Return a CARLA world *axial* vector (e.g. angular velocity) in the local frame.
 
     The handedness flip is a reflection, so pseudovectors pick up an extra sign change
@@ -143,8 +146,9 @@ def sensor_pose_in_rig(
 
 
 def lidar_points_to_rig(
-    points_xyzi_in_sensor: NDArray[np.float32], pose_in_rig: Pose
-) -> NDArray[np.float32]:
+    points_xyzi_in_sensor: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+    pose_in_rig: Pose,
+) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
     """Return a raw ``sensor.lidar.ray_cast`` buffer as ``[N, 4]`` rig-frame points.
 
     CARLA reports the points in the sensor's own frame, which is left-handed like the
@@ -177,24 +181,32 @@ def rear_axle_offset(actor: "carla.Actor", override: Optional[float] = None) -> 
     if override is not None:
         return override
 
+    # CARLA versions differ in what physics control exposes, and a vehicle
+    # blueprint without wheel data is not an error worth aborting a scenario for.
+    # One `except` per exception: Codon takes no tuple (docs/typecheck.md).
     try:
-        physics = actor.get_physics_control()
+        if TYPE_CHECKING:
+            # Codon's CARLA API has the physics control on a carla.Vehicle only.
+            physics = actor.as_vehicle().get_physics_control()
+        else:
+            physics = actor.get_physics_control()
         wheels = list(physics.wheels)
-    except (AttributeError, RuntimeError, TypeError):
-        # CARLA versions differ in what physics control exposes, and a vehicle
-        # blueprint without wheel data is not an error worth aborting a scenario for.
+    except AttributeError:
+        wheels = []
+    except RuntimeError:
+        wheels = []
+    except TypeError:
         wheels = []
 
     # CARLA 0.9.x names a wheel's position ``position`` and reports it in world
     # coordinates and centimetres. CARLA 0.10 names it ``location`` and leaves it at
     # zero, which says nothing about where the axle is: the bounding box below is
     # all there is then.
-    rear_points = [
-        point
-        for w in wheels[2:4]
-        if (point := getattr(w, "position", None) or getattr(w, "location", None))
-        is not None
-    ]
+    rear_points = []
+    for w in wheels[2:4]:
+        point = _wheel_point(w)
+        if point is not None:
+            rear_points.append(point)
     if (
         len(wheels) >= 4
         and all((point.x, point.y, point.z) != (0.0, 0.0, 0.0) for point in rear_points)
@@ -204,11 +216,17 @@ def rear_axle_offset(actor: "carla.Actor", override: Optional[float] = None) -> 
         world_cm = np.array(
             [[point.x, point.y, point.z] for point in rear_points], dtype=np.float64
         )
+        # Each row's components passed one by one: Codon unpacks no array (`*row`).
         local = (
             to_local_pose(transform)
             .inverse()
             .transform_points(
-                np.stack([to_local_vector(*(point / 100.0)) for point in world_cm])
+                np.stack(
+                    [
+                        to_local_vector(row[0], row[1], row[2])
+                        for row in world_cm / 100.0
+                    ]
+                )
             )
         )
         offset = float(np.mean(local[:, 0]))
@@ -222,9 +240,31 @@ def rear_axle_offset(actor: "carla.Actor", override: Optional[float] = None) -> 
 
     try:
         return -0.5 * float(actor.bounding_box.extent.x)
-    except (AttributeError, RuntimeError, TypeError):
-        logger.warning("Could not determine the rear-axle offset; using 0.0")
-        return 0.0
+    except AttributeError:
+        return _no_rear_axle_offset()
+    except RuntimeError:
+        return _no_rear_axle_offset()
+    except TypeError:
+        return _no_rear_axle_offset()
+
+
+def _wheel_point(wheel: "carla.WheelPhysicsControl") -> "Optional[carla.Location]":
+    """A wheel's ``position`` (CARLA 0.9.x) or else its ``location`` (CARLA 0.10).
+
+    ``getattr(wheel, "position", None) or getattr(wheel, "location", None)``, with
+    ``hasattr``, which Codon decides when it compiles (docs/typecheck.md).
+    """
+    point: Optional[carla.Location] = None
+    if hasattr(wheel, "position"):
+        point = wheel.position
+    if not point and hasattr(wheel, "location"):
+        point = wheel.location
+    return point
+
+
+def _no_rear_axle_offset() -> float:
+    logger.warning("Could not determine the rear-axle offset; using 0.0")
+    return 0.0
 
 
 def ego_observation(
@@ -277,6 +317,11 @@ class AccelerationEstimate:
         rate_hz: The rate that gain applies at.
     """
 
+    _gain: float
+    _rate_hz: float
+    _last: Optional[EgoObservation]
+    _acceleration: np.ndarray[tuple[int], np.dtype[np.float64]]
+
     def __init__(self, gain: float = 0.9, rate_hz: float = 50.0) -> None:
         self._gain = gain
         self._rate_hz = rate_hz
@@ -284,7 +329,7 @@ class AccelerationEstimate:
 
     def reset(self) -> None:
         """Forget the history: the next observation starts at zero acceleration."""
-        self._last: Optional[EgoObservation] = None
+        self._last = None
         self._acceleration = np.zeros(3)
 
     def __call__(self, observation: EgoObservation) -> EgoObservation:
@@ -307,7 +352,7 @@ class AccelerationEstimate:
 
 
 def encode_frame_jpeg(
-    image_bgr: NDArray[np.uint8], quality: int = 90
+    image_bgr: np.ndarray[tuple[int, int, int], np.dtype[np.uint8]], quality: int = 90
 ) -> Optional[bytes]:
     """Return *image_bgr* encoded as JPEG bytes.
 
@@ -336,7 +381,7 @@ def route_waypoints_in_rig(
     ego_pose: Pose,
     horizon_m: float = 80.0,
     resolution_m: float = 2.0,
-) -> NDArray[np.float64]:
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """Return the road ahead of *actor* as waypoints in the rig frame.
 
     Walks CARLA's road graph forward from the ego's current waypoint, taking the first
@@ -361,7 +406,7 @@ def route_waypoints_in_rig(
         return np.zeros((0, 3))
 
     step = max(resolution_m, 0.1)
-    points: List[NDArray[np.float64]] = []
+    points: List[np.ndarray[tuple[int], np.dtype[np.float64]]] = []
     current = waypoint
     travelled = 0.0
     while travelled < horizon_m:
@@ -381,7 +426,9 @@ def route_waypoints_in_rig(
 
 
 def route_reference_trajectory(
-    waypoints_in_rig: NDArray[np.float64], start_us: int, step_us: int
+    waypoints_in_rig: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+    start_us: int,
+    step_us: int,
 ) -> Trajectory:
     """Return the route as a timed reference trajectory, for ``GroundTruth``.
 
@@ -402,7 +449,9 @@ def route_reference_trajectory(
         return Trajectory.empty()
     deltas = np.diff(points[:, :2], axis=0)
     yaws = np.arctan2(deltas[:, 1], deltas[:, 0]) if len(deltas) else np.zeros(1)
-    yaws = np.append(yaws, yaws[-1])[: len(points)]
+    # The last yaw as a one-element array: Codon appends an array of the same
+    # dimensions only.
+    yaws = np.append(yaws, yaws[-1:])[: len(points)]
     return Trajectory(
         [start_us + index * step_us for index in range(len(points))],
         [

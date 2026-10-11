@@ -18,11 +18,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-from numpy.typing import NDArray
 
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
-from ..utils.config import checked_options as _checked
 from .geometry import Pose, Trajectory
 
 
@@ -71,6 +69,10 @@ class DriverCameraConfig:
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
+        # Imported here: the Codon check does not compile this method, and
+        # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
+        from ..utils.config import checked_options as _checked  # noqa: PLC0415
+
         return cls(**_checked(cls, mapping))
 
     def to_sensor_config(self) -> CarlaCameraSensorConfig:
@@ -108,6 +110,10 @@ class DriverLidarConfig(CarlaLidarSensorConfig):
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
+        # Imported here: the Codon check does not compile this method, and
+        # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
+        from ..utils.config import checked_options as _checked  # noqa: PLC0415
+
         return cls(**_checked(cls, mapping))
 
 
@@ -261,6 +267,10 @@ class DriverClientConfig:
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
+        # Imported here: the Codon check does not compile this method, and
+        # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
+        from ..utils.config import checked_options as _checked  # noqa: PLC0415
+
         values = _checked(cls, mapping, ignore={"control"})
         cameras = values.pop("cameras", None)
         if cameras is not None:
@@ -293,9 +303,9 @@ class EgoObservation:
 
     timestamp_us: int
     pose: Pose
-    linear_velocity: NDArray[np.float64]
-    angular_velocity: NDArray[np.float64]
-    linear_acceleration: NDArray[np.float64]
+    linear_velocity: np.ndarray[tuple[int], np.dtype[np.float64]]
+    angular_velocity: np.ndarray[tuple[int], np.dtype[np.float64]]
+    linear_acceleration: np.ndarray[tuple[int], np.dtype[np.float64]]
     speed_mps: float
 
 
@@ -338,6 +348,8 @@ class BaseEgoDriverClient(ABC):
         config: Connection and cadence settings.
     """
 
+    _config: DriverClientConfig
+
     def __init__(self, config: DriverClientConfig) -> None:
         self._config = config
 
@@ -358,7 +370,9 @@ class BaseEgoDriverClient(ABC):
 
     @abstractmethod
     def submit_route(
-        self, timestamp_us: int, waypoints_in_rig: NDArray[np.float64]
+        self,
+        timestamp_us: int,
+        waypoints_in_rig: np.ndarray[tuple[int, int], np.dtype[np.float64]],
     ) -> None:
         """Send the route the ego should follow.
 

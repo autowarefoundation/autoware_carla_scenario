@@ -248,6 +248,24 @@ def test_a_frozenset_is_checked_as_a_set() -> None:
     assert _annotation("frozenset") is None
 
 
+def test_bytes_is_checked_as_a_str() -> None:
+    # Codon 0.19 has no bytes, and reads a b"..." literal as a str.
+    out = _transform(
+        """
+        class Outcome:
+            debug_info: bytes = b""
+
+            def drive(self, data: bytes = b"") -> Optional[bytes]:
+                return None
+        """
+    )
+    lines = out.splitlines()
+    assert lines[2] == '    debug_info: str = b""'
+    assert lines[4] == '    def drive(self, data: str = b"") -> Optional[str]:'
+    assert _annotation("builtins.bytes") == "str"
+    assert _annotation("list[bytes]", class_level=True) == "list[str]"
+
+
 def test_a_variable_length_tuple_attribute_is_checked_as_a_list() -> None:
     # Codon's tuples have a fixed length: the attribute holds a list, and
     # tuple() of a list (or a generator) makes one; a tuple stays itself.

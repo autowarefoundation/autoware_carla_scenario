@@ -257,8 +257,8 @@ To check one more module:
 ### What is checked of the framework
 
 Every module but four of the example scenarios now has an entry other than
-`"not yet checked (#45)"`. 107 of the package's 225 modules (48%; about
-19,600 of 68,800 lines) are `CHECKED`:
+`"not yet checked (#45)"`. 111 of the package's 225 modules (49%; about
+21,000 of 68,900 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -271,8 +271,10 @@ the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (`scenario_config`, `examples.configs`), and the camera
-and LiDAR sensors (`sensor`). 56
+scenario configs (`scenario_config`, `examples.configs`), the camera
+and LiDAR sensors (`sensor`), and the external driver's configs and client
+interface, trajectory follower and observations (`driver.base`,
+`driver.control`, `driver.observation`, over `driver.geometry`). 61
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -283,8 +285,10 @@ over as `Any` (`set_scenario_route()`), the six members of
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
-(`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 118 `EXCLUDED` modules are the
+(`_refusing_vertex_times`), `signals.build_controllers()`, which reads
+the authoring package's pydantic specs, the driver configs'
+`from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
+`encode_frame_jpeg()` (cv2). The 114 `EXCLUDED` modules are the
 six example scenarios, which import the checked `examples.configs` (the
 scenario check compiles each as a scenario, against the model), and three
 groups. Four of the examples are not checked yet; `cut_in` and
@@ -476,6 +480,34 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
   (`utils/traffic_light.py`) and takes the network `MapManager` returns.
   Nothing else of pyxodr is there.
+- **carla_driver_interface's geometry is modelled**:
+  `codon/carla_driver_interface/geometry.codon` declares the `Pose` and
+  `Trajectory` the driver modules use (and `waypoints_to_proto`, which
+  `driver.geometry` re-exports, with its protobuf result left untyped), with
+  the package's fields, signatures and types, the arrays as Codon's
+  (`position: np.ndarray[np.float64, 1]`). Its scipy-typed constructor
+  (`from_rotation`) and the protobuf conversions (`from_proto`, `to_proto`,
+  `to_proto_at_time`) are not there. `test_typecheck_model.py` compares the
+  model with the installed package. Like every top-level directory of
+  `codon/` (`pyxodr`, `pathlib`, ...), it is a model of a module that is not
+  the framework's: `_shims()` lists it, so the library check and the scenario
+  check let `import carla_driver_interface...` through, and Codon compiles
+  the import against the model. `MODELLED_IMPORTS`, which redirects one
+  framework module's import of another, does not concern it. A scenario may
+  therefore use `Pose` and `Trajectory` of `carla_driver_interface.geometry`
+  now; a name the model lacks fails its check (`Pose.to_proto()` has no
+  attribute), and so does any other module of the package (`no module named
+  'carla_driver_interface.protocol'`).
+- **No `bytes`**: Codon 0.19 has none, and reads a `b"..."` literal as a
+  `str`, so the check reads an annotation naming `bytes` as `str`
+  (`DriveOutcome.debug_info: bytes = b""`).
+- **`dataclasses.fields()` is not in the shim**: a function that reads a
+  dataclass's fields from its class takes a free-form mapping anyway, so it
+  is `UNCALLED` and imports `fields` inside it (`ControlConfig.from_mapping`).
+- **Codon's numpy appends an array of the same dimensions**:
+  `np.append(yaws, yaws[-1:])`, not `np.append(yaws, yaws[-1])`, which numpy
+  answers the same. Nor does Codon unpack an array into arguments
+  (`f(*row)`): pass `row[0], row[1], row[2]`.
 - **numpy is Codon's own**, so `import numpy as np` compiles
   (`utils/powertrain.py`). Codon compares no `np.float32` with a Python
   `float`: convert the float (`x <= np.float32(max_rpm)`), which is what

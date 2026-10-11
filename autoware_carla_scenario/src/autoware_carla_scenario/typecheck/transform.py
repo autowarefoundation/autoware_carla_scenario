@@ -140,6 +140,9 @@ _FROZENSET_NAMES = {"frozenset", "FrozenSet", "typing.FrozenSet"}
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
+#: Python's ``bytes``, which Codon 0.19 lacks: it reads a ``b"..."`` literal
+#: as a ``str``, so an annotation naming ``bytes`` is checked as one.
+_BYTES_NAMES = {"bytes", "builtins.bytes"}
 #: CARLA's integer enumerations, which typesafe_carla's Codon library has as
 #: values, not types (``TrafficLightState = _TrafficLightState()``, each member
 #: an ``int``): an annotation naming one (``carla.TrafficLightState``) is the
@@ -430,6 +433,8 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
         return None if inner_text is None else f"Set[{inner_text}]"
     if not subscript:
+        if base_name in _BYTES_NAMES:
+            return "str"
         module, _, name = base_name.rpartition(".")
         if module in _CARLA_MODULES and name in _CARLA_INT_ENUMS:
             return "int"

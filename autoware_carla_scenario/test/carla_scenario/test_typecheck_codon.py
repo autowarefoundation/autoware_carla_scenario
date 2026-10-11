@@ -769,6 +769,30 @@ def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
     assert error.path == str(path)
 
 
+def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_it(
+    tmp_path: Path,
+) -> None:
+    # codon/carla_driver_interface/ is a top-level model directory, like a
+    # shim: the scenario check lets the import through, and Codon compiles it
+    # against what the model declares (Pose and Trajectory of geometry).
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "from carla_driver_interface.geometry import Pose\n"
+        'logger.info("%f", Pose.from_xyz_yaw(1.0, 2.0, 0.0, 0.5).yaw)\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    # The protobuf conversions are not modelled.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "from carla_driver_interface.geometry import Pose\n"
+        'logger.info("%s", str(Pose.identity().to_proto()))\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "to_proto" in error.message
+    assert error.path == str(path)
+
+
 # ---------------------------------------------------------------------------
 # The runner's step
 # ---------------------------------------------------------------------------
