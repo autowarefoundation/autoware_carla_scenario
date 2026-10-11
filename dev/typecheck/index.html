@@ -2077,26 +2077,30 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 88 of
-the package's 225 modules (39%; about 15,300 of 68,600 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 92 of
+the package's 225 modules (41%; about 16,300 of 68,700 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
-signal-controller, lane-change, set-speed, turn and walk-straight actions,
+signal-controller, lane-change, routing, set-speed, turn and walk-straight
+actions, the logical scenario's route search and matches (<code>route.model</code>) and
+the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities and the entity registry, <code>BaseScenario</code>,
 the traffic backend interface with the TrafficManager backend, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units and the CARLA-only helpers, the traffic-light lookups included. 49
+units and the CARLA-only helpers, the traffic-light lookups included. 54
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
-backend's options node (<code>Mapping[str, Any]</code>), the six members of
+backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
+match from YAML values of any type (<code>Range.parse()</code>, <code>parse_route_search()</code>,
+<code>RouteMatch.from_config()</code>) and what lays a route on a lanelet2 map handed
+over as <code>Any</code> (<code>set_scenario_route()</code>), the six members of
 <code>BaseScenario</code> built on the ego's class (<code>ego_type</code>, a <code>type[EgoVehicle]</code>:
 the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
-<code>register_route_to_goal()</code>, which also registers the unchecked
-<code>RoutingAction</code>) or on cover expressions of any value (<code>register_cover()</code>),
+<code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
 (<code>_refusing_vertex_times</code>), and <code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs. The 137 <code>EXCLUDED</code> modules fall into
+the authoring package's pydantic specs. The 133 <code>EXCLUDED</code> modules fall into
 three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
@@ -2105,14 +2109,12 @@ three groups:</p>
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
 <li><strong>About 20 build on an excluded module</strong>: the example scenarios, through
-  <code>examples.configs</code>; the <code>route</code> package, the traffic backend registry, the
+  <code>examples.configs</code>; the route frame and route poses (<code>route.frame</code>,
+  <code>route.positions</code>, through lanelet2), the traffic backend registry, the
   SUMO backend and the authoring compiler.</li>
-<li><strong>About 12 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
+<li><strong>About 10 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
   <code>odd.model</code>), a callable of any value as a parameter
-  (<code>trajectory.resolve</code>'s position resolvers), a variable-length tuple of a
-  union, which the check does not translate (<code>route.model</code>'s
-  <code>RouteSearchSpec.segments</code>, each a lane or a junction segment), a dict
-  unpacked into keyword arguments (<code>actions.routing</code>'s waypoints), or a class
+  (<code>trajectory.resolve</code>'s position resolvers), or a class
   as a value (<code>utils.config</code>, which <code>traffic.config</code> imports only in its
   uncalled <code>from_mapping()</code>).</li>
 </ul>
@@ -2327,7 +2329,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   at run time; or
   by a constructor written out, which keeps the union on the parameter for
   mypy (<code>RelativeLanePose(entity_ref: Union[EntityRole, str, None])</code>, stored
-  as <code>entity_ref: Optional[str]</code>).
+  as <code>entity_ref: Optional[str]</code>). Without <code>None</code> the union is held as it
+  is: <code>RoutingAction._entity_name: Union[EntityRole, str]</code> keeps what it was
+  given, which its public <code>entity_name</code> returns.
 - <strong>A union of classes without <code>None</code> is an attribute type</strong>: Codon 0.19
   holds <code>Union[Lanelet2Pose, MapPose, ...]</code> (<code>TrajectoryVertex.position</code>, any
   of ten poses), declared whole or through an alias (<code>position:
@@ -2437,11 +2441,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's <code>__hash__</code>), its equality with another tuple and its
   immutability; nothing compiled is run, so nothing can mutate the list.
-  Of a union (<code>tuple[A | B, ...]</code>) it is not translated, since the check
-  spells out no union of classes itself, so such a field cannot be declared
-  yet (<code>route.model</code>'s <code>RouteSearchSpec.segments</code>), though Codon 0.19 would
-  hold the <code>List[Union[A, B]]</code> (a union of classes is an attribute type,
-  above).
+  Of a union of classes (<code>tuple[A | B, ...]</code>, <code>tuple["A | B", ...]</code>) it
+  becomes <code>List[Union[A, B]]</code>, which Codon 0.19 holds as it holds an
+  attribute of the union (above): <code>route.model</code>'s
+  <code>RouteSearchSpec.segments</code>, each a lane or a junction segment. A union with
+  <code>None</code> in it is not translated.
 - <strong>No star-unpacking into a tuple display</strong> (<code>(*a, *b)</code>): Codon wants a
   tuple after <code>*</code>. Concatenate the lists (<code>a + b</code>).
 - <strong>A default does not name a class attribute</strong> (<code>random_seed: int =
@@ -2516,11 +2520,36 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>tuple[X, ...]</code> return annotation
   (<code>signals.registry.registered_signal_controllers()</code>).
 - <strong>No <code>**</code> of a dict in a call</strong> (<code>f(**extra)</code> with <code>extra</code> a <code>dict</code>):
-  Codon unpacks only a named tuple into keyword arguments
-  (<code>actions.routing</code>).
+  Codon unpacks only a named tuple into keyword arguments. Write one call
+  per set of keywords (<code>RoutingAction</code> passes <code>waypoints=</code> only when there
+  are some, in a call of its own).
 - <strong>No escaped brace in an f-string</strong> (<code>f"{{min, max}} of {name}"</code>): Codon's
   parser rejects it, even in a function it never compiles. Concatenate the
-  literal part (<code>"{min, max}" + f" of {name}"</code>).
+  literal part (<code>"{min, max}" + f" of {name}"</code>, as <code>Range.parse</code> does).
+- <strong><code>Literal["a", "b"]</code> is checked as the type of its values</strong> (<code>str</code>), an
+  annotation and a module-level alias alike (<code>route.model</code>'s <code>Tristate</code>):
+  Codon's own <code>Literal</code> types a compile-time value of <code>int</code>, <code>bool</code> or <code>str</code>
+  only, and the <code>typing</code> shim's <code>Literal</code> is <code>str</code> (its <code>TYPE_CHECKING</code> is
+  declared with <code>Static[bool]</code>, Codon's other name for its <code>Literal</code>). A
+  <code>Literal</code> inside a <code>Union</code>/<code>Optional</code> alias is translated the same way. A
+  <code>Literal</code> of values of several types is dropped as an annotation; as an
+  alias it is left as written, which the check rejects.
+- <strong>No <code>getattr(obj, name)</code> with a name built at run time</strong>: spell the
+  attributes out (<code>JunctionSegmentSpec.crossing()</code>), and keep the <code>getattr</code>
+  for any other name in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>, so Python
+  still raises the <code>AttributeError</code> it raised.
+- <strong>A method only some subclasses have</strong> (<code>EgoVehicle.route_to()</code>, which an
+  entity found as a <code>BackendDriven</code> may or may not have): ask
+  <code>hasattr(entity, "route_to")</code> and call it under that, and keep the call
+  that raises the <code>AttributeError</code> for an entity without it in the <code>else</code>
+  branch of <code>if TYPE_CHECKING:</code>. Codon decides <code>hasattr</code> by the static type,
+  which lacks the method, so it compiles none of the calls: the check covers
+  the lookup around them, not the calls (<code>RoutingAction.execute()</code>).
+- <strong>A lanelet2 object at the model boundary is opaque</strong>: the model's
+  <code>MapManager</code> hands out its <code>lanelet_map</code> and <code>routing_graph</code> as classes
+  with nothing in them, which the model's <code>RouteFrame</code> takes, so the checked
+  <code>scenario_route_frame()</code> (<code>route.active</code>) compiles; <code>route.frame</code> itself,
+  which reads them, is not checked.
 - <strong>A model shared with checked modules is split out</strong>: the model's
   <code>EgoConfig</code> derives from <code>VehicleEntityConfig</code>, and the checked
   <code>EgoVehicle.spawn()</code> hands its spawn location to the checked
@@ -2557,7 +2586,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 10:50:23 UTC"><span class="timeago" datetime="2026-10-11T10:50:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 10:50:23 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 11:20:49 UTC"><span class="timeago" datetime="2026-10-11T11:20:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 11:20:49 UTC">2026-10-11</span>
   </span>
 
     
