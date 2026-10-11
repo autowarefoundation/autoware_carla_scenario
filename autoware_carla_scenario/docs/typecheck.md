@@ -254,9 +254,10 @@ groups:
 - **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
   `odd.model`), a class or a callable of any value as a parameter
   (`scenario_base`'s `ego_type`, callbacks and measure expressions,
-  `trajectory.resolve`'s position resolvers), a list of a union, which
-  crashes Codon 0.19 (`route.model`'s `RouteSearchSpec.segments`, each a lane
-  or a junction segment), a dict unpacked into keyword arguments
+  `trajectory.resolve`'s position resolvers), a variable-length tuple of a
+  union, which the check does not translate (`route.model`'s
+  `RouteSearchSpec.segments`, each a lane or a junction segment), a dict
+  unpacked into keyword arguments
   (`actions.routing`'s waypoints), or a class as a value (`utils.config`).
 
 The scenario check is not limited by this: it compiles every scenario against
@@ -529,9 +530,11 @@ What Codon 0.19 needs that Python does not, beyond
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's `__hash__`), its equality with another tuple and its
   immutability; nothing compiled is run, so nothing can mutate the list.
-  Of a union (`tuple[A | B, ...]`) it is dropped, since a list of a union
-  crashes Codon 0.19 ("union already sealed"), so such a field cannot be
-  declared (`route.model`'s `RouteSearchSpec.segments`).
+  Of a union (`tuple[A | B, ...]`) it is not translated, since the check
+  spells out no union of classes itself, so such a field cannot be declared
+  yet (`route.model`'s `RouteSearchSpec.segments`). Codon 0.19 itself holds a
+  class-level `List[Union[A, B]]`; what crashes it ("union already sealed")
+  is a parameter annotated with a union, which the check drops.
 - **No `del` of a parameter** (`del world, goal` to mark it unused): Codon
   reads it as a call on the value. Leave the parameter unused.
 - **An `Optional` attribute is assigned without an annotation**: with one
