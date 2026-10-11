@@ -247,7 +247,9 @@ def _apply(phase: Phase, world: "carla.World", controller_name: str) -> None:
     """
     unresolved: list[str] = []
     for entry in phase.states:
-        state = STATE_NAMES.get(entry.state)
+        # Not ``STATE_NAMES.get(entry.state)``: Codon's dict.get wants a
+        # default of the value's type (docs/typecheck.md).
+        state = STATE_NAMES[entry.state] if entry.state in STATE_NAMES else None
         if state is None:
             # The validator rejects this while the document is being written,
             # so reaching here means something bypassed it.  One signal left

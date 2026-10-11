@@ -1,10 +1,8 @@
-# Model of autoware_carla_scenario.signals (docs/typecheck.md), for
-# signals.registry, which is checked and imports SignalController from
-# signals.controller. signals.controller is not (typecheck/library.py): this
-# declares only what checked modules use of it, the phase a controller is
-# showing and the jump to another phase. find_signal_controller is the checked
-# signals.registry's, which a library run naming a module that imports it
-# compiles too.
+# Model of autoware_carla_scenario.signals (docs/typecheck.md).
+# The whole signals package is checked (typecheck/library.py): the library
+# check compiles its source, also when a module is checked alone, since such a
+# run brings the checked modules it imports. This declares the phase a
+# controller is showing and the jump to another phase.
 
 import typesafe_carla.carla as carla
 
