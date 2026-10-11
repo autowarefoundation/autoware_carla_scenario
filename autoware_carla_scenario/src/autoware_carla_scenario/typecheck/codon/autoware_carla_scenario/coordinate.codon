@@ -228,9 +228,27 @@ class RoadNetwork:
     root: _XmlElement
 
 
+# lanelet2's map and routing graph, as MapManager hands them out: opaque here.
+# Only route.active reads them, to hand them to RouteFrame (route.codon).
+class _Lanelet2Map:
+    pass
+
+
+class _Lanelet2RoutingGraph:
+    pass
+
+
 class MapManager:
     @staticmethod
     def get_instance() -> MapManager:
+        raise NotImplementedError()
+
+    @property
+    def lanelet_map(self) -> _Lanelet2Map:
+        raise NotImplementedError()
+
+    @property
+    def routing_graph(self) -> _Lanelet2RoutingGraph:
         raise NotImplementedError()
 
     @property

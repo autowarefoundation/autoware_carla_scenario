@@ -260,6 +260,56 @@ def test_a_variable_length_tuple_attribute_is_checked_as_a_list() -> None:
     assert _annotation("Sequence[int, ...]", class_level=True) is None
 
 
+def test_a_variable_length_tuple_of_a_union_attribute_is_a_list_of_the_union() -> None:
+    # Codon 0.19 holds a list of a union of classes, as it holds an attribute
+    # of one (route.model's RouteSearchSpec.segments).
+    out = _transform(
+        """
+        class Search:
+            segments: tuple["LaneSpec | JunctionSpec", ...]
+        """
+    )
+    assert out.splitlines()[2] == "    segments: List[Union[LaneSpec, JunctionSpec]]"
+    assert (
+        _annotation("Tuple[Union[A, B, C], ...]", class_level=True)
+        == "List[Union[A, B, C]]"
+    )
+    # A parameter is still dropped (a caller may pass a tuple), and a union
+    # with None, which Codon 0.19 cannot hold, is not translated.
+    assert _annotation("tuple[A | B, ...]") is None
+    assert _annotation("tuple[A | B | None, ...]", class_level=True) is None
+    assert _annotation("tuple[A | Any, ...]", class_level=True) is None
+
+
+def test_a_literal_is_checked_as_the_type_of_its_values() -> None:
+    # Codon's Literal types a compile-time value; Python's is checked as the
+    # type of its values, and the typing shim's Literal is str.
+    assert _annotation('Literal["any", "yes", "no"]') == "str"
+    assert _annotation("typing.Literal[1, 2]") == "int"
+    assert _annotation("Literal[True]") == "bool"
+    assert _annotation('Literal["a", 1]') is None
+    out = _transform(
+        """
+        Tristate = Literal["any", "yes", "no"]
+
+
+        class Segment:
+            shape: Literal["straight", "curved"] = "straight"
+        """
+    )
+    lines = out.splitlines()
+    assert lines[1] == "Tristate = str"
+    assert lines[5] == '    shape: str = "straight"'
+    # Inside a Union/Optional alias, a Literal's values are not forward
+    # references to unquote.
+    assert _transform('Maybe = Optional[Literal["a", "b"]]\n') == (
+        "Maybe = Optional[str]\n"
+    )
+    assert _transform('Either = Union["Pose", Literal[1, 2]]\n') == (
+        "Either = Union[Pose, int]\n"
+    )
+
+
 def test_callable_is_checked_by_the_stand_in() -> None:
     # Codon 0.19 has no callable(): _acs_callable decides it when compiling.
     assert "ok = _acs_callable(x.check)" in _transform("ok = callable(x.check)\n")
