@@ -256,12 +256,12 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 121 of
-the package's 225 modules (54%; about 22,900 of 69,000 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 122 of
+the package's 225 modules (54%; about 24,200 of 69,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
-every condition, the action base with the environment, traffic-signal,
-signal-controller, lane-change, routing, set-speed, turn and walk-straight
-actions, the logical scenario's route search and matches (`route.model`) and
+every condition, the action base with the environment, follow-trajectory,
+traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
+walk-straight actions, the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
@@ -278,7 +278,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `entity` and `driver`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 61
+below). 62
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -289,10 +289,12 @@ over as `Any` (`set_scenario_route()`), the six members of
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
-(`_refusing_vertex_times`), `signals.build_controllers()`, which reads
+(`_refusing_vertex_times`), what resolves a followed trajectory with the
+unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
+`signals.build_controllers()`, which reads
 the authoring package's pydantic specs, the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 104 `EXCLUDED` modules fall in
+`encode_frame_jpeg()` (cv2). The 103 `EXCLUDED` modules fall in
 three groups:
 
 - **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
@@ -760,6 +762,18 @@ What Codon 0.19 needs that Python does not, beyond
 - **`hasattr` on an `Optional` is decided on the `Optional`**, which has
   none of its value's attributes: assign the value to an annotated local
   after the `None` test (`walker: PedestrianEntity = entity`) and ask that.
+- **An `Optional` local tested in a loop** (`assert x is not None`, or `if x
+  is None: return`) is left the unwrapped type for the next lap, whose
+  assignment of the `Optional` then fails ("'BaseCondition' does not match
+  expected type 'Optional[BaseCondition]'"). Read the value through a function
+  that returns it unwrapped (`follow_trajectory._gate_at()`), and test the
+  `Optional` expression itself where the loop needs the test.
+- **A call into a module Codon cannot compile, from a function it must**: a
+  function `UNCALLED` names is still compiled when a checked function calls
+  it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
+  first branch what it is handed (`FollowTrajectoryAction._resolve()` hands
+  `_resolve_in_world()`, which imports `trajectory.resolve`, its reference
+  lookup, which the first branch calls instead).
 - **An entity looked up by role is looked up by kind**:
   `find_entity_by_role_name` returns an entity of any kind (`Optional[Any]`),
   so a checked module asks `entity.registry` for the kind it acts on,
