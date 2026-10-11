@@ -2052,34 +2052,37 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 80 of
-the package's 224 modules (36%; about 12,100 of 68,100 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 85 of
+the package's 225 modules (38%; about 13,700 of 68,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
 the signal-controller registry, the ego, NPC vehicle and pedestrian entities
-and the entity registry, <code>BaseScenario</code>, the Autoware bridge interface and
-its fake, the measures, the ODD units and the CARLA-only helpers, the
-traffic-light lookups included. 39 functions and methods of those modules are
-<code>UNCALLED</code>: most of them a condition's <code>get_details()</code>, and the six members of
+and the entity registry, <code>BaseScenario</code>, the traffic backend interface with
+the TrafficManager backend, the Autoware bridge interface and its fake, the
+measures, the ODD units and the CARLA-only helpers, the traffic-light lookups
+included. 47 functions and methods of those modules are <code>UNCALLED</code>: most of
+them a condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a
+traffic backend's options node (<code>Mapping[str, Any]</code>), and the six members of
 <code>BaseScenario</code> built on the ego's class (<code>ego_type</code>, a <code>type[EgoVehicle]</code>: the
 constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
 <code>register_route_to_goal()</code>, which also registers the unchecked
 <code>RoutingAction</code>) or on cover expressions of any value (<code>register_cover()</code>).
-The 144 <code>EXCLUDED</code> modules fall into three groups:</p>
+The 140 <code>EXCLUDED</code> modules fall into three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (<code>pathlib</code>, <code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
-<li><strong>About 25 build on an excluded module</strong>: the example scenarios, through
-  <code>examples.configs</code>; the <code>signals</code> package, the traffic backends and the
-  authoring compiler.</li>
+<li><strong>About 20 build on an excluded module</strong>: the example scenarios, through
+  <code>examples.configs</code>; the <code>signals</code> package, the traffic backend registry,
+  the SUMO backend and the authoring compiler.</li>
 <li><strong>About 12 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
   <code>odd.model</code>), a union-typed attribute, which crashes Codon 0.19
   (<code>RelativeLanePose.entity_ref</code>), a variable-length tuple (<code>route.model</code>,
-  <code>actions.routing</code>'s waypoints), or a class as a value (<code>utils.config</code>).</li>
+  <code>actions.routing</code>'s waypoints), or a class as a value (<code>utils.config</code>,
+  which <code>traffic.config</code> imports only in its uncalled <code>from_mapping()</code>).</li>
 </ul>
 <p>The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.</p>
@@ -2107,6 +2110,11 @@ it is called with the class itself. A <code>Callable</code> whose argument and r
 types Codon can express (<code>Callable[[carla.World], Optional[float]]</code>, a
 dataclass field too) is called with a value of Codon's <code>Callable</code> type, which
 a function of that signature converts to.</p>
+<p>A method with keyword-only parameters or <code>**kwargs</code> is called through its
+class (<code>TrafficBackend.start(_acs_value(TrafficBackend), ...,
+skip_actor_ids=...)</code>): Codon 0.19 calls a method a subclass may override
+through a dispatch thunk, which takes neither a keyword argument nor
+<code>**kwargs</code>, and the call through the class checks the same body.</p>
 <h3 id="checked-modules-and-the-model">Checked modules and the model<a class="headerlink" href="#checked-modules-and-the-model" title="Permanent link">&para;</a></h3>
 <p>The checked modules are compiled next to the same model the scenario check
 uses. Every import of the framework in a checked module is pointed at what
@@ -2206,8 +2214,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code> and <code>__future__</code> shims of
   <code>codon/</code> are. <code>collections.abc</code> is not: import <code>Sequence</code> and the other
   abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
-  Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base.
-  <code>typing.Any</code> imports, and every annotation naming it is dropped.</li>
+  Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base, and so is
+  <code>typing.Protocol</code>, whose <code>@runtime_checkable</code> is dropped too.
+  <code>typing.Any</code> imports, and every annotation naming it is dropped.
+  <code>typing.TYPE_CHECKING</code> is a compile-time true, so Codon compiles only the
+  first branch of <code>if TYPE_CHECKING: ... else: ...</code>. The <code>logging</code> shim's
+  methods take <code>exc_info</code> as a <code>bool</code>.</li>
 <li><strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
   <code>RoadNetwork</code> that <code>coordinate.codon</code> declares (what the framework reads of
   it, down to the XML elements), so a module that may not import
@@ -2221,52 +2233,89 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   = None</code> in the base class and in the checked <code>FakeAutowareBridge</code>, and its
   caller passes a list. (<code>None</code>, not <code>[]</code>: a mutable default is shared by
   every call.)</li>
-<li><strong>No <code>**</code> in a dict display</strong> (<code>{"a": 1, **other}</code>): Codon's parser fails on
+<li><strong>A call to an overridden method passes every argument, by position, of
+  the parameter's own type</strong>: Codon 0.19 calls it through a dispatch thunk,
+  which fills in no default, takes no keyword argument and no <code>**kwargs</code>,
+  and does not upcast. Hand a subclass over through a local of the
+  parameter's type (<code>entity: DrivenEntity = self</code>, as <code>traffic/driven.py</code>
+  does). A thunk cannot call a method that takes <code>**kwargs</code> at all:
+  <code>BackendDriven.turn_at_junction()</code>, which <code>actions.turn</code> calls, hands the
+  backend its <code>**kwargs</code> only in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>
+  (see below), and the check calls each backend's <code>turn_at_junction()</code>
+  through its class instead.</li>
+<li><strong>A class cannot be named before it is defined or imported</strong>, in a
+  signature or a class-level declaration, and an import cycle resolves only
+  with the names already defined. Two classes whose signatures name each
+  other across modules (a backend's methods take the entity, the entity holds
+  the backend) need a base class the first module defines: the backends take
+  a <code>traffic.base.DrivenEntity</code>, which <code>traffic.driven.BackendDriven</code> derives
+  from.</li>
+<li><strong>A part of a module that needs what Codon lacks moves out</strong>: the
+  backend interface of <code>traffic/base.py</code> is checked, and <code>TrafficContext</code>,
+  which holds <code>pathlib.Path</code>s, lives in <code>traffic/context.py</code> (re-exported by
+  <code>base</code>), which the model (<code>traffic.codon</code>) stands in for.</li>
+<li><strong>A <code>carla.Actor</code> where the CARLA API takes a <code>carla.Vehicle</code></strong>
+  (<code>TrafficManager.set_desired_speed()</code>): typesafe_carla's Python API takes
+  the actor as it is, and its Codon library wants the checked conversion.
+  Convert under <code>if TYPE_CHECKING:</code>, which Codon reads as true and Python as
+  false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</li>
+</ul>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="k">return</span> <span class="n">actor</span>
+</code></pre></div>
+- <strong>An import of the framework inside an uncalled function</strong> is left as
+  written: Codon does not compile it, so a checked module may import a
+  module with no model there (<code>traffic.config</code> imports <code>utils.config</code> in
+  <code>from_mapping()</code>).
+- <strong>A CARLA container has no truth value in Codon</strong>: <code>if not found:</code> on a
+  <code>carla.BlueprintLibrary</code> is <code>if len(found) == 0:</code>.
+- <strong>No <code>**</code> in a dict display</strong> (<code>{"a": 1, **other}</code>): Codon's parser fails on
   it, even in a function it never compiles. Build the dict, then
-  <code>update()</code> it.</li>
-<li><strong><code>dict.get()</code> takes a default</strong> in Codon, of the value type. Where
+  <code>update()</code> it.
+- <strong><code>dict.get()</code> takes a default</strong> in Codon, of the value type. Where
   "absent" has no value of that type, test membership:
-  <code>d[k] if k in d else None</code>.</li>
-<li><strong>CARLA's containers are not lists.</strong> <code>world.get_actors()</code> is a
+  <code>d[k] if k in d else None</code>.
+- <strong>CARLA's containers are not lists.</strong> <code>world.get_actors()</code> is a
   <code>carla.ActorList</code>; a parameter that takes it or a list is
   <code>Union[carla.ActorList, list[carla.Actor]]</code>, and the check calls it with
-  each.</li>
-<li><strong>Codon cannot hash a class</strong>: <code>hash((MyClass, x))</code> names the class by its
-  name instead.</li>
-<li><strong>An attribute holds one type</strong>: one assigned a union (<code>EntityRole | str</code>)
+  each.
+- <strong>Codon cannot hash a class</strong>: <code>hash((MyClass, x))</code> names the class by its
+  name instead.
+- <strong>An attribute holds one type</strong>: one assigned a union (<code>EntityRole | str</code>)
   is stored converted where every use converts it anyway
   (<code>self._entity_name = str(entity_name)</code>). Codon 0.19 crashes on an
   attribute declared with a union ("union already sealed"). A public
   dataclass field is converted in <code>__post_init__</code>
   (<code>VehicleEntityConfig.role_name: str</code>, <code>self.role_name =
-  str(self.role_name)</code>), which still takes an <code>EntityRole</code> at run time.</li>
-<li><strong>Annotate a local that starts as <code>None</code></strong> (<code>spawn_points:
+  str(self.role_name)</code>), which still takes an <code>EntityRole</code> at run time.
+- <strong>Annotate a local that starts as <code>None</code></strong> (<code>spawn_points:
   Optional[list[carla.Transform]] = None</code>): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
   diagnostic. A function that imports a name locally (<code>import
   typesafe_carla.carla as carla</code>) makes it local to the whole function, so an
-  annotation naming it needs that import above it.</li>
-<li><strong>Operators take the operand types they accept</strong>, not <code>object</code>. Annotate
+  annotation naming it needs that import above it.
+- <strong>Operators take the operand types they accept</strong>, not <code>object</code>. Annotate
   <code>other</code> with the class (<code>def __add__(self, other: FrenetVelocity)</code>) and a
   scalar with <code>float</code>, and keep the <code>isinstance</code> guard that returns
   <code>NotImplemented</code>: Python still runs it, and Codon, which decides
-  <code>isinstance</code> when it compiles, drops it.</li>
-<li><strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
+  <code>isinstance</code> when it compiles, drops it.
+- <strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
   -&gt; Relative</code>, <code>Absolute - Relative -&gt; Absolute</code>) keeps its <code>@overload</code>
-  stubs, for mypy, and spells the union out on the implementation:</li>
-</ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nd">@overload</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nd">@overload</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
+  stubs, for mypy, and spells the union out on the implementation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nd">@overload</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nd">@overload</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
 </code></pre></div>
 <p>The check calls the implementation once per member, and Codon compiles
   only the <code>isinstance</code> branch of that member, so each call has one result
@@ -2414,7 +2463,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:53:01 UTC"><span class="timeago" datetime="2026-10-11T07:53:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:53:01 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 08:43:30 UTC"><span class="timeago" datetime="2026-10-11T08:43:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 08:43:30 UTC">2026-10-11</span>
   </span>
 
     
