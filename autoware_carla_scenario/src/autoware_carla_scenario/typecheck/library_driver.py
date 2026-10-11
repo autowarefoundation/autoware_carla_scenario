@@ -152,7 +152,7 @@ class _Renderer:
         members = _union_members(annotation)
         if members is not None:
             texts = [
-                codon_annotation(m, class_level=True)
+                codon_annotation(m, class_level=True) or callable_annotation(m)
                 for m in members
                 if not _is_none(m)
             ]

@@ -47,7 +47,13 @@ from .toolchain import (
     find_codon,
     is_supported_version,
 )
-from .library import CHECKED, REPLACED_MODELS, UNCALLED, package_modules
+from .library import (
+    CHECKED,
+    MODELLED_IMPORTS,
+    REPLACED_MODELS,
+    UNCALLED,
+    package_modules,
+)
 from .library_driver import (
     render_library_checks,
     render_library_driver,
@@ -790,14 +796,21 @@ def _library_files(
     """
     checked = set(names)
 
-    def target(module: str) -> str | None:
-        return workspace_module(module) if module in checked else _model_module(module)
+    def targets(name: str) -> Callable[[str], str | None]:
+        modelled = set(MODELLED_IMPORTS.get(name, ()))
+
+        def target(module: str) -> str | None:
+            if module in checked and module not in modelled:
+                return workspace_module(module)
+            return _model_module(module)
+
+        return target
 
     files: list[_LibraryFile] = []
     for name in names:
         module = sources.modules[name]
         redirected, problems = redirect_imports(
-            module.text, name, module.is_package, target, every.__contains__
+            module.text, name, module.is_package, targets(name), every.__contains__
         )
         checks = render_library_checks(module.tree, _uncalled(name))
         for line, message in [*problems, *checks.problems]:

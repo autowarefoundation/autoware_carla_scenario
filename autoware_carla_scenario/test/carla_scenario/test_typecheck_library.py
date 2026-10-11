@@ -27,6 +27,7 @@ from autoware_carla_scenario.typecheck.cli import main as scenario_check
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
     EXCLUDED,
+    MODELLED_IMPORTS,
     NOT_YET_CHECKED,
     REPLACED_MODELS,
     UNCALLED,
@@ -95,6 +96,12 @@ def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name == function
         ], f"{name}: no such function"
+
+
+def test_every_modelled_import_is_between_checked_modules() -> None:
+    for name, imported in MODELLED_IMPORTS.items():
+        assert name in CHECKED, name
+        assert imported and all(m in CHECKED for m in imported), name
 
 
 def test_the_checker_itself_is_not_a_module_to_check() -> None:
@@ -193,6 +200,24 @@ def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
     )
     assert _model_module(f"{_PACKAGE}.utils.config") is None
     assert _model_module(f"{_PACKAGE}.coordinate.transform") == f"{_PACKAGE}.coordinate"
+
+
+def test_a_modelled_import_names_the_model_though_the_module_is_checked() -> None:
+    # measures and scenario_base import each other: measures has scenario_base
+    # through its model, scenario_base has measures from its source.
+    measures, scenario_base = f"{_PACKAGE}.measures", f"{_PACKAGE}.scenario_base"
+    assert scenario_base in MODELLED_IMPORTS[measures]
+    every = package_modules()
+    sources = check._Sources()
+    for name in (measures, scenario_base):
+        text = every[name].read_text(encoding="utf-8")
+        sources.modules[name] = check._Module(every[name], False, text, ast.parse(text))
+    files = {
+        f.module: f.text
+        for f in check._library_files([measures, scenario_base], sources, every)
+    }
+    assert f"from {_PACKAGE}.scenario_base import BaseScenario" in files[measures]
+    assert f"from {workspace_module(measures)} import " in files[scenario_base]
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +387,7 @@ _CALLABLES = """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
 
 def apply(f: Callable[[float, str], Optional[float]]) -> None:
@@ -380,6 +405,10 @@ def anything(f: Callable[[Any], Any]) -> None:
 
 def variadic(f: Callable[..., float]) -> None:
     pass
+
+
+def register(cb: Union[float, Callable[[float], None]]) -> None:
+    pass
 """
 
 
@@ -388,6 +417,9 @@ def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
     calls = checks.source.splitlines()
     assert "    apply(_acs_value(Callable[[float, str], Optional[float]]))" in calls
     assert "    Reader(_acs_value(Callable[[carla.World], float]))" in calls
+    # A union with a callable in it: called once with each member.
+    assert "    register(_acs_value(float))" in calls
+    assert "    register(_acs_value(Callable[[float], None]))" in calls
     lines = _CALLABLES.splitlines()
     assert sorted(lines[line - 1].split("(")[0] for line, _ in checks.problems) == [
         "def anything",

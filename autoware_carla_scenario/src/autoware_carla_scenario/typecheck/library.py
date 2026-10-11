@@ -39,6 +39,7 @@ from pathlib import Path
 __all__ = [
     "CHECKED",
     "EXCLUDED",
+    "MODELLED_IMPORTS",
     "NOT_YET_CHECKED",
     "REPLACED_MODELS",
     "UNCALLED",
@@ -120,6 +121,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.tools",
     "autoware_carla_scenario.kinematics.velocity",
     "autoware_carla_scenario.measures",
+    "autoware_carla_scenario.scenario_base",
     "autoware_carla_scenario.odd.scenario_measure",
     "autoware_carla_scenario.odd.units",
     "autoware_carla_scenario.signals.registry",
@@ -169,13 +171,19 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.elapsed_time.ElapsedTimeCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.lane_change_settled.LaneChangeSettledCondition.get_details": _DETAILS,
     "autoware_carla_scenario.entity.registry.find_entity_by_role_name": "returns the entity of any kind registered under a role (`Optional[Any]`), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups",
-    "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); a checked caller compiles it with the entity it passes",
+    "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base calls",
     "autoware_carla_scenario.conditions.not_condition.NotCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.or_condition.OrCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.persistent.PersistentCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.route_progress.RouteProgressCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.sticky.StickyCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.traffic_signal.TrafficSignalCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.scenario_base.BaseScenario.__init__": "takes and stores the ego's class (`ego_type: type[EgoVehicle] | None`), and Codon cannot hold a class as a value",
+    "autoware_carla_scenario.scenario_base.BaseScenario.create_ego": "instantiates the ego's class held in `ego_type`, which Codon cannot hold as a value",
+    "autoware_carla_scenario.scenario_base.BaseScenario.ego_requires_goal": "reads `requires_goal` off the ego's class (`type(entity)` or `ego_type`), which Codon cannot hold as a value",
+    "autoware_carla_scenario.scenario_base.BaseScenario.require_goal": "asks ego_requires_goal, which reads the ego's class (`ego_type`)",
+    "autoware_carla_scenario.scenario_base.BaseScenario.register_route_to_goal": "asks require_goal, which reads the ego's class (`ego_type`), and registers a RoutingAction, which actions.routing (not checked) derives from the model's BaseAction rather than the checked one",
+    "autoware_carla_scenario.scenario_base.BaseScenario.register_cover": "builds a CoverItem of values of any type (`expression: Callable[[carla.World], Any]`, `values: Iterable[Any]`, `ignore: Callable[[Any], bool]`, `event: SamplingEvent | BaseCondition`), which Codon cannot express; coverage.items is not checked",
 }
 
 #: Every other module, with the reason it is not compiled.
@@ -294,7 +302,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.route.search": "imports route.geometry (lanelet2) and sweeper.constraints, which are neither checked nor modelled, and walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",
     "autoware_carla_scenario.scaffold.generator": "imports pathlib, argparse, keyword",
-    "autoware_carla_scenario.scenario_base": "takes the ego's class (`type[EgoVehicle]`), callbacks that are an action or a function (`Union[BaseAction, Callable]`), and measure and cover expressions of any value (`Callable[[carla.World], Any]`, `Iterable[Any]`, `Callable[[Any], bool]`), none of which Codon can express; imports entity.registry (entities as `Any`) and coverage.items, which are not checked, and traffic.base (pathlib), which the model does not declare",
     "autoware_carla_scenario.scenario_config": "imports omegaconf",
     "autoware_carla_scenario.scenario_queue": "imports pathlib, tqdm, pytest",
     "autoware_carla_scenario.scenario_runner": "imports pathlib, shutil",
@@ -354,6 +361,21 @@ REPLACED_MODELS: dict[str, tuple[str, ...]] = {
         "autoware_carla_scenario.entity._spawn",
         "autoware_carla_scenario.entity.vehicle_entity",
     ),
+}
+
+#: Checked modules that import another checked module through its model
+#: rather than its source, by importing module -> the modules so imported.
+#: For an import cycle Codon cannot resolve: each module names the other's
+#: types where Codon resolves them when it reads the module (a class-level
+#: attribute, a global, a signature), so neither can be read first.  The
+#: module keeps the model's types: they never meet the checked module's.
+MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
+    # BaseScenario holds Measures (`_measures: dict[str, Measure]`), and
+    # measures holds the running BaseScenario (`_MEASURED`).
+    "autoware_carla_scenario.measures": ("autoware_carla_scenario.scenario_base",),
+    # BaseScenario holds an EgoVehicle (`ego_entity`), and EgoVehicle.spawn()
+    # takes an EgoConfig.
+    "autoware_carla_scenario.entity.ego": ("autoware_carla_scenario.scenario_base",),
 }
 
 

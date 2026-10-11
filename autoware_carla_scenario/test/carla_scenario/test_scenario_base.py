@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Iterable, Iterator, List, Optional
 from unittest.mock import MagicMock
 
 import typesafe_carla.carla as carla
@@ -13,8 +13,19 @@ from autoware_carla_scenario import (
     BaseCondition,
     BaseScenario,
     EgoConfig,
+    Lanelet2Pose,
+    PedestrianEntity,
+    PedestrianEntityConfig,
     ScenarioResult,
     SpawnTransform,
+    VehicleEntity,
+    VehicleEntityConfig,
+)
+from autoware_carla_scenario.entity.registry import (
+    clear_entities,
+    find_entity_by_role_name,
+    find_pedestrian_entity,
+    find_vehicle_entity,
 )
 
 
@@ -541,3 +552,109 @@ class TestInitPhase:
     def test_nothing_registered_is_a_no_op(self) -> None:
         scenario = _SimpleScenario(_make_ego_config())
         scenario.run_init(MagicMock())
+
+
+class TestConstruction:
+    """Behaviour the static check's rewrites of BaseScenario must keep."""
+
+    def test_the_random_seed_defaults_to_the_class_default(self) -> None:
+        # The default is written as a literal for Codon; it must stay equal.
+        scenario = _SimpleScenario(_make_ego_config())
+        assert scenario.random_seed == BaseScenario.DEFAULT_RANDOM_SEED
+
+    @pytest.mark.parametrize(
+        "given",
+        [
+            None,
+            [],
+            (Lanelet2Pose(lanelet_id=1, s=0.0), Lanelet2Pose(lanelet_id=2, s=0.0)),
+            (Lanelet2Pose(lanelet_id=n, s=0.0) for n in (1, 2)),
+        ],
+        ids=["none", "empty", "tuple", "generator"],
+    )
+    def test_waypoint_poses_take_any_iterable_as_a_new_list(
+        self, given: Optional[Iterable[Lanelet2Pose]]
+    ) -> None:
+        config = EgoConfig(
+            spawn_location=SpawnTransform(carla.Transform(carla.Location())),
+            waypoint_poses=given,  # type: ignore[arg-type]
+        )
+        assert isinstance(config.waypoint_poses, list)
+        assert [p.lanelet_id for p in config.waypoint_poses] == (
+            [] if given is None or given == [] else [1, 2]
+        )
+        assert config.waypoint_poses is not given
+
+    def test_the_backend_reaches_actions_of_every_phase(self) -> None:
+        received: List[str] = []
+
+        class _Driven(BaseAction):
+            def execute(self, world: object) -> None:
+                pass
+
+            def set_traffic_backend(self, backend: object) -> None:
+                received.append(self.label)
+
+        class _NotDriven(BaseAction):
+            set_traffic_backend = None
+
+            def execute(self, world: object) -> None:
+                pass
+
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_init(_Driven(label="init"))
+        scenario.register_pre_tick(_Driven(label="pre"))
+        scenario.register_post_tick(_Driven(label="post"))
+        scenario.register_post_tick(_NotDriven(label="none"))
+        assert received == []
+        scenario.set_traffic_backend(MagicMock())
+        assert received == ["init", "pre", "post"]
+
+
+class TestEntityRegistration:
+    """register_entity / register_pedestrian put the entity in the registry
+    by kind, and a duck-typed double of neither kind under every lookup, as
+    registry.register_entity always has."""
+
+    @pytest.fixture(autouse=True)
+    def _empty_registry(self) -> Iterator[None]:
+        clear_entities()
+        yield
+        clear_entities()
+
+    def test_a_vehicle_is_registered_as_a_vehicle(self) -> None:
+        npc = VehicleEntity(
+            VehicleEntityConfig(
+                role_name="npc1", spawn_location=SpawnTransform(carla.Transform())
+            )
+        )
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_entity(npc)
+
+        assert find_vehicle_entity("npc1") is npc
+        assert find_pedestrian_entity("npc1") is None
+
+    def test_a_pedestrian_is_registered_as_a_pedestrian(self) -> None:
+        walker = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1", spawn_location=SpawnTransform(carla.Transform())
+            )
+        )
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_pedestrian(walker)
+
+        assert find_pedestrian_entity("walker1") is walker
+        assert find_vehicle_entity("walker1") is None
+
+    @pytest.mark.parametrize("method", ["register_entity", "register_pedestrian"])
+    def test_a_double_of_neither_kind_is_found_by_every_lookup(
+        self, method: str
+    ) -> None:
+        double = MagicMock()
+        double.role_name = "x"
+        scenario = _SimpleScenario(_make_ego_config())
+        getattr(scenario, method)(double)
+
+        assert find_entity_by_role_name("x") is double
+        assert find_vehicle_entity("x") is double
+        assert find_pedestrian_entity("x") is double
