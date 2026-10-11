@@ -409,3 +409,36 @@ def test_the_release_is_not_the_default_control():
     released = vehicle.apply_control.call_args[0][0]
     assert (released.throttle, released.brake, released.hand_brake) == (0.0, 0.0, False)
     assert released.gear == 1 and released.manual_gear_shift is False
+
+
+class TestReloadingTheMap:
+    """The world is reset by loading its map by name, not with reload_world()."""
+
+    @staticmethod
+    def _client(map_name: str) -> MagicMock:
+        client = MagicMock()
+        client.get_world.return_value.get_map.return_value.name = map_name
+        return client
+
+    def test_the_map_is_loaded_by_its_name(self):
+        from autoware_carla_scenario.world_reset import reload_current_map
+
+        client = self._client("Carla/Maps/Town10HD_Opt")
+
+        world = reload_current_map(client)
+
+        # FindMapPath on a CARLA UE5 server matches the name, not the path,
+        # and an empty name (what reload_world sends) matches nothing.
+        client.load_world.assert_called_once_with("Town10HD_Opt")
+        client.reload_world.assert_not_called()
+        assert world is client.load_world.return_value
+
+    def test_a_map_without_a_name_falls_back_to_reload_world(self):
+        from autoware_carla_scenario.world_reset import reload_current_map
+
+        client = self._client("")
+
+        reload_current_map(client)
+
+        client.reload_world.assert_called_once_with()
+        client.load_world.assert_not_called()

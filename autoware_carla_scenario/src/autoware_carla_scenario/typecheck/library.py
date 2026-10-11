@@ -113,6 +113,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.odd.scenario_measure",
     "autoware_carla_scenario.odd.units",
     "autoware_carla_scenario.traffic.sumo.geometry",
+    "autoware_carla_scenario.world_reset",
     "autoware_carla_scenario.traffic.sumo.physics_control",
     "autoware_carla_scenario.trajectory",
     "autoware_carla_scenario.utils",
