@@ -1489,6 +1489,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#conditions-the-checked-base-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions: the checked base and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#making-a-module-compile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1770,6 +1781,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#conditions-the-checked-base-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions: the checked base and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#making-a-module-compile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1926,7 +1948,7 @@ outside the public API) is refused with a message naming the module.</p>
 <p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
 <code>Optional[X]</code>, drops <code>@dataclass</code> and resolves <code>field(...)</code> defaults, accepts
-keyword-only parameters, gives a list of different conditions the type
+keyword-only parameters, required ones after a default included, gives a list of different conditions the type
 <code>list[BaseCondition]</code>, and drops a parameter or return annotation naming a
 class the module defines further down, which Codon cannot name yet). What a
 scenario has to do itself:</p>
@@ -1984,6 +2006,17 @@ nobody has made compile yet; any other reason names what keeps a module out
 (<code>"imports numpy, lanelet2"</code>: a package or a standard module Codon cannot
 compile). Every module of the package except <code>typecheck/</code> is in exactly one of
 the two, which the test suite checks, so <strong>a new module needs an entry</strong>.</p>
+<p><code>UNCALLED</code> names the few public functions and methods of a checked module the
+check leaves out (<code>module.Class.method</code>), each with its reason: one whose job
+Codon cannot express, in a module that otherwise compiles. Today that is
+what builds a condition's details (<code>get_details()</code>, <code>to_summary_dict()</code>,
+<code>to_dict()</code>: a <code>dict[str, Any]</code> of mixed value types) and what serialises
+them (<code>ScenarioResult.to_json()</code>, with <code>json</code>). Codon compiles a function
+only when something calls it, so neither its body nor an import made inside
+it is compiled: a module that needs a standard module Codon lacks for one
+function imports it inside that function (<code>import json</code> in <code>to_json()</code>) and
+lists the function here. A test checks that every entry names a public
+function or method of a checked module.</p>
 <p>To check one more module:</p>
 <ol>
 <li>Move its entry from <code>EXCLUDED</code> to <code>CHECKED</code>.</li>
@@ -2030,6 +2063,25 @@ source file. A type a checked module defines is not the type the model
 declares under the same name, so a checked module cannot hand its own value to
 a model function that wants the model's: check modules bottom-up, before the
 modules that use them.</p>
+<h3 id="conditions-the-checked-base-and-the-model">Conditions: the checked base and the model<a class="headerlink" href="#conditions-the-checked-base-and-the-model" title="Permanent link">&para;</a></h3>
+<p><code>conditions.base</code> is checked, so the checked conditions derive from the real
+<code>BaseCondition</code> (<code>_acs_lib.autoware_carla_scenario__conditions__base</code>), not
+from the model's. The two are different types that never meet:</p>
+<ul>
+<li>the <strong>scenario check</strong> compiles a scenario against the model only; no
+  checked module is in its workspace, and the model's <code>BaseCondition</code>,
+  <code>_expect_condition</code> and <code>_acs_list</code> (which recognises a condition by the
+  model-only <code>_acs_condition</code> marker) are unchanged;</li>
+<li>the <strong>library check</strong> compiles the checked conditions against the checked
+  base. A checked module that hands a condition to a model function (an
+  action, <code>scenario_base</code>) cannot do so until that module is checked too;
+  <code>_acs_list</code> gives a list display of checked conditions the type of its
+  first element, so a display mixing two checked condition classes waits for
+  the same.</li>
+</ul>
+<p><code>BaseCondition.__init_subclass__</code>, which wraps every subclass's <code>check()</code> to
+record its last result for the UI, is in <code>UNCALLED</code>: the check sees each
+<code>check()</code> as written.</p>
 <h3 id="making-a-module-compile">Making a module compile<a class="headerlink" href="#making-a-module-compile" title="Permanent link">&para;</a></h3>
 <p>What Codon 0.19 needs that Python does not, beyond
 <a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
@@ -2049,10 +2101,26 @@ modules that use them.</p>
   <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code> and <code>__future__</code> shims of
   <code>codon/</code> are. <code>collections.abc</code> is not: import <code>Sequence</code> and the other
   abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
-  Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base.</li>
+  Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base.
+  <code>typing.Any</code> imports, and every annotation naming it is dropped.</li>
 <li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.</li>
+<li><strong>No <code>**</code> in a dict display</strong> (<code>{"a": 1, **other}</code>): Codon's parser fails on
+  it, even in a function it never compiles. Build the dict, then
+  <code>update()</code> it.</li>
+<li><strong><code>dict.get()</code> takes a default</strong> in Codon, of the value type. Where
+  "absent" has no value of that type, test membership:
+  <code>d[k] if k in d else None</code>.</li>
+<li><strong>CARLA's containers are not lists.</strong> <code>world.get_actors()</code> is a
+  <code>carla.ActorList</code>; a parameter that takes it or a list is
+  <code>Union[carla.ActorList, list[carla.Actor]]</code>, and the check calls it with
+  each.</li>
+<li><strong>Codon cannot hash a class</strong>: <code>hash((MyClass, x))</code> names the class by its
+  name instead.</li>
+<li><strong>An attribute holds one type</strong>: one assigned a union (<code>EntityRole | str</code>)
+  is stored converted where every use converts it anyway
+  (<code>self._entity_name = str(entity_name)</code>).</li>
 <li><strong>Operators take the operand types they accept</strong>, not <code>object</code>. Annotate
   <code>other</code> with the class (<code>def __add__(self, other: FrenetVelocity)</code>) and a
   scalar with <code>float</code>, and keep the <code>isinstance</code> guard that returns
@@ -2121,7 +2189,7 @@ modules that use them.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 02:33:34 UTC"><span class="timeago" datetime="2026-10-11T02:33:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 02:33:34 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 02:45:57 UTC"><span class="timeago" datetime="2026-10-11T02:45:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 02:45:57 UTC">2026-10-11</span>
   </span>
 
     
