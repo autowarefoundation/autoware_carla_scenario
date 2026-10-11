@@ -478,6 +478,14 @@ What Codon 0.19 needs that Python does not, beyond
   backend its `**kwargs` only in the `else` branch of `if TYPE_CHECKING:`
   (see below), and the check calls each backend's `turn_at_junction()`
   through its class instead.
+- **A list of a subclass is not a list of its base**: Codon 0.19 refuses a
+  `list[EntityLanePositionCondition]` where a `list[BaseCondition]` is
+  expected, and `extend()` does not upcast either. Build the list in a local
+  declared `list[BaseCondition]`, appending each element
+  (`composition/temporary_stop.py`). An element of a `Sequence[AnyPose]` is
+  a `Union` of poses; the model's `_expect_pose` takes one, reading its
+  members with `static.vars_types(pose, with_index=True)` (without
+  `with_index`, Codon 0.19 does not bind the loop variable).
 - **A class cannot be named before it is defined or imported**, in a
   signature or a class-level declaration, and an import cycle resolves only
   with the names already defined. Two classes whose signatures name each

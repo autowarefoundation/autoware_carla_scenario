@@ -4,6 +4,9 @@
 # here: a function taking it is overloaded per pose type, as the Python
 # functions are with typing.overload, or generic and checked by _expect_pose.
 
+import internal.static as static
+import numpy
+
 import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only
@@ -12,13 +15,25 @@ from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanele
 
 
 def _expect_pose(pose):
-    """An AnyPose argument."""
+    """An AnyPose argument: one of the poses, or a Union of them (an element
+    of a Sequence[AnyPose], which Codon holds as a Union)."""
     if isinstance(pose, Lanelet2Pose):
         pass
     elif isinstance(pose, OpenDrivePose):
         pass
     elif isinstance(pose, CarlaWorldPose):
         pass
+    elif isinstance(pose, Union):
+        # with_index: without it Codon 0.19 does not bind T.
+        for _tag, T in static.vars_types(pose, with_index=True):
+            if isinstance(T, Lanelet2Pose):
+                pass
+            elif isinstance(T, OpenDrivePose):
+                pass
+            elif isinstance(T, CarlaWorldPose):
+                pass
+            else:
+                compile_error("expected a Union of poses: Lanelet2Pose, OpenDrivePose, CarlaWorldPose")
     else:
         compile_error("expected a pose: a Lanelet2Pose, an OpenDrivePose or a CarlaWorldPose")
 
@@ -219,6 +234,12 @@ class _XmlElement:
 class Road:
     road_xml: _XmlElement
 
+    # pyxodr's cached_property: the road's reference line, a 2-D array with a
+    # row per point along the road (composition.temporary_stop sums its length).
+    @property
+    def reference_line(self) -> numpy.ndarray[float, 2]:
+        raise NotImplementedError()
+
     def __getitem__(self, name: str) -> str:
         raise NotImplementedError()
 
@@ -229,13 +250,40 @@ class RoadNetwork:
 
 
 # lanelet2's map and routing graph, as MapManager hands them out: opaque here.
-# Only route.active reads them, to hand them to RouteFrame (route.codon).
+# route.active hands them to RouteFrame (route.codon); composition.temporary_stop
+# walks the routing graph from a lanelet to its neighbours' ids. Only that much
+# of lanelet2's API is declared.
+
+
+# Opaque: a lanelet2.core.Lanelet (or ConstLanelet); only its id is read.
+class _Lanelet2Lanelet:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+
+# Opaque: lanelet2.core.LaneletLayer; only indexed by lanelet id.
+class _Lanelet2LaneletLayer:
+    def __getitem__(self, id: int) -> _Lanelet2Lanelet:
+        raise NotImplementedError()
+
+
+# Opaque: lanelet2.core.LaneletMap; only its lanelet layer is read.
 class _Lanelet2Map:
-    pass
+    @property
+    def laneletLayer(self) -> _Lanelet2LaneletLayer:
+        raise NotImplementedError()
 
 
+# Opaque: lanelet2.routing.RoutingGraph; only previous and following are read.
 class _Lanelet2RoutingGraph:
-    pass
+    def previous(self, lanelet: _Lanelet2Lanelet, withLaneChanges: bool = False
+                 ) -> List[_Lanelet2Lanelet]:
+        raise NotImplementedError()
+
+    def following(self, lanelet: _Lanelet2Lanelet, withLaneChanges: bool = False
+                  ) -> List[_Lanelet2Lanelet]:
+        raise NotImplementedError()
 
 
 class MapManager:
