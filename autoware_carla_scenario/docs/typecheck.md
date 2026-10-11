@@ -228,33 +228,32 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 68 of
-the package's 218 modules (31%; about 10,700 of 66,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 76 of
+the package's 224 modules (34%; about 11,700 of 68,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
-nearly every condition, the action base with the environment and
-traffic-signal actions, the ego, NPC vehicle and pedestrian entities,
-`BaseScenario`, the measures, the ODD units and the CARLA-only helpers. 36
-functions and methods of those modules are `UNCALLED`: most of them a
-condition's `get_details()`, and the six members of `BaseScenario` built on
-the ego's class (`ego_type`, a `type[EgoVehicle]`: the constructor,
-`create_ego()`, `ego_requires_goal`, `require_goal()` and
-`register_route_to_goal()`, which also registers the unchecked
-`RoutingAction`) or on cover expressions of any value (`register_cover()`).
-The 150 `EXCLUDED` modules fall into three groups:
+nearly every condition, the action base with the environment, traffic-signal,
+lane-change, set-speed, turn and walk-straight actions, the ego, NPC vehicle
+and pedestrian entities and the entity registry, `BaseScenario`, the
+measures, the ODD units and the CARLA-only helpers. 39 functions and methods
+of those modules are `UNCALLED`: most of them a condition's `get_details()`,
+and the six members of `BaseScenario` built on the ego's class (`ego_type`, a
+`type[EgoVehicle]`: the constructor, `create_ego()`, `ego_requires_goal`,
+`require_goal()` and `register_route_to_goal()`, which also registers the
+unchecked `RoutingAction`) or on cover expressions of any value
+(`register_cover()`). The 148 `EXCLUDED` modules fall into three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
-- **About 30 build on an excluded module**: the entity actions, through
-  `entity.registry`; the example scenarios, through `examples.configs`;
-  the signal controllers, the traffic backends and the authoring compiler.
-- **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
-  which holds an entity of any kind, `coverage.items`, `odd.model`), a
-  union-typed attribute, which crashes Codon 0.19
-  (`RelativeLanePose.entity_ref`), a variable-length tuple (`route.model`),
-  or a class as a value (`utils.config`).
+- **About 25 build on an excluded module**: the example scenarios, through
+  `examples.configs`; the signal controllers, the traffic backends and the
+  authoring compiler.
+- **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
+  `odd.model`), a union-typed attribute, which crashes Codon 0.19
+  (`RelativeLanePose.entity_ref`), a variable-length tuple (`route.model`,
+  `actions.routing`'s waypoints), or a class as a value (`utils.config`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -361,9 +360,10 @@ record its last result for the UI, is in `UNCALLED`: the check sees each
 `BaseCondition`, so it imports it from `conditions.base` rather than from the
 `conditions` package, which the model stands in for until it is checked. Its
 `BaseAction` and `ActionState` are again not the model's, so
-`conditions.action_state` watches checked actions. An action that hands a
-condition from an unchecked module to its base (`SetSpeedAction`'s default
-`SpeedCondition`) waits for that module.
+`conditions.action_state` watches checked actions. An action that hands its
+base a condition of its own making imports that condition from its checked
+module too (`SetSpeedAction`'s default `SpeedCondition` from
+`conditions.composition.speed`); one whose module is not checked waits for it.
 
 ### Making a module compile
 
@@ -510,6 +510,20 @@ What Codon 0.19 needs that Python does not, beyond
 - **`getattr(x, name, None)`** for an attribute a value may lack at run time
   (a mock in a test) becomes `try: v = x.name` / `except AttributeError:`,
   which reads the attribute once, as `getattr` did.
+- **`hasattr` on an `Optional` is decided on the `Optional`**, which has
+  none of its value's attributes: assign the value to an annotated local
+  after the `None` test (`walker: PedestrianEntity = entity`) and ask that.
+- **An entity looked up by role is looked up by kind**:
+  `find_entity_by_role_name` returns an entity of any kind (`Optional[Any]`),
+  so a checked module asks `entity.registry` for the kind it acts on,
+  `find_vehicle_entity` (a `BackendDriven`: an NPC vehicle or the ego) or
+  `find_pedestrian_entity`. An object of neither kind (a test double) is
+  registered as both, so at run time every lookup still finds it; keep a
+  `hasattr` test where the code relied on `getattr(entity, name, None)`.
+  Where the code called a method the other kind lacks, look the other kind
+  up when the lookup misses and raise the `AttributeError` the call raised
+  (`LaneChangeAction`, `TurnAction` and `SetSpeedAction` on a pedestrian),
+  so a wrong kind still fails rather than reading as an entity not found.
 - **`dict.get` takes its default**: Codon's has no one-argument form. Test
   `key in d` and index instead of `d.get(key)`.
 - **No sign in an f-string format spec**: Codon's parser rejects

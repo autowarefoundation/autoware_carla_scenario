@@ -682,10 +682,9 @@ scenario run, build it with the Codon compiler from the toolchain wheel (15 to
 `typesafe-codon pycarla` does that ahead of time, and reports that there is
 nothing to build when the prebuilt package applies.
 
-That is the point of the format. Autoware's `scenario_bridge` installs a
-scenario into a venv built from `python3-venv` and `python3-pip` -- the two
-things rosdep can resolve -- and has neither uv nor, on a vehicle, a network
-route. A uv project needs all three; a wheelhouse needs none.
+That is the point of the format. Where scenarios run is often a venv built
+from `python3-venv` and `python3-pip` -- the two things rosdep can resolve --
+with neither uv nor, on a vehicle, a network route. A uv project needs all three; a wheelhouse needs none.
 
 The scenario's document and Hydra config travel **inside** its wheel, so an
 installed scenario is self-contained: there is no directory that has to be kept

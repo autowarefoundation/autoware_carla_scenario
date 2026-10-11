@@ -14,7 +14,12 @@ Usage::
 from __future__ import annotations
 
 from .devcontainer import DevContainer, DevContainerError, read_devcontainer
-from .docker import STACK_LABEL, DockerAutowareConfig, DockerAutowareLauncher
+from .docker import (
+    DEPENDENCY_IMAGE_REPOSITORY,
+    STACK_LABEL,
+    DockerAutowareConfig,
+    DockerAutowareLauncher,
+)
 from .launcher import (
     AutowareEpisode,
     AutowareLauncher,
@@ -24,6 +29,7 @@ from .launcher import (
 )
 
 __all__ = [
+    "DEPENDENCY_IMAGE_REPOSITORY",
     "STACK_LABEL",
     "AutowareEpisode",
     "AutowareLauncher",

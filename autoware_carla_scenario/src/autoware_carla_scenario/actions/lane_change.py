@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional, Union
 
-from typing import Optional as _Optional
-
-from ..conditions import BaseCondition, LaneChangeSettledCondition
-from ..entity.registry import find_entity_by_role_name
+from ..conditions.base import BaseCondition
+from ..conditions.lane_change_settled import LaneChangeSettledCondition
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import LaneChangeDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
@@ -51,29 +51,34 @@ class LaneChangeAction(BaseAction):
             to :class:`LaneChangeSettledCondition` on *entity_name*.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _direction: LaneChangeDirection
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
         direction: LaneChangeDirection,
-        condition: _Optional[BaseCondition] = None,
+        condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "lane_change",
         once: bool = True,
-        until: _Optional[BaseCondition] = None,
+        until: Optional[BaseCondition] = None,
     ) -> None:
+        if until is None:
+            settled: BaseCondition = LaneChangeSettledCondition(
+                entity_name, label=f"{label}_settled"
+            )
+            until = settled
         super().__init__(
             label=label,
             condition=condition,
             timing=timing,
             once=once,
-            until=(
-                until
-                if until is not None
-                else LaneChangeSettledCondition(entity_name, label=f"{label}_settled")
-            ),
+            until=until,
         )
-        self._entity_name = entity_name
+        self._entity_name = str(entity_name)
         self._direction = direction
 
     # ------------------------------------------------------------------
@@ -82,11 +87,29 @@ class LaneChangeAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Ask the named entity to change lane."""
-        entity = find_entity_by_role_name(self._entity_name)
+        entity = find_vehicle_entity(self._entity_name)
         if entity is None:
+            _fail_if_pedestrian(self._entity_name)
             logger.warning(
                 "LaneChangeAction: entity '%s' not found", str(self._entity_name)
             )
             return
 
         entity.change_lane(world, self._direction)
+
+
+def _fail_if_pedestrian(entity_name: str) -> None:
+    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
+
+    A pedestrian cannot change lane. The vehicle lookup does not find one, but
+    the action used to look up an entity of any kind and call
+    ``change_lane`` on it, which raised; it still raises, rather than reading
+    as an entity that is not there.
+    """
+    found = find_pedestrian_entity(entity_name)
+    if found is None:
+        return
+    walker: PedestrianEntity = found
+    raise AttributeError(
+        f"'{type(walker).__name__}' object has no attribute 'change_lane'"
+    )

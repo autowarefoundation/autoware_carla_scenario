@@ -37,11 +37,14 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Optional, Protocol, runtime_checkable
+from typing import IO, Any, Optional, Protocol, runtime_checkable
+
+from .bridge_node import bridge_command, host_python_root
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_BRIDGE_PARAMETERS",
     "AutowareEpisode",
     "AutowareLauncher",
     "AutowareStackError",
@@ -54,6 +57,12 @@ __all__ = [
 
 class AutowareStackError(RuntimeError):
     """The Autoware stack could not be prepared or started."""
+
+
+#: The ``scenario_bridge`` node's ROS parameters besides its address: CARLA
+#: drives the clock in a scenario, so the poses and routes it stamps carry
+#: simulation time like everything else it talks to.
+DEFAULT_BRIDGE_PARAMETERS: Mapping[str, Any] = {"use_sim_time": True}
 
 
 @dataclass(frozen=True)
@@ -280,15 +289,18 @@ class CommandAutowareLauncher:
         CommandAutowareLauncher(
             [
                 "bash", "-c",
-                "source ~/autoware/install/setup.bash && exec ros2 launch "
-                "autoware_launch e2e_simulator.launch.xml ... "
-                "bridge_address:={bridge_address}",
+                "source ~/autoware/install/setup.bash && ({scenario_bridge} &) && "
+                "exec ros2 launch autoware_launch e2e_simulator.launch.xml "
+                "scenario_mode:=true ...",
             ],
         )
 
     ``{bridge_address}``, ``{index}`` and ``{name}`` in any argument are
     replaced with the episode's (see :class:`AutowareEpisode`); the address is
-    in the environment as ``AUTOWARE_BRIDGE_ADDRESS`` too.
+    in the environment as ``AUTOWARE_BRIDGE_ADDRESS`` too.  ``{scenario_bridge}``
+    is a shell command running the ``scenario_bridge`` node
+    (:mod:`.bridge_node`) with that address and *bridge_parameters*: the command
+    runs it in Autoware's ROS 2 environment, beside the launch.
 
     Attributes:
         argv: The command, with the placeholders above.
@@ -297,12 +309,18 @@ class CommandAutowareLauncher:
             ``autoware-<index>-<name>.log``; ``None`` discards it.  A
             ``log_dir`` passed to :meth:`prepare` replaces it.
         stop_timeout_s: How long stopping waits after each signal.
+        bridge_parameters: ROS parameters of the ``scenario_bridge`` node
+            besides its address (``auto_engage``, ``initialize_localization``,
+            ``require_localization_initialized``, ...).
     """
 
     argv: Sequence[str]
     env: Mapping[str, str] = field(default_factory=dict)
     log_dir: Optional[Path] = None
     stop_timeout_s: float = 20.0
+    bridge_parameters: Mapping[str, Any] = field(
+        default_factory=lambda: dict(DEFAULT_BRIDGE_PARAMETERS)
+    )
 
     _process: Optional[ProcessGroup] = field(default=None, init=False, repr=False)
     _episodes: int = field(default=0, init=False, repr=False)
@@ -320,7 +338,13 @@ class CommandAutowareLauncher:
             )
         episode = AutowareEpisode(self._episodes, name, bridge_address)
         self._episodes += 1
-        argv = [fill_placeholders(arg, episode) for arg in self.argv]
+        bridge = bridge_command(
+            str(host_python_root()), episode.bridge_address, self.bridge_parameters
+        )
+        argv = [
+            fill_placeholders(arg, episode, {"scenario_bridge": bridge})
+            for arg in self.argv
+        ]
         env = {
             **os.environ,
             **self.env,
@@ -359,8 +383,10 @@ def episode_log_path(
     return log_dir / f"autoware-{episode.index:03d}-{safe_name}.log"
 
 
-def fill_placeholders(text: str, episode: AutowareEpisode) -> str:
-    """Replace ``{bridge_address}``, ``{index}`` and ``{name}`` in *text*.
+def fill_placeholders(
+    text: str, episode: AutowareEpisode, extra: Optional[Mapping[str, str]] = None
+) -> str:
+    """Replace ``{bridge_address}``, ``{index}``, ``{name}`` and *extra*'s keys in *text*.
 
     Only those: every other brace is the command's own -- a shell's
     ``${VAR}``, a Python one-liner's dict -- and stays as written.
@@ -369,6 +395,7 @@ def fill_placeholders(text: str, episode: AutowareEpisode) -> str:
         ("bridge_address", episode.bridge_address),
         ("index", str(episode.index)),
         ("name", episode.name),
+        *(extra or {}).items(),
     ):
         text = text.replace("{" + key + "}", value)
     return text

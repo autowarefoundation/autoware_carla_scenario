@@ -36,10 +36,12 @@ from .coordinate import (
     to_opendrive,
 )
 from .entity._spawn import SpawnLocation, SpawnTransform
-from .entity.registry import register_entity as _register_entity
+from .entity.registry import register_pedestrian_entity as _register_pedestrian_entity
+from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
 from .measures import BUILT_IN_MEASURES, Measure
 from .traffic.base import TrafficBackend
+from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
 
@@ -666,8 +668,10 @@ class BaseScenario(ABC):
         self._entities.append(entity)
         # Also by role, so an action that names this entity can find it.  The
         # list above is walked to apply initial speeds; the registry answers
-        # "who is 'npc1'?", which is what a scenario document asks.
-        _register_entity(entity.role_name, entity)
+        # "who is 'npc1'?", which is what a scenario document asks.  Handed on
+        # as the vehicle it is (a typed local: the static check upcasts there).
+        driven: BackendDriven = entity
+        _register_vehicle_entity(entity.role_name, driven)
         # And whatever drives it.  One of the two, never both: the backend is
         # what a run selected, and the client is what a scenario driven outside
         # a run -- no runner, so no backend -- has always meant instead.
@@ -691,7 +695,7 @@ class BaseScenario(ABC):
         Args:
             entity: A :class:`PedestrianEntity` spawned in :meth:`setup`.
         """
-        _register_entity(entity.role_name, entity)
+        _register_pedestrian_entity(entity.role_name, entity)
 
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.
