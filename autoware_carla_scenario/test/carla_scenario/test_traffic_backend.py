@@ -286,6 +286,70 @@ class TestTrafficManagerClose:
         }
 
 
+class _Blueprint:
+    def has_attribute(self, name: str) -> bool:
+        return False
+
+
+class _BackgroundActor:
+    def __init__(self) -> None:
+        self.destroyed = 0
+
+    def set_target_velocity(self, velocity: Any) -> None:
+        pass
+
+    def get_location(self) -> Any:
+        return SimpleNamespace(x=1.0, y=2.0)
+
+    def destroy(self) -> None:
+        self.destroyed += 1
+
+
+class _BackgroundWorld:
+    def __init__(self, blueprints: List[_Blueprint]) -> None:
+        self.blueprints = blueprints
+        self.spawned: List[_BackgroundActor] = []
+
+    def get_blueprint_library(self) -> Any:
+        return SimpleNamespace(filter=lambda pattern: list(self.blueprints))
+
+    def try_spawn_actor(self, blueprint: Any, transform: Any) -> _BackgroundActor:
+        self.spawned.append(_BackgroundActor())
+        return self.spawned[-1]
+
+
+def _road_transform() -> Any:
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    return carla.Transform(carla.Location(1.0, 2.0, 0.0), carla.Rotation())
+
+
+class TestTrafficManagerBackground:
+    """Background vehicles: spawned, listed by handle, removed once."""
+
+    def test_no_blueprint_spawns_nothing(self) -> None:
+        world: Any = _BackgroundWorld([])
+        backend = TrafficManagerBackend()
+        assert (
+            backend.spawn_background(world, _road_transform(), speed_kmh=30.0) is None
+        )
+        assert world.spawned == []
+
+    def test_a_vehicle_is_removed_once_and_an_unknown_handle_is_ignored(
+        self,
+    ) -> None:
+        world: Any = _BackgroundWorld([_Blueprint()])
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        assert backend.background_vehicles(world) == {handle: (1.0, 2.0)}
+        backend.remove_background(world, "no-such-handle")
+        backend.remove_background(world, handle)
+        backend.remove_background(world, handle)
+        assert world.spawned[0].destroyed == 1
+        assert backend.background_vehicles(world) == {}
+
+
 # ---------------------------------------------------------------------------
 # The no-traffic backend
 # ---------------------------------------------------------------------------
