@@ -2,7 +2,10 @@
 # (docs/typecheck.md): the manoeuvre directions. Traffic backends are the
 # runner's business and are not modelled; BackendDriven, the base of the
 # checked entities (entity.ego, entity.vehicle_entity), is declared for the
-# library check, without the manoeuvres, which nothing checked calls.
+# library check, with the manoeuvres the checked actions ask of the vehicle
+# entity.registry finds (find_vehicle_entity).
+
+import typesafe_carla.carla as carla
 
 
 @tuple
@@ -23,3 +26,15 @@ class LaneChangeDirection:
 class BackendDriven:
     def __init__(self):
         pass
+
+    def change_lane(self, world: carla.World, direction: LaneChangeDirection) -> None:
+        raise NotImplementedError()
+
+    def lane_change_finished(self, world: carla.World) -> bool:
+        raise NotImplementedError()
+
+    def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
+        raise NotImplementedError()
+
+    def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        raise NotImplementedError()

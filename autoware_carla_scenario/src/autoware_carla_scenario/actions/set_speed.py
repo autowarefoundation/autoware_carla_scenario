@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from ..conditions import BaseCondition, ComparisonRule, SpeedCondition
-from ..entity.registry import find_entity_by_role_name
+from ..conditions.base import BaseCondition
+from ..conditions.comparison import ComparisonRule
+from ..conditions.composition.speed import SpeedCondition
+from ..entity.registry import find_vehicle_entity
 from ..entity_role import EntityRole
+from ..traffic.driven import BackendDriven
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -93,6 +96,11 @@ class SetSpeedAction(BaseAction):
             worth reporting rather than running.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _target_speed_kmh: float
+    _rate_kmh_s: Optional[float]
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -120,13 +128,14 @@ class SetSpeedAction(BaseAction):
             )
 
         if until is None and rate_kmh_s is not None:
-            until = SpeedCondition(
+            arrived: BaseCondition = SpeedCondition(
                 entity_name=entity_name,
                 value=target_speed_kmh / _KMH_PER_MS,
                 rule=ComparisonRule.EQUAL_TO,
                 tolerance=ARRIVAL_TOLERANCE_KMH / _KMH_PER_MS,
                 label=f"{label}_arrived",
             )
+            until = arrived
 
         super().__init__(
             label=label,
@@ -136,7 +145,7 @@ class SetSpeedAction(BaseAction):
             until=until,
             reissue=reissue,
         )
-        self._entity_name = entity_name
+        self._entity_name = str(entity_name)
         self._target_speed_kmh = target_speed_kmh
         self._rate_kmh_s = rate_kmh_s
 
@@ -154,7 +163,7 @@ class SetSpeedAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Command the target, or this tick's step towards it."""
-        entity = find_entity_by_role_name(self._entity_name)
+        entity = find_vehicle_entity(self._entity_name)
         if entity is None:
             logger.warning(
                 "SetSpeedAction: entity '%s' not found", str(self._entity_name)
@@ -209,7 +218,7 @@ def _tick_seconds(world: "carla.World") -> float:
     return float(world.get_snapshot().timestamp.delta_seconds)
 
 
-def _current_speed_kmh(entity: object) -> float:
+def _current_speed_kmh(entity: BackendDriven) -> float:
     """Return *entity*'s present speed in km/h, or 0.0 when unknowable.
 
     The step is taken from the vehicle's own speed, which is what keeps the
@@ -217,7 +226,11 @@ def _current_speed_kmh(entity: object) -> float:
     or one whose actor has gone -- reads as stopped, which is the only honest
     answer available and never worse than refusing to command anything.
     """
-    actor = getattr(entity, "actor", None)
+    # `hasattr`, which Codon decides when it compiles: BackendDriven, the
+    # mixin, declares no actor; the entities it is mixed into do.
+    if not hasattr(entity, "actor"):
+        return 0.0
+    actor = entity.actor
     if actor is None:
         return 0.0
     velocity = actor.get_velocity()

@@ -5,15 +5,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from ..conditions import BaseCondition
-from ..entity.registry import find_entity_by_role_name
+from ..conditions.base import BaseCondition
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
-
-    from ..entity.pedestrian_entity import PedestrianEntity
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +51,10 @@ class WalkStraightAction(BaseAction):
             walking backwards through a crossing is not what anyone wrote.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _speed_ms: float
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -65,28 +68,35 @@ class WalkStraightAction(BaseAction):
         if speed_ms < 0:
             raise ValueError("speed_ms must not be negative")
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._entity_name = entity_name
+        self._entity_name = str(entity_name)
         self._speed_ms = speed_ms
 
     def execute(self, world: "carla.World") -> None:
         """Tell the named pedestrian to start walking."""
-        del world
-        entity: Optional[PedestrianEntity] = find_entity_by_role_name(self._entity_name)
+        entity = find_pedestrian_entity(self._entity_name)
         if entity is None:
-            logger.warning(
-                "WalkStraightAction: entity '%s' not found", str(self._entity_name)
-            )
+            if find_vehicle_entity(self._entity_name) is None:
+                logger.warning(
+                    "WalkStraightAction: entity '%s' not found", str(self._entity_name)
+                )
+            else:
+                self._warn_not_a_pedestrian()
             return
-        walk = getattr(entity, "walk_straight", None)
-        if walk is None:
-            logger.warning(
-                "WalkStraightAction: '%s' is not a pedestrian and cannot walk",
-                str(self._entity_name),
-            )
+        # Codon types `hasattr` by the static type, so not the Optional.
+        walker: PedestrianEntity = entity
+        # An entity of no known kind is found here too; it may not walk.
+        if not hasattr(walker, "walk_straight"):
+            self._warn_not_a_pedestrian()
             return
-        walk(self._speed_ms)
+        walker.walk_straight(self._speed_ms)
         logger.info(
             "WalkStraightAction: '%s' walking at %.2f m/s",
             self._entity_name,
             self._speed_ms,
+        )
+
+    def _warn_not_a_pedestrian(self) -> None:
+        logger.warning(
+            "WalkStraightAction: '%s' is not a pedestrian and cannot walk",
+            str(self._entity_name),
         )

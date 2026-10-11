@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional, Union
 
-from typing import Optional as _Optional
-
-from ..conditions import BaseCondition
-from ..entity.registry import find_entity_by_role_name
+from ..conditions.base import BaseCondition
+from ..entity.registry import find_vehicle_entity
 from ..traffic import TurnDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
@@ -48,11 +46,18 @@ class TurnAction(BaseAction):
     _LEFT_TARGET_DEG: float = -90.0
     _RIGHT_TARGET_DEG: float = 90.0
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _direction: TurnDirection
+    _search_distance: float
+    _waypoint_step: float
+    _post_junction_distance: float
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
         direction: TurnDirection,
-        condition: _Optional[BaseCondition] = None,
+        condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "turn_signal",
@@ -62,7 +67,7 @@ class TurnAction(BaseAction):
         post_junction_distance: float = 20.0,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._entity_name = entity_name
+        self._entity_name = str(entity_name)
         self._direction = direction
         self._search_distance = search_distance
         self._waypoint_step = waypoint_step
@@ -74,7 +79,7 @@ class TurnAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Ask the named entity to turn at the next junction."""
-        entity = find_entity_by_role_name(self._entity_name)
+        entity = find_vehicle_entity(self._entity_name)
         if entity is None:
             logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
             return
