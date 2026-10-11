@@ -88,7 +88,9 @@ class TemporaryStopCondition(CompositionCondition):
         if stop_duration <= 0:
             raise ValueError("stop_duration must be positive")
 
-        persistent_conditions: list[PersistentCondition] = []
+        # list[BaseCondition], not list[PersistentCondition]: OrCondition takes
+        # a list of BaseCondition, and Codon does not upcast a list.
+        persistent_conditions: list[BaseCondition] = []
         for pose in stop_positions:
             # In the frame the position was given in: a lanelet is a lane, with
             # an s of its own that runs the other way from the road's on every
@@ -105,7 +107,12 @@ class TemporaryStopCondition(CompositionCondition):
             if len(position_conds) == 1:
                 position_cond: BaseCondition = position_conds[0]
             else:
-                position_cond = OrCondition(position_conds)
+                # Upcast for the static check: Codon does not take a
+                # list[EntityLanePositionCondition] as a list[BaseCondition].
+                position_members: list[BaseCondition] = []
+                for member in position_conds:
+                    position_members.append(member)
+                position_cond = OrCondition(position_members)
 
             speed_cond = SpeedCondition(
                 entity_name=entity_name,
@@ -113,7 +120,8 @@ class TemporaryStopCondition(CompositionCondition):
                 rule=ComparisonRule.LESS_THAN_OR_EQUAL,
                 label=f"{label}_speed",
             )
-            and_cond = AndCondition([position_cond, speed_cond])
+            and_members: list[BaseCondition] = [position_cond, speed_cond]
+            and_cond = AndCondition(and_members)
             persistent = PersistentCondition(and_cond, duration=stop_duration)
             persistent_conditions.append(persistent)
 

@@ -257,10 +257,10 @@ To check one more module:
 ### What is checked of the framework
 
 Every module but four of the example scenarios now has an entry other than
-`"not yet checked (#45)"`. 102 of the package's 225 modules (45%; about
-18,400 of 68,700 lines) are `CHECKED`:
+`"not yet checked (#45)"`. 103 of the package's 225 modules (46%; about
+18,800 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
-nearly every condition, the action base with the environment, traffic-signal,
+every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
 actions, the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
@@ -283,7 +283,7 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 123 `EXCLUDED` modules are the
+the authoring package's pydantic specs. The 122 `EXCLUDED` modules are the
 six example scenarios, which import the checked `examples.configs` (the
 scenario check compiles each as a scenario, against the model), and three
 groups. Four of the examples are not checked yet; `cut_in` and
@@ -499,6 +499,14 @@ What Codon 0.19 needs that Python does not, beyond
   backend its `**kwargs` only in the `else` branch of `if TYPE_CHECKING:`
   (see below), and the check calls each backend's `turn_at_junction()`
   through its class instead.
+- **A list of a subclass is not a list of its base**: Codon 0.19 refuses a
+  `list[EntityLanePositionCondition]` where a `list[BaseCondition]` is
+  expected, and `extend()` does not upcast either. Build the list in a local
+  declared `list[BaseCondition]`, appending each element
+  (`composition/temporary_stop.py`). An element of a `Sequence[AnyPose]` is
+  a `Union` of poses; the model's `_expect_pose` takes one, reading its
+  members with `static.vars_types(pose, with_index=True)` (without
+  `with_index`, Codon 0.19 does not bind the loop variable).
 - **A class cannot be named before it is defined or imported**, in a
   signature or a class-level declaration, and an import cycle resolves only
   with the names already defined. Two classes whose signatures name each
