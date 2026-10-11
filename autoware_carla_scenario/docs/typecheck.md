@@ -226,6 +226,35 @@ To check one more module:
    behave exactly as it did.
 3. Run `uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py`.
 
+### What is checked of the framework
+
+Every module now has an entry other than `"not yet checked (#45)"`. 66 of
+the package's 217 modules (30%; about 9,600 of 66,600 lines) are `CHECKED`:
+the kinematics, the coordinate frames and poses, the condition base and
+nearly every condition, the action base with the environment and
+traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
+measures, the ODD units and the CARLA-only helpers. 30 functions and methods
+of those modules are `UNCALLED`, almost all of them a condition's
+`get_details()`. The 151 `EXCLUDED` modules fall into three groups:
+
+- **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
+  lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
+  the tooling around a run (the editor, the UI, authoring, the sweeper, the
+  map cache, the Autoware launcher) and everything that reads Lanelet2.
+- **About 30 build on an excluded module**: the entity actions, through
+  `entity.registry`; the example scenarios, through `examples.configs`;
+  the signal controllers, the traffic backends and the authoring compiler.
+- **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
+  which holds an entity of any kind, `coverage.items`, `odd.model`), a class
+  or a callable of any value as a parameter (`scenario_base`'s `ego_type`,
+  callbacks and measure expressions), a union-typed attribute, which crashes
+  Codon 0.19 (`RelativeLanePose.entity_ref`), a variable-length tuple
+  (`route.model`), or a class as a value (`utils.config`).
+
+The scenario check is not limited by this: it compiles every scenario against
+the model, which declares the whole public API.
+
 ### What is compiled
 
 Codon checks a function only when something calls it, so the check appends a
@@ -370,9 +399,10 @@ What Codon 0.19 needs that Python does not, beyond
 - **An attribute holds one type**: one assigned a union (`EntityRole | str`)
   is stored converted where every use converts it anyway
   (`self._entity_name = str(entity_name)`). Codon 0.19 crashes on an
-  attribute declared with a union ("union already sealed"), so where the
-  union is what the class holds (a public dataclass field such as
-  `VehicleEntityConfig.role_name`), the module stays in `EXCLUDED`.
+  attribute declared with a union ("union already sealed"). A public
+  dataclass field is converted in `__post_init__`
+  (`VehicleEntityConfig.role_name: str`, `self.role_name =
+  str(self.role_name)`), which still takes an `EntityRole` at run time.
 - **Annotate a local that starts as `None`** (`spawn_points:
   Optional[list[carla.Transform]] = None`): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
@@ -435,9 +465,14 @@ What Codon 0.19 needs that Python does not, beyond
 - **One `except` clause per exception type**: Codon 0.19 does not take a
   tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
   to `raise X` by the check; `raise X from exc` compiles as it is.
-- **No `frozenset`** and no variable-length tuple (`tuple[X, ...]`, which the
-  check drops from an annotation): use a `set` or a `list` where nothing
-  relies on the immutability.
+- **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
+  rewrites `frozenset(...)` to `set(...)` and `frozenset[X]` /
+  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`. A
+  variable-length tuple (`tuple[X, ...]`, which the check drops from an
+  annotation) has no such stand-in: use a `list` where nothing relies on the
+  immutability.
+- **No `del` of a parameter** (`del world, goal` to mark it unused): Codon
+  reads it as a call on the value. Leave the parameter unused.
 - **An `Optional` attribute is assigned without an annotation**: with one
   declared at class level (`_lane_id: Optional[int]`), Codon refuses
   `self._lane_id: Optional[int] = address.lane_id` (an `int` "does not match"
@@ -475,6 +510,14 @@ What Codon 0.19 needs that Python does not, beyond
   Turning it into a list changes what the class does (a frozen dataclass's
   hash, its equality with a tuple), so such a module stays in `EXCLUDED`
   (`route.model`).
+- **A model shared with checked modules is split out**: the model's
+  `EgoConfig` derives from `VehicleEntityConfig`, and the checked
+  `EgoVehicle.spawn()` hands its spawn location to the checked
+  `spawn_vehicle_actor()`. So the spawn locations and the NPC vehicle live
+  in a model module of their own (`_vehicle_entity.codon`), which
+  `REPLACED_MODELS` replaces with `entity._spawn` and
+  `entity.vehicle_entity`: the model's `EgoConfig` then holds the checked
+  `SpawnLocation`.
 - **A name the model lacks at the boundary**: when a checked module imports a
   name of a modelled package that the model does not declare
   (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in

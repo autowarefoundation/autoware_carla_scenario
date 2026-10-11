@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 import autoware_carla_scenario as acs
+from autoware_carla_scenario.traffic import driven as traffic_driven
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
 
@@ -169,6 +170,7 @@ def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
 #: (typecheck/library.py), though the package does not export them: name ->
 #: (model module, the Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
+    "BackendDriven": ("traffic", traffic_driven.BackendDriven),
     "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
 }

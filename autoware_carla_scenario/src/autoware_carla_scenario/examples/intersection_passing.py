@@ -153,7 +153,7 @@ class IntersectionPassingScenario(BaseScenario):
             )
             npc_entity = VehicleEntity(
                 VehicleEntityConfig(
-                    role_name=EntityRole.npc(i),
+                    role_name=str(EntityRole.npc(i)),
                     spawn_location=SpawnTransform(npc_snapped.to_carla_transform()),
                     vehicle_type=npc_cfg.vehicle_type,
                     initial_speed_kmh=npc_cfg.initial_speed_kmh,

@@ -104,7 +104,7 @@ class CutInScenario(BaseScenario):
         )
         npc = VehicleEntity(
             VehicleEntityConfig(
-                role_name=CUT_IN_ROLE,
+                role_name=str(CUT_IN_ROLE),
                 spawn_location=SpawnTransform(npc_snapped.to_carla_transform()),
                 vehicle_type=cfg.npc_vehicle_type,
                 initial_speed_kmh=cfg.npc_initial_speed_kmh,
