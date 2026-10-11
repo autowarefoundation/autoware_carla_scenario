@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import itertools
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from .driver import Driver
@@ -45,6 +46,7 @@ __all__ = [
     "LibraryChecks",
     "render_library_checks",
     "render_library_driver",
+    "uncalled_nodes",
     "workspace_module",
 ]
 
@@ -86,7 +88,8 @@ class LibraryChecks:
 
 
 class _Renderer:
-    def __init__(self) -> None:
+    def __init__(self, uncalled: Collection[str] = ()) -> None:
+        self.uncalled = set(uncalled)
         self.lines = [
             "",
             "",
@@ -177,7 +180,8 @@ class _Renderer:
             self.emit(f"{head}({', '.join(values)})", f"{where}({signature})")
 
     def function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        self.calls(node, node.name, node.name, drop_first=False)
+        if node.name not in self.uncalled:
+            self.calls(node, node.name, node.name, drop_first=False)
 
     def cls(self, node: ast.ClassDef) -> None:
         name = node.name
@@ -193,7 +197,9 @@ class _Renderer:
             if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
         ]
         init = next((m for m in methods if m.name == "__init__"), None)
-        if init is not None and not is_enum:
+        if f"{name}.__init__" in self.uncalled:
+            pass
+        elif init is not None and not is_enum:
             self.calls(init, name, f"{name}.__init__", drop_first=True, owner=name)
         elif decorators & _DATACLASS and not is_enum:
             self._dataclass_init(node)
@@ -205,6 +211,8 @@ class _Renderer:
                 continue
             kinds = {_dotted(d) or "" for d in method.decorator_list}
             where = f"{name}.{method.name}"
+            if where in self.uncalled:
+                continue
             if kinds & _SKIPPED_DECORATORS or any(
                 k.endswith((".setter", ".deleter")) for k in kinds
             ):
@@ -283,9 +291,40 @@ def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
     return out
 
 
-def render_library_checks(tree: ast.Module) -> LibraryChecks:
-    """The function to append to the module *tree* is the source of."""
-    renderer = _Renderer()
+def uncalled_nodes(
+    tree: ast.Module, uncalled: Collection[str]
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """The definitions in *tree* of the functions *uncalled* names.
+
+    *uncalled* names a function as ``function`` or ``Class.method``; a name
+    with no definition in *tree* is ignored.
+    """
+    wanted = set(uncalled)
+    out: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in wanted:
+                out.append(node)
+        elif isinstance(node, ast.ClassDef):
+            out += [
+                m
+                for m in node.body
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and f"{node.name}.{m.name}" in wanted
+            ]
+    return out
+
+
+def render_library_checks(
+    tree: ast.Module, uncalled: Collection[str] = ()
+) -> LibraryChecks:
+    """The function to append to the module *tree* is the source of.
+
+    *uncalled* names the functions the check leaves out (``function`` or
+    ``Class.method``; ``Class.__init__`` for the constructor, generated or
+    not), as :data:`.library.UNCALLED` lists them.
+    """
+    renderer = _Renderer(uncalled)
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not node.name.startswith("_"):

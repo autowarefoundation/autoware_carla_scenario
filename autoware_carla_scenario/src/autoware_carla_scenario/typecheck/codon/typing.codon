@@ -13,3 +13,9 @@ Collection = List
 Mapping = Dict
 MutableMapping = Dict
 AbstractSet = Set
+
+
+# Only for the import: the checker drops every annotation naming Any
+# (typecheck/transform.py), so nothing is ever typed with this class.
+class Any:
+    pass

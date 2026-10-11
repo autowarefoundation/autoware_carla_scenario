@@ -21,6 +21,9 @@ class NotCondition(BaseCondition):
         condition: The child condition whose result is inverted.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _condition: BaseCondition
+
     def __init__(self, condition: BaseCondition, *, label: str | None = None) -> None:
         super().__init__(label=label if label is not None else condition.label)
         self._condition = condition

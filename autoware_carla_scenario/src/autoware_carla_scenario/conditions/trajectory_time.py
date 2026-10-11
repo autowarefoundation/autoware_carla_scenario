@@ -47,6 +47,9 @@ class TrajectoryTimeCondition(BaseCondition):
     #: in, and the editor builds trajectories without a simulator).
     IS_TRAJECTORY_TIME: ClassVar[bool] = True
 
+    # Declared for the static check (docs/typecheck.md).
+    _time: float
+
     def __init__(self, time: float, *, label: str = "trajectory_time") -> None:
         super().__init__(label=label)
         if not math.isfinite(float(time)):
@@ -64,7 +67,8 @@ class TrajectoryTimeCondition(BaseCondition):
         return self._time == other._time
 
     def __hash__(self) -> int:
-        return hash((TrajectoryTimeCondition, self._time))
+        # The class by name: Codon cannot hash a class.
+        return hash(("TrajectoryTimeCondition", self._time))
 
     def __repr__(self) -> str:
         return f"TrajectoryTimeCondition({self._time!r})"
