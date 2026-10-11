@@ -66,6 +66,8 @@ class _LanePath:
     heading most like the lane walked so far is taken.
     """
 
+    _samples: List[Tuple[float, "carla.Transform"]]
+
     def __init__(
         self,
         carla_map: "carla.Map",
@@ -151,6 +153,14 @@ class _LanePath:
 
 class _CarriedVehicle:
     """A vehicle driven onto its first-frame pose along its lane."""
+
+    actor: "carla.Actor"
+    speed: float
+    _ticks: int
+    _step_s: float
+    start: "carla.Transform"
+    path: _LanePath
+    _powertrain: ChaosPowertrain
 
     def __init__(
         self,
@@ -238,6 +248,13 @@ class _CarriedVehicle:
 class _CarriedWalker:
     """A pedestrian moved in a straight line onto its first-frame pose."""
 
+    actor: "carla.Actor"
+    _ticks: int
+    _step_s: float
+    start: "carla.Transform"
+    _vx: float
+    _vy: float
+
     def __init__(
         self, actor: "carla.Actor", speed_mps: float, ticks: int, step_s: float
     ) -> None:
@@ -246,7 +263,8 @@ class _CarriedWalker:
         self._step_s = step_s
         self.start = actor.get_transform()
         yaw = math.radians(self.start.rotation.yaw)
-        self._vx, self._vy = speed_mps * math.cos(yaw), speed_mps * math.sin(yaw)
+        self._vx = speed_mps * math.cos(yaw)
+        self._vy = speed_mps * math.sin(yaw)
 
     def place(self, tick: int) -> None:
         import typesafe_carla.carla as carla  # noqa: PLC0415
@@ -275,6 +293,14 @@ class PolicyWarmup:
             id, in metres per second; an actor not named starts still.
         step_s: The simulation step.
     """
+
+    _ticks: int
+    _tick: int
+    _step_s: float
+    _ego: _CarriedVehicle
+    _vehicles: List[_CarriedVehicle]
+    _walkers: List[_CarriedWalker]
+    _frozen: List["carla.Actor"]
 
     def __init__(
         self,

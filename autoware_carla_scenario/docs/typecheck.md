@@ -122,7 +122,7 @@ Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).
 
-A scenario that imports a module with no model (numpy, or a framework module
+A scenario that imports a module with no model (pyxodr, or a framework module
 outside the public API) is refused with a message naming the module.
 
 ## Writing a scenario that type-checks
@@ -227,8 +227,9 @@ defines anything.
 `CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every
 other module to the reason it is not. `"not yet checked (#45)"` marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(`"imports numpy, lanelet2"`: a package or a standard module Codon cannot
-compile). Every module of the package except `typecheck/` is in exactly one of
+(`"imports lanelet2, pyxodr"`: a package or a standard module Codon cannot
+compile). numpy is not one: Codon ships its own, and a module's numpy calls
+compile. Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
 
 `UNCALLED` names the few public functions and methods of a checked module the
@@ -255,13 +256,14 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 88 of
-the package's 225 modules (39%; about 15,300 of 68,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 90 of
+the package's 225 modules (40%; about 16,100 of 68,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
 the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities and the entity registry, `BaseScenario`,
+NPC vehicle and pedestrian entities, the entity registry and the policy
+warm-up with the Chaos powertrain model, `BaseScenario`,
 the traffic backend interface with the TrafficManager backend, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units and the CARLA-only helpers, the traffic-light lookups included. 49
@@ -274,10 +276,10 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `RoutingAction`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 137 `EXCLUDED` modules fall into
+the authoring package's pydantic specs. The 135 `EXCLUDED` modules fall into
 three groups:
 
-- **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
+- **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
@@ -452,6 +454,13 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
   (`utils/traffic_light.py`) and takes the network `MapManager` returns.
   Nothing else of pyxodr is there.
+- **numpy is Codon's own**, so `import numpy as np` compiles
+  (`utils/powertrain.py`). Codon compares no `np.float32` with a Python
+  `float`: convert the float (`x <= np.float32(max_rpm)`), which is what
+  numpy 2 does anyway (NEP 50), so nothing changes at run time. Codon's
+  `ndarray` needs its dtype and dimension count, so a parameter annotated
+  with a bare `np.ndarray` or numpy.typing's `NDArray[...]` does not
+  translate.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
