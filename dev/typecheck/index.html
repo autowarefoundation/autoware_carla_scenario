@@ -1982,10 +1982,14 @@ scenario has to do itself:</p>
 <code>Sequence</code>, <code>type[...]</code>) are dropped from parameters, which become generic:
 Codon then checks each call with the arguments it is given.</p>
 <p>The checker also rewrites what Codon spells differently: an <code>Enum</code> class (its
-members become instances with a <code>name</code> and a typed <code>value</code>; looking a member
-up by value or name, and iterating over the class, are not modelled), a class
-deriving from an exception, and a <code>@classmethod</code> (a static method of its
-class: <code>cls</code> names the class it is defined in).</p>
+members become instances with a <code>name</code> and a typed <code>value</code>; a lookup by value,
+<code>ActionState("completeState")</code>, takes a value of that type and is typed but
+not resolved to the member; looking a member up by name and iterating over the
+class are not modelled), a class deriving from an exception, a <code>@classmethod</code>
+(a static method of its class: <code>cls</code> names the class it is defined in), and an
+annotation naming one of CARLA's integer enumerations
+(<code>carla.TrafficLightState</code>), which typesafe_carla's Codon library has as a
+value whose members are <code>int</code>, not as a type: it becomes <code>int</code>.</p>
 <h2 id="checking-the-framework-itself">Checking the framework itself<a class="headerlink" href="#checking-the-framework-itself" title="Permanent link">&para;</a></h2>
 <p>The scenario check trusts the model: it never compiles the framework's own
 source. The library check does, a module at a time, as each is made to
@@ -2100,6 +2104,13 @@ from the model's. The two are different types that never meet:</p>
 <p><code>BaseCondition.__init_subclass__</code>, which wraps every subclass's <code>check()</code> to
 record its last result for the UI, is in <code>UNCALLED</code>: the check sees each
 <code>check()</code> as written.</p>
+<p><code>actions.base</code> is checked the same way: a checked action takes the checked
+<code>BaseCondition</code>, so it imports it from <code>conditions.base</code> rather than from the
+<code>conditions</code> package, which the model stands in for until it is checked. Its
+<code>BaseAction</code> and <code>ActionState</code> are again not the model's, so
+<code>conditions.action_state</code> watches checked actions. An action that hands a
+condition from an unchecked module to its base (<code>SetSpeedAction</code>'s default
+<code>SpeedCondition</code>) waits for that module.</p>
 <h3 id="making-a-module-compile">Making a module compile<a class="headerlink" href="#making-a-module-compile" title="Permanent link">&para;</a></h3>
 <p>What Codon 0.19 needs that Python does not, beyond
 <a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
@@ -2197,6 +2208,18 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (<code>od: OpenDrivePose = x</code>),
   which Codon unwraps.
+- <strong>Codon does not narrow a union either</strong>, with <code>is</code> or <code>isinstance</code>, and an
+  attribute holding a union (<code>Union[Sequence[int], TrafficLightTarget,
+  None]</code>) reaches every use as the union. Store it split by kind
+  (<code>_all_lights: bool</code>, <code>_lanelet2_ids: Optional[Sequence[int]]</code>), deciding
+  the kind once in <code>__init__</code>, where <code>isinstance</code> on the parameter is decided
+  when Codon compiles.
+- <strong>A default of a subclass for an <code>Optional</code> of its base</strong> goes through an
+  <code>if</code> statement, not a conditional expression: <code>x if x is not None else
+  Sub()</code> is refused (<code>Optional[Base]</code> is not <code>Optional[Sub]</code>).
+- <strong>A dict has no truth value</strong> in Codon: <code>if not d:</code> is <code>if len(d) == 0:</code>.
+- <strong>No <code>setattr(obj, name, value)</code> with a name known only at run time</strong>:
+  spell the assignments out (<code>actions/environment.py</code>).
 - <strong>One <code>except</code> clause per exception type</strong>: Codon 0.19 does not take a
   tuple (<code>except (KeyError, ValueError):</code>). <code>raise X from None</code> is rewritten
   to <code>raise X</code> by the check; <code>raise X from exc</code> compiles as it is.
@@ -2253,7 +2276,7 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 03:58:29 UTC"><span class="timeago" datetime="2026-10-11T03:58:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 03:58:29 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 04:06:42 UTC"><span class="timeago" datetime="2026-10-11T04:06:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 04:06:42 UTC">2026-10-11</span>
   </span>
 
     
