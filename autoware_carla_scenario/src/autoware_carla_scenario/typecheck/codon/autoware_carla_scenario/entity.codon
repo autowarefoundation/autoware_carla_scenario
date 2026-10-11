@@ -157,3 +157,9 @@ def _expect_optional_ego_vehicle(ego) -> Optional[EgoVehicle]:
 
 def _expect_ego_vehicle(ego: EgoVehicle) -> EgoVehicle:
     return ego
+
+
+def register_entity(role_name, entity) -> None:
+    """entity.registry.register_entity, for the library check (scenario_base
+    registers its entities): an entity of any kind, under its role name."""
+    _expect_role_name(role_name)

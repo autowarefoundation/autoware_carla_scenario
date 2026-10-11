@@ -2,7 +2,12 @@
 # (docs/typecheck.md): the manoeuvre directions. Traffic backends are the
 # runner's business and are not modelled; BackendDriven, the base of the
 # checked entities (entity.ego, entity.vehicle_entity), is declared for the
-# library check, without the manoeuvres, which nothing checked calls.
+# library check, without the manoeuvres, which nothing checked calls, and so is
+# the TrafficBackend scenario_base hands a registered entity to.
+
+import typesafe_carla.carla as carla
+
+from .constants import DEFAULT_TM_PORT
 
 
 @tuple
@@ -20,6 +25,17 @@ class LaneChangeDirection:
     RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")
 
 
+class TrafficBackend:
+    def adopt(self, entity) -> None:
+        pass
+
+
 class BackendDriven:
     def __init__(self):
+        pass
+
+    def set_traffic_backend(self, backend: TrafficBackend) -> None:
+        pass
+
+    def set_client(self, client: carla.Client, tm_port: int = DEFAULT_TM_PORT) -> None:
         pass

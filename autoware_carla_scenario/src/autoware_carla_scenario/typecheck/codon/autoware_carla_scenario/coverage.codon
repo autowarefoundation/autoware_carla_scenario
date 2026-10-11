@@ -1,7 +1,9 @@
 # Model of autoware_carla_scenario.coverage (docs/typecheck.md).
 #
 # Only what a scenario names: the sampling event of a cover item.  Cover items
-# themselves are declared through BaseScenario.register_cover().
+# themselves are declared through BaseScenario.register_cover().  CoverItem and
+# CrossItem are declared for the library check (scenario_base, which holds
+# them), with only the name scenario_base reads; a scenario never builds one.
 
 import typesafe_carla.carla as carla
 
@@ -53,3 +55,22 @@ def _expect_optional_edges(edges):
     else:
         for edge in edges:
             _expect_float(edge)
+
+
+class CoverItem:
+    name: str
+
+    def __init__(self, name: str, expression, unit: str = "", range = None, every = None,
+                 buckets = None, values = None, ignore = None, event = SamplingEvent("end"),
+                 text: str = "", target = 1.0, group = None, cover_by: str = "hits",
+                 min_stay = None):
+        self.name = name
+
+
+class CrossItem:
+    name: str
+    items: List[CoverItem]
+    text: str = ""
+    target: float = 1.0
+    cover_by: str = "hits"
+    min_stay: Optional[float] = None

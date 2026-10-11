@@ -23,6 +23,9 @@ from typing import Any
 import pytest
 
 import autoware_carla_scenario as acs
+from autoware_carla_scenario.coverage import items as coverage_items
+from autoware_carla_scenario.entity import registry as entity_registry
+from autoware_carla_scenario.traffic import base as traffic_base
 from autoware_carla_scenario.traffic import driven as traffic_driven
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
@@ -171,6 +174,10 @@ def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
 #: (model module, the Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
     "BackendDriven": ("traffic", traffic_driven.BackendDriven),
+    "CoverItem": ("coverage", coverage_items.CoverItem),
+    "CrossItem": ("coverage", coverage_items.CrossItem),
+    "register_entity": ("entity", entity_registry.register_entity),
+    "TrafficBackend": ("traffic", traffic_base.TrafficBackend),
     "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
 }

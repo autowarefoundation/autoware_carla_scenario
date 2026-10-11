@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 import typesafe_carla.carla as carla
 
 from .actions import BaseAction, RoutingAction
-from .conditions import BaseCondition, find_actor_by_role_name
+from .conditions.base import BaseCondition, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .coverage.items import CoverItem, CrossItem, SamplingEvent
 from .coordinate import (
@@ -104,7 +104,11 @@ class EgoConfig(VehicleEntityConfig):
             spawn_retry_z_step=spawn_retry_z_step,
         )
         self.goal_pose = goal_pose
-        self.waypoint_poses = list(waypoint_poses or ())
+        # Not `list(waypoint_poses or ())`, which has no one type in Codon.
+        poses: List[Lanelet2Pose] = []
+        if waypoint_poses:
+            poses = list(waypoint_poses)
+        self.waypoint_poses = poses
 
 
 class BaseScenario(ABC):
@@ -122,13 +126,41 @@ class BaseScenario(ABC):
     #: TrafficManager before the main tick loop begins.
     STABILIZE_TICKS: int = 5
 
+    # Declared for the static check (docs/typecheck.md): Codon types an
+    # attribute from its declaration; to Python each is a bare annotation.
+    ego_config: EgoConfig
+    ego_type: type[EgoVehicle]
+    ego_entity: Optional[EgoVehicle]
+    _spawn_pose: Optional[Lanelet2Pose]
+    _ground_projection: GroundProjectionConfig
+    random_seed: int
+    _client: Optional[carla.Client]
+    _tm_port: int
+    _traffic_backend: Optional[TrafficBackend]
+    _entities: List[VehicleEntity]
+    _init_callbacks: List[Callable[[carla.World], None]]
+    _init_actions: List[BaseAction]
+    _pre_tick_callbacks: List[Callable[[carla.World], None]]
+    _post_tick_callbacks: List[Callable[[carla.World], None]]
+    _pre_tick_actions: List[BaseAction]
+    _post_tick_actions: List[BaseAction]
+    _pass_conditions: List[BaseCondition]
+    _fail_conditions: List[BaseCondition]
+    _spectator_camera_config: Optional[SpectatorCameraConfig]
+    _cover_items: List[CoverItem]
+    _cross_items: List[CrossItem]
+    _measures: dict[str, Measure]
+    _initial_measures: dict[str, Measure]
+
     def __init__(
         self,
         ego_config: EgoConfig,
         *,
         spawn_pose: Lanelet2Pose | None = None,
         ground_projection: GroundProjectionConfig | None = None,
-        random_seed: int = DEFAULT_RANDOM_SEED,
+        # DEFAULT_RANDOM_SEED's value: Codon cannot name a class attribute in
+        # a default, which Python evaluates once, when the class is created.
+        random_seed: int = 0,
         ego_type: type[EgoVehicle] | None = None,
         ego_entity: EgoVehicle | None = None,
     ) -> None:
@@ -167,22 +199,22 @@ class BaseScenario(ABC):
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
         self.random_seed = random_seed
-        self._client: Optional["carla.Client"] = None
-        self._tm_port: int = DEFAULT_TM_PORT
-        self._traffic_backend: Optional[TrafficBackend] = None
-        self._entities: List[VehicleEntity] = []
-        self._init_callbacks: List[Callable[["carla.World"], None]] = []
-        self._init_actions: List[BaseAction] = []
-        self._pre_tick_callbacks: List[Callable[["carla.World"], None]] = []
-        self._post_tick_callbacks: List[Callable[["carla.World"], None]] = []
-        self._pre_tick_actions: List[BaseAction] = []
-        self._post_tick_actions: List[BaseAction] = []
-        self._pass_conditions: List[BaseCondition] = []
-        self._fail_conditions: List[BaseCondition] = []
-        self._spectator_camera_config: Optional[SpectatorCameraConfig] = None
-        self._cover_items: List[CoverItem] = []
-        self._cross_items: List[CrossItem] = []
-        self._measures: dict[str, Measure] = dict(BUILT_IN_MEASURES)
+        self._client = None
+        self._tm_port = DEFAULT_TM_PORT
+        self._traffic_backend = None
+        self._entities = []
+        self._init_callbacks = []
+        self._init_actions = []
+        self._pre_tick_callbacks = []
+        self._post_tick_callbacks = []
+        self._pre_tick_actions = []
+        self._post_tick_actions = []
+        self._pass_conditions = []
+        self._fail_conditions = []
+        self._spectator_camera_config = None
+        self._cover_items = []
+        self._cross_items = []
+        self._measures = dict(BUILT_IN_MEASURES)
 
     # ------------------------------------------------------------------
     # Ego construction
@@ -258,10 +290,9 @@ class BaseScenario(ABC):
             backend: The run's traffic backend.
         """
         self._traffic_backend = backend
+        # Concatenated rather than unpacked into a tuple, which Codon cannot.
         for action in (
-            *self._init_actions,
-            *self._pre_tick_actions,
-            *self._post_tick_actions,
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
         ):
             self._hand_backend_to(action)
 
@@ -558,7 +589,11 @@ class BaseScenario(ABC):
         needs it the way a vehicle entity does.  Whichever of registration and
         :meth:`set_traffic_backend` comes second hands it over.
         """
-        inject = getattr(action, "set_traffic_backend", None)
+        # hasattr() rather than getattr() with a default, for the static check
+        # (docs/typecheck.md), which decides it when it compiles.
+        if not hasattr(action, "set_traffic_backend"):
+            return
+        inject = action.set_traffic_backend
         if callable(inject) and self._traffic_backend is not None:
             inject(self._traffic_backend)
 
@@ -685,7 +720,7 @@ class BaseScenario(ABC):
     def register_measure(
         self,
         key: str,
-        read: Callable[["carla.World"], Any],
+        read: Callable[["carla.World"], Optional[float]],
         *,
         unit: str = "",
         text: str = "",
@@ -712,7 +747,7 @@ class BaseScenario(ABC):
             raise ValueError("register_measure(): key must not be empty")
         from .odd.units import normalize_unit  # noqa: PLC0415
 
-        built_in = BUILT_IN_MEASURES.get(key)
+        built_in = BUILT_IN_MEASURES[key] if key in BUILT_IN_MEASURES else None
         if (
             built_in is not None
             and unit
@@ -740,13 +775,13 @@ class BaseScenario(ABC):
         else:
             self._measures = dict(initial)
 
-    def measure(self, key: str, world: "carla.World") -> Any:
+    def measure(self, key: str, world: "carla.World") -> Optional[float]:
         """This scenario's measure *key* in *world*.
 
         ``None`` when there is nothing to read, when the scenario does not
         measure *key*, or when the measure raised.
         """
-        found = self._measures.get(key)
+        found = self._measures[key] if key in self._measures else None
         if found is None:
             return None
         try:

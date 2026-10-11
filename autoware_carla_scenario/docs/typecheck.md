@@ -228,14 +228,19 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 66 of
-the package's 217 modules (30%; about 9,600 of 66,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 68 of
+the package's 218 modules (31%; about 10,700 of 66,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment and
-traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
-measures, the ODD units and the CARLA-only helpers. 30 functions and methods
-of those modules are `UNCALLED`, almost all of them a condition's
-`get_details()`. The 151 `EXCLUDED` modules fall into three groups:
+traffic-signal actions, the ego, NPC vehicle and pedestrian entities,
+`BaseScenario`, the measures, the ODD units and the CARLA-only helpers. 36
+functions and methods of those modules are `UNCALLED`: most of them a
+condition's `get_details()`, and the six members of `BaseScenario` built on
+the ego's class (`ego_type`, a `type[EgoVehicle]`: the constructor,
+`create_ego()`, `ego_requires_goal`, `require_goal()` and
+`register_route_to_goal()`, which also registers the unchecked
+`RoutingAction`) or on cover expressions of any value (`register_cover()`).
+The 150 `EXCLUDED` modules fall into three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -246,11 +251,10 @@ of those modules are `UNCALLED`, almost all of them a condition's
   `entity.registry`; the example scenarios, through `examples.configs`;
   the signal controllers, the traffic backends and the authoring compiler.
 - **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
-  which holds an entity of any kind, `coverage.items`, `odd.model`), a class
-  or a callable of any value as a parameter (`scenario_base`'s `ego_type`,
-  callbacks and measure expressions), a union-typed attribute, which crashes
-  Codon 0.19 (`RelativeLanePose.entity_ref`), a variable-length tuple
-  (`route.model`), or a class as a value (`utils.config`).
+  which holds an entity of any kind, `coverage.items`, `odd.model`), a
+  union-typed attribute, which crashes Codon 0.19
+  (`RelativeLanePose.entity_ref`), a variable-length tuple (`route.model`),
+  or a class as a value (`utils.config`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -272,8 +276,9 @@ def _acs_library_check():
 
 `_acs_value(T)` is a `T` Codon cannot tell from a real one; nothing compiled
 is ever run. A parameter annotated with a union (`Lanelet2Pose |
-OpenDrivePose`) is called once with each member, so the body is checked for
-every type it accepts. A parameter with no annotation, or one Codon cannot
+OpenDrivePose`, or `Union[BaseAction, Callable[[carla.World], None]]`) is
+called once with each member, so the body is checked for every type it
+accepts. A parameter with no annotation, or one Codon cannot
 express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
 gives the check nothing to call with and is reported as a problem of the
 module, at its line: annotate it with the type its callers pass. The one
@@ -296,6 +301,15 @@ stands in for it in the check's workspace:
   a model of that module alone (`utils/traffic_light.codon`). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
+
+Two checked modules that import each other can each need the other's types
+the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
+Measure]` at class level, and `measures` declares the running scenario
+(`_MEASURED: dict[str, Optional[BaseScenario]]`) as a global, so neither can
+be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
+cycle: the module it names (`measures`, `entity.ego`) imports the other
+(`scenario_base`) through its model, as it did before that one was checked.
+Its types are the model's, which never meet the checked module's.
 
 A model module that stands in for unchecked code (`coordinate.codon` for
 `transform.py` and `map_manager.py`) declares only what the checked modules
@@ -332,7 +346,9 @@ from the model's. The two are different types that never meet:
   model-only `_acs_condition` marker) are unchanged;
 - the **library check** compiles the checked conditions against the checked
   base. A checked module that hands a condition to a model function (an
-  action, `scenario_base`) cannot do so until that module is checked too;
+  unchecked action) cannot do so until that module is checked too
+  (`scenario_base` is checked, and imports `BaseCondition` from
+  `conditions.base` for that);
   `_acs_list` gives a list display of checked conditions the type of its
   first element, so a display mixing two checked condition classes waits for
   the same.
@@ -471,6 +487,12 @@ What Codon 0.19 needs that Python does not, beyond
   variable-length tuple (`tuple[X, ...]`, which the check drops from an
   annotation) has no such stand-in: use a `list` where nothing relies on the
   immutability.
+- **No star-unpacking into a tuple display** (`(*a, *b)`): Codon wants a
+  tuple after `*`. Concatenate the lists (`a + b`).
+- **A default does not name a class attribute** (`random_seed: int =
+  DEFAULT_RANDOM_SEED` in a method of the class defining it): Python
+  evaluates it once, when the class is created, and Codon cannot name it
+  there. Write the value, with a comment naming the attribute.
 - **No `del` of a parameter** (`del world, goal` to mark it unused): Codon
   reads it as a call on the value. Leave the parameter unused.
 - **An `Optional` attribute is assigned without an annotation**: with one
