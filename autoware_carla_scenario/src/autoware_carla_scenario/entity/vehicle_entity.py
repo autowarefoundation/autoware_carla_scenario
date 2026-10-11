@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from ..coordinate.poses import OpenDrivePose
     from ..coordinate.snap import GroundProjectionConfig
 
-from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
 from ._spawn import SpawnLocation, spawn_vehicle_actor
 
@@ -29,7 +28,10 @@ class VehicleEntityConfig:
     explicit :class:`SpawnTransform` or a :class:`SpawnPointIndex`.
     """
 
-    role_name: Union[EntityRole, str]
+    #: CARLA's ``role_name`` string.  An :class:`EntityRole` is accepted and
+    #: stored as its string (:meth:`__post_init__`), so the config holds one
+    #: type whatever it was built with.
+    role_name: str
     spawn_location: SpawnLocation
     vehicle_type: str = "vehicle.mini.cooper"
     initial_speed_kmh: float = 0.0
@@ -38,6 +40,12 @@ class VehicleEntityConfig:
     spawn_retry_z_step: float = 0.5
     od_pose: Optional["OpenDrivePose"] = None
     ground_projection: Optional["GroundProjectionConfig"] = None
+
+    def __post_init__(self) -> None:
+        # Stored as a string: CARLA's role_name is one, every reader converts
+        # it to one anyway, and the static check (docs/typecheck.md) needs an
+        # attribute of one type.
+        self.role_name = str(self.role_name)
 
 
 class VehicleEntity(BackendDriven):
@@ -48,6 +56,11 @@ class VehicleEntity(BackendDriven):
     for non-ego vehicles that participate in a scenario.
     """
 
+    # Declared for the static check (docs/typecheck.md): Codon types an
+    # attribute from its declaration; to Python it is a bare annotation.
+    _config: VehicleEntityConfig
+    _vehicle: Optional["carla.Actor"]
+
     def __init__(self, config: VehicleEntityConfig) -> None:
         self._config = config
         self._vehicle: Optional["carla.Actor"] = None
@@ -57,7 +70,7 @@ class VehicleEntity(BackendDriven):
     # ------------------------------------------------------------------
 
     @property
-    def role_name(self) -> Union[EntityRole, str]:
+    def role_name(self) -> str:
         """Return the role name that identifies this entity."""
         return self._config.role_name
 
@@ -109,7 +122,7 @@ class VehicleEntity(BackendDriven):
         self._vehicle = spawn_vehicle_actor(
             world,
             self._config.vehicle_type,
-            str(self._config.role_name),
+            self._config.role_name,
             self._config.spawn_location,
             od_pose=self._config.od_pose,
             spawn_retry_max_count=self._config.spawn_retry_max_count,

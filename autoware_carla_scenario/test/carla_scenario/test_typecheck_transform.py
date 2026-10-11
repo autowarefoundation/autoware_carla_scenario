@@ -217,6 +217,26 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
+def test_a_frozenset_is_checked_as_a_set() -> None:
+    # Codon 0.19 has no frozenset; the check only types it, so a set will do.
+    out = _transform(
+        """
+        def ids(self) -> FrozenSet[int]:
+            return frozenset()
+
+        def more(xs: frozenset[str]) -> None:
+            ys = frozenset({"a"})
+        """
+    )
+    lines = out.splitlines()
+    assert lines[1] == "def ids(self) -> Set[int]:"
+    assert lines[2] == "    return set()"
+    assert lines[4] == "def more(xs: Set[str]) -> None:"
+    assert lines[5] == '    ys = set({"a"})'
+    assert _annotation("typing.FrozenSet[int]") == "Set[int]"
+    assert _annotation("frozenset") is None
+
+
 def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() -> None:
     out = _transform(
         """

@@ -1,0 +1,88 @@
+# Model of autoware_carla_scenario.entity._spawn and .vehicle_entity
+# (docs/typecheck.md), re-exported by entity.codon. The library check compiles
+# the checked source in its place (REPLACED_MODELS, typecheck/library.py), so
+# the model's EgoConfig derives from the checked VehicleEntityConfig and hands
+# the checked spawn_vehicle_actor the checked SpawnLocation.
+#
+# SpawnLocation (Union[SpawnTransform, SpawnPointIndex] in Python) is the base
+# class of the two here.
+
+import typesafe_carla.carla as carla
+
+from .coordinate import OpenDrivePose, GroundProjectionConfig, _expect_optional_ground_projection
+from .entity_role import _expect_role_name
+
+
+class SpawnLocation:
+    def __init__(self):
+        pass
+
+
+class SpawnTransform(SpawnLocation):
+    value: carla.Transform
+
+    def __init__(self, value: carla.Transform):
+        super().__init__()
+        self.value = value
+
+
+class SpawnPointIndex(SpawnLocation):
+    value: int
+
+    def __init__(self, value: int):
+        super().__init__()
+        self.value = value
+
+
+class VehicleEntityConfig:
+    role_name: str
+    spawn_location: SpawnLocation
+    vehicle_type: str
+    initial_speed_kmh: float
+    spawn_retry_max_count: int
+    spawn_retry_t_step: float
+    spawn_retry_z_step: float
+    od_pose: Optional[OpenDrivePose]
+    ground_projection: Optional[GroundProjectionConfig]
+
+    def __init__(self, role_name, spawn_location: SpawnLocation,
+                 vehicle_type: str = "vehicle.mini.cooper", initial_speed_kmh: float = 0.0,
+                 spawn_retry_max_count: int = 0, spawn_retry_t_step: float = 0.1,
+                 spawn_retry_z_step: float = 0.5, od_pose: Optional[OpenDrivePose] = None,
+                 ground_projection = None):
+        self.role_name = _expect_role_name(role_name)
+        self.spawn_location = spawn_location
+        self.vehicle_type = vehicle_type
+        self.initial_speed_kmh = initial_speed_kmh
+        self.spawn_retry_max_count = spawn_retry_max_count
+        self.spawn_retry_t_step = spawn_retry_t_step
+        self.spawn_retry_z_step = spawn_retry_z_step
+        self.od_pose = od_pose
+        self.ground_projection = _expect_optional_ground_projection(ground_projection)
+
+
+class VehicleEntity:
+    def __init__(self, config: VehicleEntityConfig):
+        pass
+
+    @property
+    def role_name(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def vehicle_type(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def initial_speed_kmh(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def actor(self) -> Optional[carla.Actor]:
+        raise NotImplementedError()
+
+    def spawn(self, world: carla.World) -> carla.Actor:
+        raise NotImplementedError()
+
+    def destroy(self) -> None:
+        raise NotImplementedError()

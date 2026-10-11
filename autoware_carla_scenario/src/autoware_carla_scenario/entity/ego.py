@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, FrozenSet, Optional
+from typing import TYPE_CHECKING, FrozenSet, Mapping, Optional, Sequence
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -46,6 +45,10 @@ class EgoVehicle(BackendDriven):
     #: node, say) and :meth:`spawn` only attaches to it.  :class:`ScenarioRunner`
     #: reads this to leave that actor out of the cleanup it does before a run.
     attaches_to_existing_actor: bool = False
+
+    # Declared for the static check (docs/typecheck.md): Codon types an
+    # attribute from its declaration; to Python it is a bare annotation.
+    _vehicle: Optional["carla.Actor"]
 
     def __init__(self) -> None:
         self._vehicle: Optional["carla.Actor"] = None
@@ -141,7 +144,6 @@ class EgoVehicle(BackendDriven):
                 needs one.  ``None`` leaves it to the entity.
             ground_projection: Settings used to snap the goal to the road.
         """
-        del world, goal, initial_pose, ground_projection
 
     def spawn(self, world: "carla.World", config: EgoConfig) -> "carla.Actor":
         """Spawn the ego vehicle.

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional
 
 import typesafe_carla.carla as carla
 
-from ..entity_role import EntityRole
 
 if TYPE_CHECKING:
     from ._spawn import SpawnTransform
@@ -47,14 +46,22 @@ class PedestrianEntityConfig:
     """Configuration for spawning a pedestrian.
 
     Attributes:
-        role_name: The role the pedestrian answers to.
+        role_name: The role the pedestrian answers to, as CARLA's
+            ``role_name`` string.  An :class:`EntityRole` is accepted and
+            stored as its string (:meth:`__post_init__`).
         spawn_location: Where to place it, as a transform.
         walker_type: CARLA blueprint id; must be a ``walker.*``.
     """
 
-    role_name: Union[EntityRole, str]
+    role_name: str
     spawn_location: "SpawnTransform"
     walker_type: str = "walker.pedestrian.0001"
+
+    def __post_init__(self) -> None:
+        # Stored as a string: CARLA's role_name is one, every reader converts
+        # it to one anyway, and the static check (docs/typecheck.md) needs an
+        # attribute of one type.
+        self.role_name = str(self.role_name)
 
 
 class PedestrianEntity:
@@ -75,6 +82,11 @@ class PedestrianEntity:
     then route around obstacles the scenario put there on purpose.
     """
 
+    # Declared for the static check (docs/typecheck.md): Codon types an
+    # attribute from its declaration; to Python it is a bare annotation.
+    _config: PedestrianEntityConfig
+    _walker: Optional["carla.Actor"]
+
     def __init__(self, config: PedestrianEntityConfig) -> None:
         self._config = config
         self._walker: Optional["carla.Actor"] = None
@@ -84,7 +96,7 @@ class PedestrianEntity:
     # ------------------------------------------------------------------
 
     @property
-    def role_name(self) -> Union[EntityRole, str]:
+    def role_name(self) -> str:
         """Return the role name that identifies this entity."""
         return self._config.role_name
 
@@ -112,7 +124,14 @@ class PedestrianEntity:
         blueprint_library = world.get_blueprint_library()
         try:
             blueprint = blueprint_library.find(self._config.walker_type)
-        except (IndexError, RuntimeError) as exc:
+        # One clause per exception type, for the static check
+        # (docs/typecheck.md): Codon 0.19 does not take a tuple.
+        except IndexError as exc:
+            raise ValueError(
+                f"pedestrian blueprint {self._config.walker_type!r} is not "
+                f"available in this CARLA build"
+            ) from exc
+        except RuntimeError as exc:
             raise ValueError(
                 f"pedestrian blueprint {self._config.walker_type!r} is not "
                 f"available in this CARLA build"
@@ -131,13 +150,13 @@ class PedestrianEntity:
                 f"role_name attribute, so no condition could find it; pick a "
                 f"walker blueprint that has one"
             )
-        blueprint.set_attribute("role_name", str(self._config.role_name))
+        blueprint.set_attribute("role_name", self._config.role_name)
         # A walker that another actor can push is a walker the scenario no
         # longer controls; every pedestrian here is scripted.
         if blueprint.has_attribute("is_invincible"):
             blueprint.set_attribute("is_invincible", "false")
 
-        walker = None
+        walker: Optional["carla.Actor"] = None
         for lift in _SPAWN_LIFTS_M:
             transform = self._lifted_transform(lift)
             walker = world.try_spawn_actor(blueprint, transform)

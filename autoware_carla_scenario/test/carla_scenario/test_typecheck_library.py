@@ -224,6 +224,20 @@ def test_a_replaced_model_re_exports_the_checked_definitions() -> None:
     ]
 
 
+def test_the_vehicle_entity_model_re_exports_the_checked_spawn_and_vehicle() -> None:
+    # So the model's EgoConfig derives from the checked VehicleEntityConfig and
+    # the checked ego hands the checked spawn_vehicle_actor its own SpawnLocation.
+    spawn, vehicle = REPLACED_MODELS["_vehicle_entity"]
+    problems: list = []
+    out = replaced_models(_trees(spawn, vehicle), problems)
+    assert problems == []
+    assert out["_vehicle_entity"].splitlines() == [
+        f"from {workspace_module(spawn)} import SpawnLocation, SpawnPointIndex, "
+        "SpawnTransform",
+        f"from {workspace_module(vehicle)} import VehicleEntity, VehicleEntityConfig",
+    ]
+
+
 def test_a_model_is_replaced_only_once_all_its_modules_are_checked() -> None:
     frames, _poses = REPLACED_MODELS["_poses"]
     problems: list = []

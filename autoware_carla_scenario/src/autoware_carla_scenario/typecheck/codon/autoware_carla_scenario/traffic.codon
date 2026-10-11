@@ -1,6 +1,8 @@
 # Model of the parts of autoware_carla_scenario.traffic a scenario names
 # (docs/typecheck.md): the manoeuvre directions. Traffic backends are the
-# runner's business and are not modelled.
+# runner's business and are not modelled; BackendDriven, the base of the
+# checked entities (entity.ego, entity.vehicle_entity), is declared for the
+# library check, without the manoeuvres, which nothing checked calls.
 
 
 @tuple
@@ -16,3 +18,8 @@ class LaneChangeDirection:
     value: str
     LEFT: ClassVar[LaneChangeDirection] = LaneChangeDirection("left")
     RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")
+
+
+class BackendDriven:
+    def __init__(self):
+        pass
