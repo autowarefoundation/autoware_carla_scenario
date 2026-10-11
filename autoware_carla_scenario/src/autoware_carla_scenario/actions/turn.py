@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional, Union
 
-from typing import Optional as _Optional
-
-from ..conditions import BaseCondition
-from ..entity.registry import find_entity_by_role_name
+from ..conditions.base import BaseCondition
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import TurnDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
@@ -48,11 +47,18 @@ class TurnAction(BaseAction):
     _LEFT_TARGET_DEG: float = -90.0
     _RIGHT_TARGET_DEG: float = 90.0
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _direction: TurnDirection
+    _search_distance: float
+    _waypoint_step: float
+    _post_junction_distance: float
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
         direction: TurnDirection,
-        condition: _Optional[BaseCondition] = None,
+        condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "turn_signal",
@@ -62,7 +68,7 @@ class TurnAction(BaseAction):
         post_junction_distance: float = 20.0,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._entity_name = entity_name
+        self._entity_name = str(entity_name)
         self._direction = direction
         self._search_distance = search_distance
         self._waypoint_step = waypoint_step
@@ -74,8 +80,9 @@ class TurnAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Ask the named entity to turn at the next junction."""
-        entity = find_entity_by_role_name(self._entity_name)
+        entity = find_vehicle_entity(self._entity_name)
         if entity is None:
+            _fail_if_pedestrian(self._entity_name)
             logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
             return
 
@@ -86,3 +93,20 @@ class TurnAction(BaseAction):
             waypoint_step=self._waypoint_step,
             post_junction_distance=self._post_junction_distance,
         )
+
+
+def _fail_if_pedestrian(entity_name: str) -> None:
+    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
+
+    A pedestrian cannot turn. The vehicle lookup does not find one, but
+    the action used to look up an entity of any kind and call
+    ``turn_at_junction`` on it, which raised; it still raises, rather than reading
+    as an entity that is not there.
+    """
+    found = find_pedestrian_entity(entity_name)
+    if found is None:
+        return
+    walker: PedestrianEntity = found
+    raise AttributeError(
+        f"'{type(walker).__name__}' object has no attribute 'turn_at_junction'"
+    )
