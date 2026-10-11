@@ -288,7 +288,7 @@ EXCLUDED: dict[str, str] = {
         "field Codon 0.19 cannot hold"
     ),
     "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
-    "autoware_carla_scenario.declarative": "imports pathlib",
+    "autoware_carla_scenario.declarative": "imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",
     "autoware_carla_scenario.driver": "re-exports driver.base and driver.control (numpy), driver.egodriver_client (grpc)",
     "autoware_carla_scenario.driver.base": "imports numpy",
     "autoware_carla_scenario.driver.control": "imports numpy",
@@ -321,7 +321,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.maps": "re-exports maps.cache (subprocess, json) and maps.config (pathlib)",
     "autoware_carla_scenario.maps.cache": "imports pathlib, subprocess, shutil, tempfile, json, hashlib",
     "autoware_carla_scenario.maps.catalogue": "imports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib), which are not checked and have no model",
-    "autoware_carla_scenario.maps.config": "imports pathlib",
+    "autoware_carla_scenario.maps.config": "imports maps.resolver (pathlib, hashlib), which is not checked and has no model, and takes the map config node as `Any` (`resolve_map_paths()`), which Codon cannot express",
     "autoware_carla_scenario.maps.opendrive": "imports pathlib, shutil",
     "autoware_carla_scenario.maps.resolver": "imports pathlib, hashlib",
     "autoware_carla_scenario.odd": (
@@ -338,7 +338,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.probes": "imports lanelet2",
     "autoware_carla_scenario.odd.registry": "imports pathlib, importlib",
     "autoware_carla_scenario.odd.route": "imports lanelet2",
-    "autoware_carla_scenario.odd.sampler": "imports pathlib",
+    "autoware_carla_scenario.odd.sampler": "holds and takes values of `Any` (`OddSample.values`, `OddSampler`'s coverage, the `Mapping[str, Any]` config nodes of `knobs_from_mapping()` and `sampler_from_config()`), which Codon cannot express",
     "autoware_carla_scenario.odd.sources": "imports pathlib, subprocess, shutil, tempfile, tarfile, hashlib, fcntl, io, contextlib",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest",
     "autoware_carla_scenario.registry": "imports pathlib, omegaconf, importlib",
