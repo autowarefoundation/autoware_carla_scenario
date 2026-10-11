@@ -31,6 +31,11 @@ __all__ = ["MapSource", "MapSourceError"]
 class MapSourceError(ValueError):
     """A map source URI could not be understood."""
 
+    # Spelled out: Codon 0.19 cannot raise an exception subclass that leaves
+    # its constructor to the built-in base.
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 #: The ``/<kind>/<ref>/<path...>`` infix a web UI puts between the repository
 #: and the file being viewed.  ``tree`` and ``blob`` are GitHub's, ``resolve``

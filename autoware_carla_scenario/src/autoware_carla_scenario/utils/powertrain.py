@@ -37,9 +37,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Sequence, Tuple
+from typing import TYPE_CHECKING, Sequence, Tuple
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 __all__ = ["CREEP_THROTTLE", "ChaosPowertrain", "DEFAULT_ROAD_FRICTION"]
 
@@ -134,7 +137,9 @@ class ChaosPowertrain:
 
     @classmethod
     def from_physics_control(
-        cls, physics: Any, road_friction: float = DEFAULT_ROAD_FRICTION
+        cls,
+        physics: "carla.VehiclePhysicsControl",
+        road_friction: float = DEFAULT_ROAD_FRICTION,
     ) -> "ChaosPowertrain":
         """Read the model off a vehicle's ``carla.VehiclePhysicsControl``.
 
@@ -158,7 +163,9 @@ class ChaosPowertrain:
         # UE steps a float by max_rpm / 20 up to max_rpm; mirror it, not a linspace.
         step = np.float32(max_rpm / _TORQUE_SAMPLES)
         x = np.float32(0.0)
-        while x <= max_rpm:
+        # numpy 2 compares a float32 with a Python float in float32 (NEP 50);
+        # spelled out, as Codon compares no float32 with a float.
+        while x <= np.float32(max_rpm):
             graph.append(_rich_curve(keys, float(x)) / peak if peak else 0.0)
             x = np.float32(x + step)
         driven = _DRIVEN_WHEELS.get(int(physics.differential_type), "all")

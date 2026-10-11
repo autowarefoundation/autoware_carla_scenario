@@ -1,0 +1,65 @@
+# The part of Python's urllib.parse the checked framework calls, for the
+# checker (docs/typecheck.md). Nothing here runs: urlsplit returns its five
+# parts typed as Python's SplitResult has them, without splitting anything.
+
+
+class SplitResult:
+    scheme: str
+    netloc: str
+    path: str
+    query: str
+    fragment: str
+
+    def __init__(
+        self, scheme: str, netloc: str, path: str, query: str, fragment: str
+    ):
+        self.scheme = scheme
+        self.netloc = netloc
+        self.path = path
+        self.query = query
+        self.fragment = fragment
+
+    # Python's SplitResult is a 5-tuple of str.
+    def __len__(self) -> int:
+        return 5
+
+    def __getitem__(self, index: int) -> str:
+        return (self.scheme, self.netloc, self.path, self.query, self.fragment)[
+            index
+        ]
+
+    def __iter__(self):
+        yield self.scheme
+        yield self.netloc
+        yield self.path
+        yield self.query
+        yield self.fragment
+
+    @property
+    def username(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def password(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def hostname(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def port(self) -> Optional[int]:
+        return Optional[int]()
+
+    def geturl(self) -> str:
+        return urlunsplit(self)
+
+
+def urlsplit(url: str, scheme: str = "", allow_fragments: bool = True) -> SplitResult:
+    return SplitResult(scheme, "", url, "", "")
+
+
+# Any five str, as Python takes them: a tuple, a list or a SplitResult.
+def urlunsplit(components) -> str:
+    scheme, netloc, path, query, fragment = components
+    return scheme + "://" + netloc + path + query + fragment
