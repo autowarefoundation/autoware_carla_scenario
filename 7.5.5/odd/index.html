@@ -1,0 +1,3204 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/7.5.5/odd/">
+      
+      
+        <link rel="prev" href="../coverage/">
+      
+      
+        <link rel="next" href="../typecheck/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ODD - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#odd" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ODD
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../autoware/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Autoware as the Ego
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autoware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concepts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-an-odd-in-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing an ODD in Python
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing an ODD in Python">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#situations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Situations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in probes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scenario-measures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scenario measures
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-an-odd-in-openodd-yaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing an ODD in OpenODD YAML
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing an ODD in OpenODD YAML">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#taxonomies-and-modules-from-git" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Taxonomies and modules from git
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-binding-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The binding file
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#picking-the-odd-of-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Picking the ODD of a run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sampling-scenarios-from-the-odd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling scenarios from the ODD
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sampling scenarios from the ODD">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-knows-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who knows what
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-a-case-is-drawn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a case is drawn
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-an-odd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking an ODD
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-a-planned-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking a planned route
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-report-says" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the report says
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concepts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-an-odd-in-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing an ODD in Python
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing an ODD in Python">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#situations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Situations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in probes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scenario-measures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scenario measures
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-an-odd-in-openodd-yaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing an ODD in OpenODD YAML
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing an ODD in OpenODD YAML">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#taxonomies-and-modules-from-git" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Taxonomies and modules from git
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-binding-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The binding file
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#picking-the-odd-of-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Picking the ODD of a run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sampling-scenarios-from-the-odd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling scenarios from the ODD
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sampling scenarios from the ODD">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-knows-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who knows what
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-a-case-is-drawn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a case is drawn
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-an-odd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking an ODD
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-a-planned-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking a planned route
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-report-says" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the report says
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="odd">ODD<a class="headerlink" href="#odd" title="Permanent link">&para;</a></h1>
+<p>An <strong>Operational Design Domain</strong> (ODD) states the conditions a system is
+built to drive in: urban roads, up to 60 km/h, no heavy rain, and so on. Every
+run is measured against one. The runner samples the ODD's attributes on every
+tick. Their buckets are the run's <strong>ODD coverage</strong>: which conditions it
+reached (see <a href="../coverage/">Coverage</a>). The ODD's modules say which ticks were
+<strong>outside</strong> the ODD.</p>
+<p>An ODD is written in one of two ways. Both build the same objects, so they
+are measured, judged and reported the same way:</p>
+<ul>
+<li><strong>Python</strong>: the canonical form. It is checked with Codon before it is used,
+  like a scenario (<a href="../typecheck/">Static Check</a>).</li>
+<li><strong><a href="https://www.asam.net/standards/detail/openodd/">ASAM OpenODD</a> 1.0 YAML</strong>
+  (the standard's chapter 10). It is read into the same objects. A <strong>binding
+  file</strong> next to it names the probes that measure its concepts.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a> OpenODD YAML + binding file ──(load_odd_binding)──┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                                    ├──▶ OddDefinition ──▶ coverage + inside/outside per tick
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a> Python (checked by Codon) ─────────────────────────┘
+</code></pre></div>
+<p>OpenODD also maps its model to OpenSCENARIO DSL (chapter 9, model to DSL only)
+and to tables (chapter 8). Neither is read here.</p>
+<h2 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link">&para;</a></h2>
+<p>The model and its semantics follow OpenODD 1.0 (chapters 6 and 7).</p>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Attribute</strong></td>
+<td>A taxonomy concept, measured on every tick: a <strong>probe</strong> reads it from the world, and its <strong>buckets</strong> make it a cover item.</td>
+</tr>
+<tr>
+<td><strong>Condition</strong></td>
+<td>A test on one attribute (<code>speed_limit.between(0, 60)</code>), a group of conditions (<code>all_of</code>, <code>any_of</code>), another module's verdict (<code>module_holds</code>), or a missing value (<code>is_unknown</code>).</td>
+</tr>
+<tr>
+<td><strong>Module</strong></td>
+<td>A named rule: <code>INCLUDE AND (NOT EXCLUDE)</code>. It has at most one include section and at most one exclude section.</td>
+</tr>
+<tr>
+<td><strong>Label</strong></td>
+<td>A name several modules declare. It holds when any active module declaring it holds.</td>
+</tr>
+<tr>
+<td><strong>Root</strong></td>
+<td>An entry point. Each root candidate (<code>roots=</code>; by default every module) that no other module refers to, by name or through a label, is a root. The ODD holds when its active roots hold.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Missing values.</strong> OpenODD's <em>missing-value semantics</em> apply. A value the
+probe could not read does not, by itself, put a situation outside the ODD
+(open world). Examples are a simulator without weather, and a run without a
+Lanelet2 map. When a value is required, the ODD says so with
+<code>attr.is_unknown()</code> in an exclude section (<code>x: unknown</code> in YAML). A tick that
+is inside only because values were missing is reported as such.</p>
+<p><strong>Inactive modules.</strong> An inactive module is ignored. A condition referring to
+it, either way, drops out of its section, as if it were not written. A
+section with nothing left in it counts as absent: an include section then
+holds, and an exclude section does not. The standard says such conditions
+are "automatically satisfied"; taken literally, that would make an exclude
+section that refers to a switched-off hazard exclude everything, so this
+reads "ignored" as the neutral element.</p>
+<p>Modules follow ISO 34503's "default" definition mode, as OpenODD requires.
+Whatever no module rules out is inside the ODD.</p>
+<h2 id="writing-an-odd-in-python">Writing an ODD in Python<a class="headerlink" href="#writing-an-odd-in-python" title="Permanent link">&para;</a></h2>
+<p>An ODD is a function that takes nothing and returns an <code>OddDefinition</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">typesafe_carla.carla</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">carla</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">OddAttribute</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">OddDefinition</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">OddModule</span><span class="p">,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">module_holds</span><span class="p">,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">register_odd</span><span class="p">,</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">)</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="n">INTENSITY_LEVELS</span><span class="p">,</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">lanelet_location</span><span class="p">,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="n">rain</span><span class="p">,</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    <span class="n">speed_limit_kph</span><span class="p">,</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="p">)</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="k">def</span><span class="w"> </span><span class="nf">ego_yaw_rate</span><span class="p">(</span><span class="n">world</span><span class="p">:</span> <span class="n">carla</span><span class="o">.</span><span class="n">World</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    <span class="o">...</span>  <span class="c1"># any function of the world is a probe; None means unknown</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="k">def</span><span class="w"> </span><span class="nf">urban_odd</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">OddDefinition</span><span class="p">:</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    <span class="n">location</span> <span class="o">=</span> <span class="n">OddAttribute</span><span class="p">(</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>        <span class="s2">"scenery.location"</span><span class="p">,</span> <span class="n">lanelet_location</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">[</span><span class="s2">"urban"</span><span class="p">,</span> <span class="s2">"nonurban"</span><span class="p">,</span> <span class="s2">"private"</span><span class="p">]</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>    <span class="p">)</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>    <span class="n">speed_limit</span> <span class="o">=</span> <span class="n">OddAttribute</span><span class="p">(</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>        <span class="s2">"scenery.speed_limit"</span><span class="p">,</span> <span class="n">speed_limit_kph</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"km/h"</span><span class="p">,</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>        <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">40</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">60</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    <span class="p">)</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    <span class="n">weather</span> <span class="o">=</span> <span class="n">OddAttribute</span><span class="p">(</span><span class="s2">"environment.rain"</span><span class="p">,</span> <span class="n">rain</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="n">INTENSITY_LEVELS</span><span class="p">)</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    <span class="n">yaw_rate</span> <span class="o">=</span> <span class="n">OddAttribute</span><span class="p">(</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>        <span class="s2">"dynamic.yaw_rate"</span><span class="p">,</span> <span class="n">ego_yaw_rate</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"deg/s"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mf">30.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">),</span> <span class="n">every</span><span class="o">=</span><span class="mf">10.0</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>    <span class="p">)</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    <span class="k">return</span> <span class="n">OddDefinition</span><span class="p">(</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>        <span class="s2">"urban"</span><span class="p">,</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>        <span class="p">[</span><span class="n">location</span><span class="p">,</span> <span class="n">speed_limit</span><span class="p">,</span> <span class="n">weather</span><span class="p">,</span> <span class="n">yaw_rate</span><span class="p">],</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>        <span class="p">[</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>            <span class="n">OddModule</span><span class="p">(</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>                <span class="s2">"urban_roads"</span><span class="p">,</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>                <span class="n">include_and</span><span class="o">=</span><span class="p">[</span><span class="n">location</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">"urban"</span><span class="p">]),</span> <span class="n">speed_limit</span><span class="o">.</span><span class="n">between</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">60</span><span class="p">)],</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>                <span class="n">text</span><span class="o">=</span><span class="s2">"Urban roads up to 60 km/h"</span><span class="p">,</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a>            <span class="p">),</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a>            <span class="n">OddModule</span><span class="p">(</span><span class="s2">"weather"</span><span class="p">,</span> <span class="n">exclude_or</span><span class="o">=</span><span class="p">[</span><span class="n">weather</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">"heavy"</span><span class="p">])],</span> <span class="n">labels</span><span class="o">=</span><span class="p">[</span><span class="s2">"fair"</span><span class="p">]),</span>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>            <span class="n">OddModule</span><span class="p">(</span>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>                <span class="s2">"root"</span><span class="p">,</span> <span class="n">include_and</span><span class="o">=</span><span class="p">[</span><span class="n">module_holds</span><span class="p">(</span><span class="s2">"urban_roads"</span><span class="p">),</span> <span class="n">module_holds</span><span class="p">(</span><span class="s2">"fair"</span><span class="p">)]</span>
+<a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a>            <span class="p">),</span>
+<a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a>        <span class="p">],</span>
+<a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a>        <span class="n">roots</span><span class="o">=</span><span class="p">[</span><span class="s2">"root"</span><span class="p">],</span>
+<a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>        <span class="n">text</span><span class="o">=</span><span class="s2">"Urban roads, fair weather"</span><span class="p">,</span>
+<a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>    <span class="p">)</span>
+<a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a>
+<a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a>
+<a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a><span class="n">register_odd</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">urban_odd</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="attributes">Attributes<a class="headerlink" href="#attributes" title="Permanent link">&para;</a></h3>
+<p><code>OddAttribute(name, probe, *, unit, range, every, buckets, values, text)</code>
+takes the bucket arguments of
+<a href="../coverage/#register_cover-arguments"><code>register_cover()</code></a>. Give at most one
+of <code>values</code>, <code>buckets</code> and <code>range</code> (with <code>every</code>). An attribute with none of
+them is <strong>monitored but not covered</strong>: conditions may test it, and the report
+lists it so the blind spot is visible. Its cover item is named
+<code>"odd." + name</code>.</p>
+<h3 id="conditions">Conditions<a class="headerlink" href="#conditions" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Holds when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>attr.is_in(values)</code></td>
+<td>the value is one of <code>values</code> (compared by label: an enum by name, a bool as <code>true</code>/<code>false</code>)</td>
+</tr>
+<tr>
+<td><code>attr.equals(value)</code></td>
+<td>the value equals <code>value</code></td>
+</tr>
+<tr>
+<td><code>attr.between(low, high)</code></td>
+<td><code>low &lt;= value &lt;= high</code></td>
+</tr>
+<tr>
+<td><code>attr.at_least(x)</code> / <code>attr.at_most(x)</code></td>
+<td><code>value &gt;= x</code> / <code>value &lt;= x</code></td>
+</tr>
+<tr>
+<td><code>attr.greater_than(x)</code> / <code>attr.less_than(x)</code></td>
+<td><code>value &gt; x</code> / <code>value &lt; x</code></td>
+</tr>
+<tr>
+<td><code>attr.is_unknown()</code></td>
+<td>the value is missing</td>
+</tr>
+<tr>
+<td><code>all_of([...])</code> / <code>any_of([...])</code></td>
+<td>all of / any of the conditions hold</td>
+</tr>
+<tr>
+<td><code>module_holds(name, holds=True)</code></td>
+<td>the module (or label) named <code>name</code> holds, or does not</td>
+</tr>
+</tbody>
+</table>
+<p>Numbers are in the attribute's <code>unit</code>.</p>
+<h3 id="modules">Modules<a class="headerlink" href="#modules" title="Permanent link">&para;</a></h3>
+<p><code>OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels,
+active, text, situation, target, cover_by, min_stay)</code>. Give at most one of
+<code>include_and</code> / <code>include_or</code>, and at most one of <code>exclude_and</code> / <code>exclude_or</code>.</p>
+<h3 id="situations">Situations<a class="headerlink" href="#situations" title="Permanent link">&para;</a></h3>
+<p>Attribute coverage counts each attribute on its own: three lanes and 60 km/h
+can both be covered by runs that never drove 60 km/h on a three-lane road. A
+module already says such a combination, so a module can be <strong>covered as a
+situation</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">OddModule</span><span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">"three_lane_cruise"</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">include_and</span><span class="o">=</span><span class="p">[</span><span class="n">lanes</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mi">3</span><span class="p">),</span> <span class="n">speed</span><span class="o">.</span><span class="n">between</span><span class="p">(</span><span class="mi">55</span><span class="p">,</span> <span class="mi">65</span><span class="p">)],</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">situation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">cover_by</span><span class="o">=</span><span class="s2">"meters"</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">min_stay</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span>   <span class="c1"># 200 m, counting stays of 3 s or more</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+</code></pre></div>
+<p>Every tick, the module's verdict (which the ODD works out anyway) is a sample
+of the item <code>odd.situation.three_lane_cruise</code>, which has one bucket, <code>holds</code>.
+A tick where the module holds is a sample in it. A tick where it fails, or is
+inactive, ends the stay. A tick where it rests on missing values ends the stay
+too, and is counted apart as <code>unknown</code>. <code>target</code>, <code>cover_by</code> and <code>min_stay</code>
+work as for attributes (<code>docs/coverage.md</code>). The report lists situations in a
+group of their own, <strong>Situation coverage</strong>.</p>
+<p>A situation is what the runs should drive, not a bound of the ODD: with
+<code>roots</code> left out, a situation nothing refers to is not a root candidate. To
+make it a bound too, refer to it from a root, or name it in <code>roots</code>.</p>
+<h3 id="built-in-probes">Built-in probes<a class="headerlink" href="#built-in-probes" title="Permanent link">&para;</a></h3>
+<p>These live in <code>autoware_carla_scenario.odd</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>Returns</th>
+<th>Read from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ego_speed_kph</code></td>
+<td>float, km/h</td>
+<td>Ego velocity</td>
+</tr>
+<tr>
+<td><code>speed_limit_kph</code></td>
+<td>float, km/h</td>
+<td>Lanelet2 <code>speed_limit</code> tag, else CARLA</td>
+</tr>
+<tr>
+<td><code>lanelet_speed_limit_kph</code></td>
+<td>float, km/h</td>
+<td>Lanelet2 <code>speed_limit</code> tag</td>
+</tr>
+<tr>
+<td><code>lanelet_location</code></td>
+<td>str</td>
+<td>Lanelet2 <code>location</code> tag (<code>urban</code>, <code>nonurban</code>, ...)</td>
+</tr>
+<tr>
+<td><code>lanelet_subtype</code></td>
+<td>str</td>
+<td>Lanelet2 <code>subtype</code> tag (<code>road</code>, <code>highway</code>, ...)</td>
+</tr>
+<tr>
+<td><code>in_junction</code></td>
+<td>bool</td>
+<td>CARLA waypoint</td>
+</tr>
+<tr>
+<td><code>lane_count</code></td>
+<td>int</td>
+<td>Driving lanes in the ego's direction (CARLA, outside junctions)</td>
+</tr>
+<tr>
+<td><code>illumination</code></td>
+<td><code>ILLUMINATION_LEVELS</code></td>
+<td>Sun altitude</td>
+</tr>
+<tr>
+<td><code>rain</code>, <code>fog</code></td>
+<td><code>INTENSITY_LEVELS</code></td>
+<td>CARLA weather (0-100)</td>
+</tr>
+<tr>
+<td><code>traffic_density</code></td>
+<td><code>TRAFFIC_DENSITY_LEVELS</code></td>
+<td>Other vehicles within <code>NEARBY_RADIUS_M</code></td>
+</tr>
+<tr>
+<td><code>pedestrian_nearby</code></td>
+<td>bool</td>
+<td>A walker within <code>NEARBY_RADIUS_M</code></td>
+</tr>
+<tr>
+<td>The Lanelet2 probes need the run to have a Lanelet2 map (<code>map.lanelet2_path</code>).</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Without one they return nothing.</td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>The probes whose value the map alone decides (<code>speed_limit_kph</code>,
+<code>lanelet_speed_limit_kph</code>, <code>lanelet_location</code>, <code>lanelet_subtype</code>,
+<code>in_junction</code>, <code>lane_count</code>) can also read it off a lanelet, which is how a
+planned route is checked before a run
+(<a href="#checking-a-planned-route">Checking a planned route</a>).</p>
+<p>Import them from <code>autoware_carla_scenario.odd</code> itself
+(<code>from autoware_carla_scenario.odd import rain</code>). The Codon model that checks
+an ODD has no <code>probes</code> submodule.</p>
+<h3 id="scenario-measures">Scenario measures<a class="headerlink" href="#scenario-measures" title="Permanent link">&para;</a></h3>
+<p>The road users a scenario stages -- a vehicle ahead in the next lane, a
+pedestrian running out -- are not read by ODD probes: they are <strong>measures</strong>
+of the scenario, under keys the framework fixes
+(<code>autoware_carla_scenario.measures</code>). Every <code>BaseScenario</code> has these, read
+generically in the ego's frame:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Unit</th>
+<th>Reads</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vehicle_ahead_gap_m</code></td>
+<td>m</td>
+<td>The nearest vehicle ahead in the ego's lane or a lane beside it, centre to centre along the ego's heading (up to <code>AHEAD_RANGE_M</code>); a vehicle about to cut in is measured from before it changes lanes</td>
+</tr>
+<tr>
+<td><code>vehicle_ahead_relative_speed_kph</code></td>
+<td>km/h</td>
+<td>That vehicle's speed along the ego's heading less the ego's</td>
+</tr>
+<tr>
+<td><code>crossing_pedestrian_gap_m</code></td>
+<td>m</td>
+<td>How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses</td>
+</tr>
+<tr>
+<td><code>crossing_pedestrian_speed_ms</code></td>
+<td>m/s</td>
+<td>That pedestrian's speed</td>
+</tr>
+</tbody>
+</table>
+<p>Each reads nothing (missing) while there is no such road user. A scenario
+that knows better replaces one -- it knows which actor <em>is</em> its cut-in
+vehicle -- or adds one of its own:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyCutIn</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>        <span class="o">...</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_measure</span><span class="p">(</span><span class="n">VEHICLE_AHEAD_GAP_M</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_gap_to_my_npc</span><span class="p">)</span>
+</code></pre></div>
+<p>An ODD <strong>maps</strong> its taxonomy onto measures: in Python with
+<code>scenario_measure(key)</code> as the attribute's probe, in a binding file with
+<code>measure:</code> in place of <code>probe:</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">OddAttribute</span><span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="s2">"dynamic.vehicle_ahead_gap"</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">scenario_measure</span><span class="p">(</span><span class="n">VEHICLE_AHEAD_GAP_M</span><span class="p">),</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">unit</span><span class="o">=</span><span class="s2">"m"</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">probes</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">headway</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">measure</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_ahead_gap_m</span><span class="p p-Indicator">,</span><span class="nt"> buckets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">10</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">20</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">30</span><span class="p p-Indicator">]}</span>
+</code></pre></div>
+<p>The attribute then reads the running scenario's measure, its replacement
+included, in the measure's unit: an attribute mapped onto a built-in measure
+takes its unit, and one given that is not it is refused.  The keys are in the
+Codon model (<code>from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M</code>),
+so a scenario or a Python ODD naming them is checked like any other. The ODD names a measure key, never a scenario; the scenario names
+its measures, never the ODD. The default ODD maps
+<code>dynamic.vehicle_ahead_gap</code>, <code>dynamic.vehicle_ahead_relative_speed</code>,
+<code>dynamic.crossing_pedestrian_gap</code> and <code>dynamic.crossing_pedestrian_speed</code>
+onto the four built-in measures; the two of the vehicle ahead count stays of
+1 s or more (<code>min_stay</code>), so a gap the ego only closes through is not
+covered.</p>
+<h2 id="writing-an-odd-in-openodd-yaml">Writing an ODD in OpenODD YAML<a class="headerlink" href="#writing-an-odd-in-openodd-yaml" title="Permanent link">&para;</a></h2>
+<p>The OpenODD files are plain OpenODD 1.0. The example below follows the
+standard's own examples (Code 170, 171 and 192):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># taxonomy.yml</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="nt">TAXONOMY</span><span class="p">:</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">environment_conditions</span><span class="p">:</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">        </span><span class="nt">rainfall_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">float precipitation_rate</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">        </span><span class="nt">rainfall_level</span><span class="p">:</span><span class="w">                       </span><span class="c1"># literals defined by ranges: ordered</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">            </span><span class="nt">no_rain</span><span class="p">:</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">                </span><span class="nt">rainfall_rate</span><span class="p">:</span><span class="w"> </span><span class="s">"&lt;</span><span class="nv"> </span><span class="s">0.1</span><span class="nv"> </span><span class="s">mm/h"</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">            </span><span class="nt">light_rain</span><span class="p">:</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">                </span><span class="nt">rainfall_rate</span><span class="p">:</span><span class="w"> </span><span class="s">"[0.1</span><span class="nv"> </span><span class="s">..</span><span class="nv"> </span><span class="s">2.5]</span><span class="nv"> </span><span class="s">mm/h"</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">            </span><span class="nt">heavy_rain</span><span class="p">:</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">                </span><span class="nt">rainfall_rate</span><span class="p">:</span><span class="w"> </span><span class="s">"&gt;</span><span class="nv"> </span><span class="s">2.5</span><span class="nv"> </span><span class="s">mm/h"</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">        </span><span class="nt">wind_speed</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">float velocity</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">    </span><span class="nt">scenery</span><span class="p">:</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">        </span><span class="nt">road_type</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">road</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">highway</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">road_shoulder</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">        </span><span class="nt">lane_count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">integer count</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># odd.yml</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nt">IMPORT</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">taxonomy.yml</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="nt">ODD</span><span class="p">:</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="nt">odd1</span><span class="p">:</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="nt">TITLE</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The baseline ODD</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">INCLUDE_AND</span><span class="p">:</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">            </span><span class="nt">low_speed_roads</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">            </span><span class="nt">needs_wind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="nt">EXCLUDE_OR</span><span class="p">:</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">            </span><span class="nt">bad_weather</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="nt">MODULES</span><span class="p">:</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="w">    </span><span class="nt">low_speed_roads</span><span class="p">:</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="w">        </span><span class="nt">INCLUDE_AND</span><span class="p">:</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="w">            </span><span class="nt">road_type</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">road</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="w">            </span><span class="nt">lane_count</span><span class="p">:</span><span class="w"> </span><span class="s">"&lt;</span><span class="nv"> </span><span class="s">3"</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="w">    </span><span class="nt">bad_weather_1</span><span class="p">:</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="w">        </span><span class="nt">LABEL</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bad_weather</span>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="w">        </span><span class="nt">INCLUDE_OR</span><span class="p">:</span>
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a><span class="w">            </span><span class="nt">rainfall_level</span><span class="p">:</span><span class="w"> </span><span class="s">"&gt;=</span><span class="nv"> </span><span class="s">heavy_rain"</span>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="w">            </span><span class="nt">wind_speed</span><span class="p">:</span><span class="w"> </span><span class="s">"&gt;</span><span class="nv"> </span><span class="s">50</span><span class="nv"> </span><span class="s">km/h"</span>
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a><span class="w">    </span><span class="nt">needs_wind</span><span class="p">:</span>
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a><span class="w">        </span><span class="nt">EXCLUDE_OR</span><span class="p">:</span>
+<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a><span class="w">            </span><span class="nt">wind_speed</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unknown</span><span class="w">               </span><span class="c1"># the wind speed is required</span>
+</code></pre></div>
+<p>The binding file is this framework's own. It says which probe measures each
+concept, and its buckets:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># urban.yaml</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nt">openodd</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">odd.yml</span><span class="p p-Indicator">]</span><span class="w">                 </span><span class="c1"># relative to this file</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">urban</span><span class="w">                        </span><span class="c1"># default: this file's stem</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nt">text</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Urban roads, fair weather</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="nt">probes</span><span class="p">:</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">road_type</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">lanelet_subtype</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">rainfall_rate</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">my_package.probes</span><span class="p p-Indicator">:</span><span class="nv">rain_rate_mm_h</span><span class="p p-Indicator">,</span><span class="nt"> unit</span><span class="p">:</span><span class="w"> </span><span class="nv">mm/h</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="nt">wind_speed</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">my_package.probes</span><span class="p p-Indicator">:</span><span class="nv">wind_mps</span><span class="p p-Indicator">,</span><span class="nt"> unit</span><span class="p">:</span><span class="w"> </span><span class="nv">m/s</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">  </span><span class="nt">lane_count</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">lane_count</span><span class="p p-Indicator">,</span><span class="nt"> values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">4</span><span class="p p-Indicator">],</span><span class="nt"> cover_by</span><span class="p">:</span><span class="w"> </span><span class="nv">meters</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">200</span><span class="p p-Indicator">,</span><span class="nt"> min_stay</span><span class="p">:</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>Run with <code>odd=path/to/urban.yaml</code>. An OpenODD file on its own can be named
+too, but then nothing is measured: every concept is missing.</p>
+<h3 id="taxonomies-and-modules-from-git">Taxonomies and modules from git<a class="headerlink" href="#taxonomies-and-modules-from-git" title="Permanent link">&para;</a></h3>
+<p>An <code>openodd</code> entry can name a file in a git repository at a revision, so a
+taxonomy or a module library kept elsewhere is used as it was at that
+revision:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># urban.yaml</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">openodd</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">git</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://example.com/odd/taxonomy.git</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">rev</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1.2.0</span><span class="w">                    </span><span class="c1"># a tag, a branch, or a commit</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">taxonomy.yml</span><span class="w">             </span><span class="c1"># a list for several files</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">git</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git@example.com:odd/modules.git</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">    </span><span class="nt">rev</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3f2a9c1e0b7d4a6c8e5f1a2b3c4d5e6f7a8b9c0d</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">odd/urban.yml</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local_overrides.yml</span><span class="w">            </span><span class="c1"># relative to this file</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="nt">probes</span><span class="p">:</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+</code></pre></div>
+<ul>
+<li>An <code>IMPORT</code> is looked for next to the importing file first, and then in
+  the other sources: the directory of each file named, and the root of each
+  repository. The standard makes file names unique within one transmission,
+  so <code>odd/urban.yml</code> in one repository can <code>IMPORT: [taxonomy.yml]</code> from
+  another. A name found in two sources is refused.</li>
+<li><code>git fetch</code> does the fetching, so <code>url</code> is anything it takes, with the
+  credentials it is configured with. Prompts are turned off, and the <code>ext::</code>
+  transport is refused.</li>
+<li>Repositories and checkouts are cached in
+  <code>$AUTOWARE_CARLA_SCENARIO_ODD_CACHE</code> (default
+  <code>~/.cache/autoware_carla_scenario/openodd</code>). A full commit id checked out
+  once is read from the cache without the network; a tag or a branch is
+  fetched on every load, to learn which commit it names now. Pin a commit for
+  runs that must be reproducible.</li>
+<li>Fetching needs <code>git</code>, which the scenario image does not have. A run there
+  can still read a source pinned to a full commit id, from a cache filled
+  beforehand (<code>scenario-odd show urban.yaml</code> with the same cache directory)
+  and mounted at <code>$AUTOWARE_CARLA_SCENARIO_ODD_CACHE</code>.</li>
+<li>The commit each source was read at is written to the coverage file (the
+  ODD's <code>sources</code>), and <code>scenario-coverage</code> lists it, warning when the merged
+  runs read different commits of a source.</li>
+</ul>
+<p>From Python, pass <code>GitSource(url, rev, path)</code> to <code>load_openodd()</code>.</p>
+<h3 id="what-is-read">What is read<a class="headerlink" href="#what-is-read" title="Permanent link">&para;</a></h3>
+<p><strong><code>IMPORT</code></strong>: other files, relative to the importing one, or else in the
+other sources (see above). A cycle is refused.</p>
+<p>Every file read with an ODD makes up one transmission, in the standard's
+words, and the standard makes two things unique within one. Both are
+refused rather than guessed at:</p>
+<ul>
+<li>two different files of the same name, wherever they come from;</li>
+<li>a concept defined in two files, even the same way. A file can still add
+  concepts to a container another file started (<code>weather:</code> in both, with
+  different concepts under it).</li>
+</ul>
+<p><strong><code>TAXONOMY</code></strong>: nested mappings are records and containers. A leaf is one of:</p>
+<ul>
+<li><code>integer|long|float|double &lt;unit type&gt;</code>: a number;</li>
+<li><code>boolean</code>;</li>
+<li>a list of literals: a categorical;</li>
+<li>a mapping of literals to expressions on other concepts: a categorical
+  defined by them. Its value is the literal whose expressions hold; on a
+  shared range endpoint, the literal written first wins. Defined by ranges,
+  its literals are <strong>ordered</strong> in the order written, so <code>"&lt; heavy_rain"</code>
+  means the literals before it;</li>
+<li>the id of a categorical: the same literals.</li>
+</ul>
+<p>A reference to a record (a user-defined type) and a <code>shapefile</code> are not
+followed.</p>
+<p><strong><code>MODULES</code></strong> and <strong><code>ODD</code></strong>: modules. Those under <code>ODD</code> are the root
+candidates: the ones among them no other module refers to are the roots. The
+standard's examples also put referenced modules there. Without an <code>ODD</code>
+section, every module no other module refers to is a root.</p>
+<p>A module's keys are:</p>
+<ul>
+<li><code>TITLE</code>, <code>DESCRIPTION</code>;</li>
+<li><code>ACTIVE</code>;</li>
+<li><code>LABEL</code> / <code>LABELS</code> (one name or a list);</li>
+<li><code>METADATA</code> (ignored, here and inside a section);</li>
+<li>one <code>INCLUDE_AND</code> or <code>INCLUDE_OR</code>, and one <code>EXCLUDE_AND</code> or <code>EXCLUDE_OR</code>.</li>
+</ul>
+<p>A section nests one level of the other operator: <code>OR:</code> in an <code>AND</code> section,
+<code>AND:</code> in an <code>OR</code> one.</p>
+<p>A section maps a concept to an expression, or a module or label to
+<code>true</code>/<code>false</code>. A concept is named by its id (<code>wind_speed</code>), or by as much of
+its path as makes it unique.</p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>low</code>, <code>3</code>, <code>true</code>, <code>"0 mm/h"</code></td>
+<td>equal</td>
+</tr>
+<tr>
+<td><code>[a, b]</code></td>
+<td>one of the literals</td>
+</tr>
+<tr>
+<td><code>"&gt; x unit"</code>, <code>"&gt;= x"</code>, <code>"&lt; x"</code>, <code>"&lt;= x"</code></td>
+<td>a bound (<code>&gt;</code> excludes <code>x</code>, <code>&gt;=</code> includes it)</td>
+</tr>
+<tr>
+<td><code>"[low .. high] unit"</code>, <code>"[low, high] unit"</code></td>
+<td>an inclusive range</td>
+</tr>
+<tr>
+<td><code>"&lt; literal"</code>, <code>"[a .. b]"</code></td>
+<td>a bound or range over an ordered categorical</td>
+</tr>
+<tr>
+<td><code>unknown</code> (<code>none</code>, <code>null</code>, <code>undefined</code>, or YAML <code>null</code>)</td>
+<td>the value is missing, unless the categorical has a literal of that name</td>
+</tr>
+</tbody>
+</table>
+<p>A number's unit must measure the concept's unit type. It is converted into
+the probe's unit, so <code>"&gt; 50 km/h"</code> against a probe in m/s is <code>&gt; 13.89</code>. The
+units known are listed below; a document adds more with OpenODD's
+<code>conversion:</code> block.</p>
+<table>
+<thead>
+<tr>
+<th>Unit type</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>length</td>
+<td>m, km, cm, mm, mi, in, ft</td>
+</tr>
+<tr>
+<td>velocity</td>
+<td>m/s, km/h (kph), mph</td>
+</tr>
+<tr>
+<td>acceleration</td>
+<td>m/s^2, g</td>
+</tr>
+<tr>
+<td>time</td>
+<td>s, ms (msec), min, h</td>
+</tr>
+<tr>
+<td>angle</td>
+<td>deg, rad</td>
+</tr>
+<tr>
+<td>precipitation_rate</td>
+<td>mm/h (mm/hr)</td>
+</tr>
+<tr>
+<td>temperature</td>
+<td>C, K, F</td>
+</tr>
+<tr>
+<td>fraction</td>
+<td>%</td>
+</tr>
+<tr>
+<td>bandwidth</td>
+<td>bps, kbps, Mbps, Gbps</td>
+</tr>
+<tr>
+<td>frequency</td>
+<td>Hz, kHz</td>
+</tr>
+<tr>
+<td>illuminance</td>
+<td>lx</td>
+</tr>
+<tr>
+<td>count, occurrence</td>
+<td>count, 1/h, occ/hr</td>
+</tr>
+</tbody>
+</table>
+<p>The following are refused, each with the module it appears in:</p>
+<ul>
+<li>a concept that is not in the taxonomy;</li>
+<li>a literal a categorical does not have;</li>
+<li>a unit of the wrong type;</li>
+<li>a second include or exclude section;</li>
+<li>deeper nesting;</li>
+<li>a module or label id containing <code>unknown</code>.</li>
+</ul>
+<p>The YAML is read with YAML 1.2 booleans: only <code>true</code> and <code>false</code> are
+booleans, so literals such as <code>off</code> or <code>NO</code> stay literals. A key written
+twice is refused. As the standard notes, an unquoted expression starting
+with <code>&gt;</code> (<code>speed: &gt; 50 km/h</code>) is a YAML block scalar, so quote it.</p>
+<p>Not read: <code>COD</code> / <code>OD</code> records, numeric terms (<code>1.75*ego_width</code>), <code>$</code>
+parameters, and condition-level metadata.</p>
+<h3 id="the-binding-file">The binding file<a class="headerlink" href="#the-binding-file" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openodd</code></td>
+<td>The OpenODD files, relative to the binding file</td>
+</tr>
+<tr>
+<td><code>name</code>, <code>text</code></td>
+<td>The ODD's name and description</td>
+</tr>
+<tr>
+<td><code>probes</code></td>
+<td>Concept → <code>probe</code> (built-in name or <code>package.module:function</code>) or <code>measure</code> (a scenario measure's key, see <a href="#scenario-measures">Scenario measures</a>), <code>unit</code> (built-in probes and measures know theirs), buckets (<code>values</code>, <code>buckets</code>, or <code>range</code> + <code>every</code>), <code>text</code>, and the coverage criteria <code>target</code>, <code>cover_by</code>, <code>min_stay</code></td>
+</tr>
+<tr>
+<td><code>situations</code></td>
+<td>Module → its criteria (<code>target</code>, <code>cover_by</code>, <code>min_stay</code>, all optional): the modules to cover as situations (see Situations above)</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">situations</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">three_lane_cruise</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cover_by</span><span class="p">:</span><span class="w"> </span><span class="nv">meters</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">200</span><span class="p p-Indicator">,</span><span class="nt"> min_stay</span><span class="p">:</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">urban_junction_rain</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">          </span><span class="c1"># one stay of any length</span>
+</code></pre></div>
+<p>Situations live in the binding file, not in the OpenODD documents: OpenODD has
+no notion of coverage, and a construct of its own in an OpenODD document would
+not be compliant. A module named under <code>situations</code> and not under the <code>ODD</code>
+section is not a root candidate.</p>
+<p>When no buckets are given:</p>
+<ul>
+<li>a categorical gets one bucket per literal, and a boolean gets two;</li>
+<li>a number gets buckets at the <strong>thresholds the modules test it against</strong>.
+  <code>"&lt;= 60 km/h"</code> makes <code>[-inf, 60)</code> and <code>[60, inf]</code>, so every boundary the ODD
+  draws is tested from both sides. Each bucket holds its lower edge, so
+  <code>[60, inf]</code> holds 60, which <code>&lt;= 60</code> lets in. That bucket is partly inside, so
+  it stays a coverage target. With <code>"&lt; 60 km/h"</code>, it would be outside.</li>
+</ul>
+<p>A categorical defined by expressions is measured when what its expressions
+read is. A concept with no probe is always missing, and is reported as
+monitored but not covered.</p>
+<h2 id="picking-the-odd-of-a-run">Picking the ODD of a run<a class="headerlink" href="#picking-the-odd-of-a-run" title="Permanent link">&para;</a></h2>
+<p>The <code>odd</code> config key, or <code>ScenarioQueue(odd=...)</code> /
+<code>ScenarioRunner(odd=...)</code>, takes one of:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>ODD</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>default</code></td>
+<td>The built-in one (<a href="../coverage/#odd-coverage">Coverage</a>): every attribute, no modules</td>
+</tr>
+<tr>
+<td>a name</td>
+<td>One registered with <code>register_odd(name, builder)</code> in code, or by a package through the <code>autoware_carla_scenario.odds</code> entry point group</td>
+</tr>
+<tr>
+<td><code>path/to/urban.yaml</code></td>
+<td>A binding file (or an OpenODD file on its own, measuring nothing)</td>
+</tr>
+<tr>
+<td><code>package.module:function</code></td>
+<td>A builder to import and call</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.yaml
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>my_package.odds:urban_odd
+</code></pre></div>
+<p>A package that ships its ODD registers it through the
+<code>autoware_carla_scenario.odds</code> entry point group. The entry point names a
+function that takes nothing and calls <code>register_odd</code>, the convention the
+scenario and traffic-backend groups use. A private taxonomy can then plug in
+without the framework knowing it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">[project.entry-points.</span><span class="s2">"autoware_carla_scenario.odds"</span><span class="k">]</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">my_package</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my_package.odds:register"</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">register_odd</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">urban_odd</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="sampling-scenarios-from-the-odd">Sampling scenarios from the ODD<a class="headerlink" href="#sampling-scenarios-from-the-odd" title="Permanent link">&para;</a></h2>
+<p>Coverage says which situations of the ODD the runs so far have driven. The
+sampler draws the settings of the next runs from the ODD: only combinations
+the ODD admits, and, if asked, aimed at what is still uncovered. It is a
+sweep, so it is run by <code>scenario-expand</code> and by the lanelet sweeper, and with
+<code>autoware.launcher</code> each case gets a fresh Autoware (<a href="../autoware/">Autoware as the
+Ego</a>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span>hydra/sweeper<span class="o">=</span>lanelet_constraint<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">20</span><span class="w"> </span>+sweep.odd_sample.strategy<span class="o">=</span>coverage<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="s1">'+sweep.odd_sample.coverage_from=[outputs]'</span>
+</code></pre></div>
+<p>or in the scenario's YAML:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">sweep</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">odd_sample</span><span class="p">:</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20</span><span class="w">              </span><span class="c1"># cases; one per lanelet case when left out</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">seed</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                </span><span class="c1"># same seed, ODD, knobs and coverage: same cases</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">coverage</span><span class="w">     </span><span class="c1"># uniform | coverage</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">    </span><span class="nt">coverage_from</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">outputs</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># earlier runs' *_coverage.json (files or directories)</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">    </span><span class="nt">odd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">              </span><span class="c1"># the ODD to draw from; the run's (`odd`) by default</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">    </span><span class="nt">knobs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">              </span><span class="c1"># by ODD attribute, replacing the scenario's controls; see below</span>
+</code></pre></div>
+<p>Each case is a list of Hydra overrides. A sweep that also has <code>constraints</code>
+gives each drawn case the next lanelet case in turn; one without draws from
+the ODD alone, and needs no map to expand.</p>
+<h3 id="who-knows-what">Who knows what<a class="headerlink" href="#who-knows-what" title="Permanent link">&para;</a></h3>
+<p>Three things meet in a sampled case, and none of them knows the others:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Says</th>
+<th>Knows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>The ODD</strong></td>
+<td>which conditions the system is for, and which scenario measure each of its attributes is (its mapping)</td>
+<td>its taxonomy and the measure keys; no scenario</td>
+</tr>
+<tr>
+<td><strong>A scenario</strong></td>
+<td>its measures (<code>BaseScenario</code>'s, or its own replacements) and its <strong>controls</strong>: which of its parameters sets which measure, and what it can stage</td>
+<td>the measure keys; not the ODD's taxonomy or bounds</td>
+</tr>
+<tr>
+<td><strong>The framework</strong></td>
+<td>the measure keys, and the weather and sun every scenario can be given</td>
+<td>neither</td>
+</tr>
+</tbody>
+</table>
+<p>An ODD tightened, loosened or written in another taxonomy needs no scenario
+changed; a scenario added needs no ODD changed. The sampler joins them on the
+measure key: an attribute the ODD maps onto measure <em>k</em> is drawn with the
+running scenario's control of <em>k</em>. Attributes nothing sets are left open: a
+combination is admitted when the ODD can hold for some value of them.
+Controls of measures the ODD does not map are unused -- what the ODD does not
+speak of, it does not bound.</p>
+<h3 id="controls">Controls<a class="headerlink" href="#controls" title="Permanent link">&para;</a></h3>
+<p>A <strong>control</strong> (an <code>OddKnob</code>) ties a measure to the config key that sets it.
+A scenario declares its own in its config, next to the parameters they set,
+keyed by measure:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># scenario/cut_in/left.yaml</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nt">controls</span><span class="p">:</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">vehicle_ahead_gap_m</span><span class="p">:</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_ahead_m</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">6.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">30.0</span><span class="p p-Indicator">]</span><span class="w">                 </span><span class="c1"># what the scenario can stage</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">  </span><span class="nt">vehicle_ahead_relative_speed_kph</span><span class="p">:</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_initial_speed_kmh</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="nt">offset</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ego.initial_speed_kmh}</span><span class="w">   </span><span class="c1"># its speed less the ego's</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">-15.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">15.0</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>key</code></td>
+<td>The config key the value is written to</td>
+</tr>
+<tr>
+<td><code>range</code></td>
+<td>Numeric: <code>[low, high]</code> in the measure's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it</td>
+</tr>
+<tr>
+<td><code>values</code></td>
+<td>Per bucket label. Categorical: the value to write, or <code>[low, high)</code> to draw it from (<code>[x, x]</code> is <code>x</code>); a bucket without one is not drawn. Numeric: a range to draw from instead of the bucket's interval -- which an unbounded bucket (<code>-inf</code>/<code>inf</code> edges) needs to be drawn at all</td>
+</tr>
+<tr>
+<td><code>scale</code>, <code>offset</code></td>
+<td>A numeric value drawn in the unit is written as <code>value * scale + offset</code> (<code>scale</code> not zero)</td>
+</tr>
+<tr>
+<td><code>integer</code></td>
+<td>Write an integer. A rounded numeric value that falls in another bucket is drawn again</td>
+</tr>
+</tbody>
+</table>
+<p><code>{measure: key}</code> is short for <code>{measure: {key: key}}</code>. The ODD's attribute
+and the measure share a unit: the binding takes the measure's.</p>
+<p>The weather and the sun are set for every scenario, through the
+<code>environment</code> config, which sets them before the run starts
+(<code>EnvironmentAction</code>); the built-in probes reading them have controls of
+their own:</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>Key</th>
+<th>Ranges</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rain</code></td>
+<td><code>environment.precipitation</code></td>
+<td><code>none</code> 0, <code>light</code> 1-30, <code>moderate</code> 30-70, <code>heavy</code> 70-100</td>
+</tr>
+<tr>
+<td><code>fog</code></td>
+<td><code>environment.fog_density</code></td>
+<td>as <code>rain</code></td>
+</tr>
+<tr>
+<td><code>illumination</code></td>
+<td><code>environment.sun_altitude_angle</code></td>
+<td><code>day</code> 15-90, <code>low_sun</code> 0-15, <code>twilight</code> -6-0, <code>night</code> -90 to -6</td>
+</tr>
+</tbody>
+</table>
+<p>A scenario that sets the weather itself (its own <code>EnvironmentAction</code>) has
+the last word over the config.</p>
+<p>The example scenarios declare these:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Measure</th>
+<th>Parameter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cut_in/*</code></td>
+<td><code>vehicle_ahead_gap_m</code></td>
+<td><code>npc_ahead_m</code>, 6-30 m</td>
+</tr>
+<tr>
+<td><code>cut_in/*</code></td>
+<td><code>vehicle_ahead_relative_speed_kph</code></td>
+<td><code>npc_initial_speed_kmh</code> less the ego's, -15 to 15 km/h</td>
+</tr>
+<tr>
+<td><code>pedestrian_dart_out</code></td>
+<td><code>crossing_pedestrian_gap_m</code></td>
+<td><code>trigger_distance_m</code>, 8-30 m</td>
+</tr>
+<tr>
+<td><code>pedestrian_dart_out</code></td>
+<td><code>crossing_pedestrian_speed_ms</code></td>
+<td><code>walk_speed_ms</code>, 0.8-3 m/s</td>
+</tr>
+</tbody>
+</table>
+<p><code>sweep.odd_sample.knobs</code> takes the same fields keyed by the ODD's attributes,
+and replaces anything above, attribute by attribute, for that sweep. It is for
+the command line -- one sweep against one ODD -- not for a scenario's config,
+which would then name the ODD's taxonomy: a scenario says <code>controls</code>. Controls set where a run starts;
+the measures read what it then drives, which is what coverage counts.</p>
+<h3 id="how-a-case-is-drawn">How a case is drawn<a class="headerlink" href="#how-a-case-is-drawn" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Each knob's attribute gets one of its buckets, leaving out the buckets
+   outside the ODD (the ones <code>scenario-odd show</code> lists as out).</li>
+<li>The combination is kept only if the ODD's verdict on those buckets is not
+   <em>outside</em> -- so modules that rule out a combination (no heavy rain at
+   night, say) are honoured, not just single buckets.</li>
+<li>A value is drawn inside each bucket (a numeric bucket's interval, or the
+   knob's range) and checked against the ODD again, as a value, with the
+   attributes an OpenODD ODD derives from others worked out: a condition finer
+   than a bucket (<code>between(0, 45)</code> across a <code>[30, 60)</code> bucket) holds for what
+   is drawn. What is written is the value exactly as drawn, and a numeric one
+   is read back to check it is still in its bucket.</li>
+</ol>
+<p><code>strategy: uniform</code> draws every admitted bucket alike. <code>strategy: coverage</code>
+reads <code>coverage_from</code> and draws each attribute from its <strong>least covered</strong>
+buckets first, counting the cases already drawn in the batch as covered, so
+a batch works through the holes before it repeats one; it falls back to any
+bucket (the less covered the likelier) only when the ODD admits no
+combination of the least covered. <strong>Situations</strong> that are still holes (or
+that no earlier run measured) are aimed at first, one case each; inactive
+ones are not. A situation the knobs alone decide -- every attribute it tests
+has a knob, and it refers to no other module -- holds in its case. One that also tests what no knob sets -- a speed, a road -- gets a case
+under which it <em>can</em> hold; whether it does is up to the drive. A situation
+the ODD and the knobs leave no case for is given up on, with a warning.</p>
+<p><code>coverage_from</code> paths are relative to the directory the sweep is started
+from. Coverage is read when the sweep is expanded: to resume a sweep
+(<code>sweep.resume_from</code>) into the same cases, read the same coverage -- point
+<code>coverage_from</code> at the earlier runs, not at the sweep's own output.</p>
+<p>From Python:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coverage.report</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_and_merge</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddKnob</span><span class="p">,</span> <span class="n">OddSampler</span><span class="p">,</span> <span class="n">resolve_odd</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>    <span class="n">resolve_odd</span><span class="p">(</span><span class="s2">"path/to/urban.yaml"</span><span class="p">),</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_ahead_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">6.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>    <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>    <span class="n">coverage</span><span class="o">=</span><span class="n">load_and_merge</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]),</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="p">)</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">case</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">buckets</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">situation</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="checking-an-odd">Checking an ODD<a class="headerlink" href="#checking-an-odd" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>my_package.odds:urban_odd<span class="w">   </span><span class="c1"># compile with Codon</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>path/to/urban.yaml<span class="w">          </span><span class="c1"># read the binding and OpenODD files</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>show<span class="w"> </span>path/to/urban.yaml<span class="w">           </span><span class="c1"># attributes, buckets in and out</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>list<span class="w">                              </span><span class="c1"># ODDs known by name</span>
+</code></pre></div>
+<p><code>check</code> compiles a Python ODD with Codon, the same way a scenario is
+compiled. It catches the following:</p>
+<ul>
+<li>a misspelt name;</li>
+<li>a condition of the wrong type (<code>between("0", 60)</code>);</li>
+<li>a probe that does not take a world.</li>
+</ul>
+<p>The runner makes the same check before a run, under the <code>typecheck</code> config
+key. OpenODD YAML is checked as it is read (see <a href="#what-is-read">What is read</a>).</p>
+<h2 id="checking-a-planned-route">Checking a planned route<a class="headerlink" href="#checking-a-planned-route" title="Permanent link">&para;</a></h2>
+<p>Before a scenario runs, its ego route can be checked against the ODD on the
+Lanelet2 map alone, with no CARLA server:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span>intersection_passing/left_turn
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'lane_change/*'</span><span class="w"> </span>--json
+</code></pre></div>
+<p>Each scenario config is composed as a run composes it. Name it as
+<code>scenario=</code> does (a glob works too); arguments with an <code>=</code> are Hydra
+overrides for all of them. The route is planned from the ego's spawn pose
+(<code>ego.spawn_lanelet_id</code>, <code>ego.spawn_s</code>), through <code>ego.waypoint_lanelet_ids</code>,
+to the goal (<code>ego.goal_lanelet_id</code>, <code>ego.goal_s</code>), as the shortest path in
+the map's routing graph, leg by leg. A scenario that derives its goal in
+<code>setup()</code> from <code>scenario.expected_route_lanelet_ids</code>, as
+<code>intersection_passing</code> does, gets that goal here too (a configured goal
+wins). A goal derived any other way is only known once the scenario runs:
+that route is reported as not planned.</p>
+<p>The ODD's attributes are then read lanelet by lanelet along the route, and
+each lanelet gets one of three verdicts:</p>
+<table>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>inside</td>
+<td>The ODD holds there, whatever happens at run time.</td>
+</tr>
+<tr>
+<td>outside</td>
+<td>The ODD fails there, whatever happens at run time. Reported with the lanelet ids and the modules that fail.</td>
+</tr>
+<tr>
+<td>undecided</td>
+<td>It depends on what only the run can tell (weather, traffic, speed), or on a value the map does not have. At run time a missing value counts as inside, so this is "inside only by assumption".</td>
+</tr>
+</tbody>
+</table>
+<p>The map decides an attribute when its probe has a lanelet form,
+<code>probe.on_lanelet(lanelet, lanelet_map, routing_graph)</code>. It returns the
+value, <code>None</code> where the run would read none, or <code>UNDECIDED</code> where only the
+run can tell (for example <code>speed_limit_kph</code> on a lanelet with no
+<code>speed_limit</code> tag, where the run falls back to CARLA's limit). The built-in
+probes listed above have one; a custom probe opts in by having an
+<code>on_lanelet</code> attribute (a function attribute, or a method of a callable
+object). An attribute whose probe has none is <strong>open</strong>: it could take any
+value, and the ODD's own three-valued evaluation decides, exactly as it does
+for buckets outside the ODD. An OpenODD attribute derived from others is
+worked out from their values on the lanelet, and is open while one of them
+is.</p>
+<p>What the lanelet forms read, and where that differs from the run:</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>On a lanelet</th>
+<th>At run time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>in_junction</code></td>
+<td>The lanelet has a <code>turn_direction</code> tag (Autoware tags every lanelet in an intersection with one; the sweeper's <code>is_junction</code> reads it the same way)</td>
+<td>CARLA waypoint <code>is_junction</code></td>
+</tr>
+<tr>
+<td><code>lane_count</code></td>
+<td>The lanelet and every same-direction neighbour, walked left and right in the routing graph (<code>left</code>/<code>right</code>, else <code>adjacentLeft</code>/<code>adjacentRight</code>, so lanes behind a solid line count too); nothing in a junction</td>
+<td>CARLA OpenDRIVE waypoints: driving lanes of the same sign</td>
+</tr>
+<tr>
+<td><code>speed_limit_kph</code></td>
+<td>The <code>speed_limit</code> tag, else (no tag, or not a number) undecided</td>
+<td>The tag, else CARLA's <code>get_speed_limit()</code></td>
+</tr>
+<tr>
+<td><code>lanelet_location</code>, <code>lanelet_subtype</code>, <code>lanelet_speed_limit_kph</code></td>
+<td>The tag</td>
+<td>The tag of the lanelet the ego is on</td>
+</tr>
+</tbody>
+</table>
+<p>Route lane counts come from Lanelet2 and run-time lane counts come from
+CARLA's OpenDRIVE waypoints. The two maps are converted from each other but
+not always lane for lane, so they can disagree; so can the two junction
+criteria.</p>
+<p>The report also gives the <strong>expected coverage</strong>: the metres the route spends
+in each bucket of each attribute (<code>&lt;undecided&gt;</code> and <code>&lt;missing&gt;</code> collect the
+metres where the map cannot or does not say). The start lanelet counts from
+the spawn pose, the goal lanelet up to the goal pose, and a lane change
+splits the lanelets' length between the two sides. Over several scenarios
+the metres are summed, and the report lists the buckets of each map-decided
+attribute that <strong>no planned route reaches</strong>, leaving out buckets outside the
+ODD (they are not targets). An attribute the map decides in general but left
+undecided on some lanelet of a route (metres in <code>&lt;undecided&gt;</code>) is reported as
+<strong>undetermined</strong> instead: the run may reach any of its buckets there, so none
+is called unreached.</p>
+<p>The exit status is 0 when no route leaves the ODD, 1 when one does, and 2
+when a route could not be planned (no goal, no path, a lanelet the map does
+not have, no Lanelet2 map) or the ODD could not be read.</p>
+<p>From Python:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>    <span class="n">PlannedRoute</span><span class="p">,</span> <span class="n">combine_route_coverage</span><span class="p">,</span> <span class="n">plan_route_coverage</span><span class="p">,</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="p">)</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coordinate</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="n">route</span> <span class="o">=</span> <span class="n">PlannedRoute</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">203</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span> <span class="n">goal</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">207</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">))</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="n">coverage</span> <span class="o">=</span> <span class="n">plan_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="o">=</span><span class="n">lanelet_map</span><span class="p">)</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="n">coverage</span><span class="o">.</span><span class="n">leaves_odd</span><span class="p">,</span> <span class="n">coverage</span><span class="o">.</span><span class="n">outside</span><span class="p">(),</span> <span class="n">coverage</span><span class="o">.</span><span class="n">expected_m</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="n">combine_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="p">[</span><span class="n">coverage</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span><span class="o">.</span><span class="n">unreached</span>
+</code></pre></div>
+<p><code>plan_route_coverage</code> also takes a scenario (its spawn pose, waypoints and
+goal) or a list of lanelet ids. Without <code>lanelet_map</code> it uses the map the
+runner has loaded.</p>
+<p>At start-up, once <code>setup()</code> has settled the goal, the runner plans the
+route the same way and logs a warning when it leaves the ODD. It is a
+warning only. It is skipped for an ODD with no modules, and anything that
+keeps the route from being planned is logged at debug level; the run goes
+on regardless.</p>
+<h2 id="what-the-report-says">What the report says<a class="headerlink" href="#what-the-report-says" title="Permanent link">&para;</a></h2>
+<p>For each ODD the merged runs were measured against, <code>scenario-coverage</code> says
+the following (<a href="../coverage/#the-report">Coverage</a>):</p>
+<ul>
+<li>how long the runs were inside it, inside only because values were missing,
+  and outside it;</li>
+<li>which modules ruled ticks out, and how often, and how often their verdict
+  rested on missing values;</li>
+<li>which runs left it, and when (the first intervals);</li>
+<li>which attributes are monitored but not covered.</li>
+</ul>
+<p>A bucket is <strong>outside the ODD</strong> when the ODD fails for every value in it,
+whatever the other attributes are. It is reported, but it is not a coverage
+target. An example is <code>nonurban</code> under <code>location.is_in(["urban"])</code>.</p>
+<p>To decide this, the ODD's own evaluation runs with the bucket in place of the
+attribute's value and every other attribute left open. Labels, inactive
+modules, groups and module references therefore count exactly as they do on
+a tick. A condition that ties attributes together (<code>any_of</code> across two of
+them, or a junction and a speed) rules out combinations, never a single
+bucket. A bucket only partly inside (<code>[60, 90]</code> under <code>&lt;= 60</code>) stays a
+target.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 00:04:52 UTC"><span class="timeago" datetime="2026-10-11T00:04:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 00:04:52 UTC">2026-10-11</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 09:08:08 UTC"><span class="timeago" datetime="2026-10-10T09:08:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 09:08:08 UTC">2026-10-10</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
