@@ -13,10 +13,9 @@ import logging
 import queue
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
-from numpy.typing import NDArray
 
 from ..constants import FIXED_DELTA_SECONDS
 
@@ -76,12 +75,16 @@ class CarlaLidarSensor:
         config: Blueprint attributes and mount.
     """
 
+    _config: CarlaLidarSensorConfig
+    _sensor: Optional["carla.Actor"]
+    #: ``(frame, raw [N, 4] float32)``, oldest first.  Unbounded: the listen
+    #: callback must never block, and :meth:`get_sweep` drains it every call.
+    _sweeps: queue.Queue[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
+
     def __init__(self, config: CarlaLidarSensorConfig) -> None:
         self._config = config
-        self._sensor: Optional["carla.Actor"] = None
-        #: ``(frame, raw [N, 4] float32)``, oldest first.  Unbounded: the listen
-        #: callback must never block, and :meth:`get_sweep` drains it every call.
-        self._sweeps: "queue.Queue[Tuple[int, NDArray[np.float32]]]" = queue.Queue()
+        self._sensor = None
+        self._sweeps = queue.Queue()
 
     @property
     def config(self) -> CarlaLidarSensorConfig:
@@ -116,7 +119,7 @@ class CarlaLidarSensor:
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),
         )
         self._sensor = world.spawn_actor(blueprint, transform, attach_to=actor)
-        self._sensor.listen(self._receive)
+        self._sensor.listen(self._on_sensor_data)
         logger.info(
             "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s -> %s",
             cfg.channels,
@@ -125,10 +128,31 @@ class CarlaLidarSensor:
             actor.type_id,
         )
 
-    def _receive(self, measurement: Any) -> None:
+    def _on_sensor_data(
+        self, data: Union["carla.LidarMeasurement", "carla.SensorData"]
+    ) -> None:
+        """The sensor's listener, on a CARLA thread: hands the sweep to :meth:`_receive`.
+
+        CARLA's Python API, and typesafe_carla's CPython package, call it with
+        the ``carla.LidarMeasurement`` itself.  typesafe_carla's Codon library
+        calls it with the ``carla.SensorData``, which ``as_lidar()`` turns into
+        the measurement; the static check sees that branch, and Python, whose
+        ``LidarMeasurement`` has no ``as_lidar``, never takes it.
+        """
+        if hasattr(data, "as_lidar"):
+            self._receive(data.as_lidar())
+        else:
+            self._receive(data)
+
+    def _receive(self, measurement: "carla.LidarMeasurement") -> None:
         """Queue the raw buffer; copying it is all the callback thread does."""
         try:
-            raw = np.frombuffer(measurement.raw_data, dtype=np.float32)
+            if TYPE_CHECKING:
+                # typesafe_carla's Codon raw_data is a view, and Codon's
+                # frombuffer takes the bytes (a str).
+                raw = np.frombuffer(measurement.raw_data.tobytes(), dtype=np.float32)
+            else:
+                raw = np.frombuffer(measurement.raw_data, dtype=np.float32)
             self._sweeps.put((int(measurement.frame), raw.reshape(-1, 4).copy()))
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("failed to receive a LiDAR sweep")
@@ -140,7 +164,9 @@ class CarlaLidarSensor:
             self._sensor.destroy()
             self._sensor = None
 
-    def get_sweep(self, frame: int) -> Optional[NDArray[np.float32]]:
+    def get_sweep(
+        self, frame: int
+    ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
         """The sweep of simulator frame *frame*, raw ``[N, 4]`` in the sensor frame.
 
         Waits up to :data:`_SWEEP_TIMEOUT` seconds for it; older sweeps queued meanwhile
@@ -148,7 +174,9 @@ class CarlaLidarSensor:
         be a stale one, and the policy is better told nothing than told the past.
         """
         deadline = time.monotonic() + _SWEEP_TIMEOUT
-        newest: Optional[Tuple[int, NDArray[np.float32]]] = None
+        newest: Optional[
+            Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
+        ] = None
         while newest is None or newest[0] < frame:
             remaining = deadline - time.monotonic()
             try:

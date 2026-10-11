@@ -118,6 +118,8 @@ _CONCRETE_GENERICS = {
     "typing.Set",
     "typing.Tuple",
     "typing.ClassVar",
+    # The `queue` shim's Queue[T] (codon/queue.codon).
+    "queue.Queue",
 }
 #: Abstract collections: kept in class-level declarations (the typing shim
 #: maps them onto List / Dict), dropped from parameters, which a caller may
@@ -134,6 +136,9 @@ _ABSTRACT_GENERICS = {
 #: Python's immutable set, which Codon 0.19 lacks: checked as a ``Set`` (the
 #: check only types it; nothing compiled is run, so nothing can mutate it).
 _FROZENSET_NAMES = {"frozenset", "FrozenSet", "typing.FrozenSet"}
+#: numpy's array class, which Codon's numpy has as ``ndarray[dtype, ndim]``.
+_NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
+_DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
 #: CARLA's integer enumerations, which typesafe_carla's Codon library has as
 #: values, not types (``TrafficLightState = _TrafficLightState()``, each member
@@ -355,6 +360,36 @@ def _literal_type(node: ast.AST) -> str | None:
     return {bool: "bool", int: "int", str: "str"}.get(kind) if kind else None
 
 
+def _ndarray(node: ast.Subscript, base_name: str) -> str | None:
+    """Codon's ``np.ndarray[T, N]`` for numpy's shape-typed array, or ``None``.
+
+    numpy types an array by its shape and its dtype
+    (``np.ndarray[tuple[int, int], np.dtype[np.float32]]``: two dimensions of
+    ``float32``); Codon's ``ndarray`` by its dtype and its number of
+    dimensions (``np.ndarray[np.float32, 2]``).  A shape of a fixed number of
+    ``int`` gives that number; anything else (``NDArray[np.float32]``, a shape
+    of ``tuple[int, ...]`` or ``Any``) gives none, and the annotation is
+    dropped.
+    """
+    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
+        return None
+    shape, dtype = node.slice.elts
+    if not (
+        isinstance(shape, ast.Subscript)
+        and _dotted(shape.value) in _TUPLE_NAMES | {"typing.Tuple"}
+    ):
+        return None
+    dims = shape.slice.elts if isinstance(shape.slice, ast.Tuple) else [shape.slice]
+    if not dims or any(_dotted(d) != "int" for d in dims):
+        return None
+    if not (isinstance(dtype, ast.Subscript) and _dotted(dtype.value) in _DTYPE_NAMES):
+        return None
+    scalar = _dotted(dtype.slice)
+    if scalar is None or scalar.removeprefix("typing.") in _UNEXPRESSIBLE:
+        return None
+    return f"{base_name}[{scalar}, {len(dims)}]"
+
+
 def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     """The Codon spelling of a Python annotation, or ``None`` to drop it."""
     literal = _literal_type(node)
@@ -400,6 +435,8 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
             return "int"
         return base_name
     if isinstance(node, ast.Subscript):
+        if base_name in _NDARRAY_NAMES:
+            return _ndarray(node, base_name)
         args = (
             list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
         )
@@ -546,7 +583,14 @@ class _Rewriter(ast.NodeVisitor):
         if converted is not None:
             start, end = self.edits.node_span(node)
             if self.edits.text(start, end) != converted:
-                self.edits.replace(start, end, converted)
+                # An annotation broken over lines keeps its line breaks inside
+                # its brackets: the rest of its statement may follow it
+                # (`x: Optional[\n    T\n] = None`).
+                lost = self.edits.text(start, end).count("\n")
+                text = converted
+                if lost and text.endswith("]"):
+                    text = text[:-1] + "\n" * lost + "]"
+                self.edits.replace(start, end, text)
         return converted
 
     def _rewrite_arguments(self, args: ast.arguments, *, skip_first: bool) -> None:

@@ -10,10 +10,9 @@ from __future__ import annotations
 import logging
 import queue
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .base import CameraSensorBase, CameraSensorConfig
 
@@ -163,11 +162,15 @@ class CarlaCameraSensor(CameraSensorBase):
         config: CARLA camera sensor configuration.
     """
 
+    _carla_config: CarlaCameraSensorConfig
+    _sensor: Optional[carla.Actor]
+    _frame_queue: queue.Queue[carla.Image]
+
     def __init__(self, config: CarlaCameraSensorConfig) -> None:
         super().__init__(config)
         self._carla_config = config
-        self._sensor: Optional[carla.Actor] = None
-        self._frame_queue: queue.Queue[carla.Image] = queue.Queue(maxsize=2)
+        self._sensor = None
+        self._frame_queue = queue.Queue(maxsize=2)
 
     # ------------------------------------------------------------------
     # CameraSensorBase interface
@@ -200,20 +203,54 @@ class CarlaCameraSensor(CameraSensorBase):
 
         # -- Post-processing, exposure, lens: only what the config overrides, and
         # only what this server's camera has (CARLA versions add and drop them)
-        for name in BLUEPRINT_ATTRIBUTES:
-            value = getattr(cfg, name)
-            if value is None:
-                continue
-            if not camera_bp.has_attribute(name):
-                logger.warning(
-                    "%s has no attribute %r on this CARLA server; %s=%s is ignored",
-                    cfg.sensor_type,
-                    name,
-                    name,
-                    value,
-                )
-                continue
-            camera_bp.set_attribute(name, str(value))
+        if TYPE_CHECKING:
+            # Codon has no getattr() of a name known only at run time: the
+            # BLUEPRINT_ATTRIBUTES, in their order, spelled out.
+            self._override(camera_bp, "bloom_intensity", cfg.bloom_intensity)
+            self._override(camera_bp, "fstop", cfg.fstop)
+            self._override(camera_bp, "iso", cfg.iso)
+            self._override(camera_bp, "gamma", cfg.gamma)
+            self._override(camera_bp, "lens_flare_intensity", cfg.lens_flare_intensity)
+            self._override(
+                camera_bp, "motion_blur_intensity", cfg.motion_blur_intensity
+            )
+            self._override(
+                camera_bp, "motion_blur_max_distortion", cfg.motion_blur_max_distortion
+            )
+            self._override(
+                camera_bp,
+                "motion_blur_min_object_screen_size",
+                cfg.motion_blur_min_object_screen_size,
+            )
+            self._override(camera_bp, "exposure_mode", cfg.exposure_mode)
+            self._override(
+                camera_bp, "exposure_compensation", cfg.exposure_compensation
+            )
+            self._override(camera_bp, "exposure_min_bright", cfg.exposure_min_bright)
+            self._override(camera_bp, "exposure_max_bright", cfg.exposure_max_bright)
+            self._override(camera_bp, "exposure_speed_up", cfg.exposure_speed_up)
+            self._override(camera_bp, "exposure_speed_down", cfg.exposure_speed_down)
+            self._override(
+                camera_bp,
+                "chromatic_aberration_intensity",
+                cfg.chromatic_aberration_intensity,
+            )
+            self._override(
+                camera_bp,
+                "chromatic_aberration_offset",
+                cfg.chromatic_aberration_offset,
+            )
+            self._override(camera_bp, "lens_circle_falloff", cfg.lens_circle_falloff)
+            self._override(
+                camera_bp, "lens_circle_multiplier", cfg.lens_circle_multiplier
+            )
+            self._override(camera_bp, "lens_k", cfg.lens_k)
+            self._override(camera_bp, "lens_kcube", cfg.lens_kcube)
+            self._override(camera_bp, "lens_x_size", cfg.lens_x_size)
+            self._override(camera_bp, "lens_y_size", cfg.lens_y_size)
+        else:
+            for name in BLUEPRINT_ATTRIBUTES:
+                self._override(camera_bp, name, getattr(cfg, name))
 
         # -- Transform (base_link -> camera)
         transform = _carla.Transform(
@@ -222,7 +259,7 @@ class CarlaCameraSensor(CameraSensorBase):
         )
 
         self._sensor = world.spawn_actor(camera_bp, transform, attach_to=actor)
-        self._sensor.listen(self._frame_queue.put)
+        self._sensor.listen(self._on_sensor_data)
         self._attached = True
 
         logger.info(
@@ -234,6 +271,41 @@ class CarlaCameraSensor(CameraSensorBase):
             actor.type_id,
         )
 
+    def _override(
+        self, camera_bp: "carla.ActorBlueprint", name: str, value: Optional[float | str]
+    ) -> None:
+        """Set the blueprint attribute *name* to *value*, unless it is ``None``.
+
+        An attribute this server's camera lacks is skipped, with a warning.
+        """
+        if value is None:
+            return
+        if not camera_bp.has_attribute(name):
+            logger.warning(
+                "%s has no attribute %r on this CARLA server; %s=%s is ignored",
+                self._carla_config.sensor_type,
+                name,
+                name,
+                value,
+            )
+            return
+        camera_bp.set_attribute(name, str(value))
+
+    def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
+        """The sensor's listener: queues the frame for :meth:`get_image`.
+
+        It runs on a CARLA thread, and blocks while the queue is full.  CARLA's
+        Python API, and typesafe_carla's CPython package, call it with the
+        ``carla.Image`` itself.  typesafe_carla's Codon library calls it with
+        the ``carla.SensorData``, which ``as_image()`` turns into the image; the
+        static check sees that branch, and Python, whose ``Image`` has no
+        ``as_image``, never takes it.
+        """
+        if hasattr(data, "as_image"):
+            self._frame_queue.put(data.as_image())
+        else:
+            self._frame_queue.put(data)
+
     def destroy(self) -> None:
         """Stop and destroy the CARLA sensor actor."""
         if self._sensor is not None:
@@ -243,7 +315,9 @@ class CarlaCameraSensor(CameraSensorBase):
         self._attached = False
         logger.info("CarlaCameraSensor destroyed")
 
-    def get_image(self) -> Optional[NDArray[np.uint8]]:
+    def get_image(
+        self,
+    ) -> Optional[np.ndarray[tuple[int, int, int], np.dtype[np.uint8]]]:
         """Return the *newest* captured frame as an HxWx3 BGR NumPy array.
 
         Frames arrive asynchronously into a bounded FIFO, and at the default
@@ -268,7 +342,12 @@ class CarlaCameraSensor(CameraSensorBase):
             except queue.Empty:
                 break
 
-        array = np.frombuffer(image.raw_data, dtype=np.uint8)
+        if TYPE_CHECKING:
+            # typesafe_carla's Codon raw_data is a view, and Codon's frombuffer
+            # takes the bytes (a str).
+            array = np.frombuffer(image.raw_data.tobytes(), dtype=np.uint8)
+        else:
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
         array = array.reshape((image.height, image.width, 4))  # BGRA
         return np.ascontiguousarray(array[:, :, :3])  # BGR
 

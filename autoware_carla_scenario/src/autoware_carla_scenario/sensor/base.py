@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -94,7 +93,7 @@ class CameraSensorConfig:
         return self.image_height / 2.0
 
     @property
-    def intrinsic_matrix(self) -> NDArray[np.float64]:
+    def intrinsic_matrix(self) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
         """3x3 pinhole camera intrinsic matrix (K).
 
         .. math::
@@ -123,6 +122,9 @@ class CameraSensorBase(ABC):
     Args:
         config: Camera configuration dataclass.
     """
+
+    _config: CameraSensorConfig
+    _attached: bool
 
     def __init__(self, config: CameraSensorConfig) -> None:
         self._config = config
@@ -154,7 +156,9 @@ class CameraSensorBase(ABC):
         ...
 
     @abstractmethod
-    def get_image(self) -> Optional[NDArray[np.uint8]]:
+    def get_image(
+        self,
+    ) -> Optional[np.ndarray[tuple[int, int, int], np.dtype[np.uint8]]]:
         """Return the latest captured frame as an HxWx3 BGR array, or ``None``.
 
         Returns:

@@ -872,6 +872,14 @@ def _library_files(
 
         return target
 
+    # The classes of the checked modules, by name: a dataclass derived from
+    # one is constructed with the fields of its base too.
+    classes = {
+        node.name: node
+        for name in names
+        for node in sources.modules[name].tree.body
+        if isinstance(node, ast.ClassDef)
+    }
     files: list[_LibraryFile] = []
     for name in names:
         module = sources.modules[name]
@@ -884,7 +892,7 @@ def _library_files(
             uncalled=_uncalled(name),
         )
         uncalled = _uncalled(name)
-        checks = render_library_checks(module.tree, uncalled)
+        checks = render_library_checks(module.tree, uncalled, classes)
         for line, message in [*problems, *checks.problems]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
         # A function the check never compiles cannot decorate one it does: a
