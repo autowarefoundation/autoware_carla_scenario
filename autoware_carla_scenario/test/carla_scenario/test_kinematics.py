@@ -75,9 +75,11 @@ class TestVector3:
             v.x = 10  # type: ignore[misc]
 
     def test_not_implemented_for_wrong_type(self) -> None:
-        assert Vector3(1, 2, 3).__add__("bad") is NotImplemented
-        assert Vector3(1, 2, 3).__mul__("bad") is NotImplemented
-        assert Vector3(1, 2, 3).__truediv__("bad") is NotImplemented
+        # Annotated with the operand types they take (for the static check),
+        # the operators still answer NotImplemented to anything else.
+        assert Vector3(1, 2, 3).__add__("bad") is NotImplemented  # type: ignore[operator]
+        assert Vector3(1, 2, 3).__mul__("bad") is NotImplemented  # type: ignore[operator]
+        assert Vector3(1, 2, 3).__truediv__("bad") is NotImplemented  # type: ignore[operator]
 
 
 # ============================================================================

@@ -259,6 +259,13 @@ against the typed model in `typecheck/codon/`, not the Python package, so:
   functions that take or return CARLA types with typesafe_carla's types.
 - A scenario class declares the attributes it assigns on `self` at class level
   (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
+- The framework's own source is checked too, a module at a time
+  (`uv run scenario-check --library`, `test_typecheck_library.py`):
+  `typecheck/library.py` lists every module of the package as `CHECKED` or
+  `EXCLUDED` (with a reason). A new module needs an entry there; moving a
+  module into `CHECKED` means making it compile with annotations and
+  Codon-friendly rewrites only, no change in behaviour (`docs/typecheck.md`,
+  "Checking the framework itself").
 - Codon is the `typesafe-carla-toolchain` that `typesafe-carla` depends on (a
   run-time dependency, Linux x86_64 and aarch64), found by typesafe_carla's own
   lookup (`typecheck/toolchain.py` wraps `typesafe_carla.toolchain` and

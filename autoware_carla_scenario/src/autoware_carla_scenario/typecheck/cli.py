@@ -3,12 +3,18 @@
     uv run scenario-check                                   # every scenario config
     uv run scenario-check scenario=intersection_passing/straight
     uv run scenario-check scenario='lane_change/*' scenario.timeout_seconds=20
+    uv run scenario-check --library                         # the framework itself
+    uv run scenario-check --library autoware_carla_scenario.kinematics.vector
 
 Each ``scenario=`` config (a name or a glob, as ``scenario`` takes) is composed
 with the remaining overrides, exactly as the runner composes it, and checked
 the way the runner checks it before a run (docs/typecheck.md).  The exit
 status is 0 when every scenario passed, 1 when one failed, and 2 when there is
 no Codon compiler to check with.
+
+``--library`` checks the framework's own modules instead: those
+``typecheck/library.py`` lists as checked, or the modules named after it
+(docs/typecheck.md, "Checking the framework itself").
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from .check import find_supported_codon
+from .check import find_supported_codon, typecheck_library
 from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
@@ -40,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     except ToolchainError as exc:
         print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
         return 2
+    if "--library" in args:
+        modules = [a for a in args if a != "--library"]
+        result = typecheck_library(modules or None, toolchain=toolchain)
+        print(f"[{'ok' if result.ok else 'FAILED'}] {result.format()}")  # noqa: T201
+        return 0 if result.ok else 1
 
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
     from ..registry import get_scenario_builder, load_scenario_plugins  # noqa: PLC0415

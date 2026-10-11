@@ -36,6 +36,9 @@ class EntityRole:
     """
 
     __slots__ = ("_value",)
+    # Declared for the static check (docs/typecheck.md): Codon types an
+    # attribute from its declaration; to Python it is a bare annotation.
+    _value: str
 
     def __init__(self, value: str) -> None:
         if not _PATTERN.match(value):
