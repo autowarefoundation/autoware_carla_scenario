@@ -2045,9 +2045,14 @@ modules that use them.</p>
   is never compiled.</li>
 <li>An exception's <code>__init__</code> passes one message string to <code>super().__init__</code>.</li>
 <li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>importlib</code>,
-  <code>abc</code>, ...) are not available to a checked module; the <code>typing</code>,
-  <code>dataclasses</code>, <code>enum</code>, <code>logging</code> and <code>__future__</code> shims of
-  <code>codon/</code> are.</li>
+  <code>pathlib</code>, ...) are not available to a checked module; the <code>typing</code>,
+  <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code> and <code>__future__</code> shims of
+  <code>codon/</code> are. <code>collections.abc</code> is not: import <code>Sequence</code> and the other
+  abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
+  Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base.</li>
+<li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
+  method a subclass overrides when one of its parameters is generic, which an
+  abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.</li>
 <li><strong>Operators take the operand types they accept</strong>, not <code>object</code>. Annotate
   <code>other</code> with the class (<code>def __add__(self, other: FrenetVelocity)</code>) and a
   scalar with <code>float</code>, and keep the <code>isinstance</code> guard that returns
@@ -2105,7 +2110,7 @@ modules that use them.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 01:31:03 UTC"><span class="timeago" datetime="2026-10-11T01:31:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 01:31:03 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 02:15:00 UTC"><span class="timeago" datetime="2026-10-11T02:15:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 02:15:00 UTC">2026-10-11</span>
   </span>
 
     
