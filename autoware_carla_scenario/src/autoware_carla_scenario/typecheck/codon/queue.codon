@@ -1,0 +1,55 @@
+# Python's queue.Queue, for the checker (docs/typecheck.md). The signatures
+# are CPython's, so the check accepts the calls CPython does and refuses the
+# others. Nothing here runs: there are no threads to block, so a get() from an
+# empty queue raises Empty and a put() into a full one raises Full, as their
+# non-blocking forms do.
+
+
+class Empty(Static[Exception]):
+    def __init__(self, message: str = ""):
+        super().__init__("Empty", message)
+
+
+class Full(Static[Exception]):
+    def __init__(self, message: str = ""):
+        super().__init__("Full", message)
+
+
+class Queue[T]:
+    maxsize: int
+    _items: List[T]
+
+    def __init__(self, maxsize: int = 0):
+        self.maxsize = maxsize
+        self._items = List[T]()
+
+    def qsize(self) -> int:
+        return len(self._items)
+
+    def empty(self) -> bool:
+        return len(self._items) == 0
+
+    def full(self) -> bool:
+        return 0 < self.maxsize <= len(self._items)
+
+    def put(self, item: T, block: bool = True, timeout: Optional[float] = None) -> None:
+        if self.full():
+            raise Full()
+        self._items.append(item)
+
+    def put_nowait(self, item: T) -> None:
+        self.put(item, False)
+
+    def get(self, block: bool = True, timeout: Optional[float] = None) -> T:
+        if self.empty():
+            raise Empty()
+        return self._items.pop(0)
+
+    def get_nowait(self) -> T:
+        return self.get(False)
+
+    def task_done(self) -> None:
+        pass
+
+    def join(self) -> None:
+        pass

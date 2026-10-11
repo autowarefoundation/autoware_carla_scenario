@@ -476,6 +476,72 @@ def test_a_dataclass_is_constructed_with_each_member_of_a_union_field() -> None:
     ]
 
 
+_DERIVED_DATACLASS = """
+from dataclasses import dataclass
+from typing import Optional
+
+from .base import CameraConfig
+
+
+@dataclass(frozen=True)
+class Lens:
+    k: float = 0.0
+
+
+@dataclass(frozen=True)
+class Camera(CameraConfig):
+    sensor_type: str = "sensor.camera.rgb"
+    iso: Optional[float] = None
+    width: int = 640  # redefined: keeps the base's place
+
+
+@dataclass
+class Fisheye(Lens):
+    fov: float = 180.0
+
+
+class Plain:
+    label: str = ""
+
+
+@dataclass
+class Labelled(Plain):
+    size: int = 0
+"""
+
+_DATACLASS_BASE = """
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class CameraConfig:
+    width: int = 1920
+    fov: float = 90.0
+"""
+
+
+def test_a_dataclass_is_constructed_with_the_fields_of_its_bases_first() -> None:
+    base = ast.parse(_DATACLASS_BASE)
+    classes = {n.name: n for n in base.body if isinstance(n, ast.ClassDef)}
+    checks = render_library_checks(ast.parse(_DERIVED_DATACLASS), (), classes)
+    calls = [c.strip() for c in checks.source.splitlines() if "_acs_value(" in c]
+    # A base of another checked module, a base of the same module, and a base
+    # that is no dataclass, whose annotations are no fields.
+    assert calls == [
+        "Lens(_acs_value(float))",
+        "Camera(_acs_value(int), _acs_value(float), _acs_value(str), "
+        "_acs_value(Optional[float]))",
+        "Fisheye(_acs_value(float), _acs_value(float))",
+        "Labelled(_acs_value(int))",
+    ]
+    # Without the classes of the other modules, the base's fields are unknown.
+    alone = render_library_checks(ast.parse(_DERIVED_DATACLASS))
+    assert (
+        "    Camera(_acs_value(str), _acs_value(Optional[float]), _acs_value(int))"
+        in alone.source.splitlines()
+    )
+
+
 def test_an_uncalled_function_is_left_out() -> None:
     checks = render_library_checks(
         ast.parse(_MODULE), ["angle", "Vector.norm", "Config.__init__", "generic"]
@@ -927,3 +993,91 @@ def test_overridden_methods_protocols_and_type_checking_compile(
     )
     result = _check_case(_BACKENDS, tmp_path, monkeypatch)
     assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# The queue shim (the sensors' frame queues)
+# ---------------------------------------------------------------------------
+
+
+_QUEUES = """
+from __future__ import annotations
+
+import queue
+from typing import Optional
+
+
+class Frames:
+    _frames: queue.Queue[int]
+    _unbounded: queue.Queue[tuple[int, str]]
+
+    def __init__(self) -> None:
+        self._frames = queue.Queue(maxsize=2)
+        self._unbounded = queue.Queue()
+
+    def receive(self, frame: int) -> None:
+        self._frames.put(frame)
+        self._frames.put(frame, True, 1.0)
+        self._frames.put(frame, block=False, timeout=None)
+        try:
+            self._frames.put_nowait(frame)
+        except queue.Full:
+            pass
+        self._unbounded.put((frame, "frame"))
+
+    def newest(self, timeout: float) -> Optional[int]:
+        try:
+            frame = self._frames.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        while True:
+            try:
+                frame = self._frames.get_nowait()
+            except queue.Empty:
+                break
+        self._frames.get(True, timeout)
+        self._frames.get(block=False)
+        return frame
+
+    def size(self) -> int:
+        if self._frames.empty() or self._frames.full():
+            return 0
+        return self._frames.qsize() + queue.Queue[int](0).qsize()
+"""
+
+
+@needs_codon
+def test_the_queue_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_QUEUES, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ("queue.Queue(maxsize=2)", "queue.Queue(size=2)"),
+        ("self._frames.get_nowait()", "self._frames.get_nowait(True)"),
+        ("self._frames.get(True, timeout)", "self._frames.get(True, timeout, 1)"),
+        ("self._frames.qsize() + ", "self._frames.peek() + "),
+    ],
+    ids=["unknown-keyword", "get_nowait-argument", "get-arguments", "no-method"],
+)
+def test_the_queue_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _QUEUES.replace(right, wrong, 1)
+    assert source != _QUEUES
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()

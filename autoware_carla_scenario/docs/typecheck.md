@@ -256,8 +256,8 @@ To check one more module:
 ### What is checked of the framework
 
 Every module but four of the example scenarios now has an entry other than
-`"not yet checked (#45)"`. 94 of the package's 225 modules (42%; about
-16,900 of 68,700 lines) are `CHECKED`:
+`"not yet checked (#45)"`. 98 of the package's 225 modules (44%; about
+17,600 of 68,800 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
@@ -268,7 +268,8 @@ NPC vehicle and pedestrian entities and the entity registry, `BaseScenario`,
 the traffic backend interface with the TrafficManager backend, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (`scenario_config`, `examples.configs`). 54
+scenario configs (`scenario_config`, `examples.configs`), and the camera
+and LiDAR sensors (`sensor`). 54
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -280,7 +281,7 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 131 `EXCLUDED` modules are the
+the authoring package's pydantic specs. The 127 `EXCLUDED` modules are the
 six example scenarios, which import the checked `examples.configs` (the
 scenario check compiles each as a scenario, against the model), and three
 groups. Four of the examples are not checked yet; `cut_in` and
@@ -446,7 +447,7 @@ What Codon 0.19 needs that Python does not, beyond
   attribute per key.
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
   `pathlib`, ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging`, `abc` and `__future__` shims of
+  `dataclasses`, `enum`, `logging`, `abc`, `queue` and `__future__` shims of
   `codon/` are. `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
@@ -725,6 +726,31 @@ What Codon 0.19 needs that Python does not, beyond
   (`if hasattr(data, "as_collision"): data = data.as_collision()`, as
   `conditions/collision.py` does): Codon decides `hasattr` when it compiles,
   and the CPython measurement has no `as_<kind>()`.
+  The camera and the LiDAR (`sensor/`) listen the same way, with
+  `as_image()` and `as_lidar()`. A bound method of another object (a
+  queue's `put`) is no listener: wrap it in a method of the sensor.
+- **An array is typed by its shape**: Codon's numpy types an array by its
+  dtype and its number of dimensions (`np.ndarray[np.float32, 2]`), which
+  numpy.typing's `NDArray[np.float32]` does not say, and Codon has no
+  `numpy.typing`. Annotate with numpy's shape-typed array instead,
+  `np.ndarray[tuple[int, int], np.dtype[np.float32]]` (two dimensions),
+  which mypy reads as precisely and the check translates; a shape of
+  `tuple[int, ...]` or `Any`, and `NDArray`, are dropped. An annotation
+  broken over lines keeps its line breaks inside its brackets, so
+  `newest: Optional[\n    ...\n] = None` still compiles.
+- **A measurement's `raw_data` is a view** in typesafe_carla's Codon library,
+  and Codon's `np.frombuffer` takes the bytes: read
+  `np.frombuffer(image.raw_data.tobytes(), ...)` under `if TYPE_CHECKING:`
+  and the CPython `raw_data` in the `else` branch, which copies nothing.
+- **`queue.Queue[T]`** is the `queue` shim's, with CPython's signatures
+  (`Queue(maxsize=0)`, `put(item, block=True, timeout=None)`, `get(block=True,
+  timeout=None)`, `put_nowait`, `get_nowait`, `empty`, `full`, `qsize`, and
+  the `Empty` and `Full` exceptions). Declare the queue's item type at class
+  level (`_frame_queue: queue.Queue[carla.Image]`); `queue.Queue()` in
+  `__init__` takes it from there.
+- **A dataclass derived from a dataclass** is constructed with its base's
+  fields first, as Python's constructor and Codon's take them, wherever the
+  base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`).
 - **No variable-length tuples beyond attributes**: Codon's tuples have a
   fixed length. A class-level `tuple[X, ...]` and `tuple(x)` are checked as
   lists (above), but a tuple built otherwise (a display grown in a loop,

@@ -292,6 +292,65 @@ def test_a_variable_length_tuple_of_a_union_attribute_is_a_list_of_the_union() -
     assert _annotation("tuple[A | Any, ...]", class_level=True) is None
 
 
+@pytest.mark.parametrize(
+    ("python", "codon"),
+    [
+        (
+            "np.ndarray[tuple[int, int], np.dtype[np.float32]]",
+            "np.ndarray[np.float32, 2]",
+        ),
+        (
+            "Optional[numpy.ndarray[Tuple[int, int, int], numpy.dtype[numpy.uint8]]]",
+            "Optional[numpy.ndarray[numpy.uint8, 3]]",
+        ),
+        (
+            "queue.Queue[tuple[int, np.ndarray[tuple[int], np.dtype[np.float64]]]]",
+            "queue.Queue[tuple[int, np.ndarray[np.float64, 1]]]",
+        ),
+    ],
+)
+def test_a_shape_typed_array_is_codons_array_of_its_dimensions(
+    python: str, codon: str
+) -> None:
+    # numpy types an array by its shape and dtype, Codon by its dtype and
+    # its number of dimensions: a shape of N ints is N dimensions.
+    assert _annotation(python) == codon
+    assert _annotation(python, class_level=True) == codon
+
+
+@pytest.mark.parametrize(
+    "python",
+    [
+        "NDArray[np.float32]",  # no number of dimensions
+        "np.ndarray[tuple[int, ...], np.dtype[np.float32]]",
+        "np.ndarray[Any, np.dtype[np.float32]]",
+        "np.ndarray[tuple[int, int], np.dtype[Any]]",
+        "np.ndarray[tuple[int, int], np.float32]",
+    ],
+)
+def test_an_array_without_its_dimensions_is_dropped(python: str) -> None:
+    assert _annotation(python) is None
+
+
+def test_an_annotation_broken_over_lines_keeps_its_statement_together() -> None:
+    # The line breaks a rewritten annotation lost stay inside its brackets,
+    # so the `= None` after it is still part of the statement.
+    out = _transform(
+        """
+        def f() -> None:
+            newest: Optional[
+                tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
+            ] = None
+            after = 1
+        """
+    )
+    lines = out.splitlines()
+    assert lines[2] == "    newest: Optional[tuple[int, np.ndarray[np.float32, 2]]"
+    assert lines[4] == "] = None"
+    assert lines[5] == "    after = 1"
+    ast.parse(out)
+
+
 def test_a_literal_is_checked_as_the_type_of_its_values() -> None:
     # Codon's Literal types a compile-time value; Python's is checked as the
     # type of its values, and the typing shim's Literal is str.
