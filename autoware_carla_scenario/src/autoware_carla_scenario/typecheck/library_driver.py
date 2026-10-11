@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 
 from .driver import Driver
 from .transform import (
+    PRELUDE,
     _ENUM_BASES,
     _dotted,
     _is_none,
@@ -370,8 +371,17 @@ def render_library_checks(
 
 
 def render_library_driver(modules: list[str]) -> Driver:
-    """The program that runs the appended function of each module in *modules*."""
-    lines: list[str] = []
+    """The program that runs the appended function of each module in *modules*.
+
+    It imports the model through the transform's prelude first, so the model
+    is read before any checked module whichever module comes first.  The
+    model reaches a checked module through a replaced model module
+    (``_poses.codon`` re-exports ``coordinate.frames``); read from the
+    checked module instead, the prelude's import of the model would come back
+    to that module before it defines anything (a run of
+    ``coordinate.poses`` alone, which starts at ``coordinate.frames``).
+    """
+    lines: list[str] = PRELUDE.splitlines()
     calls: list[str] = []
     for i, module in enumerate(modules):
         lines.append(

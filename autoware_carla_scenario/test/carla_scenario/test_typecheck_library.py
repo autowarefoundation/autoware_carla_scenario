@@ -480,6 +480,57 @@ def test_scenario_check_checks_the_library(capsys: pytest.CaptureFixture[str]) -
     assert "[ok]" in capsys.readouterr().out
 
 
+def _dependencies(*names: str) -> list[str]:
+    every = package_modules()
+    sources = check._Sources()
+    for name in names:
+        sources.modules[name] = check._read_module(every[name])
+    return check._library_dependencies(list(names), sources, every)
+
+
+def test_a_named_module_brings_the_checked_modules_it_imports() -> None:
+    # actions.turn imports find_pedestrian_entity, which only the checked
+    # entity.registry defines (the model's entity.codon does not).
+    deps = _dependencies(f"{_PACKAGE}.actions.turn")
+    assert f"{_PACKAGE}.entity.registry" in deps
+    # ... and, transitively, what entity.registry imports.
+    assert f"{_PACKAGE}.entity.pedestrian_entity" in deps
+    assert set(deps) <= set(CHECKED)
+
+
+def test_a_modelled_import_is_not_followed() -> None:
+    deps = _dependencies(f"{_PACKAGE}.entity.ego")
+    assert f"{_PACKAGE}.scenario_base" not in deps  # MODELLED_IMPORTS
+    # entity._spawn brings the rest of the vehicle entity's replaced model,
+    # so the model re-exports the checked definitions, as in the full run.
+    assert {f"{_PACKAGE}.entity._spawn", f"{_PACKAGE}.entity.vehicle_entity"} <= set(
+        deps
+    )
+
+
+def test_the_full_run_compiles_only_the_checked_modules() -> None:
+    assert _dependencies(*CHECKED) == []
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    "module",
+    [
+        "scenario_base",
+        "entity.ego",
+        "actions.turn",
+        "actions.lane_change",
+        # The run starts at coordinate.frames, which the model's _poses.codon
+        # re-exports: the driver must read the model first.
+        "coordinate.poses",
+    ],
+)
+def test_a_module_importing_a_checked_only_name_compiles_alone(module: str) -> None:
+    result = typecheck_library([f"{_PACKAGE}.{module}"])
+    assert result.ok, result.format()
+    assert "more they import" in result.scenario
+
+
 _FAKE = f"{_PACKAGE}.zz_library_check_case"
 
 _GOOD = """
