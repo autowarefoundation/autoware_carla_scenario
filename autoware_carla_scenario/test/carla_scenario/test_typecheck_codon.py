@@ -62,12 +62,14 @@ from autoware_carla_scenario import (
     LaneChangeDirection,
     Lanelet2Pose,
     MapPose,
+    OpenDrivePose,
     ReferenceContext,
     RelativeLanePose,
     SamplingEvent,
     ScenarioResult,
     SpeedCondition,
     StickyCondition,
+    TemporaryStopCondition,
     TickTiming,
     TimeoutCondition,
     Trajectory,
@@ -133,7 +135,11 @@ _counter = 0
 
 
 def _write_case(
-    tmp_path: Path, setup: str, extra: str = "", config: str = _CONFIG
+    tmp_path: Path,
+    setup: str,
+    extra: str = "",
+    config: str = _CONFIG,
+    header: str = _HEADER,
 ) -> tuple[type, type, Path]:
     """A scenario package in *tmp_path* whose setup() body is *setup*."""
     global _counter
@@ -145,7 +151,7 @@ def _write_case(
     (root / "configs.py").write_text(config)
     scenario = root / "scenario.py"
     scenario.write_text(
-        _HEADER + textwrap.indent(textwrap.dedent(setup), " " * 8) + extra
+        header + textwrap.indent(textwrap.dedent(setup), " " * 8) + extra
     )
     sys.path.insert(0, str(tmp_path))
     try:
@@ -610,6 +616,11 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
             "FollowTrajectoryAction(",
             "TrajectoryTiming",
         ),
+        (
+            'self.register_pass_condition(TemporaryStopCondition(EGO_ROLE_NAME, ["here"], label="stop"))\n',
+            "TemporaryStopCondition(EGO_ROLE_NAME",
+            "expected a pose",
+        ),
     ],
     ids=[
         "missing-label",
@@ -625,6 +636,7 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
         "trajectory-bare-time",
         "relative-lane-int-entity-ref",
         "trajectory-mode-for-timing",
+        "temporary-stop-str-position",
     ],
 )
 def test_a_wrong_scenario_is_refused_at_its_line(
@@ -635,6 +647,40 @@ def test_a_wrong_scenario_is_refused_at_its_line(
     assert message in error.message, error.format()
     assert error.path == str(path)
     assert error.line == _line_of(path, needle)
+
+
+@pytest.mark.parametrize(
+    ("member", "position", "message"),
+    [
+        ("OpenDrivePose", 'OpenDrivePose("1", -1, 2.0)', None),
+        ("MapPose", "MapPose(1.0, 2.0)", "expected a Union of poses"),
+    ],
+    ids=["poses", "non-pose-member"],
+)
+def test_temporary_stop_takes_a_union_of_poses_only(
+    tmp_path: Path, member: str, position: str, message: str | None
+) -> None:
+    """An element of a list of a union is a Union: _expect_pose checks each member."""
+    header = _HEADER.replace(
+        "    _config: CaseConfig\n",
+        f"    _config: CaseConfig\n    _stops: list[Lanelet2Pose | {member}]\n",
+    )
+    setup = f"""
+        self._stops = []
+        self._stops.append(Lanelet2Pose(1, 0.0))
+        self._stops.append({position})
+        self.register_pass_condition(
+            TemporaryStopCondition(EGO_ROLE_NAME, self._stops, label="stop")
+        )
+    """
+    scenario, config, path = _write_case(tmp_path, setup, header=header)
+    result = typecheck_scenario(scenario, config)
+    if message is None:
+        assert result.ok, result.format()
+    else:
+        error = _only_error(result)
+        assert message in error.message, error.format()
+        assert error.line == _line_of(path, "TemporaryStopCondition(EGO_ROLE_NAME")
 
 
 def test_a_config_value_of_the_wrong_type_is_reported_at_its_key(
@@ -702,6 +748,24 @@ def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
     scenario, config, path = _write_case(tmp_path, "import json\njson.dumps({})\n")
     error = _only_error(typecheck_scenario(scenario, config))
     assert "json has no Codon model" in error.message
+    assert error.path == str(path)
+
+
+def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
+    tmp_path: Path,
+) -> None:
+    # The library check's pathlib shim serves the scenario check too: what it
+    # declares compiles, and any other name of pathlib is refused.
+    scenario, config, _ = _write_case(
+        tmp_path, 'from pathlib import Path\nlogger.info("%s", str(Path("a") / "b"))\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    scenario, config, path = _write_case(
+        tmp_path, 'from pathlib import Path\nlogger.info("%s", Path("a").exists())\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "exists" in error.message
     assert error.path == str(path)
 
 

@@ -12,7 +12,7 @@ What is checked is everything ``setup()`` and ``is_done()`` reach: the
 framework's public API (as far as the model goes), the CARLA API, which is
 typesafe_carla's Codon library (``import typesafe_carla.carla as carla``,
 the import the runtime uses too), and the scenario package's own modules.  A module outside those
-(numpy, say) has no Codon model, and a scenario importing one fails the check
+(lanelet2, say) has no Codon model, and a scenario importing one fails the check
 with a message saying so.
 
 :func:`typecheck_library` compiles the framework's own modules instead (those

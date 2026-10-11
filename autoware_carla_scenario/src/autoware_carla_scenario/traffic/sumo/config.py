@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ...constants import DEFAULT_TM_PORT
-from ...utils.config import checked_options
 
 __all__ = ["AmbientTrafficConfig", "SumoBackendConfig"]
 
@@ -54,6 +53,11 @@ class AmbientTrafficConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "AmbientTrafficConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        # Imported here: utils.config reads a dataclass's fields from its class,
+        # which Codon cannot express, and the library check compiles no import
+        # in a function it does not call (typecheck/library.py, UNCALLED).
+        from ...utils.config import checked_options  # noqa: PLC0415
+
         return cls(**checked_options(cls, mapping))
 
 
@@ -180,6 +184,8 @@ class SumoBackendConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "SumoBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        from ...utils.config import checked_options  # noqa: PLC0415
+
         checked = checked_options(cls, mapping)
         if isinstance(checked.get("ambient"), Mapping):
             checked["ambient"] = AmbientTrafficConfig.from_mapping(checked["ambient"])
