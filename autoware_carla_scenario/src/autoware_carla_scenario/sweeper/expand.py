@@ -19,6 +19,9 @@ and the match itself (``scenario.route.*``) as overrides
 sun, scenario parameters -- from the ODD, aimed at what earlier runs left
 uncovered when asked to (:mod:`autoware_carla_scenario.odd.sampler`); with
 constraints or a route search too, each drawn case takes their cases in turn.
+A batch expanding several scenarios hands each the cases the earlier ones
+drew (``drawn``, an :class:`~autoware_carla_scenario.odd.sampler.OddDraws`),
+so scenarios on one ODD go on from each other rather than draw alike.
 
 A config without a sweep is already concrete and expands to itself (one empty
 override list). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
@@ -29,7 +32,7 @@ elsewhere -- e.g. a test suite fanning them out over a cluster.
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -40,6 +43,9 @@ from .constraints import (
     find_matching_lanelets,
     parse_constraint,
 )
+
+if TYPE_CHECKING:
+    from ..odd.sampler import OddDraws
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +71,7 @@ def expand_sweep(
     *,
     odd: Any = None,
     controls: Mapping[str, Any] | None = None,
+    drawn: OddDraws | None = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -76,6 +83,8 @@ def expand_sweep(
     lanelet case or route match in turn -- or none, when the sweep has
     neither. Without a ``count``, one case is drawn per lanelet case or match.  *controls* are
     the scenario's (its config's ``controls``): what its parameters set.
+    *drawn*, in a batch, holds the cases earlier scenarios drew from the ODD:
+    the sampler goes on from them, and the cases drawn here are added to it.
 
     Raises:
         ValueError: If ``sweep`` has none of constraints, a route search and
@@ -96,7 +105,7 @@ def expand_sweep(
     else:
         raise ValueError("sweep.constraints is empty; nothing to expand.")
     if odd_sample and base_cases:
-        base_cases = _with_odd_samples(base_cases, odd_sample, odd, controls)
+        base_cases = _with_odd_samples(base_cases, odd_sample, odd, controls, drawn)
     return [[*case, *arguments] for case in base_cases]
 
 
@@ -105,15 +114,21 @@ def _with_odd_samples(
     odd_sample: Mapping[Any, Any],
     odd: Any,
     controls: Mapping[str, Any] | None = None,
+    drawn: OddDraws | None = None,
 ) -> list[list[str]]:
     """``odd_sample.count`` cases (one per base case by default), each a base
     case -- a lanelet or a route match -- and settings drawn from the ODD."""
     from ..odd.sampler import sampler_from_config  # noqa: PLC0415
 
     sampler, count = sampler_from_config(
-        {str(k): v for k, v in odd_sample.items()}, odd=odd, controls=controls
+        {str(k): v for k, v in odd_sample.items()},
+        odd=odd,
+        controls=controls,
+        drawn=drawn,
     )
     samples = sampler.sample(len(base_cases) if count is None else count)
+    if drawn is not None:
+        drawn.add(sampler.odd, samples)
     logger.info(
         "Drew %d case(s) from ODD %s over %s (%s)%s",
         len(samples),
@@ -233,8 +248,17 @@ def expand_route(
     return cases
 
 
-def expand_config(cfg: DictConfig, arguments: Sequence[str] = ()) -> list[list[str]]:
-    """The concrete scenarios of a composed scenario config (see module docstring)."""
+def expand_config(
+    cfg: DictConfig,
+    arguments: Sequence[str] = (),
+    *,
+    drawn: OddDraws | None = None,
+) -> list[list[str]]:
+    """The concrete scenarios of a composed scenario config (see module docstring).
+
+    *drawn* is a batch's record of the cases drawn from the ODD so far
+    (see :func:`expand_sweep`).
+    """
     sweep_cfg = OmegaConf.select(cfg, "sweep")
     sweep = (
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
@@ -248,13 +272,17 @@ def expand_config(cfg: DictConfig, arguments: Sequence[str] = ()) -> list[list[s
     controls = scenario_controls(cfg)
     if not (sweep.get("constraints") or sweep.get("route")):
         # Drawing from the ODD alone needs no map.
-        return expand_sweep(sweep, None, arguments, odd=odd, controls=controls)
+        return expand_sweep(
+            sweep, None, arguments, odd=odd, controls=controls, drawn=drawn
+        )
 
     from ..maps import resolve_map_paths  # noqa: PLC0415 -- clones a map on demand
     from .map_loader import load_map  # noqa: PLC0415
 
     lanelet_map = load_map(resolve_map_paths(OmegaConf.select(cfg, "map")))
-    return expand_sweep(sweep, lanelet_map, arguments, odd=odd, controls=controls)
+    return expand_sweep(
+        sweep, lanelet_map, arguments, odd=odd, controls=controls, drawn=drawn
+    )
 
 
 def scenario_controls(cfg: DictConfig) -> dict[str, Any]:

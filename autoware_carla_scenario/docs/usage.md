@@ -102,6 +102,11 @@ uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
   +sweep.odd_sample.count=10 +sweep.odd_sample.strategy=coverage
 ```
 
+Scenarios that draw from one ODD go on from each other's draws rather than
+each draw the same cases: with `strategy: coverage` a later scenario aims at
+what the earlier ones left uncovered (see
+[Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd)).
+
 A scenario with more than one case is listed as `name#k` in the summary, and
 `batch_results.json` gives each case its `overrides`. `hydra/sweeper=...` may
 be given but is not needed: the batch is the sweeper.

@@ -557,14 +557,25 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 ```
 
 A glob batch with `--multirun` draws each matched scenario's cases the same
-way and runs them all in one queue ([Batch Execution](usage.md#running-every-sweep-case-in-a-batch));
-each scenario draws its own, so two scenarios on one ODD and seed are given
-the same settings:
+way and runs them all in one queue ([Batch Execution](usage.md#running-every-sweep-case-in-a-batch)).
+Scenarios that draw from one ODD go on from each other's draws, in the order
+the batch lists them: with `strategy: coverage` a later scenario counts the
+earlier ones' cases as covered and aims at the buckets and situations they
+left (see [How a case is drawn](#how-a-case-is-drawn)); with
+`strategy: uniform` it draws from a random stream of its own rather than
+repeat their values. Here `cut_in/right`'s 3 cases aim at what
+`cut_in/left`'s 3 left uncovered:
 
 ```bash
 uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
-  +sweep.odd_sample.count=20 +sweep.odd_sample.strategy=coverage
+  +sweep.odd_sample.count=3 +sweep.odd_sample.strategy=coverage
 ```
+
+The same seed, ODD, knobs, coverage and scenarios, in the same order, give
+the same cases. Two ODDs are one when their definitions -- name, buckets
+and modules, as a coverage file records them -- are the same, however the
+command line names them (a registered name, a YAML path); a scenario on
+another ODD starts afresh.
 
 or in the scenario's YAML:
 
@@ -677,13 +688,14 @@ the measures read what it then drives, which is what coverage counts.
 
 `strategy: uniform` draws every admitted bucket alike. `strategy: coverage`
 reads `coverage_from` and draws each attribute from its **least covered**
-buckets first, counting the cases already drawn in the batch as covered, so
-a batch works through the holes before it repeats one; it falls back to any
+buckets first, counting the cases already drawn in the batch -- by earlier
+scenarios on the same ODD too, in a glob batch -- as covered, so a batch
+works through the holes before it repeats one; it falls back to any
 bucket (the less covered the likelier) only when the ODD admits no
 combination of the least covered. **Situations** that are still holes (or
 that no earlier run measured) are aimed at first, one case each; inactive
-ones are not. A situation the knobs alone decide -- every attribute it tests
-has a knob, and it refers to no other module -- holds in its case. One that also tests what no knob sets -- a speed, a road -- gets a case
+ones are not, nor are those an earlier case of the batch was aimed at. A
+situation the knobs alone decide -- every attribute it tests has a knob, and it refers to no other module -- holds in its case. One that also tests what no knob sets -- a speed, a road -- gets a case
 under which it *can* hold; whether it does is up to the drive. A situation
 the ODD and the knobs leave no case for is given up on, with a warning.
 
@@ -709,6 +721,17 @@ sampler = OddSampler(
 )
 for case in sampler.sample(20):
     print(case.overrides, case.buckets, case.situation)
+```
+
+To go on from cases drawn before -- another scenario's, on the same ODD --
+pass them as `drawn`; `OddDraws` keeps them per ODD, as a batch does:
+
+```python
+from autoware_carla_scenario.odd import OddDraws
+
+draws = OddDraws()
+draws.add(sampler.odd, sampler.sample(20))
+later = OddSampler(sampler.odd, seed=0, strategy="coverage", drawn=draws.of(sampler.odd))
 ```
 
 ## Checking an ODD

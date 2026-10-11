@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -106,6 +107,51 @@ def test_an_expanded_batch_runs_each_case_the_odd_sampler_draws(batch: _Batch) -
     )
     # The command line's own overrides are not repeated as the case's.
     assert all("+sweep.odd_sample.count=3" not in case for case in batch.overrides)
+
+
+@pytest.fixture
+def twin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """A second scenario without a sweep, in a copy of the config directory."""
+    from autoware_carla_scenario.examples import run
+
+    conf = tmp_path / "conf"
+    shutil.copytree(run._CONF_DIR, conf)
+    shutil.copy(
+        conf / "scenario" / f"{_CONCRETE}.yaml",
+        conf / "scenario" / f"{_CONCRETE}_twin.yaml",
+    )
+    monkeypatch.setattr(run, "_CONF_DIR", conf)
+    return f"{_CONCRETE}_twin"
+
+
+def _expanded_weathers(names: list[str], overrides: list[str]) -> list[Any]:
+    from autoware_carla_scenario.examples import run
+
+    return [
+        _weather(run._compose_config(n, o))
+        for n, o in run._expand_batch(names, overrides)
+    ]
+
+
+@pytest.mark.parametrize("strategy", ["coverage", "uniform"])
+def test_scenarios_on_one_odd_go_on_from_each_others_draws(
+    batch: _Batch, twin: str, strategy: str
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    overrides = [
+        "+sweep.odd_sample.count=3",
+        f"+sweep.odd_sample.strategy={strategy}",
+    ]
+    with pytest.raises(SystemExit):
+        run.run_batch([_CONCRETE, twin], overrides, expand=True)
+
+    weathers = [_weather(cfg) for cfg in batch.configs]
+    assert len(weathers) == 6
+    # The second scenario is not given the first one's settings again ...
+    assert not set(weathers[:3]) & set(weathers[3:])
+    # ... and the same batch draws the same cases.
+    assert _expanded_weathers([_CONCRETE, twin], overrides) == weathers
 
 
 def test_a_batch_without_multirun_runs_each_scenario_once_and_says_so(

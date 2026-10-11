@@ -55,7 +55,14 @@ from .route import (
     plan_route,
     plan_route_coverage,
 )
-from .sampler import DEFAULT_KNOBS, OddKnob, OddSample, OddSampler, knobs_from_mapping
+from .sampler import (
+    DEFAULT_KNOBS,
+    OddDraws,
+    OddKnob,
+    OddSample,
+    OddSampler,
+    knobs_from_mapping,
+)
 from .registry import (
     DEFAULT_ODD,
     ENTRY_POINT_GROUP,
@@ -77,6 +84,7 @@ __all__ = [
     "OddAttribute",
     "OddCondition",
     "OddDefinition",
+    "OddDraws",
     "OddKnob",
     "OddModule",
     "OddSample",

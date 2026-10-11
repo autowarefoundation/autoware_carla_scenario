@@ -661,12 +661,20 @@ def _has_sweep(cfg: DictConfig) -> bool:
 def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[BatchCase]:
     """Every concrete case of *scenario_names*, in order: each scenario's sweep
     expanded the way the lanelet sweeper expands it (``sweep.constraints``,
-    ``sweep.route``, ``sweep.odd_sample``), a scenario without one as itself."""
+    ``sweep.route``, ``sweep.odd_sample``), a scenario without one as itself.
+
+    Scenarios that draw from one ODD go on from each other's draws: a later
+    one aims at what the earlier ones left uncovered (``strategy: coverage``)
+    and does not draw their values again."""
+    from ..odd.sampler import OddDraws  # noqa: PLC0415
     from ..sweeper.expand import expand_config  # noqa: PLC0415 -- loads Lanelet2
 
+    drawn = OddDraws()
     cases: list[BatchCase] = []
     for name in scenario_names:
-        expanded = expand_config(_compose_config(name, overrides), overrides)
+        expanded = expand_config(
+            _compose_config(name, overrides), overrides, drawn=drawn
+        )
         logger.info("%s: %d case(s)", name, len(expanded))
         cases.extend((name, case) for case in expanded)
     return cases
