@@ -48,17 +48,6 @@ __all__ = [
 
 #: The reason of a module nobody has made compile yet.
 NOT_YET_CHECKED = "not yet checked (#45)"
-_NOT_YET = NOT_YET_CHECKED
-
-#: The reason of an example scenario that passes the check alone but not in
-#: the full run, where the model's types meet the checked modules' (#99).
-_MODEL_MEETS_CHECKED = (
-    "passes the GroundProjectionConfig it imports from the top-level package "
-    "(the package model, in the check) to the checked VehicleEntityConfig: "
-    "alone it passes, but in the full run the model's type meets "
-    "scenario_config's checked one, a different type to Codon (#99); the "
-    "scenario check compiles it as a scenario, against the model"
-)
 
 #: Modules compiled from their real source, by dotted name (a package by its
 #: own name, for its ``__init__.py``).
@@ -133,6 +122,12 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity_role",
     "autoware_carla_scenario.examples.conf",
     "autoware_carla_scenario.examples.configs",
+    "autoware_carla_scenario.examples.cut_in",
+    "autoware_carla_scenario.examples.intersection_passing",
+    "autoware_carla_scenario.examples.lane_change",
+    "autoware_carla_scenario.examples.pedestrian_dart_out",
+    "autoware_carla_scenario.examples.temporary_stop",
+    "autoware_carla_scenario.examples.traffic_light_compliance",
     "autoware_carla_scenario.kinematics",
     "autoware_carla_scenario.kinematics.acceleration",
     "autoware_carla_scenario.kinematics.angle",
@@ -338,14 +333,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.entity.autoware_entity": "imports autoware_stack.launcher (subprocess), which is neither checked nor modelled",
     "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, driver.egodriver_client (grpc) and driver.renderer, which are not checked, and uuid",
     "autoware_carla_scenario.examples": "re-exports examples.run (pathlib, omegaconf, hydra, json) and the registry (pathlib, omegaconf, importlib)",
-    "autoware_carla_scenario.examples.cut_in": _MODEL_MEETS_CHECKED,
     "autoware_carla_scenario.examples.expand": "imports json, sys, the registry (pathlib, omegaconf, importlib) and sweeper.expand (omegaconf)",
-    "autoware_carla_scenario.examples.intersection_passing": _MODEL_MEETS_CHECKED,
-    "autoware_carla_scenario.examples.lane_change": _NOT_YET,
-    "autoware_carla_scenario.examples.pedestrian_dart_out": _NOT_YET,
     "autoware_carla_scenario.examples.run": "imports pathlib, omegaconf, hydra, json",
-    "autoware_carla_scenario.examples.temporary_stop": _NOT_YET,
-    "autoware_carla_scenario.examples.traffic_light_compliance": _NOT_YET,
     "autoware_carla_scenario.maps": "re-exports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib)",
     "autoware_carla_scenario.maps.cache": "imports pathlib, subprocess, shutil, tempfile, json, hashlib",
     "autoware_carla_scenario.maps.catalogue": "imports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib), which are not checked and have no model",
@@ -412,6 +401,9 @@ EXCLUDED: dict[str, str] = {
 #: Without it, a checked module handing its own pose to a model function
 #: (``to_opendrive``) would hand the wrong type.
 REPLACED_MODELS: dict[str, tuple[str, ...]] = {
+    # So a scenario hands the GroundProjectionConfig it imports from the
+    # top-level package (the model) to the checked VehicleEntityConfig (#99).
+    "_ground_projection": ("autoware_carla_scenario.coordinate.snap",),
     "_poses": (
         "autoware_carla_scenario.coordinate.frames",
         "autoware_carla_scenario.coordinate.poses",

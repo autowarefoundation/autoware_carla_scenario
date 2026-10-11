@@ -12,6 +12,7 @@ import typesafe_carla.carla as carla
 from ._tc import _keyword_only
 from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanelet2Pose,
                      OpenDrivePose)
+from ._ground_projection import GroundProjectionConfig
 
 
 def _expect_pose(pose):
@@ -65,18 +66,6 @@ def _expect_pose_or_location(pose):
         pass
     else:
         _expect_pose(pose)
-
-
-class GroundProjectionConfig:
-    ray_distance_upper: float
-    ray_distance_lower: float
-    z_log_threshold: float
-
-    def __init__(self, ray_distance_upper: float = 5.0, ray_distance_lower: float = 5.0,
-                 z_log_threshold: float = 0.01):
-        self.ray_distance_upper = ray_distance_upper
-        self.ray_distance_lower = ray_distance_lower
-        self.z_log_threshold = z_log_threshold
 
 
 def _expect_optional_ground_projection(gp) -> Optional[GroundProjectionConfig]:
