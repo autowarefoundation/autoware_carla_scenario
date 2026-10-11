@@ -9,7 +9,7 @@ from ._tc import (_expect_float, _expect_int, _expect_optional_float,
                   _expect_optional_str, _expect_str)
 from .conditions import BaseCondition, _expect_condition, _expect_optional_condition
 from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
-from .entity_role import EntityRole, _expect_optional_role
+from .entity_role import EntityRole, _expect_optional_role_name
 
 
 class MapPose:
@@ -30,7 +30,7 @@ class RelativeLanePose:
     offset: float
     d_lane: int
     yaw: Optional[float]
-    entity_ref: Optional[EntityRole]
+    entity_ref: Optional[str]
 
     def __init__(self, ds = 0.0, offset = 0.0, d_lane: int = 0, yaw = None,
                  entity_ref = None):
@@ -38,7 +38,7 @@ class RelativeLanePose:
         self.offset = _expect_float(offset)
         self.d_lane = d_lane
         self.yaw = _expect_optional_float(yaw)
-        self.entity_ref = _expect_optional_role(entity_ref)
+        self.entity_ref = _expect_optional_role_name(entity_ref)
 
 
 class RouteLanePose:

@@ -237,6 +237,116 @@ def test_a_frozenset_is_checked_as_a_set() -> None:
     assert _annotation("frozenset") is None
 
 
+def test_a_variable_length_tuple_attribute_is_checked_as_a_list() -> None:
+    # Codon's tuples have a fixed length: the attribute holds a list, and
+    # tuple() of a list (or a generator) makes one; a tuple stays itself.
+    out = _transform(
+        """
+        class Path:
+            vertices: Tuple[Vertex, ...]
+
+            def __init__(self, vertices: Sequence[Vertex]) -> None:
+                self.vertices = tuple(vertices)
+                empty = tuple()
+        """
+    )
+    lines = out.splitlines()
+    assert lines[2] == "    vertices: List[Vertex]"
+    assert lines[5] == "        self.vertices = _acs_tuple(vertices)"
+    assert lines[6] == "        empty = tuple()"
+    assert _annotation("tuple[int, ...]", class_level=True) == "List[int]"
+    assert _annotation("typing.Tuple[str, ...]", class_level=True) == "List[str]"
+    assert _annotation("tuple[int, ...]") is None  # a caller may pass a tuple
+    assert _annotation("Sequence[int, ...]", class_level=True) is None
+
+
+def test_callable_is_checked_by_the_stand_in() -> None:
+    # Codon 0.19 has no callable(): _acs_callable decides it when compiling.
+    assert "ok = _acs_callable(x.check)" in _transform("ok = callable(x.check)\n")
+
+
+def test_object_setattr_with_a_constant_name_is_an_assignment() -> None:
+    # A frozen dataclass sets its fields with object.__setattr__, which Codon
+    # 0.19 lacks; the call keeps its lines inside brackets.
+    source = textwrap.dedent(
+        """
+        class Pose:
+            def __post_init__(self) -> None:
+                object.__setattr__(self, "lane", int(self.lane))
+                object.__setattr__(
+                    self, "d_lane", _whole("Pose", "d_lane", self.d_lane)
+                )
+                object.__setattr__(self, name, 1)
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    lines = out.splitlines()
+    assert lines[3] == "        self.lane = (int(self.lane))"
+    assert lines[4].strip() == "self.d_lane = ("
+    assert lines[5].strip() == '_whole("Pose", "d_lane", self.d_lane))'
+    assert lines[7] == "        object.__setattr__(self, name, 1)"
+    ast.parse(out)
+
+
+def test_a_field_set_after_init_gets_an_empty_value_of_its_type() -> None:
+    # Codon's constructor takes every field; one Python leaves out of it is
+    # given a value, so a call without it still compiles.
+    out = _transform(
+        """
+        @dataclass
+        class Track:
+            xs: list[float]
+            _arc: list[float] = field(init=False, repr=False)
+            _seen: bool = field(init=False, default=False)
+        """
+    )
+    assert "    _arc: list[float] = list[float]()" in out
+    assert "    _seen: bool = False" in out
+
+
+def test_a_union_alias_of_forward_references_is_unquoted() -> None:
+    # Codon takes no string as a type; under TYPE_CHECKING the name exists.
+    out = _transform(
+        """
+        Position = Union["Lanelet2Pose", MapPose]
+        Other = Optional["Lanelet2Pose"]
+        label = Union["a", "b"] if False else "x"
+
+        def f() -> None:
+            local = Union["Lanelet2Pose", MapPose]
+        """
+    )
+    lines = out.splitlines()
+    assert lines[1] == "Position = Union[Lanelet2Pose, MapPose]"
+    assert lines[2] == "Other = Optional[Lanelet2Pose]"
+    assert lines[3] == 'label = Union["a", "b"] if False else "x"'
+    assert lines[6] == '    local = Union["Lanelet2Pose", MapPose]'
+
+
+def test_a_decorator_the_library_check_leaves_uncalled_is_dropped() -> None:
+    # Codon 0.19 cannot decorate a method; a run-time-only wrapper is dropped
+    # and the method is compiled as written.
+    source = textwrap.dedent(
+        """
+        class Vertex:
+            @_refusing_old_calls
+            def __init__(self, position: Pose) -> None:
+                self.position = position
+
+            @other
+            def f(self) -> None:
+                pass
+        """
+    )
+    out = transform_source(source, dropped_decorators=["_refusing_old_calls"])
+    body = out[len(PRELUDE) :]
+    assert body.count("\n") == source.count("\n")
+    assert "@_refusing_old_calls" not in body
+    assert "    @other" in body
+    assert "@_refusing_old_calls" in _transform(source)
+
+
 def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() -> None:
     out = _transform(
         """

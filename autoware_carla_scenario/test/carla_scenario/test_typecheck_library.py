@@ -75,7 +75,11 @@ def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
     modules = package_modules()
     for name, reason in UNCALLED.items():
         assert reason.strip(), f"{name}: no reason"
-        module = next((m for m in CHECKED if name.startswith(f"{m}.")), None)
+        # The longest checked module it starts with: trajectory.model, not the
+        # trajectory package.
+        module = max(
+            (m for m in CHECKED if name.startswith(f"{m}.")), key=len, default=None
+        )
         assert module is not None, f"{name}: not in a checked module"
         qualname = name.removeprefix(f"{module}.")
         tree = ast.parse(modules[module].read_text(encoding="utf-8"))
