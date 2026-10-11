@@ -257,8 +257,11 @@ def _wheel_point(wheel: "carla.WheelPhysicsControl") -> "Optional[carla.Location
     point: Optional[carla.Location] = None
     if hasattr(wheel, "position"):
         point = wheel.position
-    if not point and hasattr(wheel, "location"):
-        point = wheel.location
+    if not point:
+        # A false position gives way to the location, or to None without one.
+        point = None
+        if hasattr(wheel, "location"):
+            point = wheel.location
     return point
 
 

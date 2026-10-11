@@ -153,6 +153,73 @@ def test_unreadable_geometry_yields_zero() -> None:
     assert rear_axle_offset(actor) == pytest.approx(0.0)
 
 
+def _rear_wheels(**rear: object) -> list[SimpleNamespace]:
+    front = SimpleNamespace(position=SimpleNamespace(x=1.0, y=1.0, z=1.0))
+    return [front, front, SimpleNamespace(**rear), SimpleNamespace(**rear)]
+
+
+def test_carla_0_9_wheel_positions_give_the_offset() -> None:
+    """World centimetres, brought into the rig frame of the actor."""
+    actor = _actor(_transform(x=10.0))
+    actor.get_physics_control.return_value = SimpleNamespace(
+        wheels=_rear_wheels(position=SimpleNamespace(x=850.0, y=0.0, z=30.0))
+    )
+    assert rear_axle_offset(actor) == pytest.approx(-1.5)
+
+
+def test_a_wheel_without_a_position_reads_its_location() -> None:
+    actor = _actor(_transform(x=10.0))
+    actor.get_physics_control.return_value = SimpleNamespace(
+        wheels=_rear_wheels(
+            position=None, location=SimpleNamespace(x=850.0, y=0.0, z=30.0)
+        )
+    )
+    assert rear_axle_offset(actor) == pytest.approx(-1.5)
+
+
+class _FalsePoint:
+    x = y = z = 850.0
+
+    def __bool__(self) -> bool:
+        return False
+
+
+def test_a_false_position_without_a_location_is_no_point() -> None:
+    # `getattr(w, "position", None) or getattr(w, "location", None)`: None.
+    actor = _actor(_transform(x=10.0))
+    actor.get_physics_control.return_value = SimpleNamespace(
+        wheels=_rear_wheels(position=_FalsePoint())
+    )
+    actor.bounding_box.extent.x = 2.4
+    assert rear_axle_offset(actor) == pytest.approx(-1.2)
+
+
+@pytest.mark.parametrize("error", [AttributeError, RuntimeError, TypeError])
+def test_each_physics_error_falls_back_and_each_bbox_error_yields_zero(
+    error: type[Exception], caplog: pytest.LogCaptureFixture
+) -> None:
+    # Not a MagicMock, which answers a property's AttributeError with a mock.
+    class Actor:
+        def get_physics_control(self) -> None:
+            raise error("no physics")
+
+        @property
+        def bounding_box(self) -> None:
+            raise error("no bbox")
+
+    actor = Actor()
+    with caplog.at_level("WARNING"):
+        assert rear_axle_offset(actor) == pytest.approx(0.0)
+    assert "Could not determine the rear-axle offset" in caplog.text
+
+
+def test_another_physics_error_propagates() -> None:
+    actor = MagicMock()
+    actor.get_physics_control.side_effect = ValueError("not ours")
+    with pytest.raises(ValueError):
+        rear_axle_offset(actor)
+
+
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
