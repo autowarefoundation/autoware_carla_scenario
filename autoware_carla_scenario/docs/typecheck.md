@@ -130,7 +130,7 @@ outside the public API) is refused with a message naming the module.
 A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites `X | None` into
 `Optional[X]`, drops `@dataclass` and resolves `field(...)` defaults, accepts
-keyword-only parameters, gives a list of different conditions the type
+keyword-only parameters, required ones after a default included, gives a list of different conditions the type
 `list[BaseCondition]`, and drops a parameter or return annotation naming a
 class the module defines further down, which Codon cannot name yet). What a
 scenario has to do itself:
@@ -202,6 +202,18 @@ nobody has made compile yet; any other reason names what keeps a module out
 compile). Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
 
+`UNCALLED` names the few public functions and methods of a checked module the
+check leaves out (`module.Class.method`), each with its reason: one whose job
+Codon cannot express, in a module that otherwise compiles. Today that is
+what builds a condition's details (`get_details()`, `to_summary_dict()`,
+`to_dict()`: a `dict[str, Any]` of mixed value types) and what serialises
+them (`ScenarioResult.to_json()`, with `json`). Codon compiles a function
+only when something calls it, so neither its body nor an import made inside
+it is compiled: a module that needs a standard module Codon lacks for one
+function imports it inside that function (`import json` in `to_json()`) and
+lists the function here. A test checks that every entry names a public
+function or method of a checked module.
+
 To check one more module:
 
 1. Move its entry from `EXCLUDED` to `CHECKED`.
@@ -255,6 +267,27 @@ declares under the same name, so a checked module cannot hand its own value to
 a model function that wants the model's: check modules bottom-up, before the
 modules that use them.
 
+### Conditions: the checked base and the model
+
+`conditions.base` is checked, so the checked conditions derive from the real
+`BaseCondition` (`_acs_lib.autoware_carla_scenario__conditions__base`), not
+from the model's. The two are different types that never meet:
+
+- the **scenario check** compiles a scenario against the model only; no
+  checked module is in its workspace, and the model's `BaseCondition`,
+  `_expect_condition` and `_acs_list` (which recognises a condition by the
+  model-only `_acs_condition` marker) are unchanged;
+- the **library check** compiles the checked conditions against the checked
+  base. A checked module that hands a condition to a model function (an
+  action, `scenario_base`) cannot do so until that module is checked too;
+  `_acs_list` gives a list display of checked conditions the type of its
+  first element, so a display mixing two checked condition classes waits for
+  the same.
+
+`BaseCondition.__init_subclass__`, which wraps every subclass's `check()` to
+record its last result for the UI, is in `UNCALLED`: the check sees each
+`check()` as written.
+
 ### Making a module compile
 
 What Codon 0.19 needs that Python does not, beyond
@@ -276,9 +309,25 @@ What Codon 0.19 needs that Python does not, beyond
   `codon/` are. `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base.
+  `typing.Any` imports, and every annotation naming it is dropped.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
+- **No `**` in a dict display** (`{"a": 1, **other}`): Codon's parser fails on
+  it, even in a function it never compiles. Build the dict, then
+  `update()` it.
+- **`dict.get()` takes a default** in Codon, of the value type. Where
+  "absent" has no value of that type, test membership:
+  `d[k] if k in d else None`.
+- **CARLA's containers are not lists.** `world.get_actors()` is a
+  `carla.ActorList`; a parameter that takes it or a list is
+  `Union[carla.ActorList, list[carla.Actor]]`, and the check calls it with
+  each.
+- **Codon cannot hash a class**: `hash((MyClass, x))` names the class by its
+  name instead.
+- **An attribute holds one type**: one assigned a union (`EntityRole | str`)
+  is stored converted where every use converts it anyway
+  (`self._entity_name = str(entity_name)`).
 - **Operators take the operand types they accept**, not `object`. Annotate
   `other` with the class (`def __add__(self, other: FrenetVelocity)`) and a
   scalar with `float`, and keep the `isinstance` guard that returns

@@ -21,6 +21,9 @@ class TimeoutCondition(BaseCondition):
     fail condition; see ``timeout_seconds`` there.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    timeout_seconds: float
+
     def __init__(self, timeout_seconds: float = 60.0, *, label: str) -> None:
         """Initialize the timeout condition.
 

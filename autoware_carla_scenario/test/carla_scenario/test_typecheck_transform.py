@@ -89,6 +89,38 @@ def test_parameters_and_returns_are_rewritten_in_place() -> None:
     assert "    x = 3" in out
 
 
+def test_a_required_keyword_after_a_default_gets_a_placeholder_default() -> None:
+    out = _transform(
+        """
+        def f(a: float = 0.0, *, label: str, n: int = 1, tag) -> None:
+            pass
+
+        def g(a: float, *, label: str) -> None:
+            pass
+        """
+    )
+    assert (
+        "def f(a: float = 0.0, *_acs_kw, label: str = _acs_Required(), n: int = 1, "
+        "tag = _acs_Required()) -> None:"
+    ) in out
+    assert "def g(a: float, *_acs_kw, label: str) -> None:" in out
+
+
+def test_an_empty_collection_default_takes_the_type_of_its_field() -> None:
+    out = _transform(
+        """
+        @dataclass
+        class Result:
+            statuses: list[Status] = field(default_factory=list)
+            details: dict[str, Any] = field(default_factory=dict)
+            names: set[str] = field(default_factory=list)
+        """
+    )
+    assert "    statuses: list[Status] = list[Status]()" in out
+    assert "    details: dict[str, Any] = {}" in out  # Codon cannot express Any
+    assert "    names: set[str] = []" in out  # not the annotation's collection
+
+
 def test_an_annotation_naming_a_class_defined_further_down_is_dropped() -> None:
     out = _transform(
         """
@@ -144,7 +176,7 @@ def test_every_line_stays_where_it_was() -> None:
     )
     assert "dataclass(" not in out.replace("import dataclass", "")
     assert "    ids: list[int] = ([460, 265])" in out
-    assert "    npcs: list[NpcVehicleConfig] = []" in out
+    assert "    npcs: list[NpcVehicleConfig] = list[NpcVehicleConfig]()" in out
     assert "    ground: GroundProjectionConfig = GroundProjectionConfig()" in out
     assert "    limit: Optional[float] = None" in out
 

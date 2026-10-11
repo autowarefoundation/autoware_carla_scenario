@@ -25,6 +25,7 @@ from autoware_carla_scenario.typecheck.library import (
     CHECKED,
     EXCLUDED,
     NOT_YET_CHECKED,
+    UNCALLED,
     package_modules,
 )
 from autoware_carla_scenario.typecheck.library_driver import (
@@ -64,6 +65,32 @@ def test_every_module_is_either_checked_or_excluded() -> None:
 
 def test_every_excluded_module_has_a_reason() -> None:
     assert all(reason.strip() for reason in EXCLUDED.values())
+
+
+def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
+    modules = package_modules()
+    for name, reason in UNCALLED.items():
+        assert reason.strip(), f"{name}: no reason"
+        module = next((m for m in CHECKED if name.startswith(f"{m}.")), None)
+        assert module is not None, f"{name}: not in a checked module"
+        qualname = name.removeprefix(f"{module}.")
+        tree = ast.parse(modules[module].read_text(encoding="utf-8"))
+        owner, _, function = qualname.rpartition(".")
+        body = tree.body
+        if owner:
+            classes = [
+                n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == owner
+            ]
+            assert classes, f"{name}: no class {owner}"
+            body = classes[0].body
+        if owner and function == "__init__":
+            continue  # a generated constructor (a dataclass) has no definition
+        assert [
+            n
+            for n in body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name == function
+        ], f"{name}: no such function"
 
 
 def test_the_checker_itself_is_not_a_module_to_check() -> None:
@@ -253,6 +280,17 @@ def test_a_parameter_the_check_cannot_call_with_is_a_problem_of_the_module() -> 
     assert any("`y` has no annotation" in m for _, m in checks.problems)
 
 
+def test_an_uncalled_function_is_left_out() -> None:
+    checks = render_library_checks(
+        ast.parse(_MODULE), ["angle", "Vector.norm", "Config.__init__", "generic"]
+    )
+    calls = checks.source.splitlines()
+    assert not [c for c in calls if "angle(" in c or ".norm" in c or "Config(" in c]
+    assert "    Vector.zero()" in calls
+    # generic() is not called, so its parameters are no problem.
+    assert checks.problems == []
+
+
 def test_the_driver_runs_the_calls_of_each_module() -> None:
     driver = render_library_driver([f"{_PACKAGE}.kinematics.angle"])
     assert (
@@ -435,3 +473,49 @@ def test_an_unknown_module_is_refused() -> None:
     result = typecheck_library([f"{_PACKAGE}.no_such_module"])
     assert not result.ok
     assert "not a module" in result.diagnostics[0].message
+
+
+_ABSTRACT = """
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float: ...
+
+    def summary(self) -> dict[str, Any]:
+        import json  # noqa: PLC0415
+
+        return json.loads(json.dumps({"area": self.area(), "kind": "shape"}))
+
+
+class Square(Shape):
+    side: float
+
+    def __init__(self, side: float) -> None:
+        self.side = side
+
+    def area(self) -> float:
+        return self.side * self.side
+
+
+def total(shape: Shape) -> float:
+    return shape.area()
+"""
+
+
+@needs_codon
+def test_abc_and_an_uncalled_method_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without the entry, summary() is called: json is reported.
+    result = _check_case(_ABSTRACT, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "json has no Codon model" in result.diagnostics[0].message
+    # With it, neither its import nor its mixed dict reaches Codon.
+    monkeypatch.setitem(check.UNCALLED, f"{_FAKE}.Shape.summary", "uses json")
+    result = _check_case(_ABSTRACT, tmp_path, monkeypatch)
+    assert result.ok, result.format()
