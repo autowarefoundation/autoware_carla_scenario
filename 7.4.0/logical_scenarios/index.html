@@ -1,0 +1,2607 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/7.4.0/logical_scenarios/">
+      
+      
+        <link rel="prev" href="../trajectory/">
+      
+      
+        <link rel="next" href="../coverage/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Logical Scenarios from Routes - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#logical-scenarios-from-routes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Logical Scenarios from Routes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../autoware/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Autoware as the Ego
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../odd/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autoware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The document
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The document">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#route-the-route-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        route -- the route search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route-vertices-path_source-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Route vertices (path_source: route)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anchors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anchors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route_progress-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        route_progress condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appear_on_start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appear_on_start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entities-in-a-logical-scenario" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entities in a logical scenario
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matching-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matching semantics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Matching semantics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#junctions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Junctions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crosswalks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crosswalks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opposite-lanes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opposite lanes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caps-and-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caps and performance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../odd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The document
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The document">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#route-the-route-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        route -- the route search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route-vertices-path_source-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Route vertices (path_source: route)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anchors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anchors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route_progress-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        route_progress condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appear_on_start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appear_on_start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entities-in-a-logical-scenario" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entities in a logical scenario
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matching-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matching semantics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Matching semantics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#junctions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Junctions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crosswalks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crosswalks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opposite-lanes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opposite lanes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caps-and-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caps and performance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="logical-scenarios-from-routes">Logical Scenarios from Routes<a class="headerlink" href="#logical-scenarios-from-routes" title="Permanent link">&para;</a></h1>
+<p>A <em>concrete</em> scenario names lanelets: the ego spawns on lanelet 242, an NPC
+follows vertices in one map's coordinates. It runs on that map only.</p>
+<p>A <em>logical</em> scenario describes the ego's drive as a <strong>route pattern</strong> -- "30 to
+60 m of road with an oncoming lane, a signalised left turn with traffic coming
+from the opposite approach, then up to 40 m out of it" -- and places every
+other road user <strong>relative to that route</strong>. Any map with such a road can run
+it: the route search finds every matching route of the map, and each match is
+one concrete scenario.</p>
+<p>This is the shape a recorded drive (a T4 scene) is transpiled into by
+<code>scene_to_scenario_transpiler</code>: the ego's drive becomes the route pattern,
+each NPC becomes a hidden entity that <strong>appears</strong> when the ego has progressed
+to the point it was first seen, and then drives in <code>FOLLOW</code> mode along
+waypoints that <strong>advance on the ego's progress</strong>.</p>
+<pre class="mermaid"><code>flowchart LR
+    doc["document.yaml&lt;br/&gt;route: segments..."] --&gt; search["route search&lt;br/&gt;(on the run's map)"]
+    search --&gt;|match 0..N| exp["scenario-expand&lt;br/&gt;one case per match"]
+    exp --&gt; run["DeclarativeScenario&lt;br/&gt;ego on the match,&lt;br/&gt;route poses + route_progress"]</code></pre>
+<h2 id="the-document">The document<a class="headerlink" href="#the-document" title="Permanent link">&para;</a></h2>
+<p>Everything is in the <a href="../scenario_editor/">Scenario IR</a> (<code>ScenarioDocument</code>).
+A full example, using every feature this page describes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">logical_left_turn</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Left turn with an oncoming car and a pedestrian</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># --- The ego's drive, as a pattern of road ------------------------------------</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">route</span><span class="p">:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">segments</span><span class="p">:</span><span class="w">                       </span><span class="c1"># in driving order</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lane</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">length</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">min</span><span class="p">:</span><span class="w"> </span><span class="nv">30</span><span class="p p-Indicator">,</span><span class="nt"> max</span><span class="p">:</span><span class="w"> </span><span class="nv">60</span><span class="p p-Indicator">}</span><span class="w">  </span><span class="c1"># m along the route; either bound optional</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">      </span><span class="nt">lanes_left</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">max</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">}</span><span class="w">        </span><span class="c1"># same-direction lanes to the left (count range)</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">      </span><span class="nt">lanes_right</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">             </span><span class="c1"># {} = any</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="nt">opposite_lane</span><span class="p">:</span><span class="w"> </span><span class="s">"yes"</span><span class="w">        </span><span class="c1"># any | yes | no (bare YAML yes/no accepted)</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">shape</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">straight</span><span class="w">             </span><span class="c1"># any | straight | curved_left | curved_right</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">      </span><span class="nt">stop_line</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span><span class="w">              </span><span class="c1"># at the segment's end (its last lanelet)</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">      </span><span class="nt">traffic_light_stop_line</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">junction</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">      </span><span class="nt">turn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">left</span><span class="w">                  </span><span class="c1"># any | left | right | straight</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">      </span><span class="nt">traffic_light</span><span class="p">:</span><span class="w"> </span><span class="s">"yes"</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">      </span><span class="nt">crossing_from_left</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">      </span><span class="nt">crossing_from_right</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">      </span><span class="nt">crossing_from_opposite</span><span class="p">:</span><span class="w"> </span><span class="s">"yes"</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">      </span><span class="nt">crosswalk_entry</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">      </span><span class="nt">crosswalk_exit</span><span class="p">:</span><span class="w"> </span><span class="s">"yes"</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lane</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">      </span><span class="nt">length</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">max</span><span class="p">:</span><span class="w"> </span><span class="nv">40</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">  </span><span class="nt">ego_spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span><span class="w">                </span><span class="c1"># ego spawns 5 m along the route</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">  </span><span class="nt">ego_goal</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                  </span><span class="c1"># ego's goal = route end ...</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">  </span><span class="nt">ego_goal_margin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span><span class="w">            </span><span class="c1"># ... less 2 m</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">  </span><span class="nt">match_index</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                  </span><span class="c1"># which match an unexpanded run takes</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">  </span><span class="nt">max_matches</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64</span><span class="w">                 </span><span class="c1"># 1..1000</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">  </span><span class="nt">seed</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">                      </span><span class="c1"># null: sorted order; int: shuffled with it</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="nt">entities</span><span class="p">:</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> kind</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> driven_by</span><span class="p">:</span><span class="w"> </span><span class="nv">autoware</span><span class="p p-Indicator">}</span><span class="w">   </span><span class="c1"># no spawn/goal needed: the route gives them</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="w">    </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle.tesla.model3</span>
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="w">    </span><span class="nt">spawn</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">hidden</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span><span class="w">         </span><span class="c1"># parked out of the world; no lanelet needed</span>
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker</span>
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pedestrian</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="w">    </span><span class="nt">spawn</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">hidden</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="nt">actions</span><span class="p">:</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="w">  </span><span class="c1"># The oncoming car: appears when the ego is 40 m short of the junction,</span>
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="w">  </span><span class="c1"># 30 m before the junction on the opposite approach, at 8 m/s; drives FOLLOW</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="w">  </span><span class="c1"># mode and waits at the junction entry until the ego is 5 m from it.</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming_drive</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-40.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">}</span><span class="w">     </span><span class="c1"># entity: ego (default)</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a><span class="w">      </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route</span>
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a><span class="w">      </span><span class="nt">following_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
+<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a><span class="w">      </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
+<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8.0</span><span class="w">               </span><span class="c1"># initial speed on appearing, and pace</span>
+<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a><span class="w">      </span><span class="nt">appear_on_start</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a><span class="w">      </span><span class="nt">route_vertices</span><span class="p">:</span>
+<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">-30.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a><span class="w">    </span><span class="nt">advance_conditions</span><span class="p">:</span>
+<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">                 </span><span class="c1"># counted from 1</span>
+<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
+<a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="w">          </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-5.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">greater_than_or_equal</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-69" name="__codelineno-0-69" href="#__codelineno-0-69"></a>
+<a id="__codelineno-0-70" name="__codelineno-0-70" href="#__codelineno-0-70"></a><span class="w">  </span><span class="c1"># A pedestrian: appears on the pavement at the exit crosswalk's right end</span>
+<a id="__codelineno-0-71" name="__codelineno-0-71" href="#__codelineno-0-71"></a><span class="w">  </span><span class="c1"># when the ego enters the junction, and walks across.</span>
+<a id="__codelineno-0-72" name="__codelineno-0-72" href="#__codelineno-0-72"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker_cross</span>
+<a id="__codelineno-0-73" name="__codelineno-0-73" href="#__codelineno-0-73"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
+<a id="__codelineno-0-74" name="__codelineno-0-74" href="#__codelineno-0-74"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker</span>
+<a id="__codelineno-0-75" name="__codelineno-0-75" href="#__codelineno-0-75"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-0-76" name="__codelineno-0-76" href="#__codelineno-0-76"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-77" name="__codelineno-0-77" href="#__codelineno-0-77"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-78" name="__codelineno-0-78" href="#__codelineno-0-78"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-0-79" name="__codelineno-0-79" href="#__codelineno-0-79"></a><span class="w">      </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route</span>
+<a id="__codelineno-0-80" name="__codelineno-0-80" href="#__codelineno-0-80"></a><span class="w">      </span><span class="nt">following_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
+<a id="__codelineno-0-81" name="__codelineno-0-81" href="#__codelineno-0-81"></a><span class="w">      </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
+<a id="__codelineno-0-82" name="__codelineno-0-82" href="#__codelineno-0-82"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.3</span>
+<a id="__codelineno-0-83" name="__codelineno-0-83" href="#__codelineno-0-83"></a><span class="w">      </span><span class="nt">appear_on_start</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-0-84" name="__codelineno-0-84" href="#__codelineno-0-84"></a><span class="w">      </span><span class="nt">route_vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span><span class="w">          </span><span class="c1"># the editor's text form is accepted too</span>
+<a id="__codelineno-0-85" name="__codelineno-0-85" href="#__codelineno-0-85"></a><span class="w">        </span><span class="no">crosswalk junction=0 leg=exit side=right along=-1.5</span>
+<a id="__codelineno-0-86" name="__codelineno-0-86" href="#__codelineno-0-86"></a><span class="w">        </span><span class="no">crosswalk junction=0 leg=exit side=right along=6</span>
+<a id="__codelineno-0-87" name="__codelineno-0-87" href="#__codelineno-0-87"></a>
+<a id="__codelineno-0-88" name="__codelineno-0-88" href="#__codelineno-0-88"></a><span class="w">  </span><span class="c1"># The other route vertex kinds, for reference (an entity "lead" not shown):</span>
+<a id="__codelineno-0-89" name="__codelineno-0-89" href="#__codelineno-0-89"></a><span class="w">  </span><span class="c1">#   - {kind: lane, ds: 15.0, d_lane: -1, offset: 0.0, yaw: null, anchor: null}</span>
+<a id="__codelineno-0-90" name="__codelineno-0-90" href="#__codelineno-0-90"></a><span class="w">  </span><span class="c1">#   - {kind: opposite, ds: 10.0, lane: 1, offset: 0.0, yaw: null, anchor: "segment:0:start"}</span>
+<a id="__codelineno-0-91" name="__codelineno-0-91" href="#__codelineno-0-91"></a><span class="w">  </span><span class="c1">#   - {kind: roadside, ds: 20.0, side: left, kerb_distance: 1.0, yaw: null, anchor: start}</span>
+<a id="__codelineno-0-92" name="__codelineno-0-92" href="#__codelineno-0-92"></a>
+<a id="__codelineno-0-93" name="__codelineno-0-93" href="#__codelineno-0-93"></a><span class="nt">assertions</span><span class="p">:</span>
+<a id="__codelineno-0-94" name="__codelineno-0-94" href="#__codelineno-0-94"></a><span class="w">  </span><span class="nt">pass</span><span class="p">:</span>
+<a id="__codelineno-0-95" name="__codelineno-0-95" href="#__codelineno-0-95"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-96" name="__codelineno-0-96" href="#__codelineno-0-96"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-2.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="nv">end</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-97" name="__codelineno-0-97" href="#__codelineno-0-97"></a><span class="w">  </span><span class="nt">fail</span><span class="p">:</span>
+<a id="__codelineno-0-98" name="__codelineno-0-98" href="#__codelineno-0-98"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">timeout</span>
+<a id="__codelineno-0-99" name="__codelineno-0-99" href="#__codelineno-0-99"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="nv">60</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<h3 id="route-the-route-search"><code>route</code> -- the route search<a class="headerlink" href="#route-the-route-search" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>segments</code></td>
+<td>list</td>
+<td>-- (required, &gt;= 1)</td>
+<td>The pattern, in driving order. Each item is a lane or a junction segment, told apart by <code>kind</code>.</td>
+</tr>
+<tr>
+<td><code>ego_spawn_s</code></td>
+<td>float &gt;= 0</td>
+<td><code>0.0</code></td>
+<td>The ego spawns this far along the route (route s). Must lie on the route.</td>
+</tr>
+<tr>
+<td><code>ego_goal</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>The ego's goal is the route's end (less <code>ego_goal_margin</code>). With <code>true</code> the ego must not name a goal of its own (validation error); set <code>false</code> to keep the ego's own goal.</td>
+</tr>
+<tr>
+<td><code>ego_goal_margin</code></td>
+<td>float &gt;= 0</td>
+<td><code>0.0</code></td>
+<td>How far before the route's end the goal is. The goal must be ahead of the spawn.</td>
+</tr>
+<tr>
+<td><code>match_index</code></td>
+<td>int &gt;= 0</td>
+<td><code>0</code></td>
+<td>Which match a run that was <strong>not</strong> expanded takes. Must be below <code>max_matches</code> (validation error).</td>
+</tr>
+<tr>
+<td><code>max_matches</code></td>
+<td>int 1..1000</td>
+<td><code>64</code></td>
+<td>How many matches the search returns at most.</td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td>int or null</td>
+<td><code>null</code></td>
+<td><code>null</code> keeps matches sorted (by lanelet ids, then start); an int shuffles the full list with <code>random.Random(seed)</code> before <code>max_matches</code> cuts it -- a deterministic sample spread over the map.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Lane segment</strong> (<code>kind: lane</code>) -- a stretch of road between junctions (no
+lanelet with a <code>turn_direction</code> tag):</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Values</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>length</code></td>
+<td><code>{min, max}</code> metres</td>
+<td>Its length along the route. No <code>max</code>: grown to at most <strong>300 m</strong>.</td>
+</tr>
+<tr>
+<td><code>lanes_left</code>, <code>lanes_right</code></td>
+<td><code>{min, max}</code> counts</td>
+<td>How many same-direction lanes lie on that side (routing-graph neighbours, lane-changeable or not, counted outwards), on <strong>every</strong> lanelet of the segment. <code>{min: 1}</code> reads "at least one".</td>
+</tr>
+<tr>
+<td><code>opposite_lane</code></td>
+<td><code>any</code> / <code>yes</code> / <code>no</code></td>
+<td>Whether an opposite-direction lane runs beside the road, on every lanelet of the segment (<code>yes</code>) or on none (<code>no</code>).</td>
+</tr>
+<tr>
+<td><code>shape</code></td>
+<td><code>any</code> / <code>straight</code> / <code>curved_left</code> / <code>curved_right</code></td>
+<td>By the <strong>net heading change</strong> from the segment's start point to its end point: within +-15 deg is <code>straight</code>, above +15 deg (anticlockwise) <code>curved_left</code>, below -15 deg <code>curved_right</code>. An S-bend with no net change reads straight.</td>
+</tr>
+<tr>
+<td><code>stop_line</code></td>
+<td><code>any</code> / <code>yes</code> / <code>no</code></td>
+<td>Whether its <strong>last</strong> lanelet owns a stop line (any of the three patterns <code>has_stop_line</code> uses).</td>
+</tr>
+<tr>
+<td><code>traffic_light_stop_line</code></td>
+<td><code>any</code> / <code>yes</code> / <code>no</code></td>
+<td>Whether its last lanelet's stop line is a traffic light's.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Junction segment</strong> (<code>kind: junction</code>) -- the ego's way through a junction:
+one to four consecutive lanelets carrying <code>turn_direction</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Values</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>turn</code></td>
+<td><code>any</code> / <code>left</code> / <code>right</code> / <code>straight</code></td>
+<td>The lanelets' <code>turn_direction</code>: <code>straight</code> when all are straight, else the one non-straight tag (lanelets turning both ways match only <code>any</code>).</td>
+</tr>
+<tr>
+<td><code>traffic_light</code></td>
+<td><code>any</code> / <code>yes</code> / <code>no</code></td>
+<td>A traffic-light regulatory element on one of its lanelets or on the lanelet entering it.</td>
+</tr>
+<tr>
+<td><code>crossing_from_left</code> / <code>_right</code> / <code>_opposite</code></td>
+<td><code>any</code> / <code>yes</code> / <code>no</code></td>
+<td>Whether a lanelet of the same junction, entering it <strong>from that approach, conflicts</strong> with the ego's way (see <em>Junctions</em> below).</td>
+</tr>
+<tr>
+<td><code>crosswalk_entry</code> / <code>crosswalk_exit</code></td>
+<td><code>any</code> / <code>yes</code> / <code>no</code></td>
+<td>Whether a crosswalk crosses the ego's path on the way in / out (see <em>Crosswalks</em> below).</td>
+</tr>
+</tbody>
+</table>
+<p>Unknown keys are refused (<code>extra="forbid"</code>), so a typo is an error, not a
+silently ignored constraint. A junction segment does not take lane keys and
+vice versa.</p>
+<h3 id="route-vertices-path_source-route">Route vertices (<code>path_source: route</code>)<a class="headerlink" href="#route-vertices-path_source-route" title="Permanent link">&para;</a></h3>
+<p>A <em>Follow Trajectory</em> card with <code>path_source: route</code> lists its vertices in
+<code>route_vertices</code>: a list of mappings, each with a <code>kind</code>, or the editor's text
+form, one vertex per line, <code>kind key=value ...</code> (commas allowed between pairs;
+blank lines and <code>#</code> comments skipped and not counted). Unstated keys take
+their defaults. At least two vertices.</p>
+<table>
+<thead>
+<tr>
+<th><code>kind</code></th>
+<th>Keys (default)</th>
+<th>Python class</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lane</code></td>
+<td><code>ds</code> (0), <code>offset</code> (0), <code>d_lane</code> (0), <code>yaw</code> (null), <code>anchor</code> (null)</td>
+<td><code>RouteLanePose</code></td>
+</tr>
+<tr>
+<td><code>opposite</code></td>
+<td><code>ds</code> (0), <code>lane</code> (1), <code>offset</code> (0), <code>yaw</code> (null), <code>anchor</code> (null)</td>
+<td><code>RouteOppositePose</code></td>
+</tr>
+<tr>
+<td><code>crossing</code></td>
+<td><code>junction</code> (0), <code>approach</code> (<code>left</code>), <code>distance</code> (0), <code>turn</code> (null), <code>offset</code> (0), <code>yaw</code> (null)</td>
+<td><code>RouteCrossingPose</code></td>
+</tr>
+<tr>
+<td><code>crosswalk</code></td>
+<td><code>junction</code> (0), <code>leg</code> (<code>entry</code>), <code>side</code> (<code>right</code>), <code>along</code> (0), <code>yaw</code> (null)</td>
+<td><code>RouteCrosswalkPose</code></td>
+</tr>
+<tr>
+<td><code>roadside</code></td>
+<td><code>ds</code> (0), <code>side</code> (<code>left</code>), <code>kerb_distance</code> (0.5), <code>yaw</code> (null), <code>anchor</code> (null)</td>
+<td><code>RouteRoadsidePose</code></td>
+</tr>
+</tbody>
+</table>
+<p>All are resolved <strong>when the action starts</strong> (and again at every new run of
+it), against the scenario's route match; an unanchored <code>ds</code> counts from the
+ego's position projected onto the route at that moment. <code>yaw</code> (radians,
+anticlockwise positive) is relative to the direction named in each row; <code>null</code>
+faces along the trajectory. <code>junction</code> counts the route's <strong>junction segments</strong>
+from 0.</p>
+<ul>
+<li><strong><code>lane</code></strong> -- route s <code>base + ds</code>, then <code>d_lane</code> same-direction lanes across
+  (<code>+1</code> left, <code>-1</code> right, through routing-graph neighbours, lane-changeable or
+  not; the lane change is made abreast, not at equal s), <code>offset</code> metres from
+  that lane's centreline (positive left). Before the route's start or past its
+  end the lane is followed on (the straightest predecessor / successor).</li>
+<li><strong><code>opposite</code></strong> -- the lane running the other way abreast of route s
+  <code>base + ds</code>, on whichever side the opposite road is (left- and right-hand
+  traffic alike); <code>lane</code> counts from the centre line outwards (1 = next to
+  it). The pose is on that lane's lanelet abreast of the route point, at the
+  point's projection onto it -- also where the two directions are split into
+  lanelets at different places. Faces that lane's own direction.</li>
+<li><strong><code>crossing</code></strong> -- a lanelet of junction <code>junction</code> entering from <code>approach</code>
+  (<code>left</code>, <code>right</code> or <code>opposite</code>, seen from the ego), whose path through the
+  junction turns <code>turn</code> if given; of several, one whose path conflicts with
+  the ego's way wins, then the lowest id. <code>distance</code> is metres along that path
+  from where it enters the junction (its first junction lanelet's start):
+  negative is back on its approach road (straightest predecessors), positive
+  through the junction and beyond.</li>
+<li><strong><code>crosswalk</code></strong> -- the crosswalk across the <code>leg</code> (<code>entry</code>/<code>exit</code>) of
+  junction <code>junction</code> (of several, the one nearest the junction). <code>side</code> picks
+  its end on the ego's left or right; <code>along</code> is metres from that end towards
+  the other (negative: behind the end, on the pavement). Faces across.</li>
+<li><strong><code>roadside</code></strong> -- abreast of route s <code>base + ds</code>, beyond the road's edge on
+  <code>side</code> -- past every same-direction lane and, when the opposite road is on
+  that side, past it too, taking each lane's lanelet abreast of the route
+  point -- <code>kerb_distance</code> metres out (negative: onto the road). Faces along
+  the route.</li>
+</ul>
+<p>A pose the map cannot give -- no opposite lane there, no crosswalk on that
+leg, no lanelet from that approach, a <code>ds</code> running off the map -- raises when
+the action starts, naming the vertex and what is missing. The validator checks
+what it can without the map: the rows' shape, at least two vertices, and that
+every <code>anchor</code> and <code>junction</code> index exists in the pattern.</p>
+<h3 id="anchors">Anchors<a class="headerlink" href="#anchors" title="Permanent link">&para;</a></h3>
+<p>An anchor names a point of the route by its role, so a distance means the same
+thing on every map:</p>
+<table>
+<thead>
+<tr>
+<th>Anchor</th>
+<th>Route s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start</code></td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td><code>end</code></td>
+<td>the route's length</td>
+</tr>
+<tr>
+<td><code>segment:K:start</code>, <code>segment:K:end</code></td>
+<td>where segment <code>K</code> (from 0, all segments) starts / ends</td>
+</tr>
+<tr>
+<td><code>junction:K:entry</code>, <code>junction:K:exit</code></td>
+<td>where junction segment <code>K</code> (from 0, junction segments only) starts / ends</td>
+</tr>
+</tbody>
+</table>
+<h3 id="route_progress-condition"><code>route_progress</code> condition<a class="headerlink" href="#route_progress-condition" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">                 </span><span class="c1"># null: the ego</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">rule</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">greater_than_or_equal</span><span class="w">  </span><span class="c1"># less_than | less_than_or_equal | greater_than | greater_than_or_equal | equal_to</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-15.0</span><span class="w">                 </span><span class="c1"># metres past the anchor; negative is before it</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="w">   </span><span class="c1"># default start</span>
+</code></pre></div>
+<p>Holds when the entity's <strong>route s</strong> -- its position projected onto the route's
+reference line (the route lanelets' centrelines end to end) -- compares with
+<code>anchor_s + value</code> by <code>rule</code>. Projection makes it robust to lane changes onto
+parallel lanes: a vehicle on the lane beside the route is at the route s it is
+abreast of. Successive checks look within 40 m of the last answer, so a route
+that passes the same place twice is followed pass by pass; when the entity is
+more than 12 m from the route within that window (it was teleported -- an
+appearing entity --, or the condition was not checked for a while) the whole
+route is searched instead and the nearer answer kept. The result is clamped
+to <code>[0, length]</code>. An entity 50 m or more below the route where it projects
+(spawned hidden, parked under the map) or not in the world has <strong>no</strong>
+progress: the condition does not hold, and <code>progress</code> is <code>None</code>. Usable anywhere a condition is: a trigger, an
+assertion, inside <code>all</code>/<code>any</code>/<code>not</code>, and as a <strong>waypoint condition</strong>
+(<code>advance_conditions</code>) -- a vertex departs when the ego has progressed to the
+recorded point.</p>
+<h3 id="appear_on_start"><code>appear_on_start</code><a class="headerlink" href="#appear_on_start" title="Permanent link">&para;</a></h3>
+<p>A <em>Follow Trajectory</em> parameter (bool, default <code>false</code>): when a run of the
+action starts, the entity is put on the first vertex (on the point
+<code>initial_distance_offset</code> names), facing along the path, physics on, moving at
+<code>speed_ms</code> (standing if unset) -- then follows the trajectory as usual, in
+either mode, vehicle or pedestrian. It is what brings in an entity spawned
+<code>hidden</code>. It cannot be combined with <code>hidden_outside_trajectory</code>
+(validation error). An appearing entity that is not spawned hidden draws a
+warning (it would stand at its spawn until then).</p>
+<h3 id="entities-in-a-logical-scenario">Entities in a logical scenario<a class="headerlink" href="#entities-in-a-logical-scenario" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The <strong>ego</strong> needs no spawn lanelet and, with <code>ego_goal: true</code>, no goal: the
+  route gives both. An Autoware ego is valid without its own goal then.</li>
+<li>A <strong>hidden</strong> entity needs no spawn lanelet either: it is parked out of the
+  world -- 500 m under the ego's spawn, 10 m apart -- until an action brings it
+  in.</li>
+<li>A visible entity on a fixed lanelet draws a warning: that lanelet exists on
+  one map only.</li>
+<li>A route search and a lanelet constraint search cannot both drive the
+  expansion (validation error).</li>
+</ul>
+<h2 id="matching-semantics">Matching semantics<a class="headerlink" href="#matching-semantics" title="Permanent link">&para;</a></h2>
+<p>A <strong>match</strong> is a sequence of lanelets, each following the one before in the
+routing graph (vehicle participant, German traffic rules -- the same graph the
+constraint sweeper builds; no lane changes, no lanelet twice), cut into the
+pattern's segments in order:</p>
+<ul>
+<li>lane segments cover non-junction lanelets, junction segments junction
+  lanelets (<code>turn_direction</code> tagged), so a lane segment always ends where the
+  next junction begins;</li>
+<li>segments meet at lanelet boundaries, except that a <strong>first</strong> lane segment may
+  start part-way into its first lanelet and a <strong>last</strong> lane segment may end
+  part-way into its last -- which is how their length is kept within range.</li>
+</ul>
+<p>The part of the road a match covers is fixed, so one road is found once:</p>
+<ul>
+<li>a <strong>first lane segment</strong> is grown <em>backwards</em> from where it ends to its
+  maximum length and cut there; if the road runs out first (a junction, or
+  nothing precedes), it starts where the road does;</li>
+<li>a <strong>last lane segment</strong> is grown forwards to its maximum, and ends earlier
+  only at a junction or where the road ends;</li>
+<li>a <strong>lone lane segment</strong> (the whole pattern) starts where its road starts;</li>
+<li>every <strong>interior lane segment</strong> covers whole lanelets; its length is their
+  sum and must lie in its range;</li>
+<li>a <strong>first junction segment</strong> starts where the junction does (its first
+  lanelet has no junction predecessor); a <strong>last</strong> one ends where it does.</li>
+</ul>
+<p>At a fork every branch is tried, and where two adjacent lane segments may meet
+at more than one lanelet boundary, each split is its own match. Matches are
+deduplicated by (lanelet ids, start, end, lanelets per segment) and sorted by
+the same; <code>RouteMatch.index</code> is the position in the returned list.</p>
+<p><strong>Route s</strong> runs along the route lanelets' centrelines, <code>0</code> at the match's
+start (<code>start_s</code> metres into its first lanelet) to its length (<code>end_s</code> metres
+into its last).</p>
+<h3 id="junctions">Junctions<a class="headerlink" href="#junctions" title="Permanent link">&para;</a></h3>
+<p>The ego's <strong>entry heading</strong> is its way's heading where it enters (the start of
+its first junction lanelet). The junction's <strong>members</strong> are the junction
+lanelets reachable from the ego's through the routing graph's <code>conflicting</code>
+relation (transitively), starting within <strong>60 m</strong> of the centroid of the
+ego's way. Each is walked back through junction predecessors (the straightest
+one, at most 4) to the first junction lanelet of its <strong>path</strong>: a member is that
+path, named by its first lanelet, with the path's turn (<code>straight</code>, or its one
+non-straight <code>turn_direction</code>); paths are deduplicated by (first lanelet,
+turn). A member's <strong>approach</strong> is the angle from the ego's entry heading to
+its first lanelet's heading where it enters:</p>
+<table>
+<thead>
+<tr>
+<th>Angle</th>
+<th>Approach</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>within +-45 deg</td>
+<td>the ego's own (ignored)</td>
+</tr>
+<tr>
+<td>-45 to -135 deg (clockwise: it drives towards the ego's right)</td>
+<td><code>left</code></td>
+</tr>
+<tr>
+<td>+45 to +135 deg</td>
+<td><code>right</code></td>
+</tr>
+<tr>
+<td>beyond +-135 deg</td>
+<td><code>opposite</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>crossing_from_X: yes</code> needs a member from approach X with a lanelet that
+<strong>directly conflicts</strong> with one of the ego's junction lanelets. A <code>crossing</code> <em>pose</em> takes
+any member from that approach (conflicting ones first).</p>
+<h3 id="crosswalks">Crosswalks<a class="headerlink" href="#crosswalks" title="Permanent link">&para;</a></h3>
+<p>A crosswalk is a lanelet of subtype <code>crosswalk</code>. Along the ego's local path --
+the last 10 m of the lanelet it enters on, its junction lanelets, the first
+10 m of the lanelet it leaves on -- with <code>u = 0</code> at the junction entry and <code>J</code>
+the length of its way through, a crosswalk whose centreline crosses the path
+at <code>u</code> is on the <strong>entry</strong> leg for <code>-10 m &lt;= u &lt;= J/2</code> and on the <strong>exit</strong> leg
+for <code>J/2 &lt; u &lt;= J + 10 m</code>. For a junction at the end of the route, the lanelet
+it leaves on is the straightest successor (and for one at the start, the
+straightest predecessor is the one it enters on).</p>
+<h3 id="opposite-lanes">Opposite lanes<a class="headerlink" href="#opposite-lanes" title="Permanent link">&para;</a></h3>
+<p>The opposite lane abreast of a point is a road lanelet whose heading differs
+by at least <strong>150 deg</strong>, beside the outermost same-direction lane on either
+side there: one sharing that lane's outer bound, else one within <strong>4 m</strong>
+beyond it (probed 1 m past the bound's nearest point). Both lanes are followed
+along (forwards and backwards through the routing graph, not across a
+junction) to the lanelet whose centreline is nearest the point, so it is the
+lanelet actually abreast. Both sides are looked at, so a left-hand-traffic map
+(opposite road on the right) answers the same way as a right-hand one. For
+the search's <code>opposite_lane</code>, a lanelet "has" an opposite lane when one is
+abreast of its middle.</p>
+<h2 id="caps-and-performance">Caps and performance<a class="headerlink" href="#caps-and-performance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Cap</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lane segment without <code>length.max</code></td>
+<td>grown to 300 m</td>
+</tr>
+<tr>
+<td>Lanelets per lane segment</td>
+<td>50</td>
+</tr>
+<tr>
+<td>Lanelets per junction segment</td>
+<td>4</td>
+</tr>
+<tr>
+<td>DFS steps per search</td>
+<td>200 000 (then the matches found so far are returned and a warning is logged)</td>
+</tr>
+<tr>
+<td><code>max_matches</code></td>
+<td>default 64, at most 1000</td>
+</tr>
+</tbody>
+</table>
+<p>The search is a depth-first walk from every lanelet that may start the first
+segment, in id order. Unshuffled (<code>seed: null</code>) it stops once it has
+<code>max_matches</code> matches, since later starting lanelets sort later. Measured on
+the nishishinjuku fixture map (884 road lanelets): a lane / junction / lane
+pattern with the default <code>max_matches: 64</code> takes about 0.2 s; one that has to
+walk the whole map -- <code>max_matches: 200</code>, or a five-segment pattern with no
+match -- takes about 3.5-4 s. Properties are cached per lanelet.</p>
+<h2 id="running-it">Running it<a class="headerlink" href="#running-it" title="Permanent link">&para;</a></h2>
+<p><strong>Expansion.</strong> <code>scenario-expand</code> (and the <code>lanelet_constraint</code> Hydra sweeper)
+read the document's <code>sweep.route</code> and emit, per match:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ego.spawn_lanelet_id=101 ego.spawn_s=45.0
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>ego.goal_lanelet_id=301 ego.goal_s=38.0                 # with ego_goal
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>scenario.route.index=0
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>scenario.route.lanelet_ids=[101,102,602,301]
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>scenario.route.start_s=40.0 scenario.route.end_s=40.0
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>scenario.route.segment_kinds=[lane,junction,lane]
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>scenario.route.segment_ends=[60.0,78.5,118.5]           # route s where each segment ends
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>scenario.route.segment_lanelet_counts=[2,1,1]
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>scenario.route.junction_turns=[left]
+</code></pre></div>
+<p>A match the ego cannot be placed on (spawn past the end, goal not ahead of the
+spawn) is skipped and logged. The exported Hydra config declares every
+<code>scenario.route.*</code> key, empty, so struct mode accepts them.</p>
+<p><strong>A run.</strong> <code>DeclarativeScenario</code> takes the match it was given; with none (an
+unexpanded run) it searches the loaded map and takes <code>match_index</code>, spawning
+the ego <code>ego_spawn_s</code> along it and sending it to the end. Either way the match
+becomes the scenario's route (<code>autoware_carla_scenario.route.set_scenario_route</code>),
+and the ego is sent along it:</p>
+<ul>
+<li>an <strong>Autoware</strong> ego gets the route's lanelets between its spawn and goal
+  lanelets as waypoints (unless waypoints were configured), so it plans the
+  matched route rather than the shortest one;</li>
+<li>an ego the <strong>TrafficManager</strong> drives gets a <code>TurnAction</code> per junction
+  segment, in the junction's actual <code>turn_direction</code>, triggered when it is
+  100 m short of the junction (or past the previous one).</li>
+</ul>
+<h2 id="python-api">Python API<a class="headerlink" href="#python-api" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">RouteLanePose</span><span class="p">,</span> <span class="n">RouteOppositePose</span><span class="p">,</span> <span class="n">RouteCrossingPose</span><span class="p">,</span> <span class="n">RouteCrosswalkPose</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">RouteRoadsidePose</span><span class="p">,</span> <span class="n">RouteProgressCondition</span><span class="p">,</span> <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">parse_route_search</span><span class="p">,</span> <span class="n">RouteMatch</span><span class="p">,</span> <span class="n">set_scenario_route</span><span class="p">,</span> <span class="n">scenario_route</span><span class="p">,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">)</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.search</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_route_matches</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.frame</span><span class="w"> </span><span class="kn">import</span> <span class="n">RouteFrame</span><span class="p">,</span> <span class="n">ego_placement</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.positions</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_route_pose</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">parse_route_search</span><span class="p">({</span><span class="s2">"segments"</span><span class="p">:</span> <span class="p">[</span><span class="o">...</span><span class="p">]})</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">matches</span> <span class="o">=</span> <span class="n">find_route_matches</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="p">,</span> <span class="n">routing_graph</span><span class="p">)</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="n">set_scenario_route</span><span class="p">(</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>          <span class="c1"># laid on the loaded map when first used</span>
+</code></pre></div>
+<p>Every name imported from the top-level package is mirrored in the Codon model,
+so a hand-written scenario using them passes the <a href="../typecheck/">static check</a>.</p>
+<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li>One route per scenario, the ego's. Route poses are always measured on it.
+  The route is process-wide; the runner clears it before every scenario's
+  setup, and a scenario with a route search sets it there.</li>
+<li>Lane properties hold on <em>every</em> lanelet of a segment; a road whose lane count
+  changes mid-way needs two lane segments (whose boundary is then a lanelet
+  boundary).</li>
+<li><code>shape</code> is the net heading change; it does not see an S-bend.</li>
+<li>Junction membership relies on the map's lanelets overlapping (<code>conflicting</code>);
+  a junction whose crossing lanelets never overlap the ego's has no members.</li>
+<li>A crosswalk is recognised only as a lanelet of subtype <code>crosswalk</code> crossing
+  the ego's local path.</li>
+<li>Without a time reference a <code>FOLLOW</code> entity drives every segment at
+  <code>speed_ms</code>; recorded speed changes between vertices are expressed by waypoint
+  conditions only.</li>
+<li><code>appear_on_start</code> does not take the entity out again at the end; combine with
+  an <code>until</code> condition or leave it standing.</li>
+</ul>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
