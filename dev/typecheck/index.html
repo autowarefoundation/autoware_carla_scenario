@@ -2052,29 +2052,30 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 66 of
-the package's 217 modules (30%; about 9,600 of 66,600 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 73 of
+the package's 218 modules (33%; about 10,400 of 66,700 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
-nearly every condition, the action base with the environment and
-traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
-measures, the ODD units and the CARLA-only helpers. 30 functions and methods
-of those modules are <code>UNCALLED</code>, almost all of them a condition's
-<code>get_details()</code>. The 151 <code>EXCLUDED</code> modules fall into three groups:</p>
+nearly every condition, the action base with the environment, traffic-signal,
+lane-change, set-speed, turn and walk-straight actions, the ego, NPC vehicle
+and pedestrian entities and the entity registry, the measures, the ODD units
+and the CARLA-only helpers. 33 functions and methods of those modules are
+<code>UNCALLED</code>, almost all of them a condition's <code>get_details()</code>. The 145
+<code>EXCLUDED</code> modules fall into three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (<code>pathlib</code>, <code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
-<li><strong>About 30 build on an excluded module</strong>: the entity actions, through
-  <code>entity.registry</code>; the example scenarios, through <code>examples.configs</code>;
-  the signal controllers, the traffic backends and the authoring compiler.</li>
-<li><strong>About 15 hold values Codon has no type for</strong>: <code>Any</code> (<code>entity.registry</code>,
-  which holds an entity of any kind, <code>coverage.items</code>, <code>odd.model</code>), a class
-  or a callable of any value as a parameter (<code>scenario_base</code>'s <code>ego_type</code>,
-  callbacks and measure expressions), a union-typed attribute, which crashes
-  Codon 0.19 (<code>RelativeLanePose.entity_ref</code>), a variable-length tuple
-  (<code>route.model</code>), or a class as a value (<code>utils.config</code>).</li>
+<li><strong>About 25 build on an excluded module</strong>: the example scenarios, through
+  <code>examples.configs</code>; the signal controllers, the traffic backends and the
+  authoring compiler.</li>
+<li><strong>About 12 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
+  <code>odd.model</code>), a class or a callable of any value as a parameter
+  (<code>scenario_base</code>'s <code>ego_type</code>, callbacks and measure expressions), a
+  union-typed attribute, which crashes Codon 0.19
+  (<code>RelativeLanePose.entity_ref</code>), a variable-length tuple (<code>route.model</code>,
+  <code>actions.routing</code>'s waypoints), or a class as a value (<code>utils.config</code>).</li>
 </ul>
 <p>The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.</p>
@@ -2157,9 +2158,10 @@ record its last result for the UI, is in <code>UNCALLED</code>: the check sees e
 <code>BaseCondition</code>, so it imports it from <code>conditions.base</code> rather than from the
 <code>conditions</code> package, which the model stands in for until it is checked. Its
 <code>BaseAction</code> and <code>ActionState</code> are again not the model's, so
-<code>conditions.action_state</code> watches checked actions. An action that hands a
-condition from an unchecked module to its base (<code>SetSpeedAction</code>'s default
-<code>SpeedCondition</code>) waits for that module.</p>
+<code>conditions.action_state</code> watches checked actions. An action that hands its
+base a condition of its own making imports that condition from its checked
+module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> from
+<code>conditions.composition.speed</code>); one whose module is not checked waits for it.</p>
 <h3 id="making-a-module-compile">Making a module compile<a class="headerlink" href="#making-a-module-compile" title="Permanent link">&para;</a></h3>
 <p>What Codon 0.19 needs that Python does not, beyond
 <a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
@@ -2296,6 +2298,20 @@ condition from an unchecked module to its base (<code>SetSpeedAction</code>'s de
 - <strong><code>getattr(x, name, None)</code></strong> for an attribute a value may lack at run time
   (a mock in a test) becomes <code>try: v = x.name</code> / <code>except AttributeError:</code>,
   which reads the attribute once, as <code>getattr</code> did.
+- <strong><code>hasattr</code> on an <code>Optional</code> is decided on the <code>Optional</code></strong>, which has
+  none of its value's attributes: assign the value to an annotated local
+  after the <code>None</code> test (<code>walker: PedestrianEntity = entity</code>) and ask that.
+- <strong>An entity looked up by role is looked up by kind</strong>:
+  <code>find_entity_by_role_name</code> returns an entity of any kind (<code>Optional[Any]</code>),
+  so a checked module asks <code>entity.registry</code> for the kind it acts on,
+  <code>find_vehicle_entity</code> (a <code>BackendDriven</code>: an NPC vehicle or the ego) or
+  <code>find_pedestrian_entity</code>. An object of neither kind (a test double) is
+  registered as both, so at run time every lookup still finds it; keep a
+  <code>hasattr</code> test where the code relied on <code>getattr(entity, name, None)</code>.
+  Where the code called a method the other kind lacks, look the other kind
+  up when the lookup misses and raise the <code>AttributeError</code> the call raised
+  (<code>LaneChangeAction</code>, <code>TurnAction</code> and <code>SetSpeedAction</code> on a pedestrian),
+  so a wrong kind still fails rather than reading as an entity not found.
 - <strong><code>dict.get</code> takes its default</strong>: Codon's has no one-argument form. Test
   <code>key in d</code> and index instead of <code>d.get(key)</code>.
 - <strong>No sign in an f-string format spec</strong>: Codon's parser rejects
@@ -2354,7 +2370,7 @@ condition from an unchecked module to its base (<code>SetSpeedAction</code>'s de
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 05:24:31 UTC"><span class="timeago" datetime="2026-10-11T05:24:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 05:24:31 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 06:42:30 UTC"><span class="timeago" datetime="2026-10-11T06:42:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 06:42:30 UTC">2026-10-11</span>
   </span>
 
     
