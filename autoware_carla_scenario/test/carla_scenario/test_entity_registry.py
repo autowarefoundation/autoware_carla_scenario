@@ -30,6 +30,8 @@ from autoware_carla_scenario.entity.registry import (
     find_pedestrian_entity,
     find_vehicle_entity,
     register_entity,
+    register_pedestrian_entity,
+    register_vehicle_entity,
     unregister_entity,
 )
 
@@ -101,6 +103,52 @@ def test_unregistering_forgets_every_kind() -> None:
     assert find_entity_by_role_name("npc1") is None
     assert find_vehicle_entity("npc1") is None
     assert find_pedestrian_entity("npc1") is None
+
+
+def test_register_vehicle_entity_finds_it_as_a_vehicle_only() -> None:
+    vehicle = _vehicle()
+    register_vehicle_entity(EntityRole("npc1"), vehicle)
+
+    assert find_entity_by_role_name("npc1") is vehicle
+    assert find_vehicle_entity("npc1") is vehicle
+    assert find_pedestrian_entity("npc1") is None
+
+
+def test_register_pedestrian_entity_finds_it_as_a_pedestrian_only() -> None:
+    walker = _pedestrian()
+    register_pedestrian_entity(EntityRole("walker1"), walker)
+
+    assert find_entity_by_role_name("walker1") is walker
+    assert find_pedestrian_entity("walker1") is walker
+    assert find_vehicle_entity("walker1") is None
+
+
+def test_the_typed_registrations_replace_a_role_across_kinds() -> None:
+    register_entity("x", MagicMock())
+    walker = _pedestrian()
+    register_pedestrian_entity("x", walker)
+    assert find_vehicle_entity("x") is None
+    assert find_pedestrian_entity("x") is walker
+
+    vehicle = _vehicle()
+    register_vehicle_entity("x", vehicle)
+    assert find_vehicle_entity("x") is vehicle
+    assert find_pedestrian_entity("x") is None
+
+    register_pedestrian_entity("x", walker)
+    assert find_vehicle_entity("x") is None
+    assert find_entity_by_role_name("x") is walker
+
+
+def test_the_typed_registrations_are_forgotten_and_cleared() -> None:
+    register_vehicle_entity("npc1", _vehicle())
+    register_pedestrian_entity("walker1", _pedestrian())
+    unregister_entity("npc1")
+    assert find_entity_by_role_name("npc1") is None
+    assert find_entity_by_role_name("walker1") is not None
+
+    clear_entities()
+    assert find_entity_by_role_name("walker1") is None
 
 
 def test_walking_a_vehicle_says_it_is_not_a_pedestrian(
