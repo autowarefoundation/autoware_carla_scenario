@@ -72,6 +72,20 @@ def test_an_annotation_codon_cannot_express_is_dropped(python: str) -> None:
     assert _annotation(python) is None
 
 
+@pytest.mark.parametrize(
+    ("python", "codon"),
+    [
+        ("'carla.TrafficLightState'", "int"),
+        ("Optional[carla.LaneType]", "Optional[int]"),
+        ("list[carla.VehicleLightState]", "list[int]"),
+    ],
+)
+def test_a_carla_int_enumeration_is_an_int(python: str, codon: str) -> None:
+    # typesafe_carla's Codon library has them as values whose members are
+    # ints, not as types.
+    assert _annotation(python) == codon
+
+
 def test_a_class_level_declaration_keeps_an_abstract_collection() -> None:
     # The typing shim maps it onto List; a declaration cannot be dropped.
     assert _annotation("Sequence[int]", class_level=True) == "Sequence[int]"

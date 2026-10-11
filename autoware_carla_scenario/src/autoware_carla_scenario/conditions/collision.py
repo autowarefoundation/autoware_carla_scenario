@@ -84,6 +84,17 @@ class CollisionCondition(BaseCondition):
     # Minimum interval between ego vehicle search attempts (seconds).
     _ATTACH_RETRY_INTERVAL: float = 1.0
 
+    # Declared for the static check (docs/typecheck.md).
+    _min_impulse: float
+    _target: Optional[str]
+    _target_type: CollisionTargetType
+    _sensor: Optional["carla.Actor"]
+    _lock: threading.Lock
+    _collided: bool
+    _other_type_id: Optional[str]
+    _last_attach_attempt: float
+    _cached_result: Optional[ScenarioResult]
+
     def __init__(
         self,
         min_impulse: float = 0.0,
@@ -132,7 +143,9 @@ class CollisionCondition(BaseCondition):
         collision the scenario is about would never be seen.
         """
         if self._target is not None:
-            return other.attributes.get("role_name") == self._target
+            attributes = other.attributes
+            # Codon's dict.get() takes a default (docs/typecheck.md).
+            return "role_name" in attributes and attributes["role_name"] == self._target
         return self._target_type.matches(other.type_id)
 
     def _on_collision(self, event: "carla.CollisionEvent") -> None:
@@ -141,12 +154,30 @@ class CollisionCondition(BaseCondition):
         magnitude = math.sqrt(impulse.x**2 + impulse.y**2 + impulse.z**2)
         if magnitude < self._min_impulse:
             return
-        if not self._wanted(event.other_actor):
+        # Annotated, so Codon unwraps its Optional (docs/typecheck.md).
+        other: "carla.Actor" = event.other_actor
+        if not self._wanted(other):
             return
         with self._lock:
             if not self._collided:
                 self._collided = True
-                self._other_type_id = event.other_actor.type_id
+                self._other_type_id = other.type_id
+
+    def _on_sensor_data(
+        self, data: Union["carla.CollisionEvent", "carla.SensorData"]
+    ) -> None:
+        """The sensor's listener: hands the collision event to :meth:`_on_collision`.
+
+        CARLA's Python API, and typesafe_carla's CPython package, call it with
+        the ``carla.CollisionEvent`` itself.  typesafe_carla's Codon library
+        calls it with the ``carla.SensorData``, which ``as_collision()`` turns
+        into the event; the static check sees that branch, and Python, whose
+        ``CollisionEvent`` has no ``as_collision``, never takes it.
+        """
+        if hasattr(data, "as_collision"):
+            self._on_collision(data.as_collision())
+        else:
+            self._on_collision(data)
 
     def _try_attach_sensor(self, world: "carla.World", elapsed: float) -> None:
         """Search for the ego vehicle and attach a collision sensor to it.
@@ -160,17 +191,22 @@ class CollisionCondition(BaseCondition):
         self._last_attach_attempt = elapsed
 
         actors = world.get_actors().filter("vehicle.*")
-        ego = next(
-            (a for a in actors if a.attributes.get("role_name") == str(EGO_ROLE_NAME)),
-            None,
-        )
-        if ego is None:
+        ego_name = str(EGO_ROLE_NAME)
+        # The first vehicle with the ego's role name; Codon's dict.get() takes
+        # a default (docs/typecheck.md).
+        found = [
+            a
+            for a in actors
+            if "role_name" in a.attributes and a.attributes["role_name"] == ego_name
+        ]
+        if not found:
             return
+        ego = found[0]
 
         blueprint_library = world.get_blueprint_library()
         sensor_bp = blueprint_library.find("sensor.other.collision")
         self._sensor = world.spawn_actor(sensor_bp, carla.Transform(), attach_to=ego)
-        self._sensor.listen(self._on_collision)
+        self._sensor.listen(self._on_sensor_data)
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a failure result if the ego vehicle has collided.

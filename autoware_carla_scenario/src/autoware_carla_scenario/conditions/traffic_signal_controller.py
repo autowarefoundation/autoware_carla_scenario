@@ -39,6 +39,11 @@ class TrafficSignalControllerCondition(BaseCondition):
         label: Human-readable identifier for this condition.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _controller: str
+    _phase: str
+    _warned_missing: bool
+
     def __init__(self, controller: str, phase: str, *, label: str) -> None:
         super().__init__(label=label)
         self._controller = controller

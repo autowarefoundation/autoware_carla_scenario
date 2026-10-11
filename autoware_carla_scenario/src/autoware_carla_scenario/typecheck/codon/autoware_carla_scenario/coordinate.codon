@@ -229,3 +229,11 @@ class MapManager:
     @property
     def road_network(self) -> RoadNetwork:
         raise NotImplementedError()
+
+    @property
+    def mgrs_offset(self) -> Tuple[float, float]:
+        raise NotImplementedError()
+
+    @property
+    def z_offset(self) -> float:
+        raise NotImplementedError()

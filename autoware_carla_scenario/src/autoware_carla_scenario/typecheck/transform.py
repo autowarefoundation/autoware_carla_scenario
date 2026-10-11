@@ -102,6 +102,31 @@ _ABSTRACT_GENERICS = {
 }
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
 
+#: typesafe_carla's integer enumerations: in its Codon library each is a value
+#: (the one instance of a class whose int fields are the members), not a type,
+#: and a member is an int, as ``get_state()`` and the like return.  An
+#: annotation naming one (``carla.TrafficLightState``) is ``int`` in the check.
+_CARLA_INT_ENUMS = {
+    f"carla.{name}"
+    for name in (
+        "ActorAttributeType",
+        "ActorState",
+        "CityObjectLabel",
+        "ColorConverter",
+        "GBufferTextureID",
+        "LandmarkOrientation",
+        "LaneChange",
+        "LaneMarkingColor",
+        "LaneMarkingType",
+        "LaneType",
+        "LightGroup",
+        "MapLayer",
+        "MaterialParameter",
+        "TrafficLightState",
+        "VehicleLightState",
+    )
+}
+
 #: Class decorators dropped: Codon gives the class what they would.
 _DROPPED_CLASS_DECORATORS = {
     "dataclass",
@@ -273,7 +298,7 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
     if not subscript:
-        return base_name
+        return "int" if base_name in _CARLA_INT_ENUMS else base_name
     if isinstance(node, ast.Subscript):
         args = (
             list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]

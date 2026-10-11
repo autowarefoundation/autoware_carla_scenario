@@ -393,3 +393,18 @@ What Codon 0.19 needs that Python does not, beyond
   relies on the immutability.
 - **`dict.get` takes its default**: Codon's has no one-argument form. Test
   `key in d` and index instead of `d.get(key)`.
+- **No sign in an f-string format spec**: Codon's parser rejects
+  `f"{x:+.1f}"`. Format the value first (`x.__format__("+.1f")`) and put the
+  string in the f-string.
+- **`carla.TrafficLightState` is a value in the check**, not a type: its
+  members are ints, as `get_state()` returns. The check reads an annotation
+  naming one of typesafe_carla's integer enumerations
+  (`carla.TrafficLightState`, `carla.LaneType`, ...) as `int`, so keep the
+  CARLA name (the authoring code generator reads it), and compare with
+  `get_state()` rather than look a member up by value.
+- **A sensor callback gets a `carla.SensorData` in the check**, where the
+  CPython API hands it the measurement itself (a `carla.CollisionEvent`).
+  Listen through a method that converts only when it has to
+  (`if hasattr(data, "as_collision"): data = data.as_collision()`, as
+  `conditions/collision.py` does): Codon decides `hasattr` when it compiles,
+  and the CPython measurement has no `as_<kind>()`.
