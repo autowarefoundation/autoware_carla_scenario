@@ -23,18 +23,19 @@ give it a condition like any other.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
-from ..entity.registry import find_entity_by_role_name
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
+from ..traffic.driven import BackendDriven
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from ..conditions import BaseCondition
+    from ..conditions.base import BaseCondition
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,12 @@ class RoutingAction(BaseAction):
             leaves the way to the goal to the entity's own planner.
     """
 
+    _entity_name: Union[EntityRole, str]
+    _goal: Lanelet2Pose
+    _initial_pose: Optional[CarlaWorldPose]
+    _ground_projection: Optional[GroundProjectionConfig]
+    _waypoints: tuple[Lanelet2Pose, ...]
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -98,7 +105,7 @@ class RoutingAction(BaseAction):
         self._waypoints = tuple(waypoints)
 
     @property
-    def waypoints(self) -> tuple:
+    def waypoints(self) -> tuple[Lanelet2Pose, ...]:
         """The Lanelet2 poses the route must pass through, in order."""
         return self._waypoints
 
@@ -114,21 +121,58 @@ class RoutingAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Hand the goal to the named entity."""
-        entity = find_entity_by_role_name(self._entity_name)
-        if entity is None:
+        # The entity of any kind the role names, as find_entity_by_role_name
+        # finds it: a vehicle first, then a pedestrian.  Looked up by kind, so
+        # the static check knows its type (docs/typecheck.md).
+        vehicle = find_vehicle_entity(self._entity_name)
+        if vehicle is not None:
+            entity: BackendDriven = vehicle
+            self._route(world, entity)
+            return
+        pedestrian = find_pedestrian_entity(self._entity_name)
+        if pedestrian is None:
             logger.warning(
                 "RoutingAction: entity '%s' not found", str(self._entity_name)
             )
             return
+        walker: PedestrianEntity = pedestrian
+        self._route(world, walker)
 
-        # Waypoints only when there are some: an entity that overrides
-        # route_to() with the signature it had before waypoints existed keeps
-        # working for every run that names none.
-        extra = {"waypoints": self._waypoints} if self._waypoints else {}
-        entity.route_to(
-            world,
-            self._goal,
-            initial_pose=self._initial_pose,
-            ground_projection=self._ground_projection,
-            **extra,
-        )
+    def _route(
+        self, world: "carla.World", entity: Union[BackendDriven, PedestrianEntity]
+    ) -> None:
+        if hasattr(entity, "route_to"):
+            # Waypoints only when there are some: an entity that overrides
+            # route_to() with the signature it had before waypoints existed
+            # keeps working for every run that names none.  Two calls rather
+            # than `**extra`: Codon unpacks no dict into keyword arguments.
+            if self._waypoints:
+                entity.route_to(
+                    world,
+                    self._goal,
+                    initial_pose=self._initial_pose,
+                    ground_projection=self._ground_projection,
+                    waypoints=self._waypoints,
+                )
+            else:
+                entity.route_to(
+                    world,
+                    self._goal,
+                    initial_pose=self._initial_pose,
+                    ground_projection=self._ground_projection,
+                )
+            return
+        # An entity without route_to() (an NPC vehicle, a pedestrian): the call
+        # raises the AttributeError it always did.  Codon, which reads
+        # TYPE_CHECKING as true, decides hasattr() by the static type, which
+        # never has route_to (only EgoVehicle declares it), and compiles none
+        # of the calls.
+        if TYPE_CHECKING:
+            raise AttributeError("route_to")
+        else:
+            entity.route_to(
+                world,
+                self._goal,
+                initial_pose=self._initial_pose,
+                ground_projection=self._ground_projection,
+            )
