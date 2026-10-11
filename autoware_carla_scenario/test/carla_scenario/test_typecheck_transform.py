@@ -79,6 +79,7 @@ def test_an_annotation_codon_cannot_express_is_dropped(python: str) -> None:
         ("'carla.TrafficLightState'", "int"),
         ("typesafe_carla.carla.LaneType", "int"),
         ("Optional[carla.LaneChange]", "Optional[int]"),
+        ("list[carla.VehicleLightState]", "list[int]"),
         ("carla.TrafficLight", "carla.TrafficLight"),
         ("signals.TrafficLightState", "signals.TrafficLightState"),
     ],

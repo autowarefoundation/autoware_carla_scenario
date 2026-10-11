@@ -96,6 +96,14 @@ class RouteProgressCondition(BaseCondition):
         ValueError: On an anchor that is not one, or a negative tolerance.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _value: float
+    _rule: ComparisonRule
+    _anchor: Optional[str]
+    _tolerance: float
+    _last: Optional[float]
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str, None] = None,
@@ -115,7 +123,8 @@ class RouteProgressCondition(BaseCondition):
             parse_anchor(anchor)
         else:
             anchor = None
-        self._entity_name = EGO_ROLE_NAME if entity_name is None else entity_name
+        # Kept as its string, the one thing every use of it reads.
+        self._entity_name = str(EGO_ROLE_NAME if entity_name is None else entity_name)
         self._value = float(value)
         self._rule = rule
         self._anchor = anchor
@@ -163,11 +172,13 @@ class RouteProgressCondition(BaseCondition):
         )
         if not comparison.satisfied(s):
             return None
+        # Codon's f-string parser rejects a sign in a format spec (`:+.1f`).
+        offset = self._value.__format__("+.1f")
         return ScenarioResult(
             passed=True,
             message=(
                 f"{self._entity_name} at route s {s:.1f} m {self._rule.text} "
-                f"{target:.1f} m ({self._anchor or 'start'} {self._value:+.1f} m)"
+                f"{target:.1f} m ({self._anchor or 'start'} {offset} m)"
             ),
             elapsed_seconds=elapsed,
         )

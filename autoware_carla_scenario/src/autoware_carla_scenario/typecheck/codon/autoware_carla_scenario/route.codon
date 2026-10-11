@@ -1,0 +1,29 @@
+# Model of autoware_carla_scenario.route (docs/typecheck.md), for
+# conditions.route_progress, which is checked. The package itself is not
+# (typecheck/library.py; route.frame reaches lanelet2): this declares only what
+# checked modules read of it, the scenario's route and its frame.
+
+
+class RouteMatch:
+    def anchor_s(self, anchor: Optional[str]) -> float:
+        raise NotImplementedError()
+
+
+class RouteFrame:
+    def project(self, x: float, y: float, near: Optional[float] = None) -> Tuple[float, float]:
+        raise NotImplementedError()
+
+    def height(self, s: float) -> float:
+        raise NotImplementedError()
+
+
+def parse_anchor(anchor: str) -> Tuple[str, int, str]:
+    raise NotImplementedError()
+
+
+def scenario_route() -> Optional[RouteMatch]:
+    raise NotImplementedError()
+
+
+def scenario_route_frame() -> RouteFrame:
+    raise NotImplementedError()

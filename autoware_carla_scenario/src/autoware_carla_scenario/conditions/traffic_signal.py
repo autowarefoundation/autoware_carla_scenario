@@ -34,6 +34,12 @@ class TrafficSignalCondition(BaseCondition):
         label: Human-readable identifier for this condition.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _lanelet2_id: int
+    _expected_state: "carla.TrafficLightState"
+    _expected_name: str
+    _cached_signal_ids: Optional[set[str]]
+
     def __init__(
         self,
         lanelet2_regulatory_element_id: int,
@@ -69,7 +75,9 @@ class TrafficSignalCondition(BaseCondition):
             )
             return None
 
-        signal_ids = get_signal_ids_for_controller(controller_id)
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        controller: int = controller_id
+        signal_ids = get_signal_ids_for_controller(controller)
         if not signal_ids:
             logger.warning(
                 "TrafficSignalCondition [%s]: controller %d has no signal IDs",
@@ -103,12 +111,14 @@ class TrafficSignalCondition(BaseCondition):
             if resolved is None:
                 return None
             self._cached_signal_ids = resolved
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        signal_ids: set[str] = self._cached_signal_ids
 
         # Single-pass: find matching actors and collect mismatches
         match_count = 0
-        mismatches: list[tuple[str, object]] = []
+        mismatches: list[tuple[str, int]] = []
         for actor in world.get_actors().filter("traffic.traffic_light*"):
-            if actor.get_opendrive_id() in self._cached_signal_ids:
+            if actor.get_opendrive_id() in signal_ids:
                 match_count += 1
                 state = actor.get_state()
                 if state != self._expected_state:
@@ -120,7 +130,7 @@ class TrafficSignalCondition(BaseCondition):
                 message=(
                     f"TrafficSignalCondition [{self.label}]: "
                     f"no matching actors found for signal IDs "
-                    f"{sorted(self._cached_signal_ids)}"
+                    f"{sorted(signal_ids)}"
                 ),
                 elapsed_seconds=elapsed,
             )
