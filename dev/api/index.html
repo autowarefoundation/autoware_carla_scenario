@@ -2122,6 +2122,10 @@ directly.</p>
 <td>The item definitions <code>register_cover()</code> / <code>register_cross()</code> build.</td>
 </tr>
 <tr>
+<td><code>BaseScenario.register_measure(key, read, *, unit, text)</code>, <code>.measure(key, world)</code>, <code>.measures</code></td>
+<td>A scenario's measures: what it sets up, under fixed keys (<code>autoware_carla_scenario.measures</code>: <code>VEHICLE_AHEAD_GAP_M</code>, <code>VEHICLE_AHEAD_RELATIVE_SPEED_KPH</code>, <code>CROSSING_PEDESTRIAN_GAP_M</code>, <code>CROSSING_PEDESTRIAN_SPEED_MS</code>). Replace a built-in one or add one of its own. See <a href="../odd/#scenario-measures">Scenario measures</a>.</td>
+</tr>
+<tr>
 <td><code>CoverageCollector</code></td>
 <td>Samples items on their events during a run; written as <code>{Scenario}_coverage.json</code>.</td>
 </tr>
@@ -2182,6 +2186,10 @@ directly.</p>
 <td>Built-in probes.</td>
 </tr>
 <tr>
+<td><code>scenario_measure(key)</code>, <code>ScenarioMeasure</code></td>
+<td>The probe mapping an attribute onto the running scenario's measure <em>key</em> (<code>measure:</code> in a binding file). See <a href="../odd/#scenario-measures">Scenario measures</a>.</td>
+</tr>
+<tr>
 <td><code>typecheck.typecheck_odd(builder)</code></td>
 <td>Compile a Python ODD with Codon.</td>
 </tr>
@@ -2200,6 +2208,14 @@ directly.</p>
 <tr>
 <td><code>UNDECIDED</code></td>
 <td>What a probe's <code>on_lanelet</code> returns for a value only the run can tell.</td>
+</tr>
+<tr>
+<td><code>OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries)</code></td>
+<td>Draws concrete cases inside the ODD: <code>.sample(count)</code> gives <code>OddSample(index, overrides, buckets, values, situation)</code>. <code>strategy="coverage"</code> draws the least covered buckets and the uncovered situations first. See <a href="../odd/#sampling-scenarios-from-the-odd">Sampling scenarios from the ODD</a>.</td>
+</tr>
+<tr>
+<td><code>OddKnob(key, *, values, scale, offset, integer, range)</code>, <code>knobs_from_mapping(raw)</code>, <code>DEFAULT_KNOBS</code></td>
+<td>A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under <code>controls</code> in their config, by measure key.</td>
 </tr>
 </tbody>
 </table>
@@ -2951,7 +2967,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 18:09:46 UTC"><span class="timeago" datetime="2026-10-10T18:09:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 18:09:46 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 00:04:52 UTC"><span class="timeago" datetime="2026-10-11T00:04:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 00:04:52 UTC">2026-10-11</span>
   </span>
 
     
