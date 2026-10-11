@@ -37,6 +37,8 @@ controls:
     key: scenario.npc_initial_speed_kmh
     offset: ${ego.initial_speed_kmh}
     range: [-15.0, 15.0]
+    # A speed, whatever the ego's: a slow ego leaves the slower leads out.
+    limits: [0.0, null]
 
 sweep:
   constraints:
