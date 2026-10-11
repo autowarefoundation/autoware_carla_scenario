@@ -35,7 +35,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -227,7 +227,7 @@ class AutowareBridge(ABC):
         self,
         initial_pose: BridgePose,
         goal: BridgePose,
-        waypoints: Sequence[BridgePose] = (),
+        waypoints: Optional[list[BridgePose]] = None,
     ) -> None:
         """Give Autoware the scenario's initial pose, goal and way there.
 
@@ -239,10 +239,11 @@ class AutowareBridge(ABC):
             initial_pose: Map-frame pose to initialize localization at.
             goal: Map-frame goal pose to plan the route to.
             waypoints: Map-frame poses the route must pass through, in order.
-                Empty leaves the way to the goal to Autoware, which plans the
-                shortest one. A scenario that is a particular drive rather than a
-                destination -- one rendered from a recorded run, where leaving
-                that road means leaving the rendered world -- names them.
+                ``None`` or empty leaves the way to the goal to Autoware, which
+                plans the shortest one. A scenario that is a particular drive
+                rather than a destination -- one rendered from a recorded run,
+                where leaving that road means leaving the rendered world --
+                names them.
         """
 
     @abstractmethod

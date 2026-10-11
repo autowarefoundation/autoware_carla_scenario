@@ -10,6 +10,8 @@ from .base import BaseCondition, ScenarioResult
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..traffic.driven import BackendDriven
+
 
 class LaneChangeSettledCondition(BaseCondition):
     """Satisfied once *entity_name* is centred on the lane it was sent to.
@@ -34,6 +36,9 @@ class LaneChangeSettledCondition(BaseCondition):
         label: Human-readable identifier for logs and result summaries.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -41,7 +46,7 @@ class LaneChangeSettledCondition(BaseCondition):
         label: str = "lane_change_settled",
     ) -> None:
         super().__init__(label=label)
-        self._entity_name = entity_name
+        self._entity_name = str(entity_name)
 
     def get_details(self) -> dict[str, Any]:
         return {"entity_name": str(self._entity_name)}
@@ -60,11 +65,18 @@ class LaneChangeSettledCondition(BaseCondition):
         # Imported here rather than at module scope: the entity package reaches
         # back into `conditions.base`, so naming it at import time would close
         # a cycle.
-        from ..entity.registry import find_entity_by_role_name  # noqa: PLC0415
+        from ..entity.registry import find_vehicle_entity  # noqa: PLC0415
 
-        entity = find_entity_by_role_name(self._entity_name)
-        finished = getattr(entity, "lane_change_finished", None)
-        if finished is None or not finished(world):
+        entity = find_vehicle_entity(self._entity_name)
+        if entity is None:
+            return None
+        # An entity of no known kind is found here too; it may not be able to
+        # tell.  `hasattr` is decided on the static type in Codon, so on the
+        # vehicle rather than the Optional.
+        vehicle: BackendDriven = entity
+        if not hasattr(vehicle, "lane_change_finished"):
+            return None
+        if not vehicle.lane_change_finished(world):
             return None
         return ScenarioResult(
             passed=True,

@@ -49,13 +49,13 @@ def _alive(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    # A child nothing has reaped yet is gone for every purpose here.  It can
-    # also be reaped between the open and the read, which then fails with
-    # ESRCH rather than ENOENT.
+    # A child nothing has reaped yet is gone for every purpose here.
     try:
         with open(f"/proc/{pid}/stat") as stat:
             return stat.read().split()[2] != "Z"
     except (FileNotFoundError, ProcessLookupError):
+        # The process was reaped between kill(0) and the read: /proc raises
+        # ESRCH mid-read rather than failing the open.
         return False
 
 

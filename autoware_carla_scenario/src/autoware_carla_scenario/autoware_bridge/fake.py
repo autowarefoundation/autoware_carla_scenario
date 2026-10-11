@@ -8,7 +8,7 @@ configurable number of polls, so an :class:`AutowareEgoEntity` can be driven to
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
 from .base import AutowareBridge, BridgePose
 
@@ -43,12 +43,12 @@ class FakeAutowareBridge(AutowareBridge):
         self,
         initial_pose: BridgePose,
         goal: BridgePose,
-        waypoints: Sequence[BridgePose] = (),
+        waypoints: Optional[list[BridgePose]] = None,
     ) -> None:
         self.calls.append("configure")
         self.configured_initial_pose = initial_pose
         self.configured_goal = goal
-        self.configured_waypoints = list(waypoints)
+        self.configured_waypoints = list(waypoints) if waypoints is not None else []
 
     def is_ready(self) -> bool:
         self.calls.append("is_ready")

@@ -583,6 +583,37 @@ class Fake(Bridge):
 
 
 @needs_codon
+def test_pyxodrs_road_network_is_the_one_map_manager_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # utils/traffic_light.py annotates with pyxodr's RoadNetwork, since utils
+    # may not import coordinate; the pyxodr shim names the model's class, so
+    # the network MapManager returns goes into it.
+    source = """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
+from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+if TYPE_CHECKING:
+    from pyxodr.road_objects.network import RoadNetwork
+
+
+def first_controller_name(road_network: RoadNetwork) -> Optional[str]:
+    for element in road_network.root.iter("controller"):
+        return element.get("name")
+    return None
+
+
+def ambient_controller_name() -> Optional[str]:
+    return first_controller_name(MapManager.get_instance().road_network)
+"""
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
 def test_a_module_importing_what_codon_cannot_compile_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
