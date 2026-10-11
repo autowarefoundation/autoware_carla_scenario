@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
 from ..conditions.lane_change_settled import LaneChangeSettledCondition
-from ..entity.registry import find_vehicle_entity
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import LaneChangeDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
@@ -88,9 +89,27 @@ class LaneChangeAction(BaseAction):
         """Ask the named entity to change lane."""
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
+            _fail_if_pedestrian(self._entity_name)
             logger.warning(
                 "LaneChangeAction: entity '%s' not found", str(self._entity_name)
             )
             return
 
         entity.change_lane(world, self._direction)
+
+
+def _fail_if_pedestrian(entity_name: str) -> None:
+    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
+
+    A pedestrian cannot change lane. The vehicle lookup does not find one, but
+    the action used to look up an entity of any kind and call
+    ``change_lane`` on it, which raised; it still raises, rather than reading
+    as an entity that is not there.
+    """
+    found = find_pedestrian_entity(entity_name)
+    if found is None:
+        return
+    walker: PedestrianEntity = found
+    raise AttributeError(
+        f"'{type(walker).__name__}' object has no attribute 'change_lane'"
+    )

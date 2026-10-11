@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Optional, Union
 from ..conditions.base import BaseCondition
 from ..conditions.comparison import ComparisonRule
 from ..conditions.composition.speed import SpeedCondition
-from ..entity.registry import find_vehicle_entity
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
 from .base import BaseAction, TickTiming
@@ -165,6 +166,7 @@ class SetSpeedAction(BaseAction):
         """Command the target, or this tick's step towards it."""
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
+            _fail_if_pedestrian(self._entity_name)
             logger.warning(
                 "SetSpeedAction: entity '%s' not found", str(self._entity_name)
             )
@@ -236,3 +238,20 @@ def _current_speed_kmh(entity: BackendDriven) -> float:
     velocity = actor.get_velocity()
     speed_ms = (velocity.x**2 + velocity.y**2 + velocity.z**2) ** 0.5
     return speed_ms * _KMH_PER_MS
+
+
+def _fail_if_pedestrian(entity_name: str) -> None:
+    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
+
+    A pedestrian cannot be given a speed. The vehicle lookup does not find one, but
+    the action used to look up an entity of any kind and call
+    ``set_desired_speed`` on it, which raised; it still raises, rather than reading
+    as an entity that is not there.
+    """
+    found = find_pedestrian_entity(entity_name)
+    if found is None:
+        return
+    walker: PedestrianEntity = found
+    raise AttributeError(
+        f"'{type(walker).__name__}' object has no attribute 'set_desired_speed'"
+    )

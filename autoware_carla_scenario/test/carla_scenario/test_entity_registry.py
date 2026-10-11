@@ -10,10 +10,16 @@ import pytest
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
+    BaseAction,
     EntityRole,
+    LaneChangeAction,
+    LaneChangeDirection,
     PedestrianEntity,
     PedestrianEntityConfig,
+    SetSpeedAction,
     SpawnTransform,
+    TurnAction,
+    TurnDirection,
     VehicleEntity,
     VehicleEntityConfig,
     WalkStraightAction,
@@ -106,3 +112,45 @@ def test_walking_a_vehicle_says_it_is_not_a_pedestrian(
         WalkStraightAction(entity_name="npc1").execute(MagicMock())
 
     assert "is not a pedestrian" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("action", "method"),
+    [
+        (LaneChangeAction("walker1", LaneChangeDirection.LEFT), "change_lane"),
+        (TurnAction("walker1", TurnDirection.LEFT), "turn_at_junction"),
+        (SetSpeedAction("walker1", 30.0), "set_desired_speed"),
+        (SetSpeedAction("walker1", 30.0, rate_kmh_s=5.0), "set_desired_speed"),
+    ],
+    ids=["lane_change", "turn", "set_speed", "set_speed_rate"],
+)
+def test_a_vehicle_action_on_a_pedestrian_raises_as_before(
+    action: BaseAction, method: str
+) -> None:
+    # The vehicle lookup does not find a pedestrian, but these actions used
+    # to call the method on whatever entity had the role, which raised.
+    register_entity("walker1", _pedestrian())
+
+    with pytest.raises(AttributeError, match=f"'PedestrianEntity'.*'{method}'"):
+        action.execute(MagicMock())
+
+
+def test_a_vehicle_action_on_an_unknown_role_says_not_found(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        LaneChangeAction("npc9", LaneChangeDirection.LEFT).execute(MagicMock())
+
+    assert "not found" in caplog.text
+
+
+def test_clearing_forgets_every_kind() -> None:
+    register_entity("npc1", MagicMock())
+    register_entity("npc2", _vehicle())
+    register_entity("walker1", _pedestrian())
+    clear_entities()
+
+    for role in ("npc1", "npc2", "walker1"):
+        assert find_entity_by_role_name(role) is None
+        assert find_vehicle_entity(role) is None
+        assert find_pedestrian_entity(role) is None

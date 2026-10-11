@@ -6,7 +6,8 @@ import logging
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
-from ..entity.registry import find_vehicle_entity
+from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import TurnDirection
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
@@ -81,6 +82,7 @@ class TurnAction(BaseAction):
         """Ask the named entity to turn at the next junction."""
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
+            _fail_if_pedestrian(self._entity_name)
             logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
             return
 
@@ -91,3 +93,20 @@ class TurnAction(BaseAction):
             waypoint_step=self._waypoint_step,
             post_junction_distance=self._post_junction_distance,
         )
+
+
+def _fail_if_pedestrian(entity_name: str) -> None:
+    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
+
+    A pedestrian cannot turn. The vehicle lookup does not find one, but
+    the action used to look up an entity of any kind and call
+    ``turn_at_junction`` on it, which raised; it still raises, rather than reading
+    as an entity that is not there.
+    """
+    found = find_pedestrian_entity(entity_name)
+    if found is None:
+        return
+    walker: PedestrianEntity = found
+    raise AttributeError(
+        f"'{type(walker).__name__}' object has no attribute 'turn_at_junction'"
+    )

@@ -500,6 +500,10 @@ What Codon 0.19 needs that Python does not, beyond
   `find_pedestrian_entity`. An object of neither kind (a test double) is
   registered as both, so at run time every lookup still finds it; keep a
   `hasattr` test where the code relied on `getattr(entity, name, None)`.
+  Where the code called a method the other kind lacks, look the other kind
+  up when the lookup misses and raise the `AttributeError` the call raised
+  (`LaneChangeAction`, `TurnAction` and `SetSpeedAction` on a pedestrian),
+  so a wrong kind still fails rather than reading as an entity not found.
 - **`dict.get` takes its default**: Codon's has no one-argument form. Test
   `key in d` and index instead of `d.get(key)`.
 - **No sign in an f-string format spec**: Codon's parser rejects
