@@ -405,6 +405,21 @@ What Codon 0.19 needs that Python does not, beyond
 - **No `frozenset`** and no variable-length tuple (`tuple[X, ...]`, which the
   check drops from an annotation): use a `set` or a `list` where nothing
   relies on the immutability.
+- **An `Optional` attribute is assigned without an annotation**: with one
+  declared at class level (`_lane_id: Optional[int]`), Codon refuses
+  `self._lane_id: Optional[int] = address.lane_id` (an `int` "does not match"
+  `Optional[int]`) but takes `self._lane_id = address.lane_id`, and
+  `X(...) if c else None` likewise only without the annotation.
+- **`x or []` with `x: Optional[list[T]]`** has no one type in Codon: start
+  from an annotated empty list and assign `x` under `if x:`.
+- **A subclass goes into an `Optional` base parameter from a base-typed
+  variable**: Codon does not upcast and wrap in one step, so
+  `super().__init__(child=PersistentCondition(...))` against
+  `child: BaseCondition | None` fails, and
+  `child: BaseCondition = PersistentCondition(...)` passed on compiles.
+- **`getattr(x, name, None)`** for an attribute a value may lack at run time
+  (a mock in a test) becomes `try: v = x.name` / `except AttributeError:`,
+  which reads the attribute once, as `getattr` did.
 - **`dict.get` takes its default**: Codon's has no one-argument form. Test
   `key in d` and index instead of `d.get(key)`.
 - **No sign in an f-string format spec**: Codon's parser rejects

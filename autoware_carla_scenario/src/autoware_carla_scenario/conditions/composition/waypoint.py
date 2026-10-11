@@ -38,6 +38,11 @@ class WaypointCondition(CompositionCondition):
         label: Human-readable label for this condition.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _distance: float
+    _check_type: WaypointCheckType
+    _carla_map: Optional[carla.Map]
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
