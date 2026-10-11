@@ -1227,6 +1227,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#starting-autoware-yourself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting Autoware yourself
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#from-python" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1619,6 +1630,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#starting-autoware-yourself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting Autoware yourself
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#from-python" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1654,9 +1676,12 @@
 at the scenario's start, serves the scenario's mission (initial pose, goal,
 waypoints) on the <code>AutowareBridge</code> gRPC server, and waits for Autoware to
 report it is localized, routed, engaged and driving before the scenario clock
-starts. Autoware's side of the bridge is the <code>scenario_bridge</code> node of
-<code>autoware_carla_interface</code>
-(<a href="https://github.com/autowarefoundation/autoware_universe/pull/13319">autowarefoundation/autoware_universe#13319</a>).</p>
+starts. Autoware's side of the bridge is the framework's own <code>scenario_bridge</code>
+ROS 2 node (<code>autoware_carla_scenario.autoware_bridge.ros_bridge</code>): run in
+Autoware's ROS 2 environment, it pulls the mission and drives localization,
+routing and engaging through the AD API. Autoware itself only has to follow the
+scenario's world, ego and clock, which <code>autoware_carla_interface</code> does with
+<code>scenario_mode:=true</code>.</p>
 <p>Who starts Autoware is <code>autoware.launcher.type</code>:</p>
 <table>
 <thead>
@@ -1668,7 +1693,7 @@ starts. Autoware's side of the bridge is the <code>scenario_bridge</code> node o
 <tbody>
 <tr>
 <td><code>none</code> (default)</td>
-<td>Someone else: launched by hand, or by Autoware's own <code>with_scenario</code> launch, for one scenario</td>
+<td>Someone else, by hand, with the <code>scenario_bridge</code> node (<a href="#starting-autoware-yourself">Starting Autoware yourself</a>)</td>
 </tr>
 <tr>
 <td><code>docker</code></td>
@@ -1690,12 +1715,13 @@ is what makes a batch or a sweep of Autoware scenarios meaningful.</p>
 <p>The workspace is the one you already build in: a clone of
 <a href="https://github.com/autowarefoundation/autoware"><code>autowarefoundation/autoware</code></a>
 with Autoware's sources in <code>src/</code>, checked out on a branch whose
-<code>autoware_carla_interface</code> has <code>scenario_bridge</code>.</p>
+<code>autoware_carla_interface</code> launch takes <code>scenario_mode</code>, which the launch is
+given:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="s1">'scenario=intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ego.entity<span class="o">=</span>autoware<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>autoware.launcher.type<span class="o">=</span>docker<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>autoware.launcher.workspace<span class="o">=</span><span class="nv">$HOME</span>/autoware<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="s1">'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt","simulator_type:=carla","bridge_address:={bridge_address}"]'</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="s1">'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt","simulator_type:=carla","scenario_mode:=true"]'</span>
 </code></pre></div>
 <p>What happens:</p>
 <ol>
@@ -1705,13 +1731,24 @@ with Autoware's sources in <code>src/</code>, checked out on a branch whose
   Compose service it names -- the same image and the same path
   (<code>/home/aw/autoware</code>) VS Code uses. colcon writes absolute paths into
   <code>install/</code>, so a workspace built in VS Code runs here, and the reverse.</li>
+<li>What the stack needs is installed into an image of its own, made from
+  the dev container's and tagged <code>autoware-carla-scenario-deps:&lt;digest&gt;</code>:
+  the <code>scenario_bridge</code> node's <code>python3-grpcio</code> and <code>python3-protobuf</code>,
+  and the workspace's dependencies (<code>rosdep install --from-paths src</code>).
+  A dev container gets the dependencies a branch added since its image
+  was built by someone running <code>rosdep install</code> in it; a fresh container
+  per scenario does not, so the launcher does it once, and again only
+  when a <code>package.xml</code> or the dev container's image changes
+  (<code>autoware.launcher.rosdep=false</code> leaves the workspace's out). The
+  output goes to <code>autoware-deps.log</code>.</li>
 <li>The workspace is built (<code>colcon build</code> in that image) when
   <code>autoware.launcher.build</code> says so: <code>auto</code> builds it only when
   <code>install/setup.bash</code> is missing, <code>always</code> before every batch, <code>never</code>
   leaves building to you. The output goes to <code>autoware-build.log</code>.</li>
-<li>A workspace whose <code>autoware_carla_interface</code> has no <code>scenario_bridge</code> --
-  one built from a branch without scenario support -- is refused here,
-  not after the first scenario has timed out waiting for it.</li>
+<li>A workspace whose <code>autoware_carla_interface</code> launch takes no
+  <code>scenario_mode</code> -- one built from a branch without scenario support --
+  is refused here, not after the first scenario has timed out waiting for
+  it.</li>
 <li>Containers left behind by a run of yours that was killed (they carry the
   <code>autoware_carla_scenario.stack=uid-&lt;your uid&gt;</code> label) are removed.
   Another user's are left alone, but two of your own batches on one host
@@ -1721,11 +1758,13 @@ with Autoware's sources in <code>src/</code>, checked out on a branch whose
 </li>
 <li><strong>For each scenario</strong>, once the ego is spawned and the mission served:
     <code>docker run --rm --network host</code> of the dev container image, the workspace
-    mounted where it was built, <code>source install/setup.bash &amp;&amp; exec ros2 launch
-    &lt;autoware.launcher.launch&gt;</code>. <code>{bridge_address}</code> in the launch arguments
-    becomes the bridge's address, which the launch has to hand to
-    <code>scenario_bridge</code>. The stack's output goes to
-    <code>autoware-&lt;n&gt;-&lt;scenario&gt;.log</code> in the run's output directory.</li>
+    mounted where it was built, <code>source install/setup.bash</code>, then the
+    <code>scenario_bridge</code> node in the background -- this package's
+    <code>autoware_bridge</code> directory is mounted read-only into the container for
+    it, with the bridge's address and <code>autoware.launcher.bridge_parameters</code> --
+    and <code>exec ros2 launch &lt;autoware.launcher.launch&gt;</code>. The stack's output,
+    the node's included, goes to <code>autoware-&lt;n&gt;-&lt;scenario&gt;.log</code> in the run's
+    output directory.</li>
 <li><strong>While the stack starts</strong> (until <code>scenario_bridge</code> first reaches the
     bridge), the world ticks at about real time and the wait is measured in
     wall-clock seconds, <code>autoware.boot_timeout_s</code>. Once it has reached the
@@ -1777,6 +1816,16 @@ on it is refused).</p>
 <td><code>build</code></td>
 <td><code>auto</code></td>
 <td><code>auto</code> / <code>always</code> / <code>never</code></td>
+</tr>
+<tr>
+<td><code>rosdep</code></td>
+<td><code>true</code></td>
+<td>Also install the workspace's dependencies into the image the stack runs in</td>
+</tr>
+<tr>
+<td><code>bridge_parameters</code></td>
+<td><code>{use_sim_time: true}</code></td>
+<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, ...</td>
 </tr>
 <tr>
 <td><code>colcon_args</code></td>
@@ -1852,38 +1901,56 @@ ODD, aimed at what earlier runs left uncovered, add a <code>sweep.odd_sample</co
 process group stopped with <code>SIGINT</code>, then <code>SIGTERM</code>, then <code>SIGKILL</code>. It is
 sent <code>SIGTERM</code> if the process that started it dies -- a sweeper job killed at
 its timeout -- so it does not outlive the job. <code>{bridge_address}</code>, <code>{index}</code> and <code>{name}</code>
-are filled in, and the address is in <code>AUTOWARE_BRIDGE_ADDRESS</code> too:</p>
+are filled in, and the address is in <code>AUTOWARE_BRIDGE_ADDRESS</code> too.
+<code>{scenario_bridge}</code> is a shell command that runs the <code>scenario_bridge</code> node with
+that address and <code>autoware.launcher.bridge_parameters</code>, for the command to run
+beside the launch in Autoware's ROS 2 environment:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>autoware<span class="w"> </span>autoware.launcher.type<span class="o">=</span><span class="nb">command</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="s1">'autoware.launcher.command=[bash,-c,"source ~/autoware/install/setup.bash &amp;&amp; exec ros2 launch autoware_launch e2e_simulator.launch.xml bridge_address:={bridge_address} ..."]'</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="s1">'autoware.launcher.command=[bash,-c,"source ~/autoware/install/setup.bash &amp;&amp; ({scenario_bridge} &amp;) &amp;&amp; exec ros2 launch autoware_launch e2e_simulator.launch.xml scenario_mode:=true ..."]'</span>
+</code></pre></div>
+<p>The node runs on the ROS 2 distribution's own <code>python3</code>, which needs
+<code>python3-grpcio</code> and <code>python3-protobuf</code>. It imports nothing of the framework
+but <code>autoware_carla_scenario.autoware_bridge</code>: <code>{scenario_bridge}</code> puts a
+directory on <code>PYTHONPATH</code> that holds that package alone
+(<code>~/.cache/autoware_carla_scenario/ros_bridge/</code>).</p>
+<h2 id="starting-autoware-yourself">Starting Autoware yourself<a class="headerlink" href="#starting-autoware-yourself" title="Permanent link">&para;</a></h2>
+<p>With <code>autoware.launcher.type=none</code>, start Autoware with <code>scenario_mode:=true</code>
+and the node beside it, once the scenario is waiting for Autoware:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">source</span><span class="w"> </span>~/autoware/install/setup.bash
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">PYTHONPATH</span><span class="o">=</span><span class="k">$(</span>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"from autoware_carla_scenario.autoware_stack.bridge_node import host_python_root; print(host_python_root())"</span><span class="k">)</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>python3<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.autoware_bridge.ros_bridge<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--ros-args<span class="w"> </span>-p<span class="w"> </span>bridge_address:<span class="o">=</span>localhost:50052<span class="w"> </span>-p<span class="w"> </span>use_sim_time:<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="p">&amp;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>ros2<span class="w"> </span>launch<span class="w"> </span>autoware_launch<span class="w"> </span>e2e_simulator.launch.xml<span class="w"> </span>simulator_type:<span class="o">=</span>carla<span class="w"> </span>scenario_mode:<span class="o">=</span><span class="nb">true</span><span class="w"> </span>...
 </code></pre></div>
 <h2 id="from-python">From Python<a class="headerlink" href="#from-python" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScenarioQueue</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.autoware_stack</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">DockerAutowareConfig</span><span class="p">,</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">DockerAutowareLauncher</span><span class="p">,</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">)</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">launcher</span> <span class="o">=</span> <span class="n">DockerAutowareLauncher</span><span class="p">(</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">DockerAutowareConfig</span><span class="p">(</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>        <span class="n">workspace</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"~/autoware"</span><span class="p">),</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">launch</span><span class="o">=</span><span class="p">(</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>            <span class="s2">"autoware_launch"</span><span class="p">,</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>            <span class="s2">"e2e_simulator.launch.xml"</span><span class="p">,</span>
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>            <span class="s2">"bridge_address:=</span><span class="si">{bridge_address}</span><span class="s2">"</span><span class="p">,</span>
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        <span class="p">),</span>
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    <span class="p">)</span>
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="p">)</span>
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="n">queue</span> <span class="o">=</span> <span class="n">ScenarioQueue</span><span class="p">(</span><span class="n">map_name</span><span class="o">=</span><span class="s2">"Town10HD_Opt"</span><span class="p">,</span> <span class="n">autoware_launcher</span><span class="o">=</span><span class="n">launcher</span><span class="p">)</span>
-<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="c1"># Each scenario's AutowareEgoEntity is given the same launcher:</span>
-<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="c1">#   AutowareEgoEntity(config, bridge=..., launcher=launcher)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScenarioQueue</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.autoware_stack</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">DockerAutowareConfig</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">DockerAutowareLauncher</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="p">)</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">launcher</span> <span class="o">=</span> <span class="n">DockerAutowareLauncher</span><span class="p">(</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">DockerAutowareConfig</span><span class="p">(</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>        <span class="n">workspace</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"~/autoware"</span><span class="p">),</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="n">launch</span><span class="o">=</span><span class="p">(</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>            <span class="s2">"autoware_launch"</span><span class="p">,</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>            <span class="s2">"e2e_simulator.launch.xml"</span><span class="p">,</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>            <span class="s2">"scenario_mode:=true"</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        <span class="p">),</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="p">)</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="p">)</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="n">queue</span> <span class="o">=</span> <span class="n">ScenarioQueue</span><span class="p">(</span><span class="n">map_name</span><span class="o">=</span><span class="s2">"Town10HD_Opt"</span><span class="p">,</span> <span class="n">autoware_launcher</span><span class="o">=</span><span class="n">launcher</span><span class="p">)</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="c1"># Each scenario's AutowareEgoEntity is given the same launcher:</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="c1">#   AutowareEgoEntity(config, bridge=..., launcher=launcher)</span>
 </code></pre></div>
 <p>The queue prepares the launcher when it starts and closes it when it stops;
 <code>AutowareEgoEntity</code> starts and stops a stack per scenario. Any object with
 <code>prepare</code> / <code>start</code> / <code>poll</code> / <code>stop</code> / <code>close</code>
 (<code>autoware_carla_scenario.autoware_stack.AutowareLauncher</code>) can stand in for
-the two launchers that ship.</p>
+the two launchers that ship; it starts the <code>scenario_bridge</code> node with the
+stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds its command).</p>
 
 
 
@@ -1906,7 +1973,7 @@ the two launchers that ship.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 00:04:52 UTC"><span class="timeago" datetime="2026-10-11T00:04:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 00:04:52 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 06:28:21 UTC"><span class="timeago" datetime="2026-10-11T06:28:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 06:28:21 UTC">2026-10-11</span>
   </span>
 
     
