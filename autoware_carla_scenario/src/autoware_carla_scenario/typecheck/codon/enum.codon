@@ -8,8 +8,11 @@
 #         RED = "red"        ->        RED: ClassVar[Color] = Color("RED", "red")
 #
 # so `Color.RED.value` is a str, `Color.RED.name` a str, and a Color is a type
-# of its own. Looking a member up by value (`Color("red")`) or by name
-# (`Color["RED"]`) and iterating over the class are not modelled.
+# of its own. Looking a member up by value (`Color("red")`) is typed by a
+# constructor the checker adds to each class after its module (`@extend`); it
+# makes a Color, not the member, since nothing the check compiles runs.
+# Looking a member up by name (`Color["RED"]`) and iterating over the class are
+# not modelled.
 
 
 class Enum:

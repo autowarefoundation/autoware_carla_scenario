@@ -6,7 +6,7 @@ import enum
 import logging
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
-from ..conditions import BaseCondition
+from ..conditions.base import BaseCondition
 from ..coordinate.traffic_light import (
     get_signal_ids_for_controller,
     lanelet2_traffic_light_id_to_opendrive_controller_id,
@@ -52,6 +52,13 @@ class TrafficSignalAction(BaseAction):
             CARLA traffic manager does not override the state.
     """
 
+    _state: "carla.TrafficLightState"
+    #: The target, split by kind: an attribute holds one type in the static
+    #: check (Codon), and the target is one of three.
+    _all_lights: bool
+    _lanelet2_ids: Optional[Sequence[int]]
+    _freeze: bool
+
     def __init__(
         self,
         state: "carla.TrafficLightState",
@@ -67,7 +74,13 @@ class TrafficSignalAction(BaseAction):
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._state = state
-        self._target = lanelet2_traffic_light_ids
+        self._all_lights = False
+        self._lanelet2_ids = None
+        if isinstance(lanelet2_traffic_light_ids, TrafficLightTarget):
+            # ALL is TrafficLightTarget's only member.
+            self._all_lights = True
+        elif lanelet2_traffic_light_ids is not None:
+            self._lanelet2_ids = lanelet2_traffic_light_ids
         self._freeze = freeze
 
     # ------------------------------------------------------------------
@@ -76,14 +89,15 @@ class TrafficSignalAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Set the traffic light state according to the target specification."""
-        if self._target is None:
-            logger.debug("TrafficSignalAction: target is None -- NOP")
+        if self._all_lights:
+            self._set_all(world)
             return
 
-        if self._target is TrafficLightTarget.ALL:
-            self._set_all(world)
-        else:
-            self._set_by_lanelet2_ids(world, self._target)
+        lanelet2_ids = self._lanelet2_ids
+        if lanelet2_ids is None:
+            logger.debug("TrafficSignalAction: target is None -- NOP")
+            return
+        self._set_by_lanelet2_ids(world, lanelet2_ids)
 
     # ------------------------------------------------------------------
     # Internal helpers

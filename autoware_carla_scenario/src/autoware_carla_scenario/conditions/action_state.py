@@ -47,6 +47,10 @@ class ActionStateCondition(BaseCondition):
         label: Human-readable identifier for logs and result summaries.
     """
 
+    _action_id: str
+    _state: ActionState
+    _actions: Mapping[str, "BaseAction"]
+
     def __init__(
         self,
         action_id: str,
@@ -62,7 +66,9 @@ class ActionStateCondition(BaseCondition):
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a passing result while the action is in the expected state."""
-        action = self._actions.get(self._action_id)
+        action = (
+            self._actions[self._action_id] if self._action_id in self._actions else None
+        )
         if action is None or action.state is not self._state:
             return None
         return ScenarioResult(

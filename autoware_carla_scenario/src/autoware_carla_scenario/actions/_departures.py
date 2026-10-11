@@ -30,7 +30,10 @@ from __future__ import annotations
 import bisect
 import math
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ..conditions.base import BaseCondition
 
 __all__ = ["DepartureTimeline", "TimelineVertex"]
 
@@ -47,12 +50,13 @@ class TimelineVertex:
         distance: How far along the path it is (m), on the first lap.
         time: The scenario time its time condition holds at; ``None`` when it
             has no time (or the action has no time reference).
-        gate: Its other departure condition, if any -- opaque here.
+        gate: Its other departure condition, if any -- opaque here: only
+            whether there is one is read.
     """
 
     distance: float
     time: Optional[float] = None
-    gate: Any = None
+    gate: Optional["BaseCondition"] = None
 
 
 class DepartureTimeline:
@@ -69,6 +73,15 @@ class DepartureTimeline:
         speed: The action's speed (m/s), for segments no time says how long
             to take over.  At (near) zero such a segment is never finished.
     """
+
+    _vertices: list[TimelineVertex]
+    _length: float
+    _closed: bool
+    _speed: float
+    distances: list[float]
+    times: list[float]
+    end_vertex: int
+    end_kind: str
 
     def __init__(
         self,

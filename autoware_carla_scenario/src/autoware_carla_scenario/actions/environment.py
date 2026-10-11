@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from ..conditions import BaseCondition
+from ..conditions.base import BaseCondition
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -15,20 +15,37 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["EnvironmentAction"]
 
-#: Constructor parameter -> the ``carla.WeatherParameters`` attribute it sets.
-#: A mapping rather than a chain of ``if`` statements so that adding a knob is
-#: one line and cannot forget either half.
-_WEATHER_FIELDS: dict[str, str] = {
-    "cloudiness": "cloudiness",
-    "precipitation": "precipitation",
-    "precipitation_deposits": "precipitation_deposits",
-    "wetness": "wetness",
-    "wind_intensity": "wind_intensity",
-    "fog_density": "fog_density",
-    "fog_distance": "fog_distance",
-    "sun_altitude_angle": "sun_altitude_angle",
-    "sun_azimuth_angle": "sun_azimuth_angle",
-}
+
+def _set_weather_field(
+    weather: "carla.WeatherParameters", name: str, value: float
+) -> None:
+    """Set the ``carla.WeatherParameters`` attribute constructor parameter *name* sets.
+
+    Every parameter sets the attribute of its own name.  Spelled out rather
+    than ``setattr(weather, name, value)``, which the static check (Codon)
+    cannot compile: a new knob is a parameter, an entry in
+    ``EnvironmentAction``'s settings and a branch here.
+    """
+    if name == "cloudiness":
+        weather.cloudiness = value
+    elif name == "precipitation":
+        weather.precipitation = value
+    elif name == "precipitation_deposits":
+        weather.precipitation_deposits = value
+    elif name == "wetness":
+        weather.wetness = value
+    elif name == "wind_intensity":
+        weather.wind_intensity = value
+    elif name == "fog_density":
+        weather.fog_density = value
+    elif name == "fog_distance":
+        weather.fog_distance = value
+    elif name == "sun_altitude_angle":
+        weather.sun_altitude_angle = value
+    elif name == "sun_azimuth_angle":
+        weather.sun_azimuth_angle = value
+    else:
+        raise KeyError(name)
 
 
 class EnvironmentAction(BaseAction):
@@ -69,6 +86,8 @@ class EnvironmentAction(BaseAction):
         once: If ``True`` (default) the action fires at most once.
     """
 
+    _settings: dict[str, float]
+
     def __init__(
         self,
         cloudiness: Optional[float] = None,
@@ -87,21 +106,21 @@ class EnvironmentAction(BaseAction):
         once: bool = True,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._settings: dict[str, float] = {
-            name: value
-            for name, value in (
-                ("cloudiness", cloudiness),
-                ("precipitation", precipitation),
-                ("precipitation_deposits", precipitation_deposits),
-                ("wetness", wetness),
-                ("wind_intensity", wind_intensity),
-                ("fog_density", fog_density),
-                ("fog_distance", fog_distance),
-                ("sun_altitude_angle", sun_altitude_angle),
-                ("sun_azimuth_angle", sun_azimuth_angle),
-            )
-            if value is not None
-        }
+        settings: dict[str, float] = {}
+        for name, value in (
+            ("cloudiness", cloudiness),
+            ("precipitation", precipitation),
+            ("precipitation_deposits", precipitation_deposits),
+            ("wetness", wetness),
+            ("wind_intensity", wind_intensity),
+            ("fog_density", fog_density),
+            ("fog_distance", fog_distance),
+            ("sun_altitude_angle", sun_altitude_angle),
+            ("sun_azimuth_angle", sun_azimuth_angle),
+        ):
+            if value is not None:
+                settings[name] = value
+        self._settings = settings
 
     @property
     def settings(self) -> dict[str, float]:
@@ -110,7 +129,7 @@ class EnvironmentAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Apply the settings on top of the world's current weather."""
-        if not self._settings:
+        if len(self._settings) == 0:
             logger.warning(
                 "EnvironmentAction '%s' sets nothing; the weather is unchanged",
                 self.label,
@@ -119,7 +138,7 @@ class EnvironmentAction(BaseAction):
 
         weather = world.get_weather()
         for name, value in self._settings.items():
-            setattr(weather, _WEATHER_FIELDS[name], value)
+            _set_weather_field(weather, name, value)
         world.set_weather(weather)
         logger.info(
             "EnvironmentAction '%s' applied %s",

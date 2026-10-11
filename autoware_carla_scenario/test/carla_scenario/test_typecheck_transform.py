@@ -75,14 +75,17 @@ def test_an_annotation_codon_cannot_express_is_dropped(python: str) -> None:
 @pytest.mark.parametrize(
     ("python", "codon"),
     [
+        ("carla.TrafficLightState", "int"),
         ("'carla.TrafficLightState'", "int"),
-        ("Optional[carla.LaneType]", "Optional[int]"),
+        ("typesafe_carla.carla.LaneType", "int"),
+        ("Optional[carla.LaneChange]", "Optional[int]"),
         ("list[carla.VehicleLightState]", "list[int]"),
+        ("carla.TrafficLight", "carla.TrafficLight"),
+        ("signals.TrafficLightState", "signals.TrafficLightState"),
     ],
 )
-def test_a_carla_int_enumeration_is_an_int(python: str, codon: str) -> None:
-    # typesafe_carla's Codon library has them as values whose members are
-    # ints, not as types.
+def test_a_carla_integer_enumeration_is_an_int(python: str, codon: str) -> None:
+    # typesafe_carla's Codon library has each as a value whose members are int.
     assert _annotation(python) == codon
 
 
@@ -257,7 +260,8 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
         """
     )
     out = _transform(source)
-    assert out.count("\n") == source.count("\n")
+    body = out.partition("\n\n@extend\n")[0]  # the constructors by value follow
+    assert body.count("\n") == source.count("\n")
     assert "@unique" not in out
     assert "class Turn(Enum[str]):" in out
     assert "    LEFT: ClassVar[Turn] = Turn('LEFT', \"left\")" in out
@@ -269,6 +273,26 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     assert "    B: ClassVar[Kind] = Kind('B', 5)" in out
     # Values of two types: left as written, for Codon to report.
     assert "class Mixed(Enum):" in out
+
+
+def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
+    source = textwrap.dedent(
+        """
+        class Turn(Enum):
+            LEFT = "left"
+        class Level(enum.IntEnum):
+            LOW = 1
+        def f():
+            class Local(Enum):
+                A = 1
+        """
+    )
+    out = _transform(source)
+    body, _, lookups = out.partition("\n\n@extend\n")
+    assert body.count("\n") == source.count("\n")  # no line of the source moves
+    assert "@extend\nclass Turn:\n    def __init__(self, value: str):" in out
+    assert "@extend\nclass Level:\n    def __init__(self, value: int):" in out
+    assert "class Local" not in lookups  # the module's top-level enums only
 
 
 def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
