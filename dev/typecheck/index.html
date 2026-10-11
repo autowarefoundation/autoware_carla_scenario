@@ -2087,7 +2087,18 @@ modules that use them.</p>
   (<code># noqa: E402</code>), after the names the other module imports, as
   <code>coordinate/frames.py</code> does for <code>poses.py</code>. Set class attributes in the
   class body (<code>FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2</code>)
-  rather than from a function run after the class.</p>
+  rather than from a function run after the class.
+- <strong>No variable-length tuples</strong>: Codon's tuples have a fixed length, so a
+  <code>tuple[int, ...]</code> parameter or field gives the check nothing to call with.
+  Turning it into a list changes what the class does (a frozen dataclass's
+  hash, its equality with a tuple), so such a module stays in <code>EXCLUDED</code>
+  (<code>route.model</code>).
+- <strong>A name the model lacks at the boundary</strong>: when a checked module imports a
+  name of a modelled package that the model does not declare
+  (<code>trajectory/__init__.py</code> re-exports <code>ResolvedTrajectory</code>), declare it in
+  the model module. When the package does not export it, add it to
+  <code>_BOUNDARY</code> in <code>test_typecheck_model.py</code>, so it is compared with the Python
+  class as an exported name is.</p>
 
 
 
@@ -2110,7 +2121,7 @@ modules that use them.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 02:15:00 UTC"><span class="timeago" datetime="2026-10-11T02:15:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 02:15:00 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 02:33:34 UTC"><span class="timeago" datetime="2026-10-11T02:33:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 02:33:34 UTC">2026-10-11</span>
   </span>
 
     
