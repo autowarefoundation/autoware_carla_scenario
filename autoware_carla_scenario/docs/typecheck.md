@@ -255,16 +255,17 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 88 of
-the package's 225 modules (39%; about 15,300 of 68,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 92 of
+the package's 225 modules (41%; about 15,800 of 68,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities and the entity registry, `BaseScenario`,
-the traffic backend interface with the TrafficManager backend, the Autoware
+the traffic backend interface and its run context with the TrafficManager
+backend and the SUMO backend's options, the map source URIs, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units and the CARLA-only helpers, the traffic-light lookups included. 49
+units and the CARLA-only helpers, the traffic-light lookups included. 51
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), the six members of
@@ -274,12 +275,13 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `RoutingAction`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 137 `EXCLUDED` modules fall into
+the authoring package's pydantic specs. The 133 `EXCLUDED` modules fall into
 three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
-  lacks (`pathlib`, `json`, `subprocess`, `importlib`, `inspect`). This is
+  lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
+  than its shim's `Path`). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
 - **About 20 build on an excluded module**: the example scenarios, through
@@ -291,8 +293,8 @@ three groups:
   union, which the check does not translate (`route.model`'s
   `RouteSearchSpec.segments`, each a lane or a junction segment), a dict
   unpacked into keyword arguments (`actions.routing`'s waypoints), or a class
-  as a value (`utils.config`, which `traffic.config` imports only in its
-  uncalled `from_mapping()`).
+  as a value (`utils.config`, which `traffic.config` and `traffic.sumo.config` import
+  only in their uncalled `from_mapping()`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -436,9 +438,12 @@ What Codon 0.19 needs that Python does not, beyond
   read back as a tuple and a list) becomes a small class with one declared
   attribute per key.
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
-  `pathlib`, ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging`, `abc` and `__future__` shims of
-  `codon/` are. `collections.abc` is not: import `Sequence` and the other
+  ...) are not available to a checked module; the `typing`,
+  `dataclasses`, `enum`, `logging`, `abc`, `pathlib`, `urllib.parse` and
+  `__future__` shims of `codon/` are. `pathlib` declares `Path(*parts)`,
+  `/`, `str()`, `expanduser()`, `resolve()` and `Path.home()`, and nothing
+  that touches the file system; `urllib.parse` declares `urlsplit()` and
+  `urlunsplit()`. `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
   `typing.Protocol`, whose `@runtime_checkable` is dropped too.
@@ -479,7 +484,7 @@ What Codon 0.19 needs that Python does not, beyond
 - **A part of a module that needs what Codon lacks moves out**: the
   backend interface of `traffic/base.py` is checked, and `TrafficContext`,
   which holds `pathlib.Path`s, lives in `traffic/context.py` (re-exported by
-  `base`), which the model (`traffic.codon`) stands in for.
+  `base`), which is checked on its own with the `pathlib` shim.
 - **A `carla.Actor` where the CARLA API takes a `carla.Vehicle`**
   (`TrafficManager.set_desired_speed()`): typesafe_carla's Python API takes
   the actor as it is, and its Codon library wants the checked conversion.
@@ -619,6 +624,11 @@ What Codon 0.19 needs that Python does not, beyond
 - **A dict has no truth value** in Codon: `if not d:` is `if len(d) == 0:`.
 - **No `setattr(obj, name, value)` with a name known only at run time**:
   spell the assignments out (`actions/environment.py`).
+- **An exception class spells out its constructor**: Codon 0.19 cannot
+  raise a subclass of a built-in exception that has none of its own
+  (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
+  message and passes it on: `def __init__(self, message: str) -> None:
+  super().__init__(message)` (`maps/source.py`).
 - **One `except` clause per exception type**: Codon 0.19 does not take a
   tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
   to `raise X` by the check; `raise X from exc` compiles as it is.

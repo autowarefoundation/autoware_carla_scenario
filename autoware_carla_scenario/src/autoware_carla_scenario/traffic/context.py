@@ -2,8 +2,9 @@
 
 Split out of :mod:`~autoware_carla_scenario.traffic.base`, which re-exports it,
 because it is the one part of the traffic seam that names a file
-(:class:`pathlib.Path`): the backend interface itself is compiled by the
-library check (``typecheck/library.py``), and Codon has no ``pathlib``.  Like
+(:class:`pathlib.Path`), which Codon has only the checker's shim of: the
+backend interface itself is compiled by the library check
+(``typecheck/library.py``) without it.  Like
 ``base``, this module imports neither CARLA nor any traffic simulator.
 """
 
