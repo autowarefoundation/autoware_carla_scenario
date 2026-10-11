@@ -50,6 +50,9 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.kinematics.frames",
     "autoware_carla_scenario.kinematics.vector",
     "autoware_carla_scenario.kinematics.velocity",
+    "autoware_carla_scenario.measures",
+    "autoware_carla_scenario.odd.scenario_measure",
+    "autoware_carla_scenario.odd.units",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.opendrive",
     "autoware_carla_scenario.utils.vehicles",
@@ -141,10 +144,15 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.coordinate.stop_line": "imports lanelet2",
     "autoware_carla_scenario.coordinate.traffic_light": "imports utils.traffic_light, which is neither checked nor modelled",
     "autoware_carla_scenario.coordinate.transform": "imports numpy, lanelet2, autoware_lanelet2_extension_python",
-    "autoware_carla_scenario.coverage": _NOT_YET,
+    "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which import pathlib, json",
     "autoware_carla_scenario.coverage.cod": "imports pathlib, yaml, csv",
     "autoware_carla_scenario.coverage.collector": "imports pathlib, json",
-    "autoware_carla_scenario.coverage.items": _NOT_YET,
+    "autoware_carla_scenario.coverage.items": (
+        "samples values of any type (value_label, bucket_of and a cover "
+        "expression take or return Any: an enum, a bool, a number or a label), "
+        "and keeps an event that is a SamplingEvent or a condition, a Union "
+        "field Codon 0.19 cannot hold"
+    ),
     "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports pathlib",
     "autoware_carla_scenario.driver": _NOT_YET,
@@ -189,18 +197,22 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.maps.opendrive": "imports pathlib, shutil",
     "autoware_carla_scenario.maps.resolver": "imports pathlib, hashlib",
     "autoware_carla_scenario.maps.source": "imports urllib",
-    "autoware_carla_scenario.measures": _NOT_YET,
-    "autoware_carla_scenario.odd": _NOT_YET,
+    "autoware_carla_scenario.odd": (
+        "re-exports odd.probes and odd.route (lanelet2), odd.openodd (pathlib, "
+        "yaml), odd.sources, odd.sampler and odd.registry (pathlib, importlib)"
+    ),
     "autoware_carla_scenario.odd.cli": "imports json, argparse",
-    "autoware_carla_scenario.odd.model": _NOT_YET,
+    "autoware_carla_scenario.odd.model": (
+        "evaluates attribute values of any type (Mapping[str, Any] of numbers, "
+        "labels, None, UNDECIDED and buckets; three-valued verdicts mixed with "
+        'the "inactive" label), and builds on coverage.items, which is not checked'
+    ),
     "autoware_carla_scenario.odd.openodd": "imports pathlib, yaml",
     "autoware_carla_scenario.odd.probes": "imports lanelet2",
     "autoware_carla_scenario.odd.registry": "imports pathlib, importlib",
     "autoware_carla_scenario.odd.route": "imports lanelet2",
     "autoware_carla_scenario.odd.sampler": "imports pathlib",
-    "autoware_carla_scenario.odd.scenario_measure": _NOT_YET,
     "autoware_carla_scenario.odd.sources": "imports pathlib, subprocess, shutil, tempfile, tarfile, hashlib, fcntl, io, contextlib",
-    "autoware_carla_scenario.odd.units": _NOT_YET,
     "autoware_carla_scenario.pytest_fixtures": "imports pytest",
     "autoware_carla_scenario.registry": "imports pathlib, omegaconf, importlib",
     "autoware_carla_scenario.route": _NOT_YET,

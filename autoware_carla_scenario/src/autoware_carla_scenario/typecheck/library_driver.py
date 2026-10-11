@@ -19,10 +19,12 @@ it means in the module.  A parameter annotated with a union
 (``Lanelet2Pose | OpenDrivePose``) is called once with each member.
 
 Some annotations give the check nothing to call with (``Any``, ``object``,
-``Callable``, none at all): each is reported as a problem of the module, to
-be fixed there with a type Codon can check.  ``object`` is accepted for the
-other operand of ``__eq__`` and ``__ne__``, which Python requires; it is
-given a value of the class itself.
+``Callable[..., R]``, none at all): each is reported as a problem of the
+module, to be fixed there with a type Codon can check.  ``object`` is
+accepted for the other operand of ``__eq__`` and ``__ne__``, which Python
+requires; it is given a value of the class itself.  A ``Callable[[A], R]``
+with types Codon can express is given a value of Codon's ``Callable`` type
+(:func:`callable_annotation`).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from .transform import (
 __all__ = [
     "LIBRARY_CHECK",
     "LibraryChecks",
+    "callable_annotation",
     "render_library_checks",
     "render_library_driver",
     "workspace_module",
@@ -60,6 +63,36 @@ _DATACLASS = {"dataclass", "dataclasses.dataclass"}
 _SKIPPED_DECORATORS = {"overload", "typing.overload"}
 _PROPERTIES = {"property", "functools.cached_property", "cached_property"}
 _OBJECT_OPERAND = {"__eq__", "__ne__"}
+_CALLABLE = {"Callable", "typing.Callable", "collections.abc.Callable"}
+
+
+def callable_annotation(node: ast.AST) -> str | None:
+    """``Callable[[A, B], R]`` in Codon's spelling, or ``None``.
+
+    Codon 0.19 has a ``Callable[[A, B], R]`` type, which a function of that
+    signature converts to.  The transform drops a ``Callable`` parameter
+    annotation (the parameter becomes generic, so a lambda still checks) and
+    leaves a class-level one as written, but the check needs a value to call
+    with: one of that type, when Codon can express its argument and result
+    types (not ``Any``).
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _CALLABLE):
+        return None
+    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
+        return None
+    params, result = node.slice.elts
+    if not isinstance(params, ast.List):
+        return None  # Callable[..., R]: no argument types to call with
+    args = [codon_annotation(p, class_level=True) for p in params.elts]
+    ret = codon_annotation(result, class_level=True)
+    if ret is None or any(a is None for a in args):
+        return None
+    return f"Callable[[{', '.join(a for a in args if a is not None)}], {ret}]"
 
 
 def workspace_module(module: str) -> str:
@@ -110,7 +143,7 @@ class _Renderer:
                 (arg.lineno, f"{where}: parameter `{arg.arg}` has no annotation")
             )
             return None
-        text = codon_annotation(annotation)
+        text = codon_annotation(annotation) or callable_annotation(annotation)
         if text is not None:
             return [text]
         members = _union_members(annotation)
@@ -253,6 +286,7 @@ class _Renderer:
         for arg in fields:
             text = (
                 codon_annotation(arg.annotation, class_level=True)
+                or callable_annotation(arg.annotation)
                 if arg.annotation is not None
                 else None
             )

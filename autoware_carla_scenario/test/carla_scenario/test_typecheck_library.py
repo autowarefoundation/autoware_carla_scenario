@@ -253,6 +253,43 @@ def test_a_parameter_the_check_cannot_call_with_is_a_problem_of_the_module() -> 
     assert any("`y` has no annotation" in m for _, m in checks.problems)
 
 
+_CALLABLES = """
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+
+def apply(f: Callable[[float, str], Optional[float]]) -> None:
+    pass
+
+
+@dataclass
+class Reader:
+    read: Callable[["carla.World"], float]
+
+
+def anything(f: Callable[[Any], Any]) -> None:
+    pass
+
+
+def variadic(f: Callable[..., float]) -> None:
+    pass
+"""
+
+
+def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
+    checks = render_library_checks(ast.parse(_CALLABLES))
+    calls = checks.source.splitlines()
+    assert "    apply(_acs_value(Callable[[float, str], Optional[float]]))" in calls
+    assert "    Reader(_acs_value(Callable[[carla.World], float]))" in calls
+    lines = _CALLABLES.splitlines()
+    assert sorted(lines[line - 1].split("(")[0] for line, _ in checks.problems) == [
+        "def anything",
+        "def variadic",
+    ]
+
+
 def test_the_driver_runs_the_calls_of_each_module() -> None:
     driver = render_library_driver([f"{_PACKAGE}.kinematics.angle"])
     assert (
@@ -285,7 +322,9 @@ _FAKE = f"{_PACKAGE}.zz_library_check_case"
 _GOOD = """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Callable, Optional
 
 from autoware_carla_scenario.coordinate.poses import Lanelet2Pose, OpenDrivePose
 from .entity_role import EntityRole
@@ -330,6 +369,15 @@ class Thing:
 
 def lane_s(pose: Lanelet2Pose | OpenDrivePose) -> float:
     return pose.s
+
+
+@dataclass(frozen=True)
+class Reader:
+    read: Callable[[float], Optional[float]]
+
+
+def read_twice(reader: Reader, f: Callable[[float], float]) -> Optional[float]:
+    return reader.read(f(1.0))
 
 
 def describe(turn: Turn, level: Level, role: EntityRole) -> str:
