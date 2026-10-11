@@ -270,7 +270,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.authoring.persistence": "imports pathlib, yaml",
     "autoware_carla_scenario.authoring.registry": "FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object",
     "autoware_carla_scenario.authoring.starter": "reaches pydantic models through authoring.models",
-    "autoware_carla_scenario.authoring.uv_tool": "imports pathlib, subprocess, shutil",
+    "autoware_carla_scenario.authoring.uv_tool": "imports subprocess, shutil",
     "autoware_carla_scenario.authoring.validator": "reaches pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.wheelhouse": "imports pathlib, jinja2, packaging, tomllib, tomli, subprocess, shutil, tempfile, platform",
     "autoware_carla_scenario.autoware_bridge": "re-exports autoware_bridge.grpc_server (grpc, concurrent)",
@@ -311,7 +311,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.driver.hdmap_export": "imports pathlib, roadgen, shutil, tempfile, json, hashlib",
     "autoware_carla_scenario.driver.observation": "imports cv2",
     "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface",
-    "autoware_carla_scenario.editor": "imports pathlib, uvicorn",
+    "autoware_carla_scenario.editor": "imports uvicorn",
     "autoware_carla_scenario.editor.app": "imports pathlib, fastapi",
     "autoware_carla_scenario.editor.forms": "imports authoring.registry, which is not checked and has no model; parses form values typed Any",
     "autoware_carla_scenario.editor.map_preview": "imports pathlib, json",
@@ -330,7 +330,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.examples.run": "imports pathlib, omegaconf, hydra, json",
     "autoware_carla_scenario.examples.temporary_stop": _NOT_YET,
     "autoware_carla_scenario.examples.traffic_light_compliance": _NOT_YET,
-    "autoware_carla_scenario.maps": "re-exports maps.cache (subprocess, json) and maps.config (pathlib)",
+    "autoware_carla_scenario.maps": "re-exports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib)",
     "autoware_carla_scenario.maps.cache": "imports pathlib, subprocess, shutil, tempfile, json, hashlib",
     "autoware_carla_scenario.maps.catalogue": "imports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib), which are not checked and have no model",
     "autoware_carla_scenario.maps.config": "imports maps.resolver (pathlib, hashlib), which is not checked and has no model, and takes the map config node as `Any` (`resolve_map_paths()`), which Codon cannot express",
@@ -338,7 +338,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.maps.resolver": "imports pathlib, hashlib",
     "autoware_carla_scenario.odd": (
         "re-exports odd.probes and odd.route (lanelet2), odd.openodd (pathlib, "
-        "yaml), odd.sources, odd.sampler and odd.registry (pathlib, importlib)"
+        "yaml), odd.sources (pathlib, subprocess), odd.registry (importlib) and "
+        "odd.sampler (`Any`)"
     ),
     "autoware_carla_scenario.odd.cli": "imports json, argparse",
     "autoware_carla_scenario.odd.model": (
@@ -348,7 +349,7 @@ EXCLUDED: dict[str, str] = {
     ),
     "autoware_carla_scenario.odd.openodd": "imports pathlib, yaml",
     "autoware_carla_scenario.odd.probes": "imports lanelet2",
-    "autoware_carla_scenario.odd.registry": "imports pathlib, importlib",
+    "autoware_carla_scenario.odd.registry": "imports importlib",
     "autoware_carla_scenario.odd.route": "imports lanelet2",
     "autoware_carla_scenario.odd.sampler": "holds and takes values of `Any` (`OddSample.values`, `OddSampler`'s coverage, the `Mapping[str, Any]` config nodes of `knobs_from_mapping()` and `sampler_from_config()`), which Codon cannot express",
     "autoware_carla_scenario.odd.sources": "imports pathlib, subprocess, shutil, tempfile, tarfile, hashlib, fcntl, io, contextlib",
@@ -382,7 +383,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.trajectory.relative_lane": "imports lanelet2, autoware_lanelet2_extension_python",
     "autoware_carla_scenario.trajectory.resolve": "imports trajectory.relative_lane (lanelet2) and route.positions (lanelet2, through route.frame), which are neither checked nor modelled, and reads MapManager's lanelet2 map and routing graph; takes and returns callables through aliases Codon reads as no type (`GroundHeight`, `PositionResolver` of a union parameter, `ReferencePose`), built as closures over a dict and a list; `road_height` takes `carla_map: Any`",
     "autoware_carla_scenario.trajectory_recorder": "imports pathlib, json",
-    "autoware_carla_scenario.ui": "imports pathlib, uvicorn",
+    "autoware_carla_scenario.ui": "imports uvicorn",
     "autoware_carla_scenario.ui.app": "imports pathlib, fastapi, json, asyncio, fnmatch",
     "autoware_carla_scenario.ui.models": "imports pydantic",
     "autoware_carla_scenario.ui.runner": "imports pathlib, subprocess",
