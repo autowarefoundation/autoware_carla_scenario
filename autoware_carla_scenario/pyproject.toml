@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "7.5.1"
+version = "7.5.4"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"

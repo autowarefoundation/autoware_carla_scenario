@@ -15,6 +15,8 @@ the author wrote:
 * ``@dataclass`` is removed (a Codon class with annotated fields already gets
   the dataclass ``__init__``), and each ``field(default=...)`` /
   ``field(default_factory=...)`` is replaced by its default.
+* ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
+  ``abc`` shim's ``ABC`` is an empty base).
 * A parameter or return annotation naming a class the module defines further
   down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
   dropped: Codon 0.19 cannot name a class in a signature before its
@@ -58,9 +60,12 @@ __all__ = [
     "undeclared_attributes",
 ]
 
-#: First line of every transformed module; reported line numbers are shifted
-#: back by one.
-PRELUDE = "from autoware_carla_scenario._lists import _acs_list\n"
+#: First lines of every transformed module; reported line numbers are shifted
+#: back by as many.
+PRELUDE = (
+    "from autoware_carla_scenario._lists import _acs_list\n"
+    "from autoware_carla_scenario._tc import _Required as _acs_Required\n"
+)
 
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}
 _UNION_NAMES = {"Union", "typing.Union"}
@@ -103,6 +108,9 @@ _DROPPED_CLASS_DECORATORS = {
     "enum.unique",
 }
 _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
+#: Function decorators dropped: Codon 0.19 rejects a decorated method, and
+#: the method compiles the same without them.
+_DROPPED_FUNCTION_DECORATORS = {"abstractmethod", "abc.abstractmethod"}
 
 #: Enum bases (``enum.X`` too), and the value type a base implies.
 _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
@@ -279,8 +287,15 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     return None
 
 
-def _field_default(call: ast.Call, edits: _Edits) -> str | None:
-    """The default a ``field(...)`` call stands for, or ``None`` if it has none."""
+def _field_default(
+    call: ast.Call, edits: _Edits, annotation: ast.expr | None = None
+) -> str | None:
+    """The default a ``field(...)`` call stands for, or ``None`` if it has none.
+
+    An empty collection takes the type of the field's *annotation* when Codon
+    can express it (``list[int]()``): Codon types a bare ``[]`` from what is
+    put in it, and nothing is, so it would be a list of ``None``.
+    """
     for kw in call.keywords:
         if kw.arg == "default":
             return edits.text(*edits.node_span(kw.value))
@@ -290,7 +305,13 @@ def _field_default(call: ast.Call, edits: _Edits) -> str | None:
                 return "(" + edits.text(*edits.node_span(factory.body)) + ")"
             name = _dotted(factory)
             if name in _FACTORY_LITERALS:
-                return _FACTORY_LITERALS[name]
+                typed = (
+                    codon_annotation(annotation, class_level=True)
+                    if isinstance(annotation, ast.Subscript)
+                    and _dotted(annotation.value) == name
+                    else None
+                )
+                return f"{typed}()" if typed is not None else _FACTORY_LITERALS[name]
             return edits.text(*edits.node_span(factory)) + "()"
     return None
 
@@ -348,6 +369,31 @@ class _Rewriter(ast.NodeVisitor):
                 )
         if args.kwonlyargs and args.vararg is None:
             self._rewrite_bare_star(args)
+        self._default_required_keywords(args)
+
+    def _default_required_keywords(self, args: ast.arguments) -> None:
+        """Give a required keyword-only parameter after a default one.
+
+        Codon refuses a parameter without a default after one with
+        (``def f(x: float = 0.0, *, label: str)``).  The default given,
+        ``_acs_Required()`` (the model's ``_tc._Required``), is of no
+        parameter's type, so a call that leaves the argument out is still a
+        compile error, at the call.
+        """
+        defaulted = bool(args.defaults)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+            if default is not None:
+                defaulted = True
+                continue
+            if not defaulted:
+                continue
+            end = (
+                self.edits.node_span(arg.annotation)[1]
+                if arg.annotation is not None
+                else self.edits.offset(arg.lineno, arg.col_offset)
+                + len(arg.arg.encode())
+            )
+            self.edits.replace(end, end, " = _acs_Required()")
 
     def _rewrite_bare_star(self, args: ast.arguments) -> None:
         first_kw = args.kwonlyargs[0]
@@ -401,6 +447,9 @@ class _Rewriter(ast.NodeVisitor):
         for decorator in node.decorator_list:
             if classmethod_ and _dotted(decorator) == "classmethod":
                 self.edits.replace(*self.edits.node_span(decorator), "staticmethod")
+            elif _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS:
+                start, end = self.edits.node_span(decorator)
+                self.edits.replace(start - 1, end, "")  # with its "@"
             else:
                 self.visit(decorator)
         if classmethod_ and self._class_name is not None:
@@ -542,7 +591,7 @@ class _Rewriter(ast.NodeVisitor):
             and isinstance(value, ast.Call)
             and _dotted(value.func) in _FIELD_FUNCTIONS
         ):
-            default = _field_default(value, self.edits)
+            default = _field_default(value, self.edits, node.annotation)
             if default is None:
                 self.edits.replace(
                     self.edits.node_span(node.annotation)[1],

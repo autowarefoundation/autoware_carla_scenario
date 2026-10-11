@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -14,13 +13,21 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 
+def _role_name(actor: "carla.Actor") -> Optional[str]:
+    """The ``role_name`` attribute of *actor*, or ``None`` if it has none."""
+    # Not attributes.get(): Codon's dict.get() requires a default of the
+    # value type, and no string means "absent".
+    attributes = actor.attributes
+    return attributes["role_name"] if "role_name" in attributes else None
+
+
 def find_actor_in_list(
-    actors: "list[carla.Actor]", role_name: Union[EntityRole, str]
+    actors: Union[carla.ActorList, list[carla.Actor]], role_name: Union[EntityRole, str]
 ) -> Optional["carla.Actor"]:
     """Find a single actor by its ``role_name`` in a pre-fetched actor list.
 
     Args:
-        actors: Pre-fetched actor list (e.g. from ``world.get_actors()``).
+        actors: Pre-fetched actors (e.g. ``world.get_actors()``, or a list).
         role_name: The ``role_name`` attribute value to search for.
             Accepts both :class:`EntityRole` and plain ``str``.
 
@@ -29,13 +36,13 @@ def find_actor_in_list(
     """
     name = str(role_name)
     return next(
-        (a for a in actors if a.attributes.get("role_name") == name),
+        (a for a in actors if _role_name(a) == name),
         None,
     )
 
 
 def find_actor_pair(
-    actors: "list[carla.Actor]",
+    actors: Union[carla.ActorList, list[carla.Actor]],
     source: Union[EntityRole, str],
     target: Union[EntityRole, str],
 ) -> "tuple[Optional[carla.Actor], Optional[carla.Actor]]":
@@ -45,7 +52,7 @@ def find_actor_pair(
     :func:`find_actor_in_list` calls scan the list twice for it.
 
     Args:
-        actors: Pre-fetched actor list (e.g. from ``world.get_actors()``).
+        actors: Pre-fetched actors (e.g. ``world.get_actors()``, or a list).
         source: The ``role_name`` of the measurement's first end.
         target: The ``role_name`` of its second end.
 
@@ -55,12 +62,19 @@ def find_actor_pair(
     source_name, target_name = str(source), str(target)
     found: "dict[str, carla.Actor]" = {}
     for actor in actors:
-        role = actor.attributes.get("role_name")
-        if role in (source_name, target_name) and role not in found:
+        role = _role_name(actor)
+        if (
+            role is not None
+            and role in (source_name, target_name)
+            and role not in found
+        ):
             found[role] = actor
             if len(found) == 2:
                 break
-    return found.get(source_name), found.get(target_name)
+    return (
+        found[source_name] if source_name in found else None,
+        found[target_name] if target_name in found else None,
+    )
 
 
 def find_actor_by_role_name(
@@ -136,12 +150,20 @@ class ScenarioResult:
             **kwargs: Forwarded to :func:`json.dumps`
                 (e.g. ``indent=2``, ``ensure_ascii=False``).
         """
+        # Imported here: Codon has no json, and the library check leaves this
+        # method out (typecheck/library.py), so it never compiles the import.
+        import json  # noqa: PLC0415
+
         kwargs.setdefault("ensure_ascii", False)
         return json.dumps(self.to_dict(), **kwargs)
 
 
 class BaseCondition(ABC):
     """Abstract base class for scenario pass/fail conditions."""
+
+    label: str
+    _last_satisfied: bool
+    _last_message: str
 
     def __init__(self, label: str) -> None:
         if not label:
@@ -208,10 +230,13 @@ class BaseCondition(ABC):
         :meth:`get_details` into a single dict suitable for nesting
         inside parent conditions.
         """
-        return {
+        # update() rather than `**` in the display: Codon's parser fails on
+        # that, even in a function it does not compile.
+        summary: dict[str, Any] = {
             "condition_type": type(self).__name__,
             "label": self.label,
             "satisfied": self._last_satisfied,
             "message": self._last_message,
-            **self.get_details(),
         }
+        summary.update(self.get_details())
+        return summary

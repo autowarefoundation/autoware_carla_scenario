@@ -36,6 +36,10 @@ class StickyCondition(BaseCondition):
         condition: The child condition to wrap.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _condition: BaseCondition
+    _latched_result: Optional[ScenarioResult]
+
     def __init__(self, condition: BaseCondition, *, label: str | None = None) -> None:
         auto_label = f"{condition.label}_sticky"
         super().__init__(label=label if label is not None else auto_label)

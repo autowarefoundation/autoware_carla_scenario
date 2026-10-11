@@ -23,6 +23,9 @@ class AndCondition(BaseCondition):
         conditions: Child conditions to evaluate.  Must contain at least 2.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _conditions: Sequence[BaseCondition]
+
     def __init__(
         self, conditions: Sequence[BaseCondition], *, label: str | None = None
     ) -> None:
