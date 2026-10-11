@@ -255,7 +255,7 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module but the six example scenarios now has an entry other than
+Every module but four of the example scenarios now has an entry other than
 `"not yet checked (#45)"`. 94 of the package's 225 modules (42%; about
 16,900 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
@@ -281,9 +281,13 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
 the authoring package's pydantic specs. The 131 `EXCLUDED` modules are the
-six example scenarios, which import the checked `examples.configs` but are
-not checked yet (the scenario check compiles each as a scenario, against the
-model), and three groups:
+six example scenarios, which import the checked `examples.configs` (the
+scenario check compiles each as a scenario, against the model), and three
+groups. Four of the examples are not checked yet; `cut_in` and
+`intersection_passing` pass the check alone but not in the full run, where
+the model's `GroundProjectionConfig`, which they import from the top-level
+package, meets `scenario_config`'s checked one, a different type to Codon
+(#99). The three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
