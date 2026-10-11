@@ -56,6 +56,11 @@ class RelativeSpeedCondition(CompositionCondition):
         label: Identifier reported with the result.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _reference_entity_name: str
+    _comparison: ScalarComparisonRule
+    _direction: SpeedDirection
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -70,7 +75,8 @@ class RelativeSpeedCondition(CompositionCondition):
         if tolerance < 0:
             raise ValueError("tolerance must be non-negative")
         super().__init__(entity_name=entity_name, label=label)
-        self._reference_entity_name = reference_entity_name
+        # Kept as its string, the one thing every use of it reads.
+        self._reference_entity_name = str(reference_entity_name)
         self._comparison = ScalarComparisonRule(
             field="relative_speed", rule=rule, value=value, tolerance=tolerance
         )
@@ -88,7 +94,7 @@ class RelativeSpeedCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
+    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
         """Return the relative speed component, or ``None`` when unknowable."""
         assert self._entity_name is not None  # noqa: S101
         entity, reference = find_actor_pair(

@@ -72,6 +72,23 @@ def test_an_annotation_codon_cannot_express_is_dropped(python: str) -> None:
     assert _annotation(python) is None
 
 
+@pytest.mark.parametrize(
+    ("python", "codon"),
+    [
+        ("carla.TrafficLightState", "int"),
+        ("'carla.TrafficLightState'", "int"),
+        ("typesafe_carla.carla.LaneType", "int"),
+        ("Optional[carla.LaneChange]", "Optional[int]"),
+        ("list[carla.VehicleLightState]", "list[int]"),
+        ("carla.TrafficLight", "carla.TrafficLight"),
+        ("signals.TrafficLightState", "signals.TrafficLightState"),
+    ],
+)
+def test_a_carla_integer_enumeration_is_an_int(python: str, codon: str) -> None:
+    # typesafe_carla's Codon library has each as a value whose members are int.
+    assert _annotation(python) == codon
+
+
 def test_a_class_level_declaration_keeps_an_abstract_collection() -> None:
     # The typing shim maps it onto List; a declaration cannot be dropped.
     assert _annotation("Sequence[int]", class_level=True) == "Sequence[int]"
@@ -200,6 +217,24 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
+def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() -> None:
+    out = _transform(
+        """
+        try:
+            f()
+        except AttributeError:
+            raise RuntimeError(
+                "no f"
+            ) from None
+        except ValueError as exc:
+            raise RuntimeError("bad f") from exc
+        """
+    )
+    lines = out.splitlines()
+    assert lines[4:7] == ["    raise RuntimeError(", '        "no f"', "    )"]
+    assert lines[8] == '    raise RuntimeError("bad f") from exc'
+
+
 def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     source = textwrap.dedent(
         """
@@ -225,7 +260,8 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
         """
     )
     out = _transform(source)
-    assert out.count("\n") == source.count("\n")
+    body = out.partition("\n\n@extend\n")[0]  # the constructors by value follow
+    assert body.count("\n") == source.count("\n")
     assert "@unique" not in out
     assert "class Turn(Enum[str]):" in out
     assert "    LEFT: ClassVar[Turn] = Turn('LEFT', \"left\")" in out
@@ -237,6 +273,26 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     assert "    B: ClassVar[Kind] = Kind('B', 5)" in out
     # Values of two types: left as written, for Codon to report.
     assert "class Mixed(Enum):" in out
+
+
+def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
+    source = textwrap.dedent(
+        """
+        class Turn(Enum):
+            LEFT = "left"
+        class Level(enum.IntEnum):
+            LOW = 1
+        def f():
+            class Local(Enum):
+                A = 1
+        """
+    )
+    out = _transform(source)
+    body, _, lookups = out.partition("\n\n@extend\n")
+    assert body.count("\n") == source.count("\n")  # no line of the source moves
+    assert "@extend\nclass Turn:\n    def __init__(self, value: str):" in out
+    assert "@extend\nclass Level:\n    def __init__(self, value: int):" in out
+    assert "class Local" not in lookups  # the module's top-level enums only
 
 
 def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:

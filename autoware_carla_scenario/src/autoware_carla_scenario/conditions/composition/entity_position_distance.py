@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.poses import AnyPose
+from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import to_carla_location
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
@@ -58,10 +58,15 @@ class EntityPositionDistanceCondition(CompositionCondition):
         ValueError: If *tolerance* is negative.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _target: Vector3
+    _vertical: bool
+    _comparison: ScalarComparisonRule
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
-        position: AnyPose,
+        position: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose],
         value: float,
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
         vertical: bool = False,
@@ -93,7 +98,7 @@ class EntityPositionDistanceCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
+    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
         """Return the distance from the entity to the place, or ``None``."""
         assert self._entity_name is not None  # noqa: S101
         entity = find_actor_in_list(actors, self._entity_name)

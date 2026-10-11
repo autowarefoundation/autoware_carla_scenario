@@ -60,6 +60,10 @@ class AccelerationCondition(CompositionCondition):
         label: Identifier reported with the result.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _comparison: ScalarComparisonRule
+    _direction: AccelerationDirection
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],

@@ -1,0 +1,26 @@
+# Model of autoware_carla_scenario.signals (docs/typecheck.md), for
+# conditions.traffic_signal_controller, which is checked. The package itself is
+# not (typecheck/library.py): this declares only what checked modules read of
+# it, a controller found by name and the phase it is showing.
+
+
+class Phase:
+    name: str
+    duration_seconds: float
+
+
+class SignalController:
+    name: str
+    delay_seconds: float
+
+    @property
+    def current_phase(self) -> Optional[Phase]:
+        raise NotImplementedError()
+
+    @property
+    def started_at(self) -> Optional[float]:
+        raise NotImplementedError()
+
+
+def find_signal_controller(name: str) -> Optional[SignalController]:
+    raise NotImplementedError()

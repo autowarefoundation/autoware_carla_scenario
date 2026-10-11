@@ -168,10 +168,14 @@ Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 Codon then checks each call with the arguments it is given.
 
 The checker also rewrites what Codon spells differently: an `Enum` class (its
-members become instances with a `name` and a typed `value`; looking a member
-up by value or name, and iterating over the class, are not modelled), a class
-deriving from an exception, and a `@classmethod` (a static method of its
-class: `cls` names the class it is defined in).
+members become instances with a `name` and a typed `value`; a lookup by value,
+`ActionState("completeState")`, takes a value of that type and is typed but
+not resolved to the member; looking a member up by name and iterating over the
+class are not modelled), a class deriving from an exception, a `@classmethod`
+(a static method of its class: `cls` names the class it is defined in), and an
+annotation naming one of CARLA's integer enumerations
+(`carla.TrafficLightState`), which typesafe_carla's Codon library has as a
+value whose members are `int`, not as a type: it becomes `int`.
 
 ## Checking the framework itself
 
@@ -241,10 +245,14 @@ def _acs_library_check():
 is ever run. A parameter annotated with a union (`Lanelet2Pose |
 OpenDrivePose`) is called once with each member, so the body is checked for
 every type it accepts. A parameter with no annotation, or one Codon cannot
-express (`Any`, `object`, `Callable`, ...), gives the check nothing to call
-with and is reported as a problem of the module, at its line: annotate it with
-the type its callers pass. The one exception is `other: object` in `__eq__`
-and `__ne__`, which Python requires; it is called with the class itself.
+express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
+gives the check nothing to call with and is reported as a problem of the
+module, at its line: annotate it with the type its callers pass. The one
+exception is `other: object` in `__eq__` and `__ne__`, which Python requires;
+it is called with the class itself. A `Callable` whose argument and result
+types Codon can express (`Callable[[carla.World], Optional[float]]`, a
+dataclass field too) is called with a value of Codon's `Callable` type, which
+a function of that signature converts to.
 
 ### Checked modules and the model
 
@@ -255,8 +263,15 @@ stands in for it in the check's workspace:
 - another **checked** module: its own (rewritten) source;
 - any other module: its **model**, the `codon/autoware_carla_scenario/` module
   of the public package it belongs to (`coordinate.poses` is modelled by
-  `coordinate.codon`). A module with no model (`utils.config`) cannot be
-  imported by a checked module until it is checked itself.
+  `coordinate.codon`), or, for a module of a package that is itself checked,
+  a model of that module alone (`utils/traffic_light.codon`). A module with no
+  model (`utils.config`) cannot be imported by a checked module until it is
+  checked itself.
+
+A model module that stands in for unchecked code (`coordinate.codon` for
+`transform.py` and `map_manager.py`) declares only what the checked modules
+and scenarios use of it: `MapManager` there is `get_instance()` and the
+`road_network` it reads, not the class's whole API.
 
 A checked module is compiled under a name of its own
 (`_acs_lib.autoware_carla_scenario__coordinate__frames`), since Codon reads
@@ -266,6 +281,15 @@ source file. A type a checked module defines is not the type the model
 declares under the same name, so a checked module cannot hand its own value to
 a model function that wants the model's: check modules bottom-up, before the
 modules that use them.
+
+Where the model's functions take the types a checked module defines (the
+poses, which `to_opendrive` takes and returns), the model's own declarations
+of them live in a model module of their own (`_poses.codon`), which
+`REPLACED_MODELS` in `typecheck/library.py` names with the modules it
+models. Once those are all checked, the library check compiles that model
+module as a re-export of their definitions, so the model and the checked
+modules share one `Lanelet2Pose`. A name the model declares that none of the
+checked modules defines is reported.
 
 ### Conditions: the checked base and the model
 
@@ -288,6 +312,14 @@ from the model's. The two are different types that never meet:
 record its last result for the UI, is in `UNCALLED`: the check sees each
 `check()` as written.
 
+`actions.base` is checked the same way: a checked action takes the checked
+`BaseCondition`, so it imports it from `conditions.base` rather than from the
+`conditions` package, which the model stands in for until it is checked. Its
+`BaseAction` and `ActionState` are again not the model's, so
+`conditions.action_state` watches checked actions. An action that hands a
+condition from an unchecked module to its base (`SetSpeedAction`'s default
+`SpeedCondition`) waits for that module.
+
 ### Making a module compile
 
 What Codon 0.19 needs that Python does not, beyond
@@ -303,6 +335,16 @@ What Codon 0.19 needs that Python does not, beyond
   `hasattr` when it compiles, so the branch for a type without the attribute
   is never compiled.
 - An exception's `__init__` passes one message string to `super().__init__`.
+  An exception class with nothing in its body but a docstring needs that
+  `__init__` written out (`def __init__(self, message: str) -> None:`).
+- **`key in d` and `d[key]` instead of `d.get(key)`**: Codon's `dict.get`
+  wants a default of the value's type. Likewise `if not x: continue` instead
+  of `(x or {})`, `s.startswith(a) or s.startswith(b)` instead of
+  `s.startswith((a, b))`, and `if x is None: return None` / `return x.attr`
+  instead of `None if x is None else x.attr`.
+- **A dict of values of different types** (`{"at": None, "around": None}`
+  read back as a tuple and a list) becomes a small class with one declared
+  attribute per key.
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
   `pathlib`, ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc` and `__future__` shims of
@@ -327,7 +369,16 @@ What Codon 0.19 needs that Python does not, beyond
   name instead.
 - **An attribute holds one type**: one assigned a union (`EntityRole | str`)
   is stored converted where every use converts it anyway
-  (`self._entity_name = str(entity_name)`).
+  (`self._entity_name = str(entity_name)`). Codon 0.19 crashes on an
+  attribute declared with a union ("union already sealed"), so where the
+  union is what the class holds (a public dataclass field such as
+  `VehicleEntityConfig.role_name`), the module stays in `EXCLUDED`.
+- **Annotate a local that starts as `None`** (`spawn_points:
+  Optional[list[carla.Transform]] = None`): Codon types it by its first
+  assignment, and on a branch it then compiles alone it can crash without a
+  diagnostic. A function that imports a name locally (`import
+  typesafe_carla.carla as carla`) makes it local to the whole function, so an
+  annotation naming it needs that import above it.
 - **Operators take the operand types they accept**, not `object`. Annotate
   `other` with the class (`def __add__(self, other: FrenetVelocity)`) and a
   scalar with `float`, and keep the `isinstance` guard that returns
@@ -365,6 +416,60 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate/frames.py` does for `poses.py`. Set class attributes in the
   class body (`FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2`)
   rather than from a function run after the class.
+- **Codon does not narrow an `Optional`** after `if x is None: return`. Where
+  the narrowed value goes into something typed (a tuple the function
+  returns), assign it to an annotated local first (`od: OpenDrivePose = x`),
+  which Codon unwraps.
+- **Codon does not narrow a union either**, with `is` or `isinstance`, and an
+  attribute holding a union (`Union[Sequence[int], TrafficLightTarget,
+  None]`) reaches every use as the union. Store it split by kind
+  (`_all_lights: bool`, `_lanelet2_ids: Optional[Sequence[int]]`), deciding
+  the kind once in `__init__`, where `isinstance` on the parameter is decided
+  when Codon compiles.
+- **A default of a subclass for an `Optional` of its base** goes through an
+  `if` statement, not a conditional expression: `x if x is not None else
+  Sub()` is refused (`Optional[Base]` is not `Optional[Sub]`).
+- **A dict has no truth value** in Codon: `if not d:` is `if len(d) == 0:`.
+- **No `setattr(obj, name, value)` with a name known only at run time**:
+  spell the assignments out (`actions/environment.py`).
+- **One `except` clause per exception type**: Codon 0.19 does not take a
+  tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
+  to `raise X` by the check; `raise X from exc` compiles as it is.
+- **No `frozenset`** and no variable-length tuple (`tuple[X, ...]`, which the
+  check drops from an annotation): use a `set` or a `list` where nothing
+  relies on the immutability.
+- **An `Optional` attribute is assigned without an annotation**: with one
+  declared at class level (`_lane_id: Optional[int]`), Codon refuses
+  `self._lane_id: Optional[int] = address.lane_id` (an `int` "does not match"
+  `Optional[int]`) but takes `self._lane_id = address.lane_id`, and
+  `X(...) if c else None` likewise only without the annotation.
+- **`x or []` with `x: Optional[list[T]]`** has no one type in Codon: start
+  from an annotated empty list and assign `x` under `if x:`.
+- **A subclass goes into an `Optional` base parameter from a base-typed
+  variable**: Codon does not upcast and wrap in one step, so
+  `super().__init__(child=PersistentCondition(...))` against
+  `child: BaseCondition | None` fails, and
+  `child: BaseCondition = PersistentCondition(...)` passed on compiles.
+- **`getattr(x, name, None)`** for an attribute a value may lack at run time
+  (a mock in a test) becomes `try: v = x.name` / `except AttributeError:`,
+  which reads the attribute once, as `getattr` did.
+- **`dict.get` takes its default**: Codon's has no one-argument form. Test
+  `key in d` and index instead of `d.get(key)`.
+- **No sign in an f-string format spec**: Codon's parser rejects
+  `f"{x:+.1f}"`. Format the value first (`x.__format__("+.1f")`) and put the
+  string in the f-string.
+- **`carla.TrafficLightState` is a value in the check**, not a type: its
+  members are ints, as `get_state()` returns. The check reads an annotation
+  naming one of typesafe_carla's integer enumerations
+  (`carla.TrafficLightState`, `carla.LaneType`, ...) as `int`, so keep the
+  CARLA name (the authoring code generator reads it), and compare with
+  `get_state()` rather than look a member up by value.
+- **A sensor callback gets a `carla.SensorData` in the check**, where the
+  CPython API hands it the measurement itself (a `carla.CollisionEvent`).
+  Listen through a method that converts only when it has to
+  (`if hasattr(data, "as_collision"): data = data.as_collision()`, as
+  `conditions/collision.py` does): Codon decides `hasattr` when it compiles,
+  and the CPython measurement has no `as_<kind>()`.
 - **No variable-length tuples**: Codon's tuples have a fixed length, so a
   `tuple[int, ...]` parameter or field gives the check nothing to call with.
   Turning it into a list changes what the class does (a frozen dataclass's

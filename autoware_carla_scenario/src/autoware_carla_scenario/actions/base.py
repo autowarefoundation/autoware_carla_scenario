@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ..action_state import ActionState
-from ..conditions import BaseCondition
+from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 
 if TYPE_CHECKING:
@@ -96,6 +96,15 @@ class BaseAction(ABC):
     #: :meth:`_reissues_by_default` is the way to decide per instance.
     REISSUES_BY_DEFAULT: ClassVar[bool] = False
 
+    label: str
+    _condition: BaseCondition
+    _timing: TickTiming
+    _once: bool
+    _until: Optional[BaseCondition]
+    _reissue: Optional[bool]
+    _done: bool
+    _lifecycle: ActionState
+
     def __init__(
         self,
         label: str,
@@ -112,7 +121,10 @@ class BaseAction(ABC):
                 "Provide a non-empty string to identify this action."
             )
         self.label = label
-        self._condition = condition if condition is not None else AlwaysTrueCondition()
+        if condition is not None:
+            self._condition = condition
+        else:
+            self._condition = AlwaysTrueCondition()
         self._timing = timing
         self._once = once
         self._until = until

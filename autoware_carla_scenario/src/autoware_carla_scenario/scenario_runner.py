@@ -30,6 +30,7 @@ from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
+from .world_reset import reload_current_map
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .trajectory_recorder import TrajectoryRecorder
@@ -669,7 +670,7 @@ class ScenarioRunner:
             if camera_recorder is not None:
                 camera_recorder.stop()
             # Stop the replayer; leftover actors are cleaned up by the
-            # reload_world() call at the end of run_scenario().
+            # map reload at the end of run_scenario().
             self._client.stop_replayer(keep_actors=False)
 
     # ------------------------------------------------------------------
@@ -724,7 +725,7 @@ class ScenarioRunner:
         ego.set_traffic_backend(backend)
 
         # Destroy any leftover actors from a previous scenario that may
-        # have survived a failed reload_world().  On a clean world this
+        # have survived a failed map reload.  On a clean world this
         # is a no-op.
         _destroy_all_dynamic_actors(
             world,
@@ -737,7 +738,7 @@ class ScenarioRunner:
         )
 
         # Enable synchronous mode so we control the simulation tick rate.
-        # Original settings are not saved because reload_world() at the
+        # Original settings are not saved because the map reload at the
         # end of this method resets everything to defaults.
         settings = world.get_settings()
         settings.synchronous_mode = True
@@ -1071,7 +1072,7 @@ class ScenarioRunner:
                 )
 
             # Explicitly destroy the ego vehicle so it does not persist
-            # if reload_world() fails later.
+            # if the map reload fails later.
             try:
                 ego.destroy()
                 logger.info("[%s] Ego vehicle destroyed", scenario_name)
@@ -1150,15 +1151,15 @@ class ScenarioRunner:
             )
 
         # Reload the world to guarantee a completely clean state (all
-        # actors, sensors, and physics state are reset).  This is more
-        # reliable than destroying actors individually, which can fail
-        # with "failed to destroy actor" errors from the CARLA server.
-        # Flush any pending server-side operations (e.g. replayer
-        # shutdown) before reloading to avoid std::exception errors.
+        # actors, sensors, physics state, settings and weather are reset).
+        # This is more reliable than destroying actors individually, which
+        # can fail with "failed to destroy actor" errors from the CARLA
+        # server.  Flush any pending server-side operations (e.g. replayer
+        # shutdown) before reloading.
         try:
             world = self._client.get_world()
             world.tick()
-            self._client.reload_world()
+            reload_current_map(self._client)
             # After reload, get the fresh world and tick it once so that
             # CARLA fully initialises the new world state.
             self._world = self._client.get_world()
@@ -1166,7 +1167,7 @@ class ScenarioRunner:
             logger.info("[%s] World reloaded and ticked", scenario_name)
         except Exception:
             logger.warning(
-                "[%s] reload_world failed — world may retain residual state",
+                "[%s] Reloading the map failed — world may retain residual state",
                 scenario_name,
                 exc_info=True,
             )

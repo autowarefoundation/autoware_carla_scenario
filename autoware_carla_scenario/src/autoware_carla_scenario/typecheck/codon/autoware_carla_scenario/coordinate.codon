@@ -7,80 +7,8 @@
 import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only
-
-
-@tuple
-class CoordinateFrame:
-    value: int
-    CARLA_WORLD: ClassVar[CoordinateFrame] = CoordinateFrame(1)
-    LANELET2: ClassVar[CoordinateFrame] = CoordinateFrame(2)
-    OPENDRIVE: ClassVar[CoordinateFrame] = CoordinateFrame(3)
-
-
-class FrameMismatchError(Static[Exception]):
-    frame_a: CoordinateFrame
-    frame_b: CoordinateFrame
-
-    def __init__(self, frame_a: CoordinateFrame, frame_b: CoordinateFrame, operation: str):
-        super().__init__("FrameMismatchError", operation)
-        self.frame_a = frame_a
-        self.frame_b = frame_b
-
-
-class Lanelet2Pose:
-    lanelet_id: int
-    s: float
-    t: float
-    heading: float
-    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2
-
-    def __init__(self, lanelet_id: int, s: float, t: float = 0.0, heading: float = 0.0):
-        self.lanelet_id = lanelet_id
-        self.s = s
-        self.t = t
-        self.heading = heading
-
-
-class OpenDrivePose:
-    road_id: str
-    lane_id: int
-    s: float
-    t: float
-    heading: float
-    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.OPENDRIVE
-
-    def __init__(self, road_id: str, lane_id: int, s: float, t: float = 0.0, heading: float = 0.0):
-        self.road_id = road_id
-        self.lane_id = lane_id
-        self.s = s
-        self.t = t
-        self.heading = heading
-
-
-class CarlaWorldPose:
-    x: float
-    y: float
-    z: float
-    roll: float
-    pitch: float
-    yaw: float
-    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.CARLA_WORLD
-
-    def __init__(self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0,
-                 yaw: float = 0.0):
-        self.x = x
-        self.y = y
-        self.z = z
-        self.roll = roll
-        self.pitch = pitch
-        self.yaw = yaw
-
-    def to_carla_transform(self) -> carla.Transform:
-        raise NotImplementedError()
-
-    @staticmethod
-    def from_carla_transform(t: carla.Transform) -> CarlaWorldPose:
-        raise NotImplementedError()
+from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanelet2Pose,
+                     OpenDrivePose)
 
 
 def _expect_pose(pose):
@@ -218,7 +146,7 @@ def get_stop_line_poses_with_following(lanelet_id: int, depth: int = 1
 
 
 def find_nearest_traffic_light(world: carla.World, location, max_distance: float = 150.0
-                               ) -> Tuple[Optional[carla.TrafficLight], float]:
+                               ) -> Tuple[Optional[carla.Actor], float]:
     _expect_pose_or_location(location)
     raise NotImplementedError()
 
@@ -229,3 +157,83 @@ def lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id: int) ->
 
 def get_signal_ids_for_controller(controller_id: int) -> List[str]:
     raise NotImplementedError()
+
+
+# Below: the boundary the checked coordinate modules (typecheck/library.py)
+# compile against, beyond what a scenario uses. __init__.codon exports none of
+# it, so a scenario does not reach it through the model.
+
+
+def find_traffic_lights_for_lanelet2_id(world: carla.World, lanelet2_tl_id: int
+                                        ) -> List[carla.Actor]:
+    raise NotImplementedError()
+
+
+def to_map_frame(pose):
+    # Returns autoware_bridge's BridgePose, which the model does not have.
+    _expect_pose(pose)
+    raise NotImplementedError()
+
+
+def get_stop_line_linestrings(lanelet_id: int):
+    # Returns lanelet2 line strings, which the model does not have.
+    raise NotImplementedError()
+
+
+def get_stop_line_linestrings_with_following(lanelet_id: int, depth: int = 1):
+    raise NotImplementedError()
+
+
+# What lane_distance reads of the map MapManager has loaded: pyxodr's
+# RoadNetwork and Road, and the lxml elements they hold. Neither pyxodr nor
+# lxml compiles with Codon, so only what is read is declared.
+
+
+class _XmlAttributes:
+    def get(self, key: str) -> Optional[str]:
+        raise NotImplementedError()
+
+    def get(self, key: str, default: str) -> str:
+        raise NotImplementedError()
+
+
+class _XmlElement:
+    attrib: _XmlAttributes
+
+    def find(self, path: str) -> Optional[_XmlElement]:
+        raise NotImplementedError()
+
+    def findall(self, path: str) -> List[_XmlElement]:
+        raise NotImplementedError()
+
+    def get(self, key: str, default: str) -> str:
+        raise NotImplementedError()
+
+
+class Road:
+    road_xml: _XmlElement
+
+    def __getitem__(self, name: str) -> str:
+        raise NotImplementedError()
+
+
+class RoadNetwork:
+    road_ids_to_object: Dict[str, Road]
+
+
+class MapManager:
+    @staticmethod
+    def get_instance() -> MapManager:
+        raise NotImplementedError()
+
+    @property
+    def road_network(self) -> RoadNetwork:
+        raise NotImplementedError()
+
+    @property
+    def mgrs_offset(self) -> Tuple[float, float]:
+        raise NotImplementedError()
+
+    @property
+    def z_offset(self) -> float:
+        raise NotImplementedError()

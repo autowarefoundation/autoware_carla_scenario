@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,11 +21,14 @@ from autoware_carla_scenario.typecheck import (
     check,
     typecheck_library,
 )
+from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.typecheck.check import _model_module, replaced_models
 from autoware_carla_scenario.typecheck.cli import main as scenario_check
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
     EXCLUDED,
     NOT_YET_CHECKED,
+    REPLACED_MODELS,
     UNCALLED,
     package_modules,
 )
@@ -181,6 +185,66 @@ def test_an_import_with_nothing_to_stand_in_is_reported() -> None:
     assert "from autoware_carla_scenario.utils.config import load" in out
 
 
+def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
+    # utils is checked, and utils/traffic_light.codon models one module of it
+    # that is not; the other modules of utils have nothing to stand in.
+    assert _model_module(f"{_PACKAGE}.utils.traffic_light") == (
+        f"{_PACKAGE}.utils.traffic_light"
+    )
+    assert _model_module(f"{_PACKAGE}.utils.config") is None
+    assert _model_module(f"{_PACKAGE}.coordinate.transform") == f"{_PACKAGE}.coordinate"
+
+
+# ---------------------------------------------------------------------------
+# Model modules compiled from the checked source instead
+# ---------------------------------------------------------------------------
+
+
+def test_every_replaced_model_names_a_model_file_and_package_modules() -> None:
+    modules = package_modules()
+    for stem, sources in REPLACED_MODELS.items():
+        assert (model_dir() / _PACKAGE / f"{stem}.codon").is_file(), stem
+        assert sources and all(m in modules for m in sources), stem
+
+
+def _trees(*names: str) -> dict[str, SimpleNamespace]:
+    every = package_modules()
+    return {n: SimpleNamespace(tree=ast.parse(every[n].read_text())) for n in names}
+
+
+def test_a_replaced_model_re_exports_the_checked_definitions() -> None:
+    frames, poses = REPLACED_MODELS["_poses"]
+    problems: list = []
+    out = replaced_models(_trees(frames, poses), problems)
+    assert problems == []
+    assert out["_poses"].splitlines() == [
+        f"from {workspace_module(frames)} import CoordinateFrame, FrameMismatchError",
+        f"from {workspace_module(poses)} import CarlaWorldPose, Lanelet2Pose, "
+        "OpenDrivePose",
+    ]
+
+
+def test_a_model_is_replaced_only_once_all_its_modules_are_checked() -> None:
+    frames, _poses = REPLACED_MODELS["_poses"]
+    problems: list = []
+    assert "_poses" not in replaced_models(_trees(frames), problems)
+    assert problems == []
+
+
+def test_a_name_the_checked_source_lacks_is_a_problem() -> None:
+    frames, poses = REPLACED_MODELS["_poses"]
+    trees = _trees(frames, poses)
+    trees[poses].tree.body = [
+        node
+        for node in trees[poses].tree.body
+        if getattr(node, "name", None) != "OpenDrivePose"
+    ]
+    problems: list = []
+    out = replaced_models(trees, problems)
+    assert [p.message.split(",")[0] for p in problems] == ["OpenDrivePose"]
+    assert "OpenDrivePose" not in out["_poses"]
+
+
 # ---------------------------------------------------------------------------
 # The calls appended to a checked module
 # ---------------------------------------------------------------------------
@@ -280,6 +344,43 @@ def test_a_parameter_the_check_cannot_call_with_is_a_problem_of_the_module() -> 
     assert any("`y` has no annotation" in m for _, m in checks.problems)
 
 
+_CALLABLES = """
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+
+def apply(f: Callable[[float, str], Optional[float]]) -> None:
+    pass
+
+
+@dataclass
+class Reader:
+    read: Callable[["carla.World"], float]
+
+
+def anything(f: Callable[[Any], Any]) -> None:
+    pass
+
+
+def variadic(f: Callable[..., float]) -> None:
+    pass
+"""
+
+
+def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
+    checks = render_library_checks(ast.parse(_CALLABLES))
+    calls = checks.source.splitlines()
+    assert "    apply(_acs_value(Callable[[float, str], Optional[float]]))" in calls
+    assert "    Reader(_acs_value(Callable[[carla.World], float]))" in calls
+    lines = _CALLABLES.splitlines()
+    assert sorted(lines[line - 1].split("(")[0] for line, _ in checks.problems) == [
+        "def anything",
+        "def variadic",
+    ]
+
+
 def test_an_uncalled_function_is_left_out() -> None:
     checks = render_library_checks(
         ast.parse(_MODULE), ["angle", "Vector.norm", "Config.__init__", "generic"]
@@ -323,7 +424,9 @@ _FAKE = f"{_PACKAGE}.zz_library_check_case"
 _GOOD = """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Callable, Optional
 
 from autoware_carla_scenario.coordinate.poses import Lanelet2Pose, OpenDrivePose
 from .entity_role import EntityRole
@@ -368,6 +471,15 @@ class Thing:
 
 def lane_s(pose: Lanelet2Pose | OpenDrivePose) -> float:
     return pose.s
+
+
+@dataclass(frozen=True)
+class Reader:
+    read: Callable[[float], Optional[float]]
+
+
+def read_twice(reader: Reader, f: Callable[[float], float]) -> Optional[float]:
+    return reader.read(f(1.0))
 
 
 def describe(turn: Turn, level: Level, role: EntityRole) -> str:
