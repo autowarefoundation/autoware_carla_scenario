@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 __all__ = [
     "ANCHOR_PATTERN",
@@ -143,7 +143,10 @@ class Range:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return cls(float(value), float(value))
         if not isinstance(value, Mapping):
-            raise ValueError(f"{name} must be a mapping {{min, max}}, got {value!r}")
+            # Concatenated: Codon's parser rejects an escaped brace in an f-string.
+            raise ValueError(
+                f"{name} must be a mapping " + "{min, max}" + f", got {value!r}"
+            )
         unknown = sorted(set(value) - {"min", "max"})
         if unknown:
             raise ValueError(f"{name} takes only min and max, not {unknown}")
@@ -238,7 +241,19 @@ class JunctionSegmentSpec:
 
     def crossing(self, approach: str) -> str:
         """The wanted :data:`TRISTATE` for crossing traffic from *approach*."""
-        return str(getattr(self, f"crossing_from_{approach}"))
+        # Spelled out: Codon cannot compile getattr() with a name built at run
+        # time.  Any other approach still reaches getattr(), and raises as it
+        # did; Codon reads TYPE_CHECKING as true, so it never compiles that.
+        if approach == "left":
+            return str(self.crossing_from_left)
+        if approach == "right":
+            return str(self.crossing_from_right)
+        if approach == "opposite":
+            return str(self.crossing_from_opposite)
+        if TYPE_CHECKING:
+            raise AttributeError(f"crossing_from_{approach}")
+        else:
+            return str(getattr(self, f"crossing_from_{approach}"))
 
 
 SegmentSpec = "LaneSegmentSpec | JunctionSegmentSpec"
@@ -577,11 +592,12 @@ def parse_anchor(anchor: str) -> tuple[str, int, str]:
             f"{anchor!r} is not a route anchor: write start, end, "
             "segment:K:start, segment:K:end, junction:K:entry or junction:K:exit"
         )
+    # str(): Codon's group() is an Optional[str]; these groups always matched.
     if match.group(1):
-        return match.group(1), -1, ""
+        return str(match.group(1)), -1, ""
     if match.group(2):
-        return "segment", int(match.group(3)), match.group(4)
-    return "junction", int(match.group(6)), match.group(7)
+        return "segment", int(match.group(3)), str(match.group(4))
+    return "junction", int(match.group(6)), str(match.group(7))
 
 
 def anchor_problem(

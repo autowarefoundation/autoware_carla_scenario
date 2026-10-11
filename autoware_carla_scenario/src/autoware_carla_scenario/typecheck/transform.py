@@ -56,6 +56,11 @@ the author wrote:
   constructor takes every field.
 * A string inside a module-level ``Union[...]`` / ``Optional[...]`` alias (a
   forward reference) is unquoted: Codon takes no string as a type.
+* ``Literal["a", "b"]`` (an annotation, or a module-level alias) becomes the
+  type of its values (``str``): Codon's ``Literal`` types a compile-time
+  value, and the ``typing`` shim's ``Literal`` is ``str``.
+* A class-level ``tuple[A | B, ...]`` becomes ``List[Union[A, B]]``, which
+  Codon 0.19 holds as it holds an attribute of a union of classes.
 * A function decorator named in *dropped_decorators* is removed: the
   library check drops the run-time-only wrappers ``UNCALLED`` lists.  An
   annotation naming a module-level ``TypeVar`` (which types such a wrapper
@@ -94,6 +99,7 @@ PRELUDE = (
 )
 
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}
+_LITERAL_NAMES = {"Literal", "typing.Literal"}
 _UNION_NAMES = {"Union", "typing.Union"}
 _TUPLE_NAMES = {"tuple", "Tuple"}
 _TYPE_VAR_NAMES = {"TypeVar", "typing.TypeVar"}
@@ -300,8 +306,50 @@ def _is_none(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
 
 
+def _class_union(node: ast.AST) -> str | None:
+    """``Union[A, B]`` for the element of a class-level ``tuple[A | B, ...]``.
+
+    Codon 0.19 holds a list of a union of classes (``List[Union[A, B]]``), as
+    it holds an attribute of one; a union with ``None`` in it, or one with a
+    member Codon cannot express, gives ``None``.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    members = _union_members(node)
+    if members is None or len(members) < 2 or any(_is_none(m) for m in members):
+        return None
+    texts = [codon_annotation(m, class_level=True) for m in members]
+    if any(t is None or t.startswith("Optional[") for t in texts):
+        return None
+    return f"Union[{', '.join(t for t in texts if t is not None)}]"
+
+
+def _literal_type(node: ast.AST) -> str | None:
+    """The type of the values of a ``Literal[...]`` (``"a", "b"``: ``str``).
+
+    Codon's ``Literal`` is something else (a compile-time value's type, of
+    ``int``, ``bool`` or ``str`` only), so a Python ``Literal`` of values of
+    one type is checked as that type; ``None`` for anything else.
+    """
+    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _LITERAL_NAMES):
+        return None
+    inner = node.slice
+    values = list(inner.elts) if isinstance(inner, ast.Tuple) else [inner]
+    kinds = {type(v.value) if isinstance(v, ast.Constant) else None for v in values}
+    if len(kinds) != 1:
+        return None
+    kind = kinds.pop()
+    return {bool: "bool", int: "int", str: "str"}.get(kind) if kind else None
+
+
 def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     """The Codon spelling of a Python annotation, or ``None`` to drop it."""
+    literal = _literal_type(node)
+    if literal is not None:
+        return literal
     if isinstance(node, ast.Constant):
         if node.value is None:
             return "None"
@@ -354,6 +402,8 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
             if not class_level or len(args) != 2 or base not in _TUPLE_NAMES:
                 return None
             item = codon_annotation(args[0], class_level=class_level)
+            if item is None:
+                item = _class_union(args[0])
             return None if item is None else f"List[{item}]"
         converted = [codon_annotation(a, class_level=class_level) for a in args]
         if any(c is None for c in converted):
@@ -791,10 +841,32 @@ class _Rewriter(ast.NodeVisitor):
             # A type alias, `Position = Union["Lanelet2Pose", MapPose]`: Codon
             # takes no string as a type, so a forward reference is unquoted
             # (Codon reads the TYPE_CHECKING imports, which define the name).
-            for member in ast.walk(value.slice):
-                if isinstance(member, ast.Constant) and isinstance(member.value, str):
-                    self.edits.replace(*self.edits.node_span(member), member.value)
+            self._unquote_alias_members(value.slice)
+        literal = _literal_type(value)
+        if self._class_depth == 0 and self._function_depth == 0 and literal:
+            # A Literal alias, `Tristate = Literal["any", "yes", "no"]`: the
+            # type of its values (`str`), which Codon's Literal is not.
+            self.edits.replace(*self.edits.node_span(value), literal)
+            return
         self.generic_visit(node)
+
+    def _unquote_alias_members(self, node: ast.AST) -> None:
+        """Unquote the forward references in a ``Union``/``Optional`` alias.
+
+        A ``Literal[...]`` in it is no forward reference: it becomes the type
+        of its values (``Optional[Literal["a", "b"]]``: ``Optional[str]``),
+        or, of values of several types, is left as written.
+        """
+        if isinstance(node, ast.Subscript) and _dotted(node.value) in _LITERAL_NAMES:
+            literal = _literal_type(node)
+            if literal is not None:
+                self.edits.replace(*self.edits.node_span(node), literal)
+            return
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            self.edits.replace(*self.edits.node_span(node), node.value)
+            return
+        for child in ast.iter_child_nodes(node):
+            self._unquote_alias_members(child)
 
     def visit_List(self, node: ast.List) -> None:
         if (

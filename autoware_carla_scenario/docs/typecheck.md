@@ -255,26 +255,30 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 88 of
-the package's 225 modules (39%; about 15,300 of 68,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 92 of
+the package's 225 modules (41%; about 16,300 of 68,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
-signal-controller, lane-change, set-speed, turn and walk-straight actions,
+signal-controller, lane-change, routing, set-speed, turn and walk-straight
+actions, the logical scenario's route search and matches (`route.model`) and
+the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities and the entity registry, `BaseScenario`,
 the traffic backend interface with the TrafficManager backend, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units and the CARLA-only helpers, the traffic-light lookups included. 49
+units and the CARLA-only helpers, the traffic-light lookups included. 54
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
-backend's options node (`Mapping[str, Any]`), the six members of
+backend's options node (`Mapping[str, Any]`), what reads a route search or a
+match from YAML values of any type (`Range.parse()`, `parse_route_search()`,
+`RouteMatch.from_config()`) and what lays a route on a lanelet2 map handed
+over as `Any` (`set_scenario_route()`), the six members of
 `BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
-`register_route_to_goal()`, which also registers the unchecked
-`RoutingAction`) or on cover expressions of any value (`register_cover()`),
+`register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), and `signals.build_controllers()`, which reads
-the authoring package's pydantic specs. The 137 `EXCLUDED` modules fall into
+the authoring package's pydantic specs. The 133 `EXCLUDED` modules fall into
 three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
@@ -283,14 +287,12 @@ three groups:
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher) and everything that reads Lanelet2.
 - **About 20 build on an excluded module**: the example scenarios, through
-  `examples.configs`; the `route` package, the traffic backend registry, the
+  `examples.configs`; the route frame and route poses (`route.frame`,
+  `route.positions`, through lanelet2), the traffic backend registry, the
   SUMO backend and the authoring compiler.
-- **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
+- **About 10 hold values Codon has no type for**: `Any` (`coverage.items`,
   `odd.model`), a callable of any value as a parameter
-  (`trajectory.resolve`'s position resolvers), a variable-length tuple of a
-  union, which the check does not translate (`route.model`'s
-  `RouteSearchSpec.segments`, each a lane or a junction segment), a dict
-  unpacked into keyword arguments (`actions.routing`'s waypoints), or a class
+  (`trajectory.resolve`'s position resolvers), or a class
   as a value (`utils.config`, which `traffic.config` imports only in its
   uncalled `from_mapping()`).
 
@@ -522,7 +524,9 @@ What Codon 0.19 needs that Python does not, beyond
   at run time; or
   by a constructor written out, which keeps the union on the parameter for
   mypy (`RelativeLanePose(entity_ref: Union[EntityRole, str, None])`, stored
-  as `entity_ref: Optional[str]`).
+  as `entity_ref: Optional[str]`). Without `None` the union is held as it
+  is: `RoutingAction._entity_name: Union[EntityRole, str]` keeps what it was
+  given, which its public `entity_name` returns.
 - **A union of classes without `None` is an attribute type**: Codon 0.19
   holds `Union[Lanelet2Pose, MapPose, ...]` (`TrajectoryVertex.position`, any
   of ten poses), declared whole or through an alias (`position:
@@ -635,11 +639,11 @@ What Codon 0.19 needs that Python does not, beyond
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's `__hash__`), its equality with another tuple and its
   immutability; nothing compiled is run, so nothing can mutate the list.
-  Of a union (`tuple[A | B, ...]`) it is not translated, since the check
-  spells out no union of classes itself, so such a field cannot be declared
-  yet (`route.model`'s `RouteSearchSpec.segments`), though Codon 0.19 would
-  hold the `List[Union[A, B]]` (a union of classes is an attribute type,
-  above).
+  Of a union of classes (`tuple[A | B, ...]`, `tuple["A | B", ...]`) it
+  becomes `List[Union[A, B]]`, which Codon 0.19 holds as it holds an
+  attribute of the union (above): `route.model`'s
+  `RouteSearchSpec.segments`, each a lane or a junction segment. A union with
+  `None` in it is not translated.
 - **No star-unpacking into a tuple display** (`(*a, *b)`): Codon wants a
   tuple after `*`. Concatenate the lists (`a + b`).
 - **A default does not name a class attribute** (`random_seed: int =
@@ -714,11 +718,36 @@ What Codon 0.19 needs that Python does not, beyond
   `tuple[X, ...]` return annotation
   (`signals.registry.registered_signal_controllers()`).
 - **No `**` of a dict in a call** (`f(**extra)` with `extra` a `dict`):
-  Codon unpacks only a named tuple into keyword arguments
-  (`actions.routing`).
+  Codon unpacks only a named tuple into keyword arguments. Write one call
+  per set of keywords (`RoutingAction` passes `waypoints=` only when there
+  are some, in a call of its own).
 - **No escaped brace in an f-string** (`f"{{min, max}} of {name}"`): Codon's
   parser rejects it, even in a function it never compiles. Concatenate the
-  literal part (`"{min, max}" + f" of {name}"`).
+  literal part (`"{min, max}" + f" of {name}"`, as `Range.parse` does).
+- **`Literal["a", "b"]` is checked as the type of its values** (`str`), an
+  annotation and a module-level alias alike (`route.model`'s `Tristate`):
+  Codon's own `Literal` types a compile-time value of `int`, `bool` or `str`
+  only, and the `typing` shim's `Literal` is `str` (its `TYPE_CHECKING` is
+  declared with `Static[bool]`, Codon's other name for its `Literal`). A
+  `Literal` inside a `Union`/`Optional` alias is translated the same way. A
+  `Literal` of values of several types is dropped as an annotation; as an
+  alias it is left as written, which the check rejects.
+- **No `getattr(obj, name)` with a name built at run time**: spell the
+  attributes out (`JunctionSegmentSpec.crossing()`), and keep the `getattr`
+  for any other name in the `else` branch of `if TYPE_CHECKING:`, so Python
+  still raises the `AttributeError` it raised.
+- **A method only some subclasses have** (`EgoVehicle.route_to()`, which an
+  entity found as a `BackendDriven` may or may not have): ask
+  `hasattr(entity, "route_to")` and call it under that, and keep the call
+  that raises the `AttributeError` for an entity without it in the `else`
+  branch of `if TYPE_CHECKING:`. Codon decides `hasattr` by the static type,
+  which lacks the method, so it compiles none of the calls: the check covers
+  the lookup around them, not the calls (`RoutingAction.execute()`).
+- **A lanelet2 object at the model boundary is opaque**: the model's
+  `MapManager` hands out its `lanelet_map` and `routing_graph` as classes
+  with nothing in them, which the model's `RouteFrame` takes, so the checked
+  `scenario_route_frame()` (`route.active`) compiles; `route.frame` itself,
+  which reads them, is not checked.
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked
