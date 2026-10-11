@@ -153,14 +153,17 @@ def test_the_attributes_spelled_out_for_codon_are_the_blueprint_attributes() -> 
     Codon compiles: the same ones, in the same order, as the loop Python runs."""
     tree = ast.parse(inspect.getsource(CarlaCameraSensor.attach).strip())
     spelled = [
-        call.args[1].value
+        (call.args[1].value, ast.unparse(call.args[2]))
         for call in ast.walk(tree)
         if isinstance(call, ast.Call)
         and isinstance(call.func, ast.Attribute)
         and call.func.attr == "_override"
         and isinstance(call.args[1], ast.Constant)
     ]
-    assert spelled == list(carla_camera.BLUEPRINT_ATTRIBUTES)
+    # Each with the config's value of the attribute it names.
+    assert spelled == [
+        (name, f"cfg.{name}") for name in carla_camera.BLUEPRINT_ATTRIBUTES
+    ]
 
 
 def test_the_listener_queues_the_frame_it_is_handed() -> None:
