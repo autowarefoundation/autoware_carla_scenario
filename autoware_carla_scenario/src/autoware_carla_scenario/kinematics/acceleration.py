@@ -41,7 +41,7 @@ class AbsoluteAcceleration:
 
     # -- arithmetic (affine-space rules) ------------------------------------
 
-    def __add__(self, other: object) -> AbsoluteAcceleration:
+    def __add__(self, other: RelativeAcceleration) -> AbsoluteAcceleration:
         """``AbsoluteAcceleration + RelativeAcceleration -> AbsoluteAcceleration``."""
         if not isinstance(other, RelativeAcceleration):
             return NotImplemented
@@ -57,7 +57,7 @@ class AbsoluteAcceleration:
 
     def __sub__(
         self,
-        other: object,
+        other: AbsoluteAcceleration | RelativeAcceleration,
     ) -> Union[RelativeAcceleration, AbsoluteAcceleration]:
         """``Abs - Abs -> Relative``  or  ``Abs - Relative -> Abs``."""
         if isinstance(other, AbsoluteAcceleration):
@@ -70,15 +70,15 @@ class AbsoluteAcceleration:
             return AbsoluteAcceleration(self.vector - other.vector, self.frame)
         return NotImplemented
 
-    def __mul__(self, scalar: object) -> AbsoluteAcceleration:
+    def __mul__(self, scalar: float) -> AbsoluteAcceleration:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return AbsoluteAcceleration(self.vector * scalar, self.frame)
 
-    def __rmul__(self, scalar: object) -> AbsoluteAcceleration:
+    def __rmul__(self, scalar: float) -> AbsoluteAcceleration:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> AbsoluteAcceleration:
+    def __truediv__(self, scalar: float) -> AbsoluteAcceleration:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return AbsoluteAcceleration(self.vector / scalar, self.frame)
@@ -144,7 +144,7 @@ class RelativeAcceleration:
 
     def __add__(
         self,
-        other: object,
+        other: RelativeAcceleration | AbsoluteAcceleration,
     ) -> Union[RelativeAcceleration, AbsoluteAcceleration]:
         """``Rel + Rel -> Rel``  or  ``Rel + Abs -> Abs``."""
         if isinstance(other, RelativeAcceleration):
@@ -157,7 +157,7 @@ class RelativeAcceleration:
             return AbsoluteAcceleration(self.vector + other.vector, self.frame)
         return NotImplemented
 
-    def __sub__(self, other: object) -> RelativeAcceleration:
+    def __sub__(self, other: RelativeAcceleration) -> RelativeAcceleration:
         """``Rel - Rel -> Rel``."""
         if not isinstance(other, RelativeAcceleration):
             return NotImplemented
@@ -165,15 +165,15 @@ class RelativeAcceleration:
             raise FrameMismatchError(self.frame, other.frame, "subtract")
         return RelativeAcceleration(self.vector - other.vector, self.frame)
 
-    def __mul__(self, scalar: object) -> RelativeAcceleration:
+    def __mul__(self, scalar: float) -> RelativeAcceleration:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return RelativeAcceleration(self.vector * scalar, self.frame)
 
-    def __rmul__(self, scalar: object) -> RelativeAcceleration:
+    def __rmul__(self, scalar: float) -> RelativeAcceleration:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> RelativeAcceleration:
+    def __truediv__(self, scalar: float) -> RelativeAcceleration:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return RelativeAcceleration(self.vector / scalar, self.frame)
@@ -243,7 +243,7 @@ class FrenetAcceleration:
 
     # -- arithmetic ---------------------------------------------------------
 
-    def __add__(self, other: object) -> FrenetAcceleration:
+    def __add__(self, other: FrenetAcceleration) -> FrenetAcceleration:
         if not isinstance(other, FrenetAcceleration):
             return NotImplemented
         return FrenetAcceleration(
@@ -251,7 +251,7 @@ class FrenetAcceleration:
             self.lateral + other.lateral,
         )
 
-    def __sub__(self, other: object) -> FrenetAcceleration:
+    def __sub__(self, other: FrenetAcceleration) -> FrenetAcceleration:
         if not isinstance(other, FrenetAcceleration):
             return NotImplemented
         return FrenetAcceleration(
@@ -259,7 +259,7 @@ class FrenetAcceleration:
             self.lateral - other.lateral,
         )
 
-    def __mul__(self, scalar: object) -> FrenetAcceleration:
+    def __mul__(self, scalar: float) -> FrenetAcceleration:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return FrenetAcceleration(
@@ -267,10 +267,10 @@ class FrenetAcceleration:
             self.lateral * scalar,
         )
 
-    def __rmul__(self, scalar: object) -> FrenetAcceleration:
+    def __rmul__(self, scalar: float) -> FrenetAcceleration:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> FrenetAcceleration:
+    def __truediv__(self, scalar: float) -> FrenetAcceleration:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         if scalar == 0:

@@ -55,7 +55,7 @@ class AbsoluteVelocity:
 
     # -- arithmetic (affine-space rules) ------------------------------------
 
-    def __add__(self, other: object) -> AbsoluteVelocity:
+    def __add__(self, other: RelativeVelocity) -> AbsoluteVelocity:
         """``AbsoluteVelocity + RelativeVelocity -> AbsoluteVelocity``."""
         if not isinstance(other, RelativeVelocity):
             return NotImplemented
@@ -71,7 +71,7 @@ class AbsoluteVelocity:
 
     def __sub__(
         self,
-        other: object,
+        other: AbsoluteVelocity | RelativeVelocity,
     ) -> Union[RelativeVelocity, AbsoluteVelocity]:
         """``Abs - Abs -> Relative``  or  ``Abs - Relative -> Abs``."""
         if isinstance(other, AbsoluteVelocity):
@@ -84,15 +84,15 @@ class AbsoluteVelocity:
             return AbsoluteVelocity(self.vector - other.vector, self.frame)
         return NotImplemented
 
-    def __mul__(self, scalar: object) -> AbsoluteVelocity:
+    def __mul__(self, scalar: float) -> AbsoluteVelocity:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return AbsoluteVelocity(self.vector * scalar, self.frame)
 
-    def __rmul__(self, scalar: object) -> AbsoluteVelocity:
+    def __rmul__(self, scalar: float) -> AbsoluteVelocity:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> AbsoluteVelocity:
+    def __truediv__(self, scalar: float) -> AbsoluteVelocity:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return AbsoluteVelocity(self.vector / scalar, self.frame)
@@ -158,7 +158,7 @@ class RelativeVelocity:
 
     def __add__(
         self,
-        other: object,
+        other: RelativeVelocity | AbsoluteVelocity,
     ) -> Union[RelativeVelocity, AbsoluteVelocity]:
         """``Rel + Rel -> Rel``  or  ``Rel + Abs -> Abs``."""
         if isinstance(other, RelativeVelocity):
@@ -171,7 +171,7 @@ class RelativeVelocity:
             return AbsoluteVelocity(self.vector + other.vector, self.frame)
         return NotImplemented
 
-    def __sub__(self, other: object) -> RelativeVelocity:
+    def __sub__(self, other: RelativeVelocity) -> RelativeVelocity:
         """``Rel - Rel -> Rel``."""
         if not isinstance(other, RelativeVelocity):
             return NotImplemented
@@ -179,15 +179,15 @@ class RelativeVelocity:
             raise FrameMismatchError(self.frame, other.frame, "subtract")
         return RelativeVelocity(self.vector - other.vector, self.frame)
 
-    def __mul__(self, scalar: object) -> RelativeVelocity:
+    def __mul__(self, scalar: float) -> RelativeVelocity:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return RelativeVelocity(self.vector * scalar, self.frame)
 
-    def __rmul__(self, scalar: object) -> RelativeVelocity:
+    def __rmul__(self, scalar: float) -> RelativeVelocity:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> RelativeVelocity:
+    def __truediv__(self, scalar: float) -> RelativeVelocity:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return RelativeVelocity(self.vector / scalar, self.frame)
@@ -257,7 +257,7 @@ class FrenetVelocity:
 
     # -- arithmetic ---------------------------------------------------------
 
-    def __add__(self, other: object) -> FrenetVelocity:
+    def __add__(self, other: FrenetVelocity) -> FrenetVelocity:
         if not isinstance(other, FrenetVelocity):
             return NotImplemented
         return FrenetVelocity(
@@ -265,7 +265,7 @@ class FrenetVelocity:
             self.lateral + other.lateral,
         )
 
-    def __sub__(self, other: object) -> FrenetVelocity:
+    def __sub__(self, other: FrenetVelocity) -> FrenetVelocity:
         if not isinstance(other, FrenetVelocity):
             return NotImplemented
         return FrenetVelocity(
@@ -273,7 +273,7 @@ class FrenetVelocity:
             self.lateral - other.lateral,
         )
 
-    def __mul__(self, scalar: object) -> FrenetVelocity:
+    def __mul__(self, scalar: float) -> FrenetVelocity:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return FrenetVelocity(
@@ -281,10 +281,10 @@ class FrenetVelocity:
             self.lateral * scalar,
         )
 
-    def __rmul__(self, scalar: object) -> FrenetVelocity:
+    def __rmul__(self, scalar: float) -> FrenetVelocity:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> FrenetVelocity:
+    def __truediv__(self, scalar: float) -> FrenetVelocity:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         if scalar == 0:
