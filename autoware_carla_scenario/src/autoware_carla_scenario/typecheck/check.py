@@ -14,6 +14,10 @@ typesafe_carla's Codon library (``import typesafe_carla.carla as carla``,
 the import the runtime uses too), and the scenario package's own modules.  A module outside those
 (numpy, say) has no Codon model, and a scenario importing one fails the check
 with a message saying so.
+
+:func:`typecheck_library` compiles the framework's own modules instead (those
+:mod:`.library` lists as checked), each with calls to everything public
+appended (:mod:`.library_driver`), next to the same model.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -42,9 +47,16 @@ from .toolchain import (
     find_codon,
     is_supported_version,
 )
+from .library import CHECKED, package_modules
+from .library_driver import (
+    render_library_checks,
+    render_library_driver,
+    workspace_module,
+)
 from .transform import (
     PRELUDE,
     class_declarations,
+    redirect_imports,
     transform_source,
     undeclared_attributes,
 )
@@ -56,6 +68,7 @@ __all__ = [
     "available_toolchain",
     "find_supported_codon",
     "model_dir",
+    "typecheck_library",
     "typecheck_odd",
     "typecheck_scenario",
 ]
@@ -360,22 +373,38 @@ class _Workspace:
     driver: Any
     #: workspace-relative file -> original path
     files: dict[str, str] = field(default_factory=dict)
+    #: workspace-relative file -> (its lines before the calls the library
+    #: check appended, appended line -> the call on it)
+    appended: dict[str, tuple[int, dict[int, str]]] = field(default_factory=dict)
+    #: What an error in the driver program is reported at.
+    driver_label: str = _DRIVER_LABEL
 
 
-def _build_workspace(
-    root: Path, sources: _Sources, driver: Any, codon_path: Path
-) -> tuple[_Workspace, list[Diagnostic]]:
+def _base_workspace(root: Path, driver: Any, codon_path: Path) -> _Workspace:
+    """The model, the shims and the CARLA API, in *root*."""
     shutil.copytree(model_dir(), root, dirs_exist_ok=True)
     # The CARLA API: typesafe_carla's CODON_PATH directory (the library and
     # the compile-time switches it reads), linked in, as Codon reads only one.
     for entry in codon_path.iterdir():
         (root / entry.name).symlink_to(entry.resolve())
-    ws = _Workspace(root, driver)
-    problems: list[Diagnostic] = []
+    return _Workspace(root, driver)
+
+
+def _declarations(sources: _Sources) -> dict[str, set[str]]:
+    """Class name -> the names it declares, in the model and in *sources*."""
     declared = {cls: set(names) for cls, names in _model_declarations().items()}
     for module in sources.modules.values():
         for cls, (_bases, own) in class_declarations(module.tree).items():
             declared.setdefault(cls, set()).update(own)
+    return declared
+
+
+def _build_workspace(
+    root: Path, sources: _Sources, driver: Any, codon_path: Path
+) -> tuple[_Workspace, list[Diagnostic]]:
+    ws = _base_workspace(root, driver, codon_path)
+    problems: list[Diagnostic] = []
+    declared = _declarations(sources)
     for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
         rel = rel / "__init__.py" if module.is_package else rel.with_suffix(".py")
@@ -410,11 +439,16 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         """(path to show, line, is the scenario's own file)."""
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
-            return (key if key else _DRIVER_LABEL, 0 if key else line, False)
+            return (key if key else ws.driver_label, 0 if key else line, False)
         candidates = by_basename.get(Path(file).name, [])
-        if len(candidates) == 1:
-            return (ws.files[candidates[0]], line - _PRELUDE_LINES, True)
-        return None
+        if len(candidates) != 1:
+            return None
+        rel = candidates[0]
+        if rel in ws.appended and line > ws.appended[rel][0]:
+            # A call the library check appended: name the call it makes.
+            call = ws.appended[rel][1].get(line - ws.appended[rel][0])
+            return (f"<library check: {call or rel}>", 0, False)
+        return (ws.files[rel], line - _PRELUDE_LINES, True)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
     for raw in output.splitlines():
@@ -629,14 +663,22 @@ def _compile(
     toolchain: Toolchain,
     codon_path: Path,
     timeout: float,
+    build: Callable[[Path], tuple[_Workspace, list[Diagnostic]]] | None = None,
 ) -> TypeCheckResult | None:
-    """The verdict on *sources*, or ``None`` when Codon ran out of time."""
+    """The verdict on *sources*, or ``None`` when Codon ran out of time.
+
+    *build* writes the workspace into the directory it is given
+    (:func:`_build_workspace` by default).
+    """
     if sources.problems:
         return TypeCheckResult(name, ok=False, diagnostics=list(sources.problems))
 
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="acs-typecheck-") as tmp:
-        ws, problems = _build_workspace(Path(tmp), sources, driver, codon_path)
+        if build is None:
+            ws, problems = _build_workspace(Path(tmp), sources, driver, codon_path)
+        else:
+            ws, problems = build(Path(tmp))
         if problems:
             return TypeCheckResult(name, ok=False, diagnostics=problems)
         env = codon_environment(toolchain, ws.root)
@@ -680,3 +722,203 @@ def _compile(
         output=output,
         seconds=seconds,
     )
+
+
+# ---------------------------------------------------------------------------
+# The library check: the framework's own modules (library.py)
+# ---------------------------------------------------------------------------
+
+_LIBRARY_DRIVER_LABEL = "<the library check's driver>"
+
+
+def _model_module(name: str) -> str | None:
+    """The model module standing in for the framework module *name*, if any.
+
+    The model has one module per public package (``coordinate.codon``) where
+    the framework has a package (``coordinate/transform.py``): a module
+    stands in for every module under it.
+    """
+    modeled = _model_modules()
+    parts = name.split(".")
+    for end in range(len(parts), 1, -1):
+        candidate = ".".join(parts[:end])
+        if candidate in modeled:
+            return candidate
+    return name if name == _PACKAGE else None
+
+
+@dataclass(frozen=True)
+class _LibraryFile:
+    """A checked module, as it is compiled: rewritten, with the calls appended."""
+
+    module: str
+    rel: str
+    text: str
+    #: Lines of :attr:`text` before the appended calls.
+    offset: int
+    labels: dict[int, str]
+
+
+def _library_files(
+    names: list[str], sources: _Sources, every: dict[str, Path]
+) -> list[_LibraryFile]:
+    """Each module of *sources* rewritten for the library workspace.
+
+    A problem found on the way (an import that cannot be redirected, a
+    parameter the check cannot call with) is added to ``sources.problems``.
+    """
+    checked = set(names)
+
+    def target(module: str) -> str | None:
+        return workspace_module(module) if module in checked else _model_module(module)
+
+    files: list[_LibraryFile] = []
+    for name in names:
+        module = sources.modules[name]
+        redirected, problems = redirect_imports(
+            module.text, name, module.is_package, target, every.__contains__
+        )
+        checks = render_library_checks(module.tree)
+        for line, message in [*problems, *checks.problems]:
+            sources.problems.append(Diagnostic(message, str(module.path), line))
+        body = transform_source(redirected)
+        rel = workspace_module(name).replace(".", "/") + ".codon"
+        files.append(
+            _LibraryFile(
+                name, rel, body + checks.source, body.count("\n"), checks.labels
+            )
+        )
+    return files
+
+
+def _library_imports(sources: _Sources, tc: Toolchain, codon_path: Path) -> None:
+    """Report each import of a module Codon has nothing for."""
+    known = _codon_stdlib(tc) | _shims() | _linked(codon_path) | {_PACKAGE}
+    for name, module in sources.modules.items():
+        for imported, _names, lineno in _imports(module.tree, name, module.is_package):
+            if imported.split(".")[0] not in known:
+                sources.problems.append(
+                    Diagnostic(
+                        f"{imported} has no Codon model, so a module importing it "
+                        "cannot be checked: move the module to EXCLUDED "
+                        "(typecheck/library.py) with that reason",
+                        str(module.path),
+                        lineno,
+                    )
+                )
+
+
+def _build_library_workspace(
+    root: Path,
+    sources: _Sources,
+    files: list[_LibraryFile],
+    driver: Any,
+    codon_path: Path,
+) -> tuple[_Workspace, list[Diagnostic]]:
+    """The model as the scenario check has it, and the checked modules beside it.
+
+    The model stays at ``autoware_carla_scenario/``; each checked module is
+    one file of ``_acs_lib/`` (:func:`.library_driver.workspace_module`), and
+    every import of the framework in it names either another checked module
+    there or the model (:func:`.transform.redirect_imports`).
+    """
+    ws = _base_workspace(root, driver, codon_path)
+    ws.driver_label = _LIBRARY_DRIVER_LABEL
+    problems: list[Diagnostic] = []
+    declared = _declarations(sources)
+    for file in files:
+        module = sources.modules[file.module]
+        for attr in undeclared_attributes(module.tree, declared):
+            problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
+        dest = root / file.rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(file.text)
+        ws.files[file.rel] = str(module.path)
+        ws.appended[file.rel] = (file.offset, file.labels)
+    (root / Path(files[0].rel).parent / "__init__.codon").write_text("")
+    (root / DRIVER_MODULE).write_text(driver.source)
+    return ws, problems
+
+
+def typecheck_library(
+    modules: Iterable[str] | None = None,
+    *,
+    toolchain: Toolchain | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> TypeCheckResult:
+    """Compile the framework's own modules, as :data:`.library.CHECKED` lists them.
+
+    Each module is compiled from its source, every public function and
+    method called with a value of each parameter's annotated type
+    (:mod:`.library_driver`), so its body is checked.  A framework module
+    one of them imports that is not checked itself stands in through the
+    model, as it does for a scenario.  All of *modules* are compiled
+    together, in one Codon build.
+
+    Args:
+        modules: Dotted module names; :data:`.library.CHECKED` by default.
+        toolchain: The Codon to compile with (:func:`find_supported_codon`
+            by default).
+        timeout: Seconds the compile may take.
+
+    Returns:
+        The result; ``result.ok`` is ``False`` when a module does not compile.
+    """
+    names = sorted(CHECKED if modules is None else set(modules))
+    title = f"{_PACKAGE} library ({len(names)} checked modules)"
+    if not names:
+        return TypeCheckResult(title, ok=True, skipped="no module to check")
+    if toolchain is None:
+        try:
+            toolchain = find_supported_codon()
+        except ToolchainError as exc:
+            return TypeCheckResult(title, ok=True, skipped=f"no Codon compiler: {exc}")
+    try:
+        codon_path = codon_path_dir()
+    except ToolchainError as exc:
+        return TypeCheckResult(title, ok=True, skipped=f"no CARLA API to check: {exc}")
+    every = package_modules()
+    unknown = [name for name in names if name not in every]
+    if unknown:
+        return TypeCheckResult(
+            title,
+            ok=False,
+            diagnostics=[
+                Diagnostic(
+                    f"{name} is not a module of {_PACKAGE} the check can compile"
+                )
+                for name in unknown
+            ],
+        )
+    sources = _Sources()
+    for name in names:
+        path = every[name]
+        text = path.read_text(encoding="utf-8")
+        sources.modules[name] = _Module(
+            path, path.name == "__init__.py", text, ast.parse(text)
+        )
+    _library_imports(sources, toolchain, codon_path)
+    files = _library_files(names, sources, every)
+    driver = render_library_driver(names)
+    key = _cache_key(
+        toolchain,
+        codon_path,
+        sources,
+        driver.source + "".join(f.text for f in files),
+    )
+    if key not in _CACHE:
+        result = _compile(
+            title,
+            sources,
+            driver,
+            toolchain,
+            codon_path,
+            timeout,
+            build=lambda root: _build_library_workspace(
+                root, sources, files, driver, codon_path
+            ),
+        )
+        if result is None:
+            return _timed_out(title, timeout)
+        _CACHE[key] = result
+    return _CACHE[key]

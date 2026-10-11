@@ -20,6 +20,16 @@ the author wrote:
   ``[ElapsedTimeCondition(...), SpeedCondition(...)]``, becomes
   ``_acs_list(...)``: Codon types a display by its first element, and
   ``_acs_list`` makes it a list of conditions (or actions) as in Python.
+* An ``Enum`` class derives from the ``enum`` shim's ``Enum[T]`` (``T`` the
+  type of its values: ``str`` for ``class C(str, Enum)``, ``int`` for
+  ``auto()``), and each member ``RED = "red"`` becomes the class variable
+  ``RED: ClassVar[C] = C("RED", "red")``.
+* A class deriving from an exception (a built-in one, one defined above it in
+  the module, or a name ending in ``Error`` / ``Exception``) derives from
+  ``Static[Base]``, as Codon 0.19 derives exceptions.
+* A ``@classmethod`` becomes a ``@staticmethod`` without its ``cls``
+  parameter; ``cls`` in its body names the class (Codon has no
+  classmethods; a subclass calling it gets the base class's).
 
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
@@ -31,12 +41,15 @@ annotation, which Python ignores, so adding it changes nothing at run time.
 from __future__ import annotations
 
 import ast
+import builtins
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 __all__ = [
     "PRELUDE",
     "UndeclaredAttribute",
     "class_declarations",
+    "redirect_imports",
     "transform_source",
     "undeclared_attributes",
 ]
@@ -78,8 +91,34 @@ _ABSTRACT_GENERICS = {
 }
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
 
-_DATACLASS_DECORATORS = {"dataclass", "dataclasses.dataclass"}
+#: Class decorators dropped: Codon gives the class what they would.
+_DROPPED_CLASS_DECORATORS = {
+    "dataclass",
+    "dataclasses.dataclass",
+    "unique",
+    "enum.unique",
+}
 _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
+
+#: Enum bases (``enum.X`` too), and the value type a base implies.
+_ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
+_ENUM_VALUE_TYPES = {
+    "IntEnum": "int",
+    "StrEnum": "str",
+    "Flag": "int",
+    "IntFlag": "int",
+}
+_ENUM_MIXINS = {"str", "int", "float"}
+_AUTO = {"auto", "enum.auto"}
+
+#: Python's exception classes: a class deriving from one is an exception,
+#: which Codon 0.19 derives with ``Static[...]``.
+_BUILTIN_EXCEPTIONS = frozenset(
+    name
+    for name, obj in vars(builtins).items()
+    if isinstance(obj, type) and issubclass(obj, BaseException)
+)
+_EXCEPTION_SUFFIXES = ("Error", "Exception")
 _FACTORY_LITERALS = {"list": "[]", "dict": "{}", "set": "set()", "tuple": "()"}
 
 
@@ -237,10 +276,14 @@ def _field_default(call: ast.Call, edits: _Edits) -> str | None:
 
 
 class _Rewriter(ast.NodeVisitor):
-    def __init__(self, edits: _Edits) -> None:
+    def __init__(self, edits: _Edits, exceptions: set[str]) -> None:
         self.edits = edits
         self._class_depth = 0
         self._function_depth = 0
+        #: Top-level classes of the module that are exceptions.
+        self._exceptions = exceptions
+        #: The class whose body is being visited (``None`` in a function).
+        self._class_name: str | None = None
 
     # -- annotations -----------------------------------------------------
 
@@ -253,8 +296,10 @@ class _Rewriter(ast.NodeVisitor):
                 self.edits.replace(start, end, converted)
         return converted
 
-    def _rewrite_arguments(self, args: ast.arguments) -> None:
+    def _rewrite_arguments(self, args: ast.arguments, *, skip_first: bool) -> None:
         every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        if skip_first:
+            every = every[1:]  # removed as a whole (_rewrite_classmethod)
         for extra in (args.vararg, args.kwarg):
             if extra is not None:
                 every.append(extra)
@@ -314,34 +359,147 @@ class _Rewriter(ast.NodeVisitor):
         self._visit_function(node)
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        classmethod_ = (
+            self._class_name is not None
+            and self._function_depth == 0
+            and bool([*node.args.posonlyargs, *node.args.args])
+            and any(_dotted(d) == "classmethod" for d in node.decorator_list)
+        )
         for decorator in node.decorator_list:
-            self.visit(decorator)
-        self._rewrite_arguments(node.args)
+            if classmethod_ and _dotted(decorator) == "classmethod":
+                self.edits.replace(*self.edits.node_span(decorator), "staticmethod")
+            else:
+                self.visit(decorator)
+        if classmethod_ and self._class_name is not None:
+            self._rewrite_classmethod(node, self._class_name)
+        self._rewrite_arguments(node.args, skip_first=classmethod_)
         self._rewrite_returns(node)
         for default in [*node.args.defaults, *node.args.kw_defaults]:
             if default is not None:
                 self.visit(default)
         class_depth, self._class_depth = self._class_depth, 0
+        class_name, self._class_name = self._class_name, None
         self._function_depth += 1
         for stmt in node.body:
             self.visit(stmt)
         self._function_depth -= 1
         self._class_depth = class_depth
+        self._class_name = class_name
+
+    def _rewrite_classmethod(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, class_name: str
+    ) -> None:
+        """Drop the ``cls`` parameter; ``cls`` in the body names the class."""
+        first = [*node.args.posonlyargs, *node.args.args][0]
+        start, end = self.edits.node_span(first)
+        after = self.edits.text(end, len(self.edits.data))
+        comma = after.find(",")
+        closing = after.find(")")
+        if 0 <= comma < closing:
+            rest = after[comma + 1 :]
+            end += len(after[: comma + 1].encode())
+            end += len(rest[: len(rest) - len(rest.lstrip(" "))].encode())
+        self.edits.replace(start, end, "")
+        for stmt in node.body:
+            for name in ast.walk(stmt):
+                if isinstance(name, ast.Name) and name.id == first.arg:
+                    self.edits.replace(*self.edits.node_span(name), class_name)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for decorator in node.decorator_list:
             target = decorator.func if isinstance(decorator, ast.Call) else decorator
-            if _dotted(target) in _DATACLASS_DECORATORS:
+            if _dotted(target) in _DROPPED_CLASS_DECORATORS:
                 start, end = self.edits.node_span(decorator)
                 self.edits.replace(start - 1, end, "")  # with its "@"
             else:
                 self.visit(decorator)
-        for base in node.bases:
-            self.visit(base)
+        members = self._rewrite_enum(node)
+        if (
+            members is None
+            and self._class_depth == 0
+            and self._function_depth == 0
+            and node.name in self._exceptions
+        ):
+            base_start, base_end = self.edits.node_span(node.bases[0])
+            self.edits.replace(
+                base_start, base_end, f"Static[{self.edits.text(base_start, base_end)}]"
+            )
+        elif members is None:
+            for base in node.bases:
+                self.visit(base)
+        class_name, self._class_name = self._class_name, node.name
         self._class_depth += 1
         for stmt in node.body:
-            self.visit(stmt)
+            if members is None or stmt not in members:
+                self.visit(stmt)
         self._class_depth -= 1
+        self._class_name = class_name
+
+    def _rewrite_enum(self, node: ast.ClassDef) -> list[ast.stmt] | None:
+        """Rewrite an Enum class for the ``enum`` shim; its members, or ``None``.
+
+        ``None`` too for an Enum whose value type cannot be told from its
+        members (values of different types, or not literals): it is left as
+        written, and Codon reports it.
+        """
+        bases = [_dotted(b) or "" for b in node.bases]
+        enum_base = next(
+            (b for b in bases if b.rsplit(".", 1)[-1] in _ENUM_BASES), None
+        )
+        if enum_base is None or node.keywords:
+            return None
+        kind = enum_base.rsplit(".", 1)[-1]
+        members: list[tuple[ast.Assign, str, ast.expr]] = []
+        for stmt in node.body:
+            if (
+                isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and not stmt.targets[0].id.startswith("_")
+            ):
+                members.append((stmt, stmt.targets[0].id, stmt.value))
+
+        def is_auto(value: ast.expr) -> bool:
+            return isinstance(value, ast.Call) and _dotted(value.func) in _AUTO
+
+        value_type = _ENUM_VALUE_TYPES.get(kind) or next(
+            (b for b in bases if b in _ENUM_MIXINS), None
+        )
+        if value_type is None:
+
+            def literal_type(value: ast.expr) -> str | None:
+                if is_auto(value):
+                    return "int"
+                if isinstance(value, ast.Constant):
+                    name = type(value.value).__name__  # bool is not int here
+                    return name if name in _ENUM_MIXINS else None
+                return None
+
+            kinds = {literal_type(v) for _, _, v in members}
+            value_type = kinds.pop() if len(kinds) == 1 else None
+            if value_type is None:
+                return None
+        flag = kind in {"Flag", "IntFlag"}
+        last = 0
+        for stmt, name, value in members:
+            if is_auto(value):
+                if value_type == "str":
+                    text = repr(name.lower())
+                else:
+                    last = (last * 2 if last else 1) if flag else last + 1
+                    text = str(last)
+            else:
+                if isinstance(value, ast.Constant) and isinstance(value.value, int):
+                    last = value.value
+                text = self.edits.text(*self.edits.node_span(value))
+            self.edits.replace(
+                *self.edits.node_span(stmt),
+                f"{name}: ClassVar[{node.name}] = {node.name}({name!r}, {text})",
+            )
+        first_start = self.edits.node_span(node.bases[0])[0]
+        last_end = self.edits.node_span(node.bases[-1])[1]
+        self.edits.replace(first_start, last_end, f"{enum_base}[{value_type}]")
+        return [stmt for stmt, _, _ in members]
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         class_level = self._class_depth > 0 and self._function_depth == 0
@@ -391,9 +549,146 @@ def transform_source(source: str) -> str:
         source += "\n"
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
-    rewriter = _Rewriter(edits)
+    rewriter = _Rewriter(edits, _exception_classes(tree))
     rewriter.visit(tree)
     return PRELUDE + edits.apply()
+
+
+def _exception_classes(tree: ast.Module) -> set[str]:
+    """Top-level classes of *tree* deriving (only) from an exception."""
+    out: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or len(node.bases) != 1:
+            continue
+        base = (_dotted(node.bases[0]) or "").rsplit(".", 1)[-1]
+        if (
+            base in _BUILTIN_EXCEPTIONS
+            or base in out
+            or base.endswith(_EXCEPTION_SUFFIXES)
+        ):
+            out.add(node.name)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Imports of the framework, in a module of the framework (the library check)
+# ---------------------------------------------------------------------------
+
+
+def _absolute_module(node: ast.ImportFrom, module: str, is_package: bool) -> str:
+    if not node.level:
+        return node.module or ""
+    package = module if is_package else module.rpartition(".")[0]
+    base = package.split(".")
+    base = base[: len(base) - node.level + 1]
+    return ".".join(base + ([node.module] if node.module else []))
+
+
+def _alias(name: str, asname: str | None) -> str:
+    return f"{name} as {asname}" if asname and asname != name else name
+
+
+def _import_as(dest: str, asname: str) -> str:
+    parent, _, last = dest.rpartition(".")
+    if not parent:
+        return f"import {dest} as {asname}"
+    return f"from {parent} import {_alias(last, asname)}"
+
+
+def redirect_imports(
+    source: str,
+    module: str,
+    is_package: bool,
+    target: Callable[[str], str | None],
+    is_module: Callable[[str], bool],
+    package: str = "autoware_carla_scenario",
+) -> tuple[str, list[tuple[int, str]]]:
+    """Point every import of *package* in *source* at the module standing in for it.
+
+    *source* is module *module* of the framework, compiled by the library
+    check.  ``target(name)`` is the module of the check's workspace that
+    stands in for the framework module *name*: its own (rewritten) source, or
+    its Codon model; ``None`` when there is neither.  ``is_module(name)``
+    tells a submodule (``from . import frames``) from a name.  Each import
+    statement keeps its line; ``from a import b, c`` that imports both a
+    submodule and names becomes two statements on it.
+
+    Returns:
+        The rewritten source, and (line, message) for each import that could
+        not be pointed anywhere (left as written).
+    """
+    if not source.endswith("\n"):
+        source += "\n"
+    tree = ast.parse(source)
+    edits = _Edits(source.encode().splitlines(keepends=True))
+    problems: list[tuple[int, str]] = []
+
+    def inside(name: str) -> bool:
+        return name == package or name.startswith(package + ".")
+
+    def missing(name: str) -> str:
+        return (
+            f"{name} is neither checked (typecheck/library.py) nor modelled "
+            "(typecheck/codon/), so a checked module cannot import it"
+        )
+
+    for node in ast.walk(tree):
+        pieces: list[str] = []
+        failed = False
+        if isinstance(node, ast.ImportFrom):
+            name = _absolute_module(node, module, is_package)
+            if not inside(name):
+                continue
+            plain: list[str] = []
+            for alias in node.names:
+                if alias.name == "*":
+                    problems.append(
+                        (node.lineno, f"`from {name} import *`: import each name")
+                    )
+                    failed = True
+                elif is_module(f"{name}.{alias.name}"):
+                    dest = target(f"{name}.{alias.name}")
+                    if dest is None:
+                        problems.append((node.lineno, missing(f"{name}.{alias.name}")))
+                        failed = True
+                    else:
+                        pieces.append(_import_as(dest, alias.asname or alias.name))
+                else:
+                    plain.append(_alias(alias.name, alias.asname))
+            if plain:
+                dest = target(name)
+                if dest is None:
+                    problems.append((node.lineno, missing(name)))
+                    failed = True
+                else:
+                    pieces.insert(0, f"from {dest} import {', '.join(plain)}")
+        elif isinstance(node, ast.Import):
+            if not any(inside(alias.name) for alias in node.names):
+                continue
+            for alias in node.names:
+                if not inside(alias.name):
+                    pieces.append(f"import {_alias(alias.name, alias.asname)}")
+                    continue
+                dest = target(alias.name)
+                if alias.asname is None:
+                    problems.append(
+                        (
+                            node.lineno,
+                            f"`import {alias.name}`: import it with a name "
+                            f"(`from ... import ...` or `import {alias.name} as ...`)",
+                        )
+                    )
+                    failed = True
+                elif dest is None:
+                    problems.append((node.lineno, missing(alias.name)))
+                    failed = True
+                else:
+                    pieces.append(_import_as(dest, alias.asname))
+        else:
+            continue
+        if not failed:
+            edits.replace(*edits.node_span(node), "; ".join(pieces))
+    return edits.apply(), problems
 
 
 # ---------------------------------------------------------------------------

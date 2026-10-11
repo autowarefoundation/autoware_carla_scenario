@@ -10,10 +10,10 @@ Three coordinate systems are supported:
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .poses import AnyPose
+    from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 
 
 class CoordinateFrame(Enum):
@@ -26,6 +26,9 @@ class CoordinateFrame(Enum):
 
 class FrameMismatchError(ValueError):
     """Raised when an operation mixes values from different coordinate frames."""
+
+    frame_a: CoordinateFrame
+    frame_b: CoordinateFrame
 
     def __init__(
         self,
@@ -41,7 +44,7 @@ class FrameMismatchError(ValueError):
         self.frame_b = frame_b
 
 
-def frame_of(pose: Union[AnyPose, object]) -> CoordinateFrame:
+def frame_of(pose: Lanelet2Pose | OpenDrivePose | CarlaWorldPose) -> CoordinateFrame:
     """Return the :class:`CoordinateFrame` corresponding to a pose type.
 
     Accepts any pose that carries a ``FRAME`` class variable
@@ -51,9 +54,12 @@ def frame_of(pose: Union[AnyPose, object]) -> CoordinateFrame:
     Raises:
         TypeError: If *pose* does not have a ``FRAME`` attribute.
     """
-    frame = getattr(pose, "FRAME", None)
-    if isinstance(frame, CoordinateFrame):
-        return frame
+    # hasattr() rather than getattr() with a default: Codon decides it when
+    # it compiles, and a pose type without FRAME gets only the raise.
+    if hasattr(pose, "FRAME"):
+        frame = pose.FRAME
+        if isinstance(frame, CoordinateFrame):
+            return frame
     raise TypeError(
         f"Cannot determine coordinate frame for {type(pose).__name__}; "
         f"expected a pose type with a FRAME class variable."

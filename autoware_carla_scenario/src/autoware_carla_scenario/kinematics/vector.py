@@ -26,25 +26,25 @@ class Vector3:
 
     # -- vector-space arithmetic ------------------------------------------------
 
-    def __add__(self, other: object) -> Vector3:
+    def __add__(self, other: Vector3) -> Vector3:
         if not isinstance(other, Vector3):
             return NotImplemented
         return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
 
-    def __sub__(self, other: object) -> Vector3:
+    def __sub__(self, other: Vector3) -> Vector3:
         if not isinstance(other, Vector3):
             return NotImplemented
         return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
 
-    def __mul__(self, scalar: object) -> Vector3:
+    def __mul__(self, scalar: float) -> Vector3:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         return Vector3(self.x * scalar, self.y * scalar, self.z * scalar)
 
-    def __rmul__(self, scalar: object) -> Vector3:
+    def __rmul__(self, scalar: float) -> Vector3:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: object) -> Vector3:
+    def __truediv__(self, scalar: float) -> Vector3:
         if not isinstance(scalar, (int, float)):
             return NotImplemented
         if scalar == 0:

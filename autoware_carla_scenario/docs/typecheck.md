@@ -164,3 +164,111 @@ keyword-only parameters, and gives a list of different conditions the type
 Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 `Sequence`, `type[...]`) are dropped from parameters, which become generic:
 Codon then checks each call with the arguments it is given.
+
+The checker also rewrites what Codon spells differently: an `Enum` class (its
+members become instances with a `name` and a typed `value`; looking a member
+up by value or name, and iterating over the class, are not modelled), a class
+deriving from an exception, and a `@classmethod` (a static method of its
+class: `cls` names the class it is defined in).
+
+## Checking the framework itself
+
+The scenario check trusts the model: it never compiles the framework's own
+source. The library check does, a module at a time, as each is made to
+compile:
+
+```bash
+uv run scenario-check --library                                   # every checked module
+uv run scenario-check --library autoware_carla_scenario.kinematics.vector
+```
+
+```python
+from autoware_carla_scenario.typecheck import typecheck_library
+
+result = typecheck_library()  # the modules typecheck/library.py lists as checked
+assert result.ok, result.format()
+```
+
+`test_typecheck_library.py` makes the same check in the test suite.
+
+### The manifest: `typecheck/library.py`
+
+`CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every
+other module to the reason it is not. `"not yet checked (#45)"` marks a module
+nobody has made compile yet; any other reason names what keeps a module out
+(`"imports numpy, lanelet2"`: a package or a standard module Codon cannot
+compile). Every module of the package except `typecheck/` is in exactly one of
+the two, which the test suite checks, so **a new module needs an entry**.
+
+To check one more module:
+
+1. Move its entry from `EXCLUDED` to `CHECKED`.
+2. Run `uv run scenario-check --library` and fix what it reports, in the
+   module. Only annotations and Codon-friendly rewrites: the module must
+   behave exactly as it did.
+3. Run `uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py`.
+
+### What is compiled
+
+Codon checks a function only when something calls it, so the check appends a
+function to each checked module that calls every public function and every
+method of every public class (constructors, static and class methods,
+properties and dunder methods included) with a value of each parameter's
+annotated type:
+
+```python
+def _acs_library_check():
+    normalize_angle_deg(_acs_value(float))
+    Vector3(_acs_value(float), _acs_value(float), _acs_value(float))
+    _acs_value(Vector3).dot(_acs_value(Vector3))
+```
+
+`_acs_value(T)` is a `T` Codon cannot tell from a real one; nothing compiled
+is ever run. A parameter annotated with a union (`Lanelet2Pose |
+OpenDrivePose`) is called once with each member, so the body is checked for
+every type it accepts. A parameter with no annotation, or one Codon cannot
+express (`Any`, `object`, `Callable`, ...), gives the check nothing to call
+with and is reported as a problem of the module, at its line: annotate it with
+the type its callers pass. The one exception is `other: object` in `__eq__`
+and `__ne__`, which Python requires; it is called with the class itself.
+
+### Checked modules and the model
+
+The checked modules are compiled next to the same model the scenario check
+uses. Every import of the framework in a checked module is pointed at what
+stands in for it in the check's workspace:
+
+- another **checked** module: its own (rewritten) source;
+- any other module: its **model**, the `codon/autoware_carla_scenario/` module
+  of the public package it belongs to (`coordinate.poses` is modelled by
+  `coordinate.codon`). A module with no model (`utils.config`) cannot be
+  imported by a checked module until it is checked itself.
+
+A checked module is compiled under a name of its own
+(`_acs_lib.autoware_carla_scenario__coordinate__frames`), since Codon reads
+the workspace's packages only from `.codon` files and names a file in its
+errors by its base name alone; errors are reported at the line of the real
+source file. A type a checked module defines is not the type the model
+declares under the same name, so a checked module cannot hand its own value to
+a model function that wants the model's: check modules bottom-up, before the
+modules that use them.
+
+### Making a module compile
+
+What Codon 0.19 needs that Python does not, beyond
+[the rewrites above](#writing-a-scenario-that-type-checks):
+
+- **Annotate what the check calls**: every public parameter, with a type
+  Codon can express. Spell a union out (`Lanelet2Pose | OpenDrivePose`) rather
+  than through an alias (`AnyPose`); a union with `object` or `Any` in it
+  gives nothing to call with.
+- **Declare attributes** on any class in a hierarchy (exceptions included)
+  and on a class with `__slots__`, at class level (`_value: str`).
+- **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides
+  `hasattr` when it compiles, so the branch for a type without the attribute
+  is never compiled.
+- An exception's `__init__` passes one message string to `super().__init__`.
+- Standard modules Codon does not have (`json`, `inspect`, `importlib`,
+  `abc`, ...) are not available to a checked module; the `typing`,
+  `dataclasses`, `enum`, `logging` and `__future__` shims of
+  `codon/` are.

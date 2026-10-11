@@ -139,6 +139,91 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
+def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
+    source = textwrap.dedent(
+        """
+        @unique
+        class Turn(str, Enum):
+            LEFT = "left"
+            RIGHT = (
+                "right"
+            )
+
+            def opposite(self) -> Turn:
+                return self
+        class Level(enum.Enum):
+            LOW = auto()
+            HIGH = auto()
+            _ignored = 3
+        class Kind(Enum):
+            A = 4
+            B = auto()
+        class Mixed(Enum):
+            A = 1
+            B = "b"
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@unique" not in out
+    assert "class Turn(Enum[str]):" in out
+    assert "    LEFT: ClassVar[Turn] = Turn('LEFT', \"left\")" in out
+    assert "    RIGHT: ClassVar[Turn] = Turn('RIGHT', \"right\")" in out
+    assert "    def opposite(self) -> Turn:" in out
+    assert "class Level(enum.Enum[int]):" in out
+    assert "    HIGH: ClassVar[Level] = Level('HIGH', 2)" in out
+    assert "    _ignored = 3" in out
+    assert "    B: ClassVar[Kind] = Kind('B', 5)" in out
+    # Values of two types: left as written, for Codon to report.
+    assert "class Mixed(Enum):" in out
+
+
+def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
+    out = _transform("class Mode(StrEnum):\n    FAST = auto()\n")
+    assert "class Mode(StrEnum[str]):" in out
+    assert "FAST: ClassVar[Mode] = Mode('FAST', 'fast')" in out
+
+
+def test_an_exception_derives_statically() -> None:
+    out = _transform(
+        """
+        class Mismatch(ValueError):
+            pass
+        class Worse(Mismatch):
+            pass
+        class Remote(errors.TransportError):
+            pass
+        class Plain(Base):
+            pass
+        """
+    )
+    assert "class Mismatch(Static[ValueError]):" in out
+    assert "class Worse(Static[Mismatch]):" in out
+    assert "class Remote(Static[errors.TransportError]):" in out
+    assert "class Plain(Base):" in out
+
+
+def test_a_classmethod_becomes_a_staticmethod_of_its_class() -> None:
+    source = textwrap.dedent(
+        """
+        class Pose:
+            @classmethod
+            def origin(cls) -> Pose:
+                return cls(0.0)
+
+            @classmethod
+            def at(cls, x: float | None, *, y: float = 0.0) -> Pose:
+                return cls.make(cls(x))
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@classmethod" not in out
+    assert "    def origin() -> Pose:\n        return Pose(0.0)" in out
+    assert "    def at(x: Optional[float], *_acs_kw, y: float = 0.0) -> Pose:" in out
+    assert "        return Pose.make(Pose(x))" in out
+
+
 # ---------------------------------------------------------------------------
 # Attribute declarations
 # ---------------------------------------------------------------------------
