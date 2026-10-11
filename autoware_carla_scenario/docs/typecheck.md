@@ -197,6 +197,31 @@ assert result.ok, result.format()
 
 `test_typecheck_library.py` makes the same check in the test suite.
 
+A run that names modules is a slice of the full run. With the named
+modules, it compiles from their source the `CHECKED` modules they import,
+transitively. It does not follow an import that `MODELLED_IMPORTS` routes
+through the model, or one inside an `UNCALLED` function. It also brings the
+other modules of a `REPLACED_MODELS` entry once one of them is in, so that the
+model re-exports the checked definitions, as it does in the full run.
+`scenario_base`, for example, imports `register_vehicle_entity` from the
+checked `entity.registry`, which the model does not declare, and
+`entity._spawn` holds the checked `GroundProjectionConfig`, which the model
+`VehicleEntityConfig` must share. The modules it imports are checked as
+fully as the named ones: their public functions are called too, and **errors
+are reported for every compiled module**, not only the named ones. An error
+in a module the named one imports is an error the full run reports as well,
+and it would stop the named module from compiling anyway. Hiding it would
+only make the run fail without a reason. The result's title gives both
+counts (`1 checked modules, 44 more they import` for `scenario_base`, at the
+time of writing). Run without names, the check
+compiles exactly `CHECKED`, as before. Every checked module passes on its own.
+
+The check's driver imports the model before any checked module, whichever
+module it names first. The model reaches the checked `coordinate.frames`
+through `_poses.codon`, and a run that started at `coordinate.frames` would
+reach the model, and come back to `coordinate.frames`, before that module
+defines anything.
+
 ### The manifest: `typecheck/library.py`
 
 `CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every

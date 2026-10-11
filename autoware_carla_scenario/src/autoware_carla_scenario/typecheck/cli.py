@@ -13,8 +13,9 @@ status is 0 when every scenario passed, 1 when one failed, and 2 when there is
 no Codon compiler to check with.
 
 ``--library`` checks the framework's own modules instead: those
-``typecheck/library.py`` lists as checked, or the modules named after it
-(docs/typecheck.md, "Checking the framework itself").
+``typecheck/library.py`` lists as checked, or the modules named after it with
+the checked modules they import (docs/typecheck.md, "Checking the framework
+itself").
 """
 
 from __future__ import annotations
