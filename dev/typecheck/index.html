@@ -1443,6 +1443,67 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#checking-the-framework-itself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking the framework itself
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checking the framework itself">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-manifest-typechecklibrarypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The manifest: typecheck/library.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-compiled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is compiled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-modules-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checked modules and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#making-a-module-compile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Making a module compile
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1663,6 +1724,67 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#checking-the-framework-itself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking the framework itself
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checking the framework itself">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-manifest-typechecklibrarypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The manifest: typecheck/library.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-compiled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is compiled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-modules-and-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checked modules and the model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#making-a-module-compile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Making a module compile
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1835,6 +1957,96 @@ keyword-only parameters, and gives a list of different conditions the type
 <p>Annotations Codon cannot express (<code>Union</code> of two types, <code>Any</code>, <code>Callable</code>,
 <code>Sequence</code>, <code>type[...]</code>) are dropped from parameters, which become generic:
 Codon then checks each call with the arguments it is given.</p>
+<p>The checker also rewrites what Codon spells differently: an <code>Enum</code> class (its
+members become instances with a <code>name</code> and a typed <code>value</code>; looking a member
+up by value or name, and iterating over the class, are not modelled), a class
+deriving from an exception, and a <code>@classmethod</code> (a static method of its
+class: <code>cls</code> names the class it is defined in).</p>
+<h2 id="checking-the-framework-itself">Checking the framework itself<a class="headerlink" href="#checking-the-framework-itself" title="Permanent link">&para;</a></h2>
+<p>The scenario check trusts the model: it never compiles the framework's own
+source. The library check does, a module at a time, as each is made to
+compile:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w">                                   </span><span class="c1"># every checked module</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w"> </span>autoware_carla_scenario.kinematics.vector
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_library</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">typecheck_library</span><span class="p">()</span>  <span class="c1"># the modules typecheck/library.py lists as checked</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
+</code></pre></div>
+<p><code>test_typecheck_library.py</code> makes the same check in the test suite.</p>
+<h3 id="the-manifest-typechecklibrarypy">The manifest: <code>typecheck/library.py</code><a class="headerlink" href="#the-manifest-typechecklibrarypy" title="Permanent link">&para;</a></h3>
+<p><code>CHECKED</code> lists the modules compiled from their source; <code>EXCLUDED</code> maps every
+other module to the reason it is not. <code>"not yet checked (#45)"</code> marks a module
+nobody has made compile yet; any other reason names what keeps a module out
+(<code>"imports numpy, lanelet2"</code>: a package or a standard module Codon cannot
+compile). Every module of the package except <code>typecheck/</code> is in exactly one of
+the two, which the test suite checks, so <strong>a new module needs an entry</strong>.</p>
+<p>To check one more module:</p>
+<ol>
+<li>Move its entry from <code>EXCLUDED</code> to <code>CHECKED</code>.</li>
+<li>Run <code>uv run scenario-check --library</code> and fix what it reports, in the
+   module. Only annotations and Codon-friendly rewrites: the module must
+   behave exactly as it did.</li>
+<li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
+</ol>
+<h3 id="what-is-compiled">What is compiled<a class="headerlink" href="#what-is-compiled" title="Permanent link">&para;</a></h3>
+<p>Codon checks a function only when something calls it, so the check appends a
+function to each checked module that calls every public function and every
+method of every public class (constructors, static and class methods,
+properties and dunder methods included) with a value of each parameter's
+annotated type:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_acs_library_check</span><span class="p">():</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">normalize_angle_deg</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">Vector3</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">)</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">))</span>
+</code></pre></div>
+<p><code>_acs_value(T)</code> is a <code>T</code> Codon cannot tell from a real one; nothing compiled
+is ever run. A parameter annotated with a union (<code>Lanelet2Pose |
+OpenDrivePose</code>) is called once with each member, so the body is checked for
+every type it accepts. A parameter with no annotation, or one Codon cannot
+express (<code>Any</code>, <code>object</code>, <code>Callable</code>, ...), gives the check nothing to call
+with and is reported as a problem of the module, at its line: annotate it with
+the type its callers pass. The one exception is <code>other: object</code> in <code>__eq__</code>
+and <code>__ne__</code>, which Python requires; it is called with the class itself.</p>
+<h3 id="checked-modules-and-the-model">Checked modules and the model<a class="headerlink" href="#checked-modules-and-the-model" title="Permanent link">&para;</a></h3>
+<p>The checked modules are compiled next to the same model the scenario check
+uses. Every import of the framework in a checked module is pointed at what
+stands in for it in the check's workspace:</p>
+<ul>
+<li>another <strong>checked</strong> module: its own (rewritten) source;</li>
+<li>any other module: its <strong>model</strong>, the <code>codon/autoware_carla_scenario/</code> module
+  of the public package it belongs to (<code>coordinate.poses</code> is modelled by
+  <code>coordinate.codon</code>). A module with no model (<code>utils.config</code>) cannot be
+  imported by a checked module until it is checked itself.</li>
+</ul>
+<p>A checked module is compiled under a name of its own
+(<code>_acs_lib.autoware_carla_scenario__coordinate__frames</code>), since Codon reads
+the workspace's packages only from <code>.codon</code> files and names a file in its
+errors by its base name alone; errors are reported at the line of the real
+source file. A type a checked module defines is not the type the model
+declares under the same name, so a checked module cannot hand its own value to
+a model function that wants the model's: check modules bottom-up, before the
+modules that use them.</p>
+<h3 id="making-a-module-compile">Making a module compile<a class="headerlink" href="#making-a-module-compile" title="Permanent link">&para;</a></h3>
+<p>What Codon 0.19 needs that Python does not, beyond
+<a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
+<ul>
+<li><strong>Annotate what the check calls</strong>: every public parameter, with a type
+  Codon can express. Spell a union out (<code>Lanelet2Pose | OpenDrivePose</code>) rather
+  than through an alias (<code>AnyPose</code>); a union with <code>object</code> or <code>Any</code> in it
+  gives nothing to call with.</li>
+<li><strong>Declare attributes</strong> on any class in a hierarchy (exceptions included)
+  and on a class with <code>__slots__</code>, at class level (<code>_value: str</code>).</li>
+<li><strong><code>hasattr()</code> instead of <code>getattr(x, name, default)</code></strong>: Codon decides
+  <code>hasattr</code> when it compiles, so the branch for a type without the attribute
+  is never compiled.</li>
+<li>An exception's <code>__init__</code> passes one message string to <code>super().__init__</code>.</li>
+<li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>importlib</code>,
+  <code>abc</code>, ...) are not available to a checked module; the <code>typing</code>,
+  <code>dataclasses</code>, <code>enum</code>, <code>logging</code> and <code>__future__</code> shims of
+  <code>codon/</code> are.</li>
+</ul>
 
 
 
@@ -1857,7 +2069,7 @@ Codon then checks each call with the arguments it is given.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 22:56:18 UTC"><span class="timeago" datetime="2026-10-10T22:56:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 22:56:18 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 01:17:37 UTC"><span class="timeago" datetime="2026-10-11T01:17:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 01:17:37 UTC">2026-10-11</span>
   </span>
 
     
