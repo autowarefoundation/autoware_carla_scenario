@@ -17,6 +17,10 @@ the author wrote:
   ``field(default_factory=...)`` is replaced by its default.
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
   ``abc`` shim's ``ABC`` is an empty base).
+* A parameter or return annotation naming a class the module defines further
+  down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
+  dropped: Codon 0.19 cannot name a class in a signature before its
+  definition, and two classes that take each other cannot both come first.
 * A bare ``*`` in a signature (keyword-only parameters) becomes ``*_acs_kw``.
 * A list display of two or more elements that are not all literals, e.g.
   ``[ElapsedTimeCondition(...), SpeedCondition(...)]``, becomes
@@ -212,6 +216,22 @@ def _union_members(node: ast.AST) -> list[ast.AST] | None:
     return None
 
 
+def _annotation_names(node: ast.AST) -> set[str]:
+    """The bare names an annotation uses, inside string annotations too."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return set()
+    out: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name):
+            out.add(sub.id)
+        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            out |= _annotation_names(sub)
+    return out
+
+
 def _is_none(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
 
@@ -289,11 +309,24 @@ class _Rewriter(ast.NodeVisitor):
         self._exceptions = exceptions
         #: The class whose body is being visited (``None`` in a function).
         self._class_name: str | None = None
+        #: Top-level classes of the module defined below the statement
+        #: being visited.
+        self._later_classes: set[str] = set()
 
     # -- annotations -----------------------------------------------------
 
+    def visit_Module(self, node: ast.Module) -> None:
+        later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
+        for stmt in node.body:
+            if isinstance(stmt, ast.ClassDef):
+                later.discard(stmt.name)  # a class may name itself
+            self._later_classes = set(later)
+            self.visit(stmt)
+
     def _rewrite_annotation(self, node: ast.AST, *, class_level: bool) -> str | None:
         """Rewrite *node* in place; ``None`` when it must be dropped instead."""
+        if not class_level and _annotation_names(node) & self._later_classes:
+            return None  # a class defined further down: Codon cannot name it yet
         converted = codon_annotation(node, class_level=class_level)
         if converted is not None:
             start, end = self.edits.node_span(node)
