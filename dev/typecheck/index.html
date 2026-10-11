@@ -2052,17 +2052,21 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 79 of
-the package's 224 modules (35%; about 10,900 of 68,100 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 80 of
+the package's 224 modules (36%; about 12,100 of 68,100 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
 the signal-controller registry, the ego, NPC vehicle and pedestrian entities
-and the entity registry, the Autoware bridge interface and its fake, the
-measures, the ODD units and the CARLA-only helpers, the traffic-light lookups
-included. 33 functions and methods of those modules are <code>UNCALLED</code>, almost
-all of them a condition's <code>get_details()</code>. The 145 <code>EXCLUDED</code> modules fall
-into three groups:</p>
+and the entity registry, <code>BaseScenario</code>, the Autoware bridge interface and
+its fake, the measures, the ODD units and the CARLA-only helpers, the
+traffic-light lookups included. 39 functions and methods of those modules are
+<code>UNCALLED</code>: most of them a condition's <code>get_details()</code>, and the six members of
+<code>BaseScenario</code> built on the ego's class (<code>ego_type</code>, a <code>type[EgoVehicle]</code>: the
+constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
+<code>register_route_to_goal()</code>, which also registers the unchecked
+<code>RoutingAction</code>) or on cover expressions of any value (<code>register_cover()</code>).
+The 144 <code>EXCLUDED</code> modules fall into three groups:</p>
 <ul>
 <li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -2073,9 +2077,7 @@ into three groups:</p>
   <code>examples.configs</code>; the <code>signals</code> package, the traffic backends and the
   authoring compiler.</li>
 <li><strong>About 12 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
-  <code>odd.model</code>), a class or a callable of any value as a parameter
-  (<code>scenario_base</code>'s <code>ego_type</code>, callbacks and measure expressions), a
-  union-typed attribute, which crashes Codon 0.19
+  <code>odd.model</code>), a union-typed attribute, which crashes Codon 0.19
   (<code>RelativeLanePose.entity_ref</code>), a variable-length tuple (<code>route.model</code>,
   <code>actions.routing</code>'s waypoints), or a class as a value (<code>utils.config</code>).</li>
 </ul>
@@ -2094,8 +2096,9 @@ annotated type:</p>
 </code></pre></div>
 <p><code>_acs_value(T)</code> is a <code>T</code> Codon cannot tell from a real one; nothing compiled
 is ever run. A parameter annotated with a union (<code>Lanelet2Pose |
-OpenDrivePose</code>) is called once with each member, so the body is checked for
-every type it accepts. A parameter with no annotation, or one Codon cannot
+OpenDrivePose</code>, or <code>Union[BaseAction, Callable[[carla.World], None]]</code>) is
+called once with each member, so the body is checked for every type it
+accepts. A parameter with no annotation, or one Codon cannot
 express (<code>Any</code>, <code>object</code>, <code>Callable[..., R]</code>, <code>Callable[[Any], Any]</code>, ...),
 gives the check nothing to call with and is reported as a problem of the
 module, at its line: annotate it with the type its callers pass. The one
@@ -2117,6 +2120,14 @@ stands in for it in the check's workspace:</p>
   model (<code>utils.config</code>) cannot be imported by a checked module until it is
   checked itself.</li>
 </ul>
+<p>Two checked modules that import each other can each need the other's types
+the moment Codon reads it: <code>BaseScenario</code> declares <code>_measures: dict[str,
+Measure]</code> at class level, and <code>measures</code> declares the running scenario
+(<code>_MEASURED: dict[str, Optional[BaseScenario]]</code>) as a global, so neither can
+be read first. <code>MODELLED_IMPORTS</code> in <code>typecheck/library.py</code> breaks such a
+cycle: the module it names (<code>measures</code>, <code>entity.ego</code>) imports the other
+(<code>scenario_base</code>) through its model, as it did before that one was checked.
+Its types are the model's, which never meet the checked module's.</p>
 <p>A model module that stands in for unchecked code (<code>coordinate.codon</code> for
 <code>transform.py</code> and <code>map_manager.py</code>) declares only what the checked modules
 and scenarios use of it: <code>MapManager</code> there is <code>get_instance()</code> and the
@@ -2148,7 +2159,9 @@ from the model's. The two are different types that never meet:</p>
   model-only <code>_acs_condition</code> marker) are unchanged;</li>
 <li>the <strong>library check</strong> compiles the checked conditions against the checked
   base. A checked module that hands a condition to a model function (an
-  action, <code>scenario_base</code>) cannot do so until that module is checked too;
+  unchecked action) cannot do so until that module is checked too
+  (<code>scenario_base</code> is checked, and imports <code>BaseCondition</code> from
+  <code>conditions.base</code> for that);
   <code>_acs_list</code> gives a list display of checked conditions the type of its
   first element, so a display mixing two checked condition classes waits for
   the same.</li>
@@ -2293,6 +2306,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   variable-length tuple (<code>tuple[X, ...]</code>, which the check drops from an
   annotation) has no such stand-in: use a <code>list</code> where nothing relies on the
   immutability.
+- <strong>No star-unpacking into a tuple display</strong> (<code>(*a, *b)</code>): Codon wants a
+  tuple after <code>*</code>. Concatenate the lists (<code>a + b</code>).
+- <strong>A default does not name a class attribute</strong> (<code>random_seed: int =
+  DEFAULT_RANDOM_SEED</code> in a method of the class defining it): Python
+  evaluates it once, when the class is created, and Codon cannot name it
+  there. Write the value, with a comment naming the attribute.
 - <strong>No <code>del</code> of a parameter</strong> (<code>del world, goal</code> to mark it unused): Codon
   reads it as a call on the value. Leave the parameter unused.
 - <strong>An <code>Optional</code> attribute is assigned without an annotation</strong>: with one
@@ -2324,6 +2343,14 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   up when the lookup misses and raise the <code>AttributeError</code> the call raised
   (<code>LaneChangeAction</code>, <code>TurnAction</code> and <code>SetSpeedAction</code> on a pedestrian),
   so a wrong kind still fails rather than reading as an entity not found.
+- <strong>An entity is registered by kind, too</strong>: <code>register_entity</code> picks the kind
+  with <code>isinstance(entity, BackendDriven)</code>, which Codon decides by the
+  static type and does not match for a subclass (a <code>VehicleEntity</code>), so a
+  checked caller calls <code>register_vehicle_entity</code> (through a <code>BackendDriven</code>
+  local, which upcasts) or <code>register_pedestrian_entity</code>. <code>BaseScenario</code>
+  calls them under an <code>isinstance</code> test on its parameter's own class, which
+  Codon decides as true, and hands anything else (a test double) to
+  <code>register_entity</code>, so at run time it is registered as before.
 - <strong><code>dict.get</code> takes its default</strong>: Codon's has no one-argument form. Test
   <code>key in d</code> and index instead of <code>d.get(key)</code>.
 - <strong>No sign in an f-string format spec</strong>: Codon's parser rejects
@@ -2387,7 +2414,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:14:30 UTC"><span class="timeago" datetime="2026-10-11T07:14:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:14:30 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:53:01 UTC"><span class="timeago" datetime="2026-10-11T07:53:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:53:01 UTC">2026-10-11</span>
   </span>
 
     
