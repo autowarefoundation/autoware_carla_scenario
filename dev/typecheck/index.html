@@ -1467,6 +1467,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#what-is-checked-of-the-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is checked of the framework
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-is-compiled" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1759,6 +1770,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#what-is-checked-of-the-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is checked of the framework
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-is-compiled" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2029,6 +2051,33 @@ function or method of a checked module.</p>
    behave exactly as it did.</li>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
+<h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 66 of
+the package's 217 modules (30%; about 9,600 of 66,600 lines) are <code>CHECKED</code>:
+the kinematics, the coordinate frames and poses, the condition base and
+nearly every condition, the action base with the environment and
+traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
+measures, the ODD units and the CARLA-only helpers. 30 functions and methods
+of those modules are <code>UNCALLED</code>, almost all of them a condition's
+<code>get_details()</code>. The 151 <code>EXCLUDED</code> modules fall into three groups:</p>
+<ul>
+<li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
+  lacks (<code>pathlib</code>, <code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>). This is
+  the tooling around a run (the editor, the UI, authoring, the sweeper, the
+  map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
+<li><strong>About 30 build on an excluded module</strong>: the entity actions, through
+  <code>entity.registry</code>; the example scenarios, through <code>examples.configs</code>;
+  the signal controllers, the traffic backends and the authoring compiler.</li>
+<li><strong>About 15 hold values Codon has no type for</strong>: <code>Any</code> (<code>entity.registry</code>,
+  which holds an entity of any kind, <code>coverage.items</code>, <code>odd.model</code>), a class
+  or a callable of any value as a parameter (<code>scenario_base</code>'s <code>ego_type</code>,
+  callbacks and measure expressions), a union-typed attribute, which crashes
+  Codon 0.19 (<code>RelativeLanePose.entity_ref</code>), a variable-length tuple
+  (<code>route.model</code>), or a class as a value (<code>utils.config</code>).</li>
+</ul>
+<p>The scenario check is not limited by this: it compiles every scenario against
+the model, which declares the whole public API.</p>
 <h3 id="what-is-compiled">What is compiled<a class="headerlink" href="#what-is-compiled" title="Permanent link">&para;</a></h3>
 <p>Codon checks a function only when something calls it, so the check appends a
 function to each checked module that calls every public function and every
@@ -2160,9 +2209,10 @@ condition from an unchecked module to its base (<code>SetSpeedAction</code>'s de
 <li><strong>An attribute holds one type</strong>: one assigned a union (<code>EntityRole | str</code>)
   is stored converted where every use converts it anyway
   (<code>self._entity_name = str(entity_name)</code>). Codon 0.19 crashes on an
-  attribute declared with a union ("union already sealed"), so where the
-  union is what the class holds (a public dataclass field such as
-  <code>VehicleEntityConfig.role_name</code>), the module stays in <code>EXCLUDED</code>.</li>
+  attribute declared with a union ("union already sealed"). A public
+  dataclass field is converted in <code>__post_init__</code>
+  (<code>VehicleEntityConfig.role_name: str</code>, <code>self.role_name =
+  str(self.role_name)</code>), which still takes an <code>EntityRole</code> at run time.</li>
 <li><strong>Annotate a local that starts as <code>None</code></strong> (<code>spawn_points:
   Optional[list[carla.Transform]] = None</code>): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
@@ -2223,9 +2273,14 @@ condition from an unchecked module to its base (<code>SetSpeedAction</code>'s de
 - <strong>One <code>except</code> clause per exception type</strong>: Codon 0.19 does not take a
   tuple (<code>except (KeyError, ValueError):</code>). <code>raise X from None</code> is rewritten
   to <code>raise X</code> by the check; <code>raise X from exc</code> compiles as it is.
-- <strong>No <code>frozenset</code></strong> and no variable-length tuple (<code>tuple[X, ...]</code>, which the
-  check drops from an annotation): use a <code>set</code> or a <code>list</code> where nothing
-  relies on the immutability.
+- <strong><code>frozenset</code> is checked as a <code>set</code></strong>: Codon 0.19 has none, so the check
+  rewrites <code>frozenset(...)</code> to <code>set(...)</code> and <code>frozenset[X]</code> /
+  <code>FrozenSet[X]</code> to <code>Set[X]</code>; the source keeps its <code>frozenset</code>. A
+  variable-length tuple (<code>tuple[X, ...]</code>, which the check drops from an
+  annotation) has no such stand-in: use a <code>list</code> where nothing relies on the
+  immutability.
+- <strong>No <code>del</code> of a parameter</strong> (<code>del world, goal</code> to mark it unused): Codon
+  reads it as a call on the value. Leave the parameter unused.
 - <strong>An <code>Optional</code> attribute is assigned without an annotation</strong>: with one
   declared at class level (<code>_lane_id: Optional[int]</code>), Codon refuses
   <code>self._lane_id: Optional[int] = address.lane_id</code> (an <code>int</code> "does not match"
@@ -2263,6 +2318,14 @@ condition from an unchecked module to its base (<code>SetSpeedAction</code>'s de
   Turning it into a list changes what the class does (a frozen dataclass's
   hash, its equality with a tuple), so such a module stays in <code>EXCLUDED</code>
   (<code>route.model</code>).
+- <strong>A model shared with checked modules is split out</strong>: the model's
+  <code>EgoConfig</code> derives from <code>VehicleEntityConfig</code>, and the checked
+  <code>EgoVehicle.spawn()</code> hands its spawn location to the checked
+  <code>spawn_vehicle_actor()</code>. So the spawn locations and the NPC vehicle live
+  in a model module of their own (<code>_vehicle_entity.codon</code>), which
+  <code>REPLACED_MODELS</code> replaces with <code>entity._spawn</code> and
+  <code>entity.vehicle_entity</code>: the model's <code>EgoConfig</code> then holds the checked
+  <code>SpawnLocation</code>.
 - <strong>A name the model lacks at the boundary</strong>: when a checked module imports a
   name of a modelled package that the model does not declare
   (<code>trajectory/__init__.py</code> re-exports <code>ResolvedTrajectory</code>), declare it in
@@ -2291,7 +2354,7 @@ condition from an unchecked module to its base (<code>SetSpeedAction</code>'s de
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 04:45:45 UTC"><span class="timeago" datetime="2026-10-11T04:45:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 04:45:45 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 05:24:31 UTC"><span class="timeago" datetime="2026-10-11T05:24:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 05:24:31 UTC">2026-10-11</span>
   </span>
 
     
