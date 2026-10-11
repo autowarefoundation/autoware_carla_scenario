@@ -17,6 +17,12 @@ class RouteFrame:
         raise NotImplementedError()
 
 
+# The values trajectory.model's route poses are checked against.
+APPROACHES = ("left", "right", "opposite")
+CROSSWALK_LEGS = ("entry", "exit")
+SIDES = ("left", "right")
+
+
 def parse_anchor(anchor: str) -> Tuple[str, int, str]:
     raise NotImplementedError()
 

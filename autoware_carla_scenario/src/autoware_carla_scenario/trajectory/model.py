@@ -33,10 +33,19 @@ from __future__ import annotations
 
 import bisect
 import enum
-import inspect
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 if TYPE_CHECKING:
     from ..conditions.base import BaseCondition
@@ -93,6 +102,18 @@ class MapPose:
     z: Optional[float] = None
 
 
+def _finite(owner: str, name: str, value: float) -> None:
+    if not math.isfinite(float(value)):
+        raise ValueError(f"{owner}.{name} must be finite")
+
+
+def _role_name(role: Union["EntityRole", str, None]) -> Optional[str]:
+    """*role* as the ``role_name`` string it stands for (``None`` stays ``None``)."""
+    if role is None:
+        return None
+    return str(role)
+
+
 @dataclass(frozen=True)
 class RelativeLanePose:
     """A pose relative to an entity, in lane coordinates.
@@ -136,7 +157,28 @@ class RelativeLanePose:
     offset: float = 0.0
     d_lane: int = 0
     yaw: Optional[float] = None
-    entity_ref: Optional[Union["EntityRole", str]] = None
+    #: The reference entity's ``role_name``.  An :class:`EntityRole` is
+    #: accepted and stored as its string, so the pose holds one type whatever
+    #: it was built with (the static check, ``docs/typecheck.md``, needs an
+    #: attribute of one type).
+    entity_ref: Optional[str] = None
+
+    def __init__(
+        self,
+        ds: float = 0.0,
+        offset: float = 0.0,
+        d_lane: int = 0,
+        yaw: Optional[float] = None,
+        entity_ref: Union["EntityRole", str, None] = None,
+    ) -> None:
+        # Written out, rather than generated, so that the constructor still
+        # takes an EntityRole while the field holds its string.
+        object.__setattr__(self, "ds", ds)
+        object.__setattr__(self, "offset", offset)
+        object.__setattr__(self, "d_lane", d_lane)
+        object.__setattr__(self, "yaw", yaw)
+        object.__setattr__(self, "entity_ref", _role_name(entity_ref))
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if isinstance(self.d_lane, bool) or int(self.d_lane) != self.d_lane:
@@ -144,18 +186,11 @@ class RelativeLanePose:
                 f"RelativeLanePose.d_lane must be a whole number, got {self.d_lane!r}"
             )
         object.__setattr__(self, "d_lane", int(self.d_lane))
-        for name in ("ds", "offset"):
-            if not math.isfinite(float(getattr(self, name))):
-                raise ValueError(f"RelativeLanePose.{name} must be finite")
+        _finite("RelativeLanePose", "ds", self.ds)
+        _finite("RelativeLanePose", "offset", self.offset)
 
 
-def _finite(owner: str, **values: Any) -> None:
-    for name, value in values.items():
-        if not math.isfinite(float(value)):
-            raise ValueError(f"{owner}.{name} must be finite")
-
-
-def _one_of(owner: str, name: str, value: Any, allowed: Sequence[str]) -> None:
+def _one_of(owner: str, name: str, value: str, allowed: Sequence[str]) -> None:
     if value not in allowed:
         raise ValueError(
             f"{owner}.{name} must be one of {list(allowed)}, got {value!r}"
@@ -213,7 +248,8 @@ class RouteLanePose:
     anchor: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _finite("RouteLanePose", ds=self.ds, offset=self.offset)
+        _finite("RouteLanePose", "ds", self.ds)
+        _finite("RouteLanePose", "offset", self.offset)
         object.__setattr__(
             self, "d_lane", _whole("RouteLanePose", "d_lane", self.d_lane)
         )
@@ -246,7 +282,8 @@ class RouteOppositePose:
     anchor: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _finite("RouteOppositePose", ds=self.ds, offset=self.offset)
+        _finite("RouteOppositePose", "ds", self.ds)
+        _finite("RouteOppositePose", "offset", self.offset)
         lane = _whole("RouteOppositePose", "lane", self.lane)
         if lane < 1:
             raise ValueError("RouteOppositePose.lane counts from 1")
@@ -286,7 +323,8 @@ class RouteCrossingPose:
     def __post_init__(self) -> None:
         from ..route.model import APPROACHES  # noqa: PLC0415
 
-        _finite("RouteCrossingPose", distance=self.distance, offset=self.offset)
+        _finite("RouteCrossingPose", "distance", self.distance)
+        _finite("RouteCrossingPose", "offset", self.offset)
         junction = _whole("RouteCrossingPose", "junction", self.junction)
         if junction < 0:
             raise ValueError("RouteCrossingPose.junction counts from 0")
@@ -326,7 +364,7 @@ class RouteCrosswalkPose:
     def __post_init__(self) -> None:
         from ..route.model import CROSSWALK_LEGS, SIDES  # noqa: PLC0415
 
-        _finite("RouteCrosswalkPose", along=self.along)
+        _finite("RouteCrosswalkPose", "along", self.along)
         junction = _whole("RouteCrosswalkPose", "junction", self.junction)
         if junction < 0:
             raise ValueError("RouteCrosswalkPose.junction counts from 0")
@@ -362,7 +400,8 @@ class RouteRoadsidePose:
     def __post_init__(self) -> None:
         from ..route.model import SIDES  # noqa: PLC0415
 
-        _finite("RouteRoadsidePose", ds=self.ds, kerb_distance=self.kerb_distance)
+        _finite("RouteRoadsidePose", "ds", self.ds)
+        _finite("RouteRoadsidePose", "kerb_distance", self.kerb_distance)
         _one_of("RouteRoadsidePose", "side", self.side, SIDES)
         _check_anchor("RouteRoadsidePose", self.anchor)
 
@@ -389,6 +428,44 @@ TrajectoryPosition = Union[
     RouteCrosswalkPose,
     RouteRoadsidePose,
 ]
+
+
+#: How a vertex's time is written now, for the errors below.
+_HOW = "TrajectoryVertex(position, advance=TrajectoryTimeCondition({time!r}))"
+
+
+#: ``TrajectoryVertex.__init__`` as written, which the wrapper below keeps for
+#: mypy: a type checker sees ``(position, advance=None)``, typed.
+_Init = TypeVar("_Init", bound="Callable[..., None]")
+
+
+def _refusing_vertex_times(init: _Init) -> _Init:
+    """``TrajectoryVertex.__init__``, telling an old call how it is written now.
+
+    Every call written for the vertex that had a time -- a time second, a time
+    and a condition, ``time=`` -- is told how it is written now instead of
+    getting Python's arity error, and the signature introspection sees stays
+    ``(position, advance=None)``.  A run-time wrapper only: the static check
+    (``docs/typecheck.md``) drops the decorator and compiles ``__init__`` as
+    written, so ``inspect`` is imported here, where it is never compiled.
+    """
+    import functools  # noqa: PLC0415 -- run time only, see above
+    import inspect  # noqa: PLC0415
+
+    @functools.wraps(init)
+    def __init__(self: Any, position: Any, *args: Any, **kwargs: Any) -> None:
+        init(self, position, _vertex_advance(args, kwargs))
+
+    __init__.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [
+            inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("position", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter(
+                "advance", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None
+            ),
+        ]
+    )
+    return __init__  # type: ignore[return-value]
 
 
 @dataclass(frozen=True)
@@ -427,16 +504,31 @@ class TrajectoryVertex:
     position: TrajectoryPosition
     advance: Optional["BaseCondition"] = None
 
-    def __init__(self, position: TrajectoryPosition, *args: Any, **kwargs: Any) -> None:
-        # Spelled out by hand, with the signature below for introspection, so
-        # that every call written for the vertex that had a time -- a time
-        # second, a time and a condition, ``time=`` -- is told how it is
-        # written now instead of getting Python's arity error.
-        advance = _vertex_advance(args, kwargs)
+    @_refusing_vertex_times
+    def __init__(
+        self,
+        # Spelled out rather than named through TrajectoryPosition: the
+        # library check (docs/typecheck.md) calls the constructor with each
+        # member of a union written whole, and with the alias's union value
+        # otherwise, which catches less.
+        position: Union[
+            CarlaWorldPose,
+            Lanelet2Pose,
+            OpenDrivePose,
+            MapPose,
+            RelativeLanePose,
+            RouteLanePose,
+            RouteOppositePose,
+            RouteCrossingPose,
+            RouteCrosswalkPose,
+            RouteRoadsidePose,
+        ],
+        advance: Optional["BaseCondition"] = None,
+    ) -> None:
         # Duck-typed rather than an isinstance check: importing the condition
         # package here would pull its CARLA-facing modules into the editor
         # process, which builds trajectories without a simulator.
-        if advance is not None and not callable(getattr(advance, "check", None)):
+        if advance is not None and not _has_check(advance):
             raise TypeError(
                 "TrajectoryVertex.advance must be a condition (a BaseCondition), "
                 f"got {type(advance).__name__}"
@@ -459,18 +551,13 @@ class TrajectoryVertex:
         return self.advance
 
 
-TrajectoryVertex.__init__.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-    [
-        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-        inspect.Parameter("position", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-        inspect.Parameter(
-            "advance", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None
-        ),
-    ]
-)
-
-#: How a vertex's time is written now, for the errors below.
-_HOW = "TrajectoryVertex(position, advance=TrajectoryTimeCondition({time!r}))"
+def _has_check(condition: "BaseCondition") -> bool:
+    """Whether *condition* has a callable ``check``, as every condition has."""
+    try:
+        check = condition.check
+    except AttributeError:
+        return False
+    return callable(check)
 
 
 def _vertex_advance(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
@@ -514,15 +601,17 @@ def _vertex_advance(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     return advance
 
 
-def _trajectory_time(condition: Any) -> Optional[float]:
+def _trajectory_time(condition: "BaseCondition") -> Optional[float]:
     """*condition*'s time if it is a ``TrajectoryTimeCondition``, else ``None``.
 
     Recognised by the marker that class carries rather than by importing it:
     the condition package's import pulls CARLA in, and the editor process,
-    which builds and reads trajectories, has no simulator.
+    which builds and reads trajectories, has no simulator.  ``hasattr`` rather
+    than ``getattr`` with a default, which the static check cannot compile.
     """
-    if getattr(type(condition), "IS_TRAJECTORY_TIME", False):
-        return float(condition.time)
+    if hasattr(type(condition), "IS_TRAJECTORY_TIME"):
+        if type(condition).IS_TRAJECTORY_TIME:  # type: ignore[attr-defined]
+            return float(condition.time)  # type: ignore[attr-defined]
     return None
 
 
@@ -600,8 +689,21 @@ class Trajectory:
         where it lies depends on where the reference entity -- or, for a route
         pose (:data:`ROUTE_POSITIONS`), the ego on its route -- then is.
         """
+        # The classes spelled out, rather than unpacked from ROUTE_POSITIONS:
+        # the static check (docs/typecheck.md) cannot unpack a tuple of
+        # classes into isinstance().
         return any(
-            isinstance(vertex.position, (RelativeLanePose, *ROUTE_POSITIONS))
+            isinstance(
+                vertex.position,
+                (
+                    RelativeLanePose,
+                    RouteLanePose,
+                    RouteOppositePose,
+                    RouteCrossingPose,
+                    RouteCrosswalkPose,
+                    RouteRoadsidePose,
+                ),
+            )
             for vertex in self.vertices
         )
 
