@@ -290,7 +290,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_stack.devcontainer": "imports pathlib, yaml, json",
     "autoware_carla_scenario.autoware_stack.docker": "imports pathlib, subprocess, shlex",
     "autoware_carla_scenario.autoware_stack.launcher": "imports pathlib, subprocess, shutil, signal",
-    "autoware_carla_scenario.camera_recorder": "imports pathlib, ffmpeg, subprocess, queue",
+    "autoware_carla_scenario.camera_recorder": "imports pathlib, ffmpeg, subprocess",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, shutil, json, argparse, urllib, http, email, tarfile, platform",
     "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2, pyxodr, pathlib",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
