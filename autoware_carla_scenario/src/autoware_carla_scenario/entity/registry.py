@@ -56,15 +56,42 @@ def register_entity(role_name: Union[EntityRole, str], entity: Any) -> None:
         entity: The entity object.
     """
     key = str(role_name)
-    unregister_entity(key)
     if isinstance(entity, BackendDriven):
-        _VEHICLES[key] = entity
-    elif isinstance(entity, PedestrianEntity):
-        _PEDESTRIANS[key] = entity
-    else:
-        # Of neither kind: every lookup returns it, and it answers what it can.
-        _VEHICLES[key] = entity
-        _PEDESTRIANS[key] = entity
+        register_vehicle_entity(key, entity)
+        return
+    if isinstance(entity, PedestrianEntity):
+        register_pedestrian_entity(key, entity)
+        return
+    # Of neither kind: every lookup returns it, and it answers what it can.
+    unregister_entity(key)
+    _VEHICLES[key] = entity
+    _PEDESTRIANS[key] = entity
+
+
+def register_vehicle_entity(
+    role_name: Union[EntityRole, str], entity: BackendDriven
+) -> None:
+    """Make the vehicle *entity* findable by its role name.
+
+    :func:`register_entity` for a caller that knows it holds a vehicle (one a
+    traffic backend drives, the ego included): typed, so the static check
+    follows it (docs/typecheck.md).
+    """
+    key = str(role_name)
+    unregister_entity(key)
+    _VEHICLES[key] = entity
+
+
+def register_pedestrian_entity(
+    role_name: Union[EntityRole, str], entity: PedestrianEntity
+) -> None:
+    """Make the pedestrian *entity* findable by its role name.
+
+    The pedestrian counterpart of :func:`register_vehicle_entity`.
+    """
+    key = str(role_name)
+    unregister_entity(key)
+    _PEDESTRIANS[key] = entity
 
 
 def unregister_entity(role_name: Union[EntityRole, str]) -> None:

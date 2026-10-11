@@ -347,6 +347,24 @@ def test_a_decorator_the_library_check_leaves_uncalled_is_dropped() -> None:
     assert "@_refusing_old_calls" in _transform(source)
 
 
+def test_an_annotation_naming_a_type_var_is_dropped() -> None:
+    # A TypeVar types a run-time wrapper for mypy; Codon cannot type with it.
+    out = _transform(
+        """
+        _Init = TypeVar("_Init", bound="Callable[..., None]")
+
+        def wrap(init: _Init, n: int) -> _Init:
+            return init
+
+        def keep(x: int) -> int:
+            return x
+        """
+    )
+    lines = out.splitlines()
+    assert lines[3] == "def wrap(init, n: int):"
+    assert lines[6] == "def keep(x: int) -> int:"
+
+
 def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() -> None:
     out = _transform(
         """

@@ -134,7 +134,8 @@ class TestTheContract:
         A scenario is perfectly valid with a manoeuvre its traffic model has no
         answer for, and an exception here would come out of the tick loop.
         """
-        entity = object()
+        # Not a DrivenEntity: a stand-in with nothing a backend reads.
+        entity: Any = object()
         world = _World()
         backend.change_lane(entity, world, LaneChangeDirection.LEFT)
         backend.turn_at_junction(entity, world, TurnDirection.RIGHT)
@@ -199,6 +200,13 @@ class TestTrafficManagerStart:
         assert npc.autopilot == [(True, backend.port)]
 
 
+def _stand_in(actor: Any, role_name: Optional[str] = "npc1") -> Any:
+    """An entity as a backend reads it: its actor and role name, nothing else."""
+    if role_name is None:
+        return SimpleNamespace(actor=actor)
+    return SimpleNamespace(actor=actor, role_name=role_name)
+
+
 class TestTrafficManagerRelease:
     """An action that drives a vehicle itself takes it back from the manager."""
 
@@ -208,13 +216,13 @@ class TestTrafficManagerRelease:
             TrafficManagerBackendConfig(port=8123), client=_Client()
         )
         backend.start(_World([npc]))
-        backend.release(SimpleNamespace(actor=npc, role_name="npc1"), _World())
+        backend.release(_stand_in(npc), _World())
         assert npc.autopilot == [(True, 8123), (False, 8123)]
 
     def test_released_before_start_it_is_never_handed_over(self) -> None:
         npc, other = _Actor(2), _Actor(3)
         backend = TrafficManagerBackend(client=_Client())
-        backend.release(SimpleNamespace(actor=npc, role_name="npc1"), _World())
+        backend.release(_stand_in(npc), _World())
         backend.start(_World([npc, other]))
         assert npc.autopilot == []
         assert other.autopilot == [(True, backend.port)]
@@ -222,7 +230,7 @@ class TestTrafficManagerRelease:
     def test_a_new_run_forgets_what_was_released(self) -> None:
         npc = _Actor(2)
         backend = TrafficManagerBackend(client=_Client())
-        backend.release(SimpleNamespace(actor=npc, role_name="npc1"), _World())
+        backend.release(_stand_in(npc), _World())
         backend.close()
         backend.start(_World([npc]))
         assert npc.autopilot == [(True, backend.port)]
@@ -242,7 +250,7 @@ class TestTrafficManagerRelease:
         assert released == [entity]
 
     def test_the_base_backend_releases_quietly(self) -> None:
-        NullTrafficBackend().release(SimpleNamespace(actor=_Actor(1)), _World())
+        NullTrafficBackend().release(_stand_in(_Actor(1), role_name=None), _World())
 
 
 class TestTrafficManagerClose:
@@ -276,6 +284,70 @@ class TestTrafficManagerClose:
             "port": 8123,
             "random_seed": 11,
         }
+
+
+class _Blueprint:
+    def has_attribute(self, name: str) -> bool:
+        return False
+
+
+class _BackgroundActor:
+    def __init__(self) -> None:
+        self.destroyed = 0
+
+    def set_target_velocity(self, velocity: Any) -> None:
+        pass
+
+    def get_location(self) -> Any:
+        return SimpleNamespace(x=1.0, y=2.0)
+
+    def destroy(self) -> None:
+        self.destroyed += 1
+
+
+class _BackgroundWorld:
+    def __init__(self, blueprints: List[_Blueprint]) -> None:
+        self.blueprints = blueprints
+        self.spawned: List[_BackgroundActor] = []
+
+    def get_blueprint_library(self) -> Any:
+        return SimpleNamespace(filter=lambda pattern: list(self.blueprints))
+
+    def try_spawn_actor(self, blueprint: Any, transform: Any) -> _BackgroundActor:
+        self.spawned.append(_BackgroundActor())
+        return self.spawned[-1]
+
+
+def _road_transform() -> Any:
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    return carla.Transform(carla.Location(1.0, 2.0, 0.0), carla.Rotation())
+
+
+class TestTrafficManagerBackground:
+    """Background vehicles: spawned, listed by handle, removed once."""
+
+    def test_no_blueprint_spawns_nothing(self) -> None:
+        world: Any = _BackgroundWorld([])
+        backend = TrafficManagerBackend()
+        assert (
+            backend.spawn_background(world, _road_transform(), speed_kmh=30.0) is None
+        )
+        assert world.spawned == []
+
+    def test_a_vehicle_is_removed_once_and_an_unknown_handle_is_ignored(
+        self,
+    ) -> None:
+        world: Any = _BackgroundWorld([_Blueprint()])
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        assert backend.background_vehicles(world) == {handle: (1.0, 2.0)}
+        backend.remove_background(world, "no-such-handle")
+        backend.remove_background(world, handle)
+        backend.remove_background(world, handle)
+        assert world.spawned[0].destroyed == 1
+        assert backend.background_vehicles(world) == {}
 
 
 # ---------------------------------------------------------------------------

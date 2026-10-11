@@ -23,7 +23,9 @@ from typing import Any
 import pytest
 
 import autoware_carla_scenario as acs
-from autoware_carla_scenario.traffic import driven as traffic_driven
+from autoware_carla_scenario.coverage import items as coverage_items
+from autoware_carla_scenario.traffic import context as traffic_context
+from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
 
@@ -170,7 +172,21 @@ def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
 #: (typecheck/library.py), though the package does not export them: name ->
 #: (model module, the Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
-    "BackendDriven": ("traffic", traffic_driven.BackendDriven),
+    "CoverItem": ("coverage", coverage_items.CoverItem),
+    "CrossItem": ("coverage", coverage_items.CrossItem),
+    "TrafficContext": ("traffic", traffic_context.TrafficContext),
+    **{
+        name: ("traffic", getattr(traffic_registry, name))
+        for name in (
+            "TRAFFIC_BACKEND_ENTRY_POINT_GROUP",
+            "available_backends",
+            "build_backend",
+            "get_backend_factory",
+            "load_traffic_backend_plugins",
+            "register_backend",
+            "unregister_backend",
+        )
+    },
     "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
 }

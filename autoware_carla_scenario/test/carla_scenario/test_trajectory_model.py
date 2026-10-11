@@ -61,7 +61,7 @@ class TestTrajectory:
         gate = AlwaysTrueCondition()
         pose = MapPose(0.0, 0.0)
         with pytest.raises(TypeError, match="one departure condition"):
-            TrajectoryVertex(pose, 1.0, gate)  # type: ignore[call-arg]
+            TrajectoryVertex(pose, 1.0, gate)  # type: ignore[call-arg, arg-type]
         with pytest.raises(TypeError, match="one departure condition"):
             TrajectoryVertex(pose, None, gate)  # type: ignore[call-arg]
         with pytest.raises(TypeError, match="one departure condition"):
@@ -71,7 +71,7 @@ class TestTrajectory:
         with pytest.raises(TypeError, match=r"drop time=None"):
             TrajectoryVertex(pose, time=None)  # type: ignore[call-arg]
         with pytest.raises(TypeError, match=r"advance=TrajectoryTimeCondition\(2.0\)"):
-            TrajectoryVertex(pose, 2.0, gate)  # type: ignore[call-arg]
+            TrajectoryVertex(pose, 2.0, gate)  # type: ignore[call-arg, arg-type]
 
     def test_reading_a_vertex_does_not_import_carla(self) -> None:
         """The editor builds and reads trajectories without a simulator."""

@@ -16,7 +16,8 @@ the author wrote:
   the dataclass ``__init__``), and each ``field(default=...)`` /
   ``field(default_factory=...)`` is replaced by its default.
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
-  ``abc`` shim's ``ABC`` is an empty base).
+  ``abc`` shim's ``ABC`` is an empty base), and so is ``@runtime_checkable``
+  (the ``typing`` shim's ``Protocol`` is an empty base too).
 * A parameter or return annotation naming a class the module defines further
   down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
   dropped: Codon 0.19 cannot name a class in a signature before its
@@ -56,7 +57,9 @@ the author wrote:
 * A string inside a module-level ``Union[...]`` / ``Optional[...]`` alias (a
   forward reference) is unquoted: Codon takes no string as a type.
 * A function decorator named in *dropped_decorators* is removed: the
-  library check drops the run-time-only wrappers ``UNCALLED`` lists.
+  library check drops the run-time-only wrappers ``UNCALLED`` lists.  An
+  annotation naming a module-level ``TypeVar`` (which types such a wrapper
+  for mypy) is dropped.
 
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
@@ -77,6 +80,7 @@ __all__ = [
     "UndeclaredAttribute",
     "class_declarations",
     "redirect_imports",
+    "uncalled_nodes",
     "transform_source",
     "undeclared_attributes",
 ]
@@ -92,6 +96,7 @@ PRELUDE = (
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}
 _UNION_NAMES = {"Union", "typing.Union"}
 _TUPLE_NAMES = {"tuple", "Tuple"}
+_TYPE_VAR_NAMES = {"TypeVar", "typing.TypeVar"}
 _CONCRETE_GENERICS = {
     "list",
     "List",
@@ -155,6 +160,8 @@ _DROPPED_CLASS_DECORATORS = {
     "dataclasses.dataclass",
     "unique",
     "enum.unique",
+    "runtime_checkable",
+    "typing.runtime_checkable",
 }
 _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
 #: Function decorators dropped: Codon 0.19 rejects a decorated method, and
@@ -415,6 +422,10 @@ class _Rewriter(ast.NodeVisitor):
         #: Top-level classes of the module defined below the statement
         #: being visited.
         self._later_classes: set[str] = set()
+        #: Module-level ``TypeVar``s: an annotation naming one is dropped, as
+        #: Codon (whose ``typing`` shim makes a ``TypeVar`` a string) cannot
+        #: type with it.
+        self._type_vars: set[str] = set()
         #: Enum classes rewritten at the module's top level, with the type of
         #: their values: each is given a constructor by value
         #: (:func:`_enum_lookups`).
@@ -424,6 +435,15 @@ class _Rewriter(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
+        self._type_vars = {
+            target.id
+            for stmt in node.body
+            if isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Call)
+            and _dotted(stmt.value.func) in _TYPE_VAR_NAMES
+            for target in stmt.targets
+            if isinstance(target, ast.Name)
+        }
         for stmt in node.body:
             if isinstance(stmt, ast.ClassDef):
                 later.discard(stmt.name)  # a class may name itself
@@ -434,6 +454,8 @@ class _Rewriter(ast.NodeVisitor):
         """Rewrite *node* in place; ``None`` when it must be dropped instead."""
         if not class_level and _annotation_names(node) & self._later_classes:
             return None  # a class defined further down: Codon cannot name it yet
+        if _annotation_names(node) & self._type_vars:
+            return None  # a TypeVar, which types for mypy only
         converted = codon_annotation(node, class_level=class_level)
         if converted is not None:
             start, end = self.edits.node_span(node)
@@ -862,6 +884,30 @@ def _import_as(dest: str, asname: str) -> str:
     return f"from {parent} import {_alias(last, asname)}"
 
 
+def uncalled_nodes(
+    tree: ast.Module, uncalled: Collection[str]
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """The definitions in *tree* of the functions *uncalled* names.
+
+    *uncalled* names a function as ``function`` or ``Class.method``; a name
+    with no definition in *tree* is ignored.
+    """
+    wanted = set(uncalled)
+    out: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in wanted:
+                out.append(node)
+        elif isinstance(node, ast.ClassDef):
+            out += [
+                m
+                for m in node.body
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and f"{node.name}.{m.name}" in wanted
+            ]
+    return out
+
+
 def redirect_imports(
     source: str,
     module: str,
@@ -869,6 +915,7 @@ def redirect_imports(
     target: Callable[[str], str | None],
     is_module: Callable[[str], bool],
     package: str = "autoware_carla_scenario",
+    uncalled: Collection[str] = (),
 ) -> tuple[str, list[tuple[int, str]]]:
     """Point every import of *package* in *source* at the module standing in for it.
 
@@ -878,7 +925,10 @@ def redirect_imports(
     its Codon model; ``None`` when there is neither.  ``is_module(name)``
     tells a submodule (``from . import frames``) from a name.  Each import
     statement keeps its line; ``from a import b, c`` that imports both a
-    submodule and names becomes two statements on it.
+    submodule and names becomes two statements on it.  An import inside a
+    function *uncalled* names (as :func:`uncalled_nodes` takes them) is left
+    as written: Codon compiles no import in a function nothing calls, so a
+    module may import one there that has nothing to stand in for it.
 
     Returns:
         The rewritten source, and (line, message) for each import that could
@@ -889,6 +939,11 @@ def redirect_imports(
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
     problems: list[tuple[int, str]] = []
+    skipped = {
+        id(node)
+        for function in uncalled_nodes(tree, uncalled)
+        for node in ast.walk(function)
+    }
 
     def inside(name: str) -> bool:
         return name == package or name.startswith(package + ".")
@@ -900,6 +955,8 @@ def redirect_imports(
         )
 
     for node in ast.walk(tree):
+        if id(node) in skipped:
+            continue
         pieces: list[str] = []
         failed = False
         if isinstance(node, ast.ImportFrom):

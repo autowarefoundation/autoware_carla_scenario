@@ -18,6 +18,7 @@ from autoware_carla_scenario.odd import (
     INTENSITY_LEVELS,
     OddAttribute,
     OddDefinition,
+    OddDraws,
     OddKnob,
     OddModule,
     OddSampler,
@@ -893,3 +894,80 @@ def test_drawn_cases_take_route_matches_in_turn(monkeypatch) -> None:
 
     assert [c[0] for c in cases] == ["route=a", "route=b", "route=a"]
     assert all(c[-1] == "x=1" for c in cases)
+
+
+# ---------------------------------------------------------------------------
+# A batch: the cases earlier scenarios drew
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_aims_at_the_buckets_earlier_draws_left_uncovered() -> None:
+    earlier = OddSampler(_weather_odd(), seed=4, strategy="coverage").sample(2)
+
+    later = OddSampler(
+        _weather_odd(), seed=4, strategy="coverage", drawn=earlier
+    ).sample(2)
+
+    # Four cases, four rain levels: the later ones fill what the earlier left.
+    for name in ("environment.rain", "environment.illumination"):
+        assert len({c.buckets[name] for c in [*earlier, *later]}) == 4
+
+
+def test_a_situation_an_earlier_case_was_aimed_at_is_not_aimed_at_again() -> None:
+    (earlier,) = OddSampler(_storm_odd(), seed=0, strategy="coverage").sample(1)
+
+    sampler = OddSampler(_storm_odd(), seed=0, strategy="coverage", drawn=[earlier])
+
+    assert earlier.situation == "storm_at_night"
+    assert sampler.situation_holes == []
+    assert sampler.sample(1)[0].situation is None
+
+
+def test_uniform_does_not_draw_the_earlier_cases_again() -> None:
+    earlier = OddSampler(default_odd(), seed=5).sample(3)
+
+    later = OddSampler(default_odd(), seed=5, drawn=earlier).sample(3)
+    again = OddSampler(default_odd(), seed=5, drawn=earlier).sample(3)
+
+    assert not {tuple(c.overrides) for c in later} & {
+        tuple(c.overrides) for c in earlier
+    }
+    assert [c.overrides for c in later] == [c.overrides for c in again]
+
+
+def test_nothing_drawn_before_is_a_sampler_of_its_own() -> None:
+    alone = OddSampler(default_odd(), seed=5).sample(3)
+    first = OddSampler(default_odd(), seed=5, drawn=[]).sample(3)
+
+    assert [c.overrides for c in first] == [c.overrides for c in alone]
+
+
+def test_draws_are_kept_per_odd() -> None:
+    drawn = OddDraws()
+    cases = OddSampler(_weather_odd(), seed=1).sample(2)
+
+    drawn.add(_weather_odd(), cases)
+
+    # One ODD built twice is one ODD; another starts afresh.
+    assert drawn.of(_weather_odd()) == cases
+    assert drawn.of(_storm_odd()) == []
+    drawn.add(_weather_odd(), cases[:1])
+    assert drawn.of(_weather_odd()) == [*cases, cases[0]]
+
+
+def test_expanding_configs_in_turn_goes_on_from_the_earlier_draws() -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {"odd_sample": {"count": 3, "strategy": "coverage"}},
+        }
+    )
+    drawn = OddDraws()
+
+    first = expand_config(cfg, drawn=drawn)
+    second = expand_config(cfg, drawn=drawn)
+
+    assert len(drawn.of(default_odd())) == 6
+    assert not {tuple(c) for c in first} & {tuple(c) for c in second}
+    # Without a record, every expansion draws alike, as before.
+    assert expand_config(cfg) == expand_config(cfg) == first
