@@ -34,6 +34,8 @@ the author wrote:
 * A ``@classmethod`` becomes a ``@staticmethod`` without its ``cls``
   parameter; ``cls`` in its body names the class (Codon has no
   classmethods; a subclass calling it gets the base class's).
+* ``raise X from None`` becomes ``raise X``: Codon 0.19 cannot type the
+  ``None`` cause.
 
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
@@ -562,6 +564,13 @@ class _Rewriter(ast.NodeVisitor):
         self.visit(node.target)
         if value is not None:
             self.visit(value)
+
+    def visit_Raise(self, node: ast.Raise) -> None:
+        if node.exc is not None and node.cause is not None and _is_none(node.cause):
+            # `raise X from None`, which Codon 0.19 cannot type: `raise X`.
+            _, end = self.edits.node_span(node.exc)
+            self.edits.replace(end, self.edits.node_span(node)[1], "")
+        self.generic_visit(node)
 
     def visit_List(self, node: ast.List) -> None:
         if (

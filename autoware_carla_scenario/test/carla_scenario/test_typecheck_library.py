@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,11 +21,14 @@ from autoware_carla_scenario.typecheck import (
     check,
     typecheck_library,
 )
+from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.typecheck.check import _model_module, replaced_models
 from autoware_carla_scenario.typecheck.cli import main as scenario_check
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
     EXCLUDED,
     NOT_YET_CHECKED,
+    REPLACED_MODELS,
     package_modules,
 )
 from autoware_carla_scenario.typecheck.library_driver import (
@@ -152,6 +156,66 @@ def test_an_import_with_nothing_to_stand_in_is_reported() -> None:
     assert [line for line, _ in problems] == [2, 3, 4]
     assert "neither checked" in problems[0][1]
     assert "from autoware_carla_scenario.utils.config import load" in out
+
+
+def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
+    # utils is checked, and utils/traffic_light.codon models one module of it
+    # that is not; the other modules of utils have nothing to stand in.
+    assert _model_module(f"{_PACKAGE}.utils.traffic_light") == (
+        f"{_PACKAGE}.utils.traffic_light"
+    )
+    assert _model_module(f"{_PACKAGE}.utils.config") is None
+    assert _model_module(f"{_PACKAGE}.coordinate.transform") == f"{_PACKAGE}.coordinate"
+
+
+# ---------------------------------------------------------------------------
+# Model modules compiled from the checked source instead
+# ---------------------------------------------------------------------------
+
+
+def test_every_replaced_model_names_a_model_file_and_package_modules() -> None:
+    modules = package_modules()
+    for stem, sources in REPLACED_MODELS.items():
+        assert (model_dir() / _PACKAGE / f"{stem}.codon").is_file(), stem
+        assert sources and all(m in modules for m in sources), stem
+
+
+def _trees(*names: str) -> dict[str, SimpleNamespace]:
+    every = package_modules()
+    return {n: SimpleNamespace(tree=ast.parse(every[n].read_text())) for n in names}
+
+
+def test_a_replaced_model_re_exports_the_checked_definitions() -> None:
+    frames, poses = REPLACED_MODELS["_poses"]
+    problems: list = []
+    out = replaced_models(_trees(frames, poses), problems)
+    assert problems == []
+    assert out["_poses"].splitlines() == [
+        f"from {workspace_module(frames)} import CoordinateFrame, FrameMismatchError",
+        f"from {workspace_module(poses)} import CarlaWorldPose, Lanelet2Pose, "
+        "OpenDrivePose",
+    ]
+
+
+def test_a_model_is_replaced_only_once_all_its_modules_are_checked() -> None:
+    frames, _poses = REPLACED_MODELS["_poses"]
+    problems: list = []
+    assert "_poses" not in replaced_models(_trees(frames), problems)
+    assert problems == []
+
+
+def test_a_name_the_checked_source_lacks_is_a_problem() -> None:
+    frames, poses = REPLACED_MODELS["_poses"]
+    trees = _trees(frames, poses)
+    trees[poses].tree.body = [
+        node
+        for node in trees[poses].tree.body
+        if getattr(node, "name", None) != "OpenDrivePose"
+    ]
+    problems: list = []
+    out = replaced_models(trees, problems)
+    assert [p.message.split(",")[0] for p in problems] == ["OpenDrivePose"]
+    assert "OpenDrivePose" not in out["_poses"]
 
 
 # ---------------------------------------------------------------------------

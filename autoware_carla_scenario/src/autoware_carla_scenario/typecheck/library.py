@@ -31,7 +31,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["CHECKED", "EXCLUDED", "NOT_YET_CHECKED", "package_modules"]
+__all__ = [
+    "CHECKED",
+    "EXCLUDED",
+    "NOT_YET_CHECKED",
+    "REPLACED_MODELS",
+    "package_modules",
+]
 
 #: The reason of a module nobody has made compile yet.
 NOT_YET_CHECKED = "not yet checked (#45)"
@@ -41,8 +47,12 @@ _NOT_YET = NOT_YET_CHECKED
 #: own name, for its ``__init__.py``).
 CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.constants",
+    "autoware_carla_scenario.coordinate",
     "autoware_carla_scenario.coordinate.frames",
+    "autoware_carla_scenario.coordinate.lane_distance",
     "autoware_carla_scenario.coordinate.poses",
+    "autoware_carla_scenario.coordinate.snap",
+    "autoware_carla_scenario.coordinate.traffic_light",
     "autoware_carla_scenario.entity_role",
     "autoware_carla_scenario.kinematics",
     "autoware_carla_scenario.kinematics.acceleration",
@@ -133,13 +143,9 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.conditions.traffic_signal": _NOT_YET,
     "autoware_carla_scenario.conditions.traffic_signal_controller": _NOT_YET,
     "autoware_carla_scenario.conditions.trajectory_time": _NOT_YET,
-    "autoware_carla_scenario.coordinate": _NOT_YET,
-    "autoware_carla_scenario.coordinate.lane_distance": _NOT_YET,
     "autoware_carla_scenario.coordinate.map_manager": "imports numpy, lanelet2, pyxodr, pathlib",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
-    "autoware_carla_scenario.coordinate.snap": _NOT_YET,
     "autoware_carla_scenario.coordinate.stop_line": "imports lanelet2",
-    "autoware_carla_scenario.coordinate.traffic_light": "imports utils.traffic_light, which is neither checked nor modelled",
     "autoware_carla_scenario.coordinate.transform": "imports numpy, lanelet2, autoware_lanelet2_extension_python",
     "autoware_carla_scenario.coverage": _NOT_YET,
     "autoware_carla_scenario.coverage.cod": "imports pathlib, yaml, csv",
@@ -261,6 +267,19 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.utils.powertrain": "imports numpy",
     "autoware_carla_scenario.utils.stop_line": "imports lanelet2",
     "autoware_carla_scenario.utils.traffic_light": "reads pyxodr's road network as an XML tree, and calls carla.TrafficLightState, which typesafe_carla's Codon library has as a value, not a type",
+}
+
+#: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library
+#: check compiles from the checked source they model instead: once all of the
+#: modules named are checked, the model module re-exports their definitions,
+#: so every module of the check -- checked or model -- has the same types.
+#: Without it, a checked module handing its own pose to a model function
+#: (``to_opendrive``) would hand the wrong type.
+REPLACED_MODELS: dict[str, tuple[str, ...]] = {
+    "_poses": (
+        "autoware_carla_scenario.coordinate.frames",
+        "autoware_carla_scenario.coordinate.poses",
+    ),
 }
 
 

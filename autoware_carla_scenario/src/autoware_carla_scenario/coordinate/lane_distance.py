@@ -332,9 +332,11 @@ def _speed_along_s(
         z=pose.z,
         yaw=math.degrees(math.atan2(travel_y, travel_x)),
     )
-    facing_od = _project(facing)
-    if facing_od is None:
+    projected = _project(facing)
+    if projected is None:
         return None
+    # Annotated, so Codon, which does not narrow an Optional, unwraps it.
+    facing_od: OpenDrivePose = projected
 
     return facing_od, speed * math.cos(facing_od.heading)
 
@@ -386,23 +388,24 @@ class _Reach:
     through_junction: bool
 
 
-def _road(road_id: str) -> Optional[object]:
-    """Return the loaded road with *road_id*, or ``None``."""
+def _road_length(road_id: str) -> Optional[float]:
+    """Return the length in metres of the loaded road with *road_id*, or ``None``."""
     try:
         network = MapManager.get_instance().road_network
     except RuntimeError:
         return None
-    return network.road_ids_to_object.get(str(road_id))
-
-
-def _road_length(road_id: str) -> Optional[float]:
-    """Return the road's reference-line length in metres, or ``None``."""
-    road = _road(road_id)
-    if road is None:
+    roads = network.road_ids_to_object
+    key = str(road_id)
+    if key not in roads:
         return None
     try:
-        return float(road["length"])  # type: ignore[index]
-    except (KeyError, TypeError, ValueError):
+        return float(roads[key]["length"])
+    # One clause each: Codon 0.19 does not take a tuple of exception types.
+    except KeyError:
+        return None
+    except TypeError:
+        return None
+    except ValueError:
         return None
 
 
@@ -411,13 +414,13 @@ def _road_length(road_id: str) -> Optional[float]:
 #: Keyed by the identity of the loaded network rather than by a map name: a
 #: scenario queue re-initializes :class:`MapManager`, and a stale graph would
 #: measure against the previous run's roads.
-_links_for: "Optional[tuple[int, dict[tuple[str, str], tuple[tuple[str, str], ...]]]]" = None
+_links_for: "Optional[tuple[int, dict[tuple[str, str], list[tuple[str, str]]]]]" = None
 
 #: Roads that sit inside a junction, by id, for the loaded network.
-_junction_roads_for: "Optional[tuple[int, frozenset[str]]]" = None
+_junction_roads_for: "Optional[tuple[int, set[str]]]" = None
 
 
-def _link_graph() -> "dict[tuple[str, str], tuple[tuple[str, str], ...]]":
+def _link_graph() -> "dict[tuple[str, str], list[tuple[str, str]]]":
     """Return every road reached by leaving a given road at a given end.
 
     A node is ``(road_id, end)`` -- the end being left by, ``"start"`` or
@@ -489,18 +492,18 @@ def _link_graph() -> "dict[tuple[str, str], tuple[tuple[str, str], ...]]":
                     (str(road_id), leaving)
                 )
 
-    graph: "dict[tuple[str, str], tuple[tuple[str, str], ...]]" = {}
+    graph: "dict[tuple[str, str], list[tuple[str, str]]]" = {}
     for node in set(explicit) | set(derived):
         ways: "list[tuple[str, str]]" = []
         for way in explicit.get(node, []) + derived.get(node, []):
             if way not in ways:
                 ways.append(way)
-        graph[node] = tuple(ways)
+        graph[node] = ways
     _links_for = (id(network), graph)
     return graph
 
 
-def _junction_roads() -> "frozenset[str]":
+def _junction_roads() -> "set[str]":
     """Return the ids of roads that sit inside a junction.
 
     A connecting road carries ``junction="<id>"``; every other road carries
@@ -511,7 +514,7 @@ def _junction_roads() -> "frozenset[str]":
     try:
         network = MapManager.get_instance().road_network
     except RuntimeError:
-        return frozenset()
+        return set()
     if _junction_roads_for is not None and _junction_roads_for[0] == id(network):
         return _junction_roads_for[1]
 
@@ -520,11 +523,11 @@ def _junction_roads() -> "frozenset[str]":
         for road_id, road in network.road_ids_to_object.items()
         if str(road.road_xml.get("junction", "-1")) not in ("-1", "")
     }
-    _junction_roads_for = (id(network), frozenset(inside))
+    _junction_roads_for = (id(network), inside)
     return _junction_roads_for[1]
 
 
-def _next_roads(road_id: str, along_s: bool) -> "tuple[tuple[str, bool], ...]":
+def _next_roads(road_id: str, along_s: bool) -> "list[tuple[str, bool]]":
     """Return every road continuing past *road_id*, and how each is entered.
 
     Travelling along ``s`` leaves a road by its ``end``, and against ``s`` by
@@ -537,12 +540,12 @@ def _next_roads(road_id: str, along_s: bool) -> "tuple[tuple[str, bool], ...]":
     decided by distance in :func:`_reach`, not by the order the file lists
     them in.
     """
-    return tuple(
+    return [
         (next_id, entered == "start")
         for next_id, entered in _link_graph().get(
-            (str(road_id), "end" if along_s else "start"), ()
+            (str(road_id), "end" if along_s else "start"), []
         )
-    )
+    ]
 
 
 def _reach(source: OpenDrivePose, target: OpenDrivePose) -> Optional[_Reach]:

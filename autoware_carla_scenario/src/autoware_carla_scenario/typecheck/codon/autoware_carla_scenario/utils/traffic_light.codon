@@ -1,0 +1,14 @@
+# Model of autoware_carla_scenario.utils.traffic_light (docs/typecheck.md), for
+# coordinate.traffic_light, which is checked. The module itself is not: it reads
+# pyxodr's XML tree and calls carla.TrafficLightState (typecheck/library.py).
+
+from ..coordinate import RoadNetwork
+
+
+def lanelet2_traffic_light_id_to_opendrive_controller_id(road_network: RoadNetwork,
+                                                         lanelet2_tl_id: int) -> Optional[int]:
+    raise NotImplementedError()
+
+
+def get_signal_ids_for_controller(road_network: RoadNetwork, controller_id: int) -> List[str]:
+    raise NotImplementedError()

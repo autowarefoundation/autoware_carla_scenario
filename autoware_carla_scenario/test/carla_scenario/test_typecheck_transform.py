@@ -168,6 +168,24 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
+def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() -> None:
+    out = _transform(
+        """
+        try:
+            f()
+        except AttributeError:
+            raise RuntimeError(
+                "no f"
+            ) from None
+        except ValueError as exc:
+            raise RuntimeError("bad f") from exc
+        """
+    )
+    lines = out.splitlines()
+    assert lines[4:7] == ["    raise RuntimeError(", '        "no f"', "    )"]
+    assert lines[8] == '    raise RuntimeError("bad f") from exc'
+
+
 def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     source = textwrap.dedent(
         """

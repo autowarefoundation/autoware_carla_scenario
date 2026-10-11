@@ -1,0 +1,79 @@
+# Model of autoware_carla_scenario.coordinate.frames and .poses
+# (docs/typecheck.md), re-exported by coordinate.codon. The library check
+# compiles the checked source in its place (MODELLED_BY, typecheck/library.py).
+
+import typesafe_carla.carla as carla
+
+
+@tuple
+class CoordinateFrame:
+    value: int
+    CARLA_WORLD: ClassVar[CoordinateFrame] = CoordinateFrame(1)
+    LANELET2: ClassVar[CoordinateFrame] = CoordinateFrame(2)
+    OPENDRIVE: ClassVar[CoordinateFrame] = CoordinateFrame(3)
+
+
+class FrameMismatchError(Static[Exception]):
+    frame_a: CoordinateFrame
+    frame_b: CoordinateFrame
+
+    def __init__(self, frame_a: CoordinateFrame, frame_b: CoordinateFrame, operation: str):
+        super().__init__("FrameMismatchError", operation)
+        self.frame_a = frame_a
+        self.frame_b = frame_b
+
+
+class Lanelet2Pose:
+    lanelet_id: int
+    s: float
+    t: float
+    heading: float
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2
+
+    def __init__(self, lanelet_id: int, s: float, t: float = 0.0, heading: float = 0.0):
+        self.lanelet_id = lanelet_id
+        self.s = s
+        self.t = t
+        self.heading = heading
+
+
+class OpenDrivePose:
+    road_id: str
+    lane_id: int
+    s: float
+    t: float
+    heading: float
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.OPENDRIVE
+
+    def __init__(self, road_id: str, lane_id: int, s: float, t: float = 0.0, heading: float = 0.0):
+        self.road_id = road_id
+        self.lane_id = lane_id
+        self.s = s
+        self.t = t
+        self.heading = heading
+
+
+class CarlaWorldPose:
+    x: float
+    y: float
+    z: float
+    roll: float
+    pitch: float
+    yaw: float
+    FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.CARLA_WORLD
+
+    def __init__(self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0,
+                 yaw: float = 0.0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.roll = roll
+        self.pitch = pitch
+        self.yaw = yaw
+
+    def to_carla_transform(self) -> carla.Transform:
+        raise NotImplementedError()
+
+    @staticmethod
+    def from_carla_transform(t: carla.Transform) -> CarlaWorldPose:
+        raise NotImplementedError()
