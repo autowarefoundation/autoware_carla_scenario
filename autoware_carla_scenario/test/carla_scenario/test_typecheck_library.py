@@ -22,7 +22,11 @@ from autoware_carla_scenario.typecheck import (
     typecheck_library,
 )
 from autoware_carla_scenario.typecheck import model_dir
-from autoware_carla_scenario.typecheck.check import _model_module, replaced_models
+from autoware_carla_scenario.typecheck.check import (
+    _model_module,
+    _uncalled,
+    replaced_models,
+)
 from autoware_carla_scenario.typecheck.cli import main as scenario_check
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
@@ -408,6 +412,14 @@ def test_an_uncalled_function_is_left_out() -> None:
     assert "    Vector.zero()" in calls
     # generic() is not called, so its parameters are no problem.
     assert checks.problems == []
+
+
+def test_an_uncalled_name_belongs_to_the_longest_checked_module() -> None:
+    # trajectory.model's wrapper is of trajectory.model, not of the
+    # trajectory package that is checked too.
+    package = "autoware_carla_scenario.trajectory"
+    assert "_refusing_vertex_times" in _uncalled(f"{package}.model")
+    assert not [n for n in _uncalled(package) if "_refusing_vertex_times" in n]
 
 
 def test_the_driver_runs_the_calls_of_each_module() -> None:

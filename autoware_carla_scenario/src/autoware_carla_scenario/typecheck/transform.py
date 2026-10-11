@@ -56,7 +56,9 @@ the author wrote:
 * A string inside a module-level ``Union[...]`` / ``Optional[...]`` alias (a
   forward reference) is unquoted: Codon takes no string as a type.
 * A function decorator named in *dropped_decorators* is removed: the
-  library check drops the run-time-only wrappers ``UNCALLED`` lists.
+  library check drops the run-time-only wrappers ``UNCALLED`` lists.  An
+  annotation naming a module-level ``TypeVar`` (which types such a wrapper
+  for mypy) is dropped.
 
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
@@ -92,6 +94,7 @@ PRELUDE = (
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}
 _UNION_NAMES = {"Union", "typing.Union"}
 _TUPLE_NAMES = {"tuple", "Tuple"}
+_TYPE_VAR_NAMES = {"TypeVar", "typing.TypeVar"}
 _CONCRETE_GENERICS = {
     "list",
     "List",
@@ -415,6 +418,10 @@ class _Rewriter(ast.NodeVisitor):
         #: Top-level classes of the module defined below the statement
         #: being visited.
         self._later_classes: set[str] = set()
+        #: Module-level ``TypeVar``s: an annotation naming one is dropped, as
+        #: Codon (whose ``typing`` shim makes a ``TypeVar`` a string) cannot
+        #: type with it.
+        self._type_vars: set[str] = set()
         #: Enum classes rewritten at the module's top level, with the type of
         #: their values: each is given a constructor by value
         #: (:func:`_enum_lookups`).
@@ -424,6 +431,15 @@ class _Rewriter(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
+        self._type_vars = {
+            target.id
+            for stmt in node.body
+            if isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Call)
+            and _dotted(stmt.value.func) in _TYPE_VAR_NAMES
+            for target in stmt.targets
+            if isinstance(target, ast.Name)
+        }
         for stmt in node.body:
             if isinstance(stmt, ast.ClassDef):
                 later.discard(stmt.name)  # a class may name itself
@@ -434,6 +450,8 @@ class _Rewriter(ast.NodeVisitor):
         """Rewrite *node* in place; ``None`` when it must be dropped instead."""
         if not class_level and _annotation_names(node) & self._later_classes:
             return None  # a class defined further down: Codon cannot name it yet
+        if _annotation_names(node) & self._type_vars:
+            return None  # a TypeVar, which types for mypy only
         converted = codon_annotation(node, class_level=class_level)
         if converted is not None:
             start, end = self.edits.node_span(node)

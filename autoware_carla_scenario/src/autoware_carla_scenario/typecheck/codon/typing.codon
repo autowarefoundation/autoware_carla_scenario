@@ -21,3 +21,11 @@ FrozenSet = Set
 # (typecheck/transform.py), so nothing is ever typed with this class.
 class Any:
     pass
+
+
+# Only for a module-level `T = TypeVar("T", bound="...")` that types a
+# decorator for mypy (trajectory.model's _refusing_vertex_times, which the
+# library check drops): Codon has its own generics, and nothing is typed with
+# the value.
+def TypeVar(name: str, bound: str = "") -> str:
+    return name

@@ -43,6 +43,7 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    TypeVar,
     Union,
 )
 
@@ -433,7 +434,12 @@ TrajectoryPosition = Union[
 _HOW = "TrajectoryVertex(position, advance=TrajectoryTimeCondition({time!r}))"
 
 
-def _refusing_vertex_times(init: Callable[..., None]) -> Callable[..., None]:
+#: ``TrajectoryVertex.__init__`` as written, which the wrapper below keeps for
+#: mypy: a type checker sees ``(position, advance=None)``, typed.
+_Init = TypeVar("_Init", bound="Callable[..., None]")
+
+
+def _refusing_vertex_times(init: _Init) -> _Init:
     """``TrajectoryVertex.__init__``, telling an old call how it is written now.
 
     Every call written for the vertex that had a time -- a time second, a time
@@ -459,7 +465,7 @@ def _refusing_vertex_times(init: Callable[..., None]) -> Callable[..., None]:
             ),
         ]
     )
-    return __init__
+    return __init__  # type: ignore[return-value]
 
 
 @dataclass(frozen=True)
@@ -495,25 +501,16 @@ class TrajectoryVertex:
             or a ``time=`` keyword: a vertex no longer takes a bare time.
     """
 
-    # Spelled out rather than named through TrajectoryPosition: the static
-    # check (docs/typecheck.md) types an attribute from a union written whole.
-    position: Union[
-        CarlaWorldPose,
-        Lanelet2Pose,
-        OpenDrivePose,
-        MapPose,
-        RelativeLanePose,
-        RouteLanePose,
-        RouteOppositePose,
-        RouteCrossingPose,
-        RouteCrosswalkPose,
-        RouteRoadsidePose,
-    ]
+    position: TrajectoryPosition
     advance: Optional["BaseCondition"] = None
 
     @_refusing_vertex_times
     def __init__(
         self,
+        # Spelled out rather than named through TrajectoryPosition: the
+        # library check (docs/typecheck.md) calls the constructor with each
+        # member of a union written whole, and with the alias's union value
+        # otherwise, which catches less.
         position: Union[
             CarlaWorldPose,
             Lanelet2Pose,
