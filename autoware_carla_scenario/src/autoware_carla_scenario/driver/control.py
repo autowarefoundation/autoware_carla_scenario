@@ -20,7 +20,7 @@ to CARLA's left-handed steering (positive = right) happens exactly once, in
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 import numpy as np
@@ -170,6 +170,10 @@ class ControlConfig:
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
+        # Imported here: the Codon check does not compile this method, and Codon's
+        # dataclasses has no fields() (docs/typecheck.md).
+        from dataclasses import fields  # noqa: PLC0415
+
         known = {field.name for field in fields(cls)}
         aliases = {
             name[: -len("_rad")] + "_deg": name
@@ -251,12 +255,23 @@ class TrajectoryFollower:
             tracked.
     """
 
+    _config: ControlConfig
+    powertrain: Optional[ChaosPowertrain]
+    _integral: float
+    _previous_steer: float
+    _yaw_rate_trim: float
+    _asked_curvature: Optional[float]
+
     def __init__(
         self,
         config: Optional[ControlConfig] = None,
         powertrain: Optional[ChaosPowertrain] = None,
     ) -> None:
-        self._config = config or ControlConfig()
+        # A ControlConfig is always true, so this is `config or ControlConfig()`,
+        # which Codon cannot type (one side Optional, the other not).
+        if config is None:
+            config = ControlConfig()
+        self._config = config
         self.powertrain = powertrain
         self.reset()
 
@@ -270,7 +285,7 @@ class TrajectoryFollower:
         self._integral = 0.0
         self._previous_steer = 0.0
         self._yaw_rate_trim = 0.0
-        self._asked_curvature: Optional[float] = None
+        self._asked_curvature = None
 
     # ------------------------------------------------------------------
     # Control

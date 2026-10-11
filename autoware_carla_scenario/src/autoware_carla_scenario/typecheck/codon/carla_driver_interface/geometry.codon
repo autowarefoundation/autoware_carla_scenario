@@ -1,0 +1,86 @@
+# carla_driver_interface.geometry, for the checker (docs/typecheck.md).
+#
+# The real module builds on scipy's Rotation and the egodriver protobuf messages,
+# neither of which compiles with Codon. This declares what the framework's driver
+# modules (driver.geometry, driver.control, driver.base, driver.observation) use
+# of Pose and Trajectory, with the real signatures, field names and types, the
+# arrays as Codon's numpy arrays. The protobuf conversions (from_proto, to_proto,
+# to_proto_at_time) and the scipy-typed constructor (from_rotation) are left out;
+# test_typecheck_model.py compares what is here with the installed package.
+
+import numpy as np
+
+
+class Pose:
+    position: np.ndarray[np.float64, 1]
+    quat_xyzw: np.ndarray[np.float64, 1]
+
+    @staticmethod
+    def identity() -> Pose:
+        raise NotImplementedError()
+
+    @staticmethod
+    def from_xyz_yaw(x: float, y: float, z: float, yaw: float) -> Pose:
+        raise NotImplementedError()
+
+    @staticmethod
+    def from_axis_angle(axis: int, angle_rad: float) -> Pose:
+        raise NotImplementedError()
+
+    @property
+    def rotation_matrix(self) -> np.ndarray[np.float64, 2]:
+        raise NotImplementedError()
+
+    @property
+    def yaw(self) -> float:
+        raise NotImplementedError()
+
+    def as_matrix(self) -> np.ndarray[np.float64, 2]:
+        raise NotImplementedError()
+
+    def __matmul__(self, other: Pose) -> Pose:
+        raise NotImplementedError()
+
+    def inverse(self) -> Pose:
+        raise NotImplementedError()
+
+    def transform_points(self, points: np.ndarray[np.float64, 2]) -> np.ndarray[np.float64, 2]:
+        raise NotImplementedError()
+
+
+class Trajectory:
+    timestamps_us: List[int]
+    poses: List[Pose]
+
+    @staticmethod
+    def empty() -> Trajectory:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def __bool__(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def positions(self) -> np.ndarray[np.float64, 2]:
+        raise NotImplementedError()
+
+    @property
+    def last_pose(self) -> Optional[Pose]:
+        raise NotImplementedError()
+
+    def append(self, timestamp_us: int, pose: Pose) -> None:
+        raise NotImplementedError()
+
+    def transform(self, delta: Pose) -> Trajectory:
+        raise NotImplementedError()
+
+    def interpolate(self, timestamp_us: int) -> Optional[Pose]:
+        raise NotImplementedError()
+
+
+def waypoints_to_proto(points: np.ndarray[np.float64, 2]):
+    # Returns the protobuf Vec3 messages, which are not modelled: declared so
+    # that driver.geometry's re-export resolves. Nothing checked calls it.
+    raise NotImplementedError()

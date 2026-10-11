@@ -109,6 +109,10 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.poses",
     "autoware_carla_scenario.coordinate.snap",
     "autoware_carla_scenario.coordinate.traffic_light",
+    "autoware_carla_scenario.driver.base",
+    "autoware_carla_scenario.driver.control",
+    "autoware_carla_scenario.driver.geometry",
+    "autoware_carla_scenario.driver.observation",
     "autoware_carla_scenario.entity._policy_warmup",
     "autoware_carla_scenario.entity._spawn",
     "autoware_carla_scenario.entity.ego",
@@ -175,6 +179,13 @@ _OPTIONS = (
     "takes a backend's options as `Mapping[str, Any]`, a Hydra node of mixed "
     "value types, which Codon cannot express"
 )
+#: The reason of a driver config built from a Hydra node.
+_DRIVER_FROM_MAPPING = (
+    "takes a Hydra node (`Mapping[str, Any]`) of mixed value types, which "
+    "Codon cannot express, checks its keys with utils.config, which reads a "
+    "dataclass's fields from its class (`type`), and builds the config with "
+    "`**` of a dict; utils.config is imported inside it, so it is not compiled"
+)
 #: The reason of a config built from such a node.
 _FROM_MAPPING = (
     f"{_OPTIONS}, and checks its keys with utils.config, which reads a "
@@ -220,6 +231,11 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.composition.waypoint.WaypointCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.elapsed_time.ElapsedTimeCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.lane_change_settled.LaneChangeSettledCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.driver.base.DriverCameraConfig.from_mapping": _DRIVER_FROM_MAPPING,
+    "autoware_carla_scenario.driver.base.DriverClientConfig.from_mapping": _DRIVER_FROM_MAPPING,
+    "autoware_carla_scenario.driver.base.DriverLidarConfig.from_mapping": _DRIVER_FROM_MAPPING,
+    "autoware_carla_scenario.driver.control.ControlConfig.from_mapping": "takes a Hydra node (`Mapping[str, Any]`) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (`dataclasses.fields(cls)`) and builds the config with `**` of a dict",
+    "autoware_carla_scenario.driver.observation.encode_frame_jpeg": "encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled",
     "autoware_carla_scenario.entity.registry.find_entity_by_role_name": "returns the entity of any kind registered under a role (`Optional[Any]`), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups",
     "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base calls",
     "autoware_carla_scenario.conditions.not_condition.NotCondition.get_details": _DETAILS,
@@ -257,7 +273,7 @@ UNCALLED: dict[str, str] = {
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, grpc and pytest ones included",
     "autoware_carla_scenario.actions.background_traffic": "imports yaml",
-    "autoware_carla_scenario.actions.follow_trajectory": "imports carla_driver_interface",
+    "autoware_carla_scenario.actions.follow_trajectory": "looks its entity up with find_entity_by_role_name (an entity of any kind, `Optional[Any]`), and declares none of the attributes it assigns at class level; its driver.control import is checked now",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (subprocess, shutil)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler",
@@ -302,14 +318,10 @@ EXCLUDED: dict[str, str] = {
     ),
     "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",
-    "autoware_carla_scenario.driver": "re-exports driver.base and driver.control (driver.geometry, carla_driver_interface), driver.egodriver_client (grpc)",
-    "autoware_carla_scenario.driver.base": "imports utils.config (reads dataclass fields off a `type`) and driver.geometry (carla_driver_interface), and takes `Mapping[str, Any]` and `NDArray[np.float64]` (numpy.typing), which the check does not translate",
-    "autoware_carla_scenario.driver.control": "imports driver.geometry (carla_driver_interface), `ControlConfig.from_mapping` takes `Mapping[str, Any]`, and its arrays are `np.ndarray` without the dtype and dimension count Codon's ndarray needs",
-    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google, carla_driver_interface, atexit",
-    "autoware_carla_scenario.driver.geometry": "imports carla_driver_interface",
+    "autoware_carla_scenario.driver": "re-exports driver.egodriver_client (grpc, google, atexit)",
+    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, atexit, and carla_driver_interface's contract, policies, server and protocol, which its model (geometry only) does not declare",
     "autoware_carla_scenario.driver.hdmap_export": "imports pathlib, roadgen, shutil, tempfile, json, hashlib",
-    "autoware_carla_scenario.driver.observation": "imports cv2",
-    "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface",
+    "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface.protocol (the protobuf messages), which its model (geometry only) does not declare",
     "autoware_carla_scenario.editor": "imports uvicorn",
     "autoware_carla_scenario.editor.app": "imports pathlib, fastapi",
     "autoware_carla_scenario.editor.forms": "imports authoring.registry, which is not checked and has no model; parses form values typed Any",
@@ -317,9 +329,9 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.routes": "imports fastapi, starlette, anyio",
     "autoware_carla_scenario.editor.scenario_map": "reaches pydantic models through authoring.models; imports editor.map_preview (pathlib, json)",
     "autoware_carla_scenario.editor.service": "imports pathlib, yaml, shutil, tempfile, zipfile, contextlib",
-    "autoware_carla_scenario.entity": "re-exports entity.carla_driver_entity (carla_driver_interface, uuid) and entity.autoware_entity, which are not checked and which the model does not declare",
-    "autoware_carla_scenario.entity.autoware_entity": "imports autoware_stack.launcher (subprocess) and driver.observation (cv2), which are neither checked nor modelled",
-    "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface, uuid",
+    "autoware_carla_scenario.entity": "re-exports entity.carla_driver_entity (carla_driver_interface.protocol, grpc, uuid) and entity.autoware_entity, which are not checked and which the model does not declare",
+    "autoware_carla_scenario.entity.autoware_entity": "imports autoware_stack.launcher (subprocess), which is neither checked nor modelled",
+    "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, driver.egodriver_client (grpc) and driver.renderer, which are not checked, and uuid",
     "autoware_carla_scenario.examples": "re-exports examples.run (pathlib, omegaconf, hydra, json) and the registry (pathlib, omegaconf, importlib)",
     "autoware_carla_scenario.examples.expand": "imports json, sys, the registry (pathlib, omegaconf, importlib) and sweeper.expand (omegaconf)",
     "autoware_carla_scenario.examples.run": "imports pathlib, omegaconf, hydra, json",

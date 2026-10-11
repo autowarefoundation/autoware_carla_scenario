@@ -29,6 +29,7 @@ from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
+from carla_driver_interface import geometry as cdi_geometry
 
 _MODEL = model_dir() / "autoware_carla_scenario"
 
@@ -56,10 +57,10 @@ def _exports() -> dict[str, str]:
     return out
 
 
-def _definitions(module: str) -> dict[str, list[ast.stmt]]:
+def _definitions(module: str, root: Path = _MODEL) -> dict[str, list[ast.stmt]]:
     """Top-level definitions of a model module (a function may be overloaded)."""
     out: dict[str, list[ast.stmt]] = {}
-    for node in _parse(_MODEL / f"{module}.codon").body:
+    for node in _parse(root / f"{module}.codon").body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
             out.setdefault(node.name, []).append(node)
         elif isinstance(node, (ast.AnnAssign, ast.Assign)):
@@ -70,7 +71,7 @@ def _definitions(module: str) -> dict[str, list[ast.stmt]]:
         elif isinstance(node, ast.ImportFrom) and node.level == 1 and node.module:
             for alias in node.names:
                 out.setdefault(alias.asname or alias.name, []).extend(
-                    _definitions(node.module).get(alias.name, [])
+                    _definitions(node.module, root).get(alias.name, [])
                 )
     return out
 
@@ -200,8 +201,10 @@ def test_a_boundary_name_is_declared_as_in_python(name: str) -> None:
     _assert_declared_as_in_python(name, module, python)
 
 
-def _assert_declared_as_in_python(name: str, module: str, python: Any) -> None:
-    definitions = _definitions(module).get(name)
+def _assert_declared_as_in_python(
+    name: str, module: str, python: Any, root: Path = _MODEL
+) -> None:
+    definitions = _definitions(module, root).get(name)
     assert definitions, f"{name} is not defined in {module}.codon"
     node = definitions[0]
 
@@ -276,6 +279,63 @@ def _assert_declared_as_in_python(name: str, module: str, python: Any) -> None:
         assert _model_params(method, drop_first=True) == _python_params(
             getattr(python, method_name), drop_first=True
         ), f"{name}.{method_name}(): the model's parameters differ"
+
+
+#: The model of the third-party carla_driver_interface (its geometry): what the
+#: driver modules use of it, compared with the installed package.
+_CDI_MODEL = model_dir() / "carla_driver_interface"
+_CDI_NAMES = ("Pose", "Trajectory", "waypoints_to_proto")
+
+#: (class, field) -> (the package's annotation, the model's): an array is
+#: Codon's of its dtype and number of dimensions (the docstrings give them).
+_CDI_FIELDS = {
+    ("Pose", "position"): ("NDArray[np.float64]", "np.ndarray[np.float64, 1]"),
+    ("Pose", "quat_xyzw"): ("NDArray[np.float64]", "np.ndarray[np.float64, 1]"),
+    ("Trajectory", "timestamps_us"): ("List[int]", "List[int]"),
+    ("Trajectory", "poses"): ("List[Pose]", "List[Pose]"),
+}
+
+
+def test_the_carla_driver_interface_model_declares_only_the_compared_names() -> None:
+    # A name the package lacks would pass a scenario's check and fail its run:
+    # whatever the model declares is compared below, dunder methods included.
+    definitions = _definitions("geometry", _CDI_MODEL)
+    assert sorted(definitions) == sorted(_CDI_NAMES)
+    for name in _CDI_NAMES:
+        node = definitions[name][0]
+        if isinstance(node, ast.ClassDef):
+            python = getattr(cdi_geometry, name)
+            for method in _methods(node):
+                assert hasattr(python, method), f"{name}.{method} is in the model only"
+
+
+@pytest.mark.parametrize("name", _CDI_NAMES)
+def test_the_carla_driver_interface_model_is_declared_as_in_the_package(
+    name: str,
+) -> None:
+    _assert_declared_as_in_python(
+        name, "geometry", getattr(cdi_geometry, name), root=_CDI_MODEL
+    )
+
+
+@pytest.mark.parametrize("name", ["Pose", "Trajectory"])
+def test_the_carla_driver_interface_fields_have_the_packages_types(name: str) -> None:
+    node = _definitions("geometry", _CDI_MODEL)[name][0]
+    assert isinstance(node, ast.ClassDef)
+    model = {
+        stmt.target.id: ast.unparse(stmt.annotation)
+        for stmt in node.body
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+    }
+    python = getattr(cdi_geometry, name)
+    init_fields = [f.name for f in dataclasses.fields(python) if f.init]
+    assert list(model) == init_fields, f"{name}: the model's fields differ"
+    for field_name, annotation in model.items():
+        expected_python, expected_model = _CDI_FIELDS[(name, field_name)]
+        assert (
+            python.__annotations__[field_name] == expected_python
+        ), f"{name}.{field_name} changed type in carla_driver_interface"
+        assert annotation == expected_model, f"{name}.{field_name}"
 
 
 def test_every_model_file_parses_as_python() -> None:

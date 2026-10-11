@@ -1,0 +1,2 @@
+# carla_driver_interface, for the checker (docs/typecheck.md): only the rigid-body
+# primitives the framework's driver modules use (geometry.codon).
