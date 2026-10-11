@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
-from ..base import ScenarioResult
+from ..base import BaseCondition, ScenarioResult
 from ..comparison import ComparisonRule
 from ..persistent import PersistentCondition
 from .base import CompositionCondition
@@ -34,6 +34,10 @@ class StandstillCondition(CompositionCondition):
         ValueError: If *duration* is not positive or *speed_threshold* is negative.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _duration: float
+    _speed_threshold: float
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -53,7 +57,9 @@ class StandstillCondition(CompositionCondition):
             rule=ComparisonRule.LESS_THAN_OR_EQUAL,
             label=f"{label}_speed",
         )
-        child = PersistentCondition(speed_cond, duration=duration)
+        # Typed as the base: Codon passes a subclass as an Optional base only
+        # from a variable of the base type.
+        child: BaseCondition = PersistentCondition(speed_cond, duration=duration)
 
         super().__init__(child=child, entity_name=entity_name, label=label)
 

@@ -58,7 +58,7 @@ class RelativeDistanceType(enum.Enum):
     LATERAL = "lateral"
 
 
-def _box_yaw_degrees(box: object) -> float:
+def _box_yaw_degrees(box: "carla.BoundingBox") -> float:
     """Return *box*'s own yaw relative to its actor, in degrees.
 
     Zero for a box that reports no rotation.  Every vehicle and walker
@@ -66,13 +66,29 @@ def _box_yaw_degrees(box: object) -> float:
     zero -- which is exactly why it has to be read rather than assumed: the
     cases where it is not are the ones nobody would think to check.
     """
-    rotation = getattr(box, "rotation", None)
+    # Not getattr() with a default, which Codon lacks; one except clause per
+    # type, the only form Codon takes (docs/typecheck.md).
+    try:
+        rotation = box.rotation
+    except AttributeError:
+        return 0.0
     if rotation is None:
         return 0.0
     try:
         return float(rotation.yaw)
-    except (AttributeError, TypeError):
+    except AttributeError:
         return 0.0
+    except TypeError:
+        return 0.0
+
+
+def _bounding_box(actor: "carla.Actor") -> "Optional[carla.BoundingBox]":
+    """Return *actor*'s bounding box, or ``None`` if it has none."""
+    # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
+    try:
+        return actor.bounding_box
+    except AttributeError:
+        return None
 
 
 def _box_axes(actor: "carla.Actor") -> "Optional[tuple[Vector3, Vector3]]":
@@ -87,7 +103,7 @@ def _box_axes(actor: "carla.Actor") -> "Optional[tuple[Vector3, Vector3]]":
     adding two angles of one convention -- there is no handedness conversion
     to get backwards.
     """
-    box = getattr(actor, "bounding_box", None)
+    box = _bounding_box(actor)
     axes = entity_axes(actor)
     if box is None or axes is None:
         return axes
@@ -121,7 +137,7 @@ def half_extent_along(actor: "carla.Actor", direction: Vector3) -> float:
     edge-to-edge measurement degrade to centre-to-centre for that actor rather
     than fail.
     """
-    box = getattr(actor, "bounding_box", None)
+    box = _bounding_box(actor)
     if box is None:
         return 0.0
     axes = _box_axes(actor)
@@ -146,7 +162,7 @@ def _box_centre(actor: "carla.Actor") -> Vector3:
     """
     location = actor.get_location()
     centre = Vector3(location.x, location.y, location.z)
-    box = getattr(actor, "bounding_box", None)
+    box = _bounding_box(actor)
     axes = entity_axes(actor)
     if box is None or axes is None:
         return centre

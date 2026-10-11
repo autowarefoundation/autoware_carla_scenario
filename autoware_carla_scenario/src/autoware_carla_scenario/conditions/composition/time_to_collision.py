@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.poses import AnyPose
+from ...coordinate.lane_distance import lane_closing_speed, lane_separation
+from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import to_carla_location
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
-from ...coordinate.lane_distance import lane_closing_speed, lane_separation
-from ...coordinate.poses import CarlaWorldPose
 from ..base import ScenarioResult, find_actor_in_list, find_actor_pair
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
@@ -83,13 +82,20 @@ class TimeToCollisionCondition(CompositionCondition):
             run.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _target: Optional[str]
+    _coordinate_system: DistanceCoordinateSystem
+    _edge_to_edge: bool
+    _place: Optional[Vector3]
+    _comparison: ScalarComparisonRule
+
     def __init__(
         self,
         source: Union[EntityRole, str],
         target: Union[EntityRole, str, None] = None,
         value: float = 4.0,
         rule: ComparisonRule = ComparisonRule.LESS_THAN,
-        position: Optional[AnyPose] = None,
+        position: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose, None] = None,
         edge_to_edge: bool = False,
         tolerance: float = 1e-6,
         coordinate_system: DistanceCoordinateSystem = (DistanceCoordinateSystem.ENTITY),
@@ -110,7 +116,8 @@ class TimeToCollisionCondition(CompositionCondition):
                 "the road"
             )
         super().__init__(entity_name=source, label=label)
-        self._target = target
+        # Kept as its string, the one thing every use of it reads.
+        self._target = str(target) if target is not None else None
         self._coordinate_system = coordinate_system
         self._edge_to_edge = edge_to_edge
         self._place: Optional[Vector3] = None
@@ -147,7 +154,7 @@ class TimeToCollisionCondition(CompositionCondition):
     # Measurement
     # ------------------------------------------------------------------
 
-    def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
+    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
         """Return the source-to-target TTC in seconds.
 
         Returns ``None`` when either actor is missing, when the two are
@@ -214,8 +221,8 @@ class TimeToCollisionCondition(CompositionCondition):
 
     def _lane_ttc(
         self,
-        src_loc: Any,
-        tgt_loc: Any,
+        src_loc: "carla.Location",
+        tgt_loc: Vector3,
         src_vel: Vector3,
         tgt_vel: Vector3,
     ) -> Optional[float]:
@@ -275,7 +282,7 @@ class TimeToCollisionCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the TTC satisfies the comparison rule."""
-        actors: list[carla.Actor] = world.get_actors()
+        actors: carla.ActorList = world.get_actors()
         ttc = self._measure(actors)
         if ttc is None:
             return None
