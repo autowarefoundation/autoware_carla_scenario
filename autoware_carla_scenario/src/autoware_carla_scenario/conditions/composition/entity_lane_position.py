@@ -6,7 +6,7 @@ import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import (
     on_lanelet,
     project_onto_lanelet,
@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_VALID_FIELDS = frozenset({"s", "t"})
+# A set, not a frozenset: Codon has none (docs/typecheck.md).
+_VALID_FIELDS = {"s", "t"}
 
 
 class EntityLanePositionCondition(CompositionCondition):
@@ -85,10 +86,16 @@ class EntityLanePositionCondition(CompositionCondition):
         ValueError: If any rule has a ``field`` other than ``'s'`` or ``'t'``.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _road_id: str
+    _lane_id: Optional[int]
+    _lanelet_id: Optional[int]
+    _rules: list[ScalarComparisonRule]
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
-        position: AnyPose,
+        position: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose],
         rules: Optional[list[ScalarComparisonRule]] = None,
         *,
         label: str,
@@ -96,13 +103,17 @@ class EntityLanePositionCondition(CompositionCondition):
         address = to_opendrive(position)
         super().__init__(entity_name=entity_name, label=label)
         self._road_id = address.road_id
-        self._lane_id: Optional[int] = address.lane_id
+        self._lane_id = address.lane_id
         # The frame the author addressed the lane in, which is the frame its
         # rules' s and t are in: a lanelet's own, or the OpenDRIVE road's.
-        self._lanelet_id: Optional[int] = (
+        self._lanelet_id = (
             position.lanelet_id if isinstance(position, Lanelet2Pose) else None
         )
-        self._rules: list[ScalarComparisonRule] = rules or []
+        # Not `rules or []`, which Codon cannot give one type.
+        rule_list: list[ScalarComparisonRule] = []
+        if rules:
+            rule_list = rules
+        self._rules = rule_list
 
         for rule in self._rules:
             if rule.field not in _VALID_FIELDS:
@@ -363,10 +374,13 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
         ValueError: If *lane* is not one of :data:`LANE_RELATIONS`.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _relation: str
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
-        position: AnyPose,
+        position: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose],
         lane: str = "same",
         *,
         label: str,

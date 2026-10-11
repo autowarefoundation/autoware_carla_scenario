@@ -86,6 +86,11 @@ class TimeHeadwayCondition(CompositionCondition):
         ValueError: If *tolerance* is negative.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _target: str
+    _coordinate_system: DistanceCoordinateSystem
+    _comparison: ScalarComparisonRule
+
     def __init__(
         self,
         source: Union[EntityRole, str],
@@ -100,7 +105,8 @@ class TimeHeadwayCondition(CompositionCondition):
         if tolerance < 0:
             raise ValueError("tolerance must be non-negative")
         super().__init__(entity_name=source, label=label)
-        self._target = target
+        # Kept as its string, the one thing every use of it reads.
+        self._target = str(target)
         self._coordinate_system = coordinate_system
         self._comparison = ScalarComparisonRule(
             field="headway", rule=rule, value=value, tolerance=tolerance
@@ -119,7 +125,7 @@ class TimeHeadwayCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
+    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
         """Return the headway in seconds, or ``None`` when it is undefined.
 
         Two cases have no answer rather than a large one.  A stationary

@@ -83,6 +83,14 @@ class EntityDistanceCondition(CompositionCondition):
             would leave the document saying something the run does not do.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _target: str
+    _vertical: bool
+    _distance_type: RelativeDistanceType
+    _edge_to_edge: bool
+    _coordinate_system: DistanceCoordinateSystem
+    _comparison: ScalarComparisonRule
+
     def __init__(
         self,
         source: Union[EntityRole, str],
@@ -124,7 +132,8 @@ class EntityDistanceCondition(CompositionCondition):
                 "the road"
             )
         super().__init__(entity_name=source, label=label)
-        self._target = target
+        # Kept as its string, the one thing every use of it reads.
+        self._target = str(target)
         self._vertical = vertical
         self._distance_type = distance_type
         self._edge_to_edge = edge_to_edge
@@ -157,7 +166,7 @@ class EntityDistanceCondition(CompositionCondition):
     # Measurement
     # ------------------------------------------------------------------
 
-    def _measure(self, actors: "list[carla.Actor]") -> Optional[float]:
+    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
         """Return the source-to-target distance, or ``None`` if unavailable."""
         assert self._entity_name is not None  # noqa: S101
         source, target = find_actor_pair(actors, self._entity_name, self._target)
@@ -184,7 +193,7 @@ class EntityDistanceCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the distance satisfies the comparison rule."""
-        actors: list[carla.Actor] = world.get_actors()
+        actors: carla.ActorList = world.get_actors()
         distance = self._measure(actors)
         if distance is None:
             return None

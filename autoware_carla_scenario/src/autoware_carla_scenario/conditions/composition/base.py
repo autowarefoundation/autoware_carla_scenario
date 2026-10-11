@@ -103,6 +103,11 @@ class CompositionCondition(BaseCondition):
             Accepts both :class:`EntityRole` and plain ``str``.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _child: Optional[BaseCondition]
+    _entity_name: Optional[str]
+    _entity_existence: Optional[EntityExistenceCondition]
+
     def __init__(
         self,
         child: BaseCondition | None = None,
@@ -112,8 +117,9 @@ class CompositionCondition(BaseCondition):
     ) -> None:
         super().__init__(label=label)
         self._child = child
-        self._entity_name = entity_name
-        self._entity_existence: EntityExistenceCondition | None = (
+        # Kept as its string, the one thing every use of it reads.
+        self._entity_name = str(entity_name) if entity_name is not None else None
+        self._entity_existence = (
             EntityExistenceCondition(entity_name, label=f"{label}_entity_exists")
             if entity_name is not None
             else None

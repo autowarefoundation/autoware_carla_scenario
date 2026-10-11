@@ -71,6 +71,12 @@ class SpeedCondition(CompositionCondition):
             Defaults to ``1e-6``.
     """
 
+    # Declared for the static check (docs/typecheck.md).
+    _comparison: ScalarComparisonRule
+    _direction: SpeedDirection
+    _coordinate_system: SpeedCoordinateSystem
+    _reference_entity_name: Optional[str]
+
     def __init__(
         self,
         entity_name: Union[EntityRole, str],
@@ -98,7 +104,10 @@ class SpeedCondition(CompositionCondition):
         )
         self._direction = direction
         self._coordinate_system = coordinate_system
-        self._reference_entity_name = reference_entity_name
+        # Kept as its string, the one thing every use of it reads.
+        self._reference_entity_name = (
+            str(reference_entity_name) if reference_entity_name is not None else None
+        )
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
@@ -117,7 +126,7 @@ class SpeedCondition(CompositionCondition):
     def _extract_speed_component(
         self,
         entity: carla.Actor,
-        actors: list[carla.Actor],
+        actors: carla.ActorList,
     ) -> Optional[float]:
         """Extract the relevant speed component from *entity*.
 
@@ -172,7 +181,7 @@ class SpeedCondition(CompositionCondition):
             condition is met, ``None`` otherwise.
         """
         assert self._entity_name is not None
-        actors: list[carla.Actor] = world.get_actors()
+        actors: carla.ActorList = world.get_actors()
         entity = find_actor_in_list(actors, self._entity_name)
         if entity is None:
             return None
