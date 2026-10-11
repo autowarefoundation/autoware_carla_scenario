@@ -841,9 +841,7 @@ class _Rewriter(ast.NodeVisitor):
             # A type alias, `Position = Union["Lanelet2Pose", MapPose]`: Codon
             # takes no string as a type, so a forward reference is unquoted
             # (Codon reads the TYPE_CHECKING imports, which define the name).
-            for member in ast.walk(value.slice):
-                if isinstance(member, ast.Constant) and isinstance(member.value, str):
-                    self.edits.replace(*self.edits.node_span(member), member.value)
+            self._unquote_alias_members(value.slice)
         literal = _literal_type(value)
         if self._class_depth == 0 and self._function_depth == 0 and literal:
             # A Literal alias, `Tristate = Literal["any", "yes", "no"]`: the
@@ -851,6 +849,24 @@ class _Rewriter(ast.NodeVisitor):
             self.edits.replace(*self.edits.node_span(value), literal)
             return
         self.generic_visit(node)
+
+    def _unquote_alias_members(self, node: ast.AST) -> None:
+        """Unquote the forward references in a ``Union``/``Optional`` alias.
+
+        A ``Literal[...]`` in it is no forward reference: it becomes the type
+        of its values (``Optional[Literal["a", "b"]]``: ``Optional[str]``),
+        or, of values of several types, is left as written.
+        """
+        if isinstance(node, ast.Subscript) and _dotted(node.value) in _LITERAL_NAMES:
+            literal = _literal_type(node)
+            if literal is not None:
+                self.edits.replace(*self.edits.node_span(node), literal)
+            return
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            self.edits.replace(*self.edits.node_span(node), node.value)
+            return
+        for child in ast.iter_child_nodes(node):
+            self._unquote_alias_members(child)
 
     def visit_List(self, node: ast.List) -> None:
         if (

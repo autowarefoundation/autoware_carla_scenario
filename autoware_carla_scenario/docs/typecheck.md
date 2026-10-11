@@ -704,7 +704,9 @@ What Codon 0.19 needs that Python does not, beyond
   Codon's own `Literal` types a compile-time value of `int`, `bool` or `str`
   only, and the `typing` shim's `Literal` is `str` (its `TYPE_CHECKING` is
   declared with `Static[bool]`, Codon's other name for its `Literal`). A
-  `Literal` of values of several types is dropped.
+  `Literal` inside a `Union`/`Optional` alias is translated the same way. A
+  `Literal` of values of several types is dropped as an annotation; as an
+  alias it is left as written, which the check rejects.
 - **No `getattr(obj, name)` with a name built at run time**: spell the
   attributes out (`JunctionSegmentSpec.crossing()`), and keep the `getattr`
   for any other name in the `else` branch of `if TYPE_CHECKING:`, so Python

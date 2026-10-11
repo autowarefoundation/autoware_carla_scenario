@@ -300,6 +300,14 @@ def test_a_literal_is_checked_as_the_type_of_its_values() -> None:
     lines = out.splitlines()
     assert lines[1] == "Tristate = str"
     assert lines[5] == '    shape: str = "straight"'
+    # Inside a Union/Optional alias, a Literal's values are not forward
+    # references to unquote.
+    assert _transform('Maybe = Optional[Literal["a", "b"]]\n') == (
+        "Maybe = Optional[str]\n"
+    )
+    assert _transform('Either = Union["Pose", Literal[1, 2]]\n') == (
+        "Either = Union[Pose, int]\n"
+    )
 
 
 def test_callable_is_checked_by_the_stand_in() -> None:
