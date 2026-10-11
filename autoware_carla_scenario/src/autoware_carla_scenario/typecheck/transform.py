@@ -21,6 +21,9 @@ the author wrote:
   down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
   dropped: Codon 0.19 cannot name a class in a signature before its
   definition, and two classes that take each other cannot both come first.
+* An annotation naming one of CARLA's integer enumerations
+  (``carla.TrafficLightState``) becomes ``int``: typesafe_carla's Codon
+  library has each as a value whose members are ``int``, not as a type.
 * A bare ``*`` in a signature (keyword-only parameters) becomes ``*_acs_kw``.
 * A list display of two or more elements that are not all literals, e.g.
   ``[ElapsedTimeCondition(...), SpeedCondition(...)]``, becomes
@@ -29,7 +32,8 @@ the author wrote:
 * An ``Enum`` class derives from the ``enum`` shim's ``Enum[T]`` (``T`` the
   type of its values: ``str`` for ``class C(str, Enum)``, ``int`` for
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
-  ``RED: ClassVar[C] = C("RED", "red")``.
+  ``RED: ClassVar[C] = C("RED", "red")``.  After the module, each such class
+  is given a constructor by value (``C("red")``) with ``@extend``.
 * A class deriving from an exception (a built-in one, one defined above it in
   the module, or a name ending in ``Error`` / ``Exception``) derives from
   ``Static[Base]``, as Codon 0.19 derives exceptions.
@@ -101,6 +105,30 @@ _ABSTRACT_GENERICS = {
     "AbstractSet",
 }
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
+#: CARLA's integer enumerations, which typesafe_carla's Codon library has as
+#: values, not types (``TrafficLightState = _TrafficLightState()``, each member
+#: an ``int``): an annotation naming one (``carla.TrafficLightState``) is the
+#: ``int`` its members are.
+_CARLA_INT_ENUMS = frozenset(
+    {
+        "ActorAttributeType",
+        "ActorState",
+        "CityObjectLabel",
+        "ColorConverter",
+        "GBufferTextureID",
+        "LandmarkOrientation",
+        "LaneChange",
+        "LaneMarkingColor",
+        "LaneMarkingType",
+        "LaneType",
+        "LightGroup",
+        "MapLayer",
+        "MaterialParameter",
+        "TrafficLightState",
+        "VehicleLightState",
+    }
+)
+_CARLA_MODULES = {"carla", "typesafe_carla.carla"}
 
 #: Class decorators dropped: Codon gives the class what they would.
 _DROPPED_CLASS_DECORATORS = {
@@ -273,6 +301,9 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
     if not subscript:
+        module, _, name = base_name.rpartition(".")
+        if module in _CARLA_MODULES and name in _CARLA_INT_ENUMS:
+            return "int"
         return base_name
     if isinstance(node, ast.Subscript):
         args = (
@@ -330,6 +361,10 @@ class _Rewriter(ast.NodeVisitor):
         #: Top-level classes of the module defined below the statement
         #: being visited.
         self._later_classes: set[str] = set()
+        #: Enum classes rewritten at the module's top level, with the type of
+        #: their values: each is given a constructor by value
+        #: (:func:`_enum_lookups`).
+        self.enums: list[tuple[str, str]] = []
 
     # -- annotations -----------------------------------------------------
 
@@ -583,6 +618,8 @@ class _Rewriter(ast.NodeVisitor):
         first_start = self.edits.node_span(node.bases[0])[0]
         last_end = self.edits.node_span(node.bases[-1])[1]
         self.edits.replace(first_start, last_end, f"{enum_base}[{value_type}]")
+        if self._class_depth == 0 and self._function_depth == 0:
+            self.enums.append((node.name, value_type))
         return [stmt for stmt, _, _ in members]
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
@@ -642,7 +679,25 @@ def transform_source(source: str) -> str:
     edits = _Edits(source.encode().splitlines(keepends=True))
     rewriter = _Rewriter(edits, _exception_classes(tree))
     rewriter.visit(tree)
-    return PRELUDE + edits.apply()
+    return PRELUDE + edits.apply() + _enum_lookups(rewriter.enums)
+
+
+def _enum_lookups(enums: list[tuple[str, str]]) -> str:
+    """A constructor by value (``Color("red")``) for each rewritten Enum class.
+
+    Codon gives a class without an ``__init__`` one that takes each field
+    (``Color("RED", "red")``, what a member is built with); the lookup by
+    value is added to it with ``@extend``, after the module, so no line of
+    the source moves.  It is typed only: the ``Color`` it makes is not the
+    member, which nothing the check compiles needs, since nothing runs.
+    """
+    return "".join(
+        f"\n\n@extend\nclass {name}:\n"
+        f"    def __init__(self, value: {value_type}):\n"
+        f'        self._name_ = ""\n'
+        f"        self._value_ = value\n"
+        for name, value_type in enums
+    )
 
 
 def _exception_classes(tree: ast.Module) -> set[str]:

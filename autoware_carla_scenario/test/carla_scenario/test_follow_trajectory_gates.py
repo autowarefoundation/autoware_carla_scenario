@@ -219,7 +219,7 @@ class TestTheTimeline:
     def test_a_late_departure_goes_at_the_speed(self) -> None:
         timeline = self._timeline(
             TimelineVertex(0.0, 0.0),
-            TimelineVertex(10.0, None, gate="g"),
+            TimelineVertex(10.0, None, gate=AlwaysTrueCondition()),
             TimelineVertex(20.0, 2.0),
             TimelineVertex(30.0, 6.0),
         )
