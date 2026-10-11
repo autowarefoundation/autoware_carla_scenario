@@ -1,0 +1,3 @@
+# autoware_carla_scenario.autoware_bridge is checked from its source
+# (typecheck/library.py); this package holds models of the modules of it that
+# are not. A scenario importing the package itself finds none of its names here.

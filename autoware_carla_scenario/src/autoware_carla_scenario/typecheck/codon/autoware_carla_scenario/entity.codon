@@ -141,6 +141,21 @@ class EgoVehicle:
         raise NotImplementedError()
 
 
+# entity.carla_driver_entity imports grpc and carla_driver_interface's protocol,
+# and the checked entity package re-exports CarlaDriverEntity: only the name is
+# needed, as no checked module builds or uses one. Its constructor is declared
+# as Python's, and any call to it fails the check, as its configs (the checked
+# DriverClientConfig and ControlConfig) are not in the model: a scenario cannot
+# build one that the run would then refuse. It does not derive from EgoVehicle
+# here: nothing is declared of it but its constructor, and a subclass of this
+# EgoVehicle that nothing builds breaks Codon 0.19's code generation for every
+# scenario ("LLVM: error: value doesn't match function result type").
+class CarlaDriverEntity:
+    def __init__(self, config=None, control_config=None, client=None):
+        compile_error("CarlaDriverEntity is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/entity.codon)")
+
+
 def _expect_optional_ego_vehicle(ego) -> Optional[EgoVehicle]:
     """An Optional[EgoVehicle] argument (Codon's Optional does not take a subclass)."""
     if isinstance(ego, None):

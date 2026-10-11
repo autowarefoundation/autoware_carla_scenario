@@ -256,15 +256,16 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 117 of
-the package's 225 modules (52%; about 22,100 of 68,900 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 121 of
+the package's 225 modules (54%; about 22,900 of 69,000 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
 actions, the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities, the entity registry and the policy
+NPC vehicle and pedestrian entities, the Autoware ego
+(`entity.autoware_entity`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`,
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs, the Autoware
@@ -274,7 +275,10 @@ scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
-`driver.geometry`). 61
+`driver.geometry`), and the `autoware_bridge`, `entity` and `driver`
+packages themselves, whose `__init__` re-exports what is not checked
+through models of it (see *A class a checked package only re-exports*
+below). 61
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -288,7 +292,7 @@ the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), `signals.build_controllers()`, which reads
 the authoring package's pydantic specs, the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 108 `EXCLUDED` modules fall in
+`encode_frame_jpeg()` (cv2). The 104 `EXCLUDED` modules fall in
 three groups:
 
 - **About 110 import what Codon cannot compile**: lanelet2, pyxodr,
@@ -354,7 +358,9 @@ stands in for it in the check's workspace:
 - any other module: its **model**, the `codon/autoware_carla_scenario/` module
   of the public package it belongs to (`coordinate.poses` is modelled by
   `coordinate.codon`), or, for a module of a package that is itself checked,
-  a model of that module alone (`utils/traffic_light.codon`). A module with no
+  a model of that module alone (`utils/traffic_light.codon`,
+  `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
+  `autoware_stack/launcher.codon`). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
@@ -366,6 +372,12 @@ be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
 cycle: the module it names (`measures`, `entity.ego`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
+`entity.autoware_entity` imports `scenario_base` through the model too: its
+`AutowareEgoEntity.spawn()` overrides `EgoVehicle.spawn()`, so it takes the
+same, the model's, `EgoConfig`. Through the checked `scenario_base`, a run
+with an example scenario in it failed in Codon 0.19's code generation
+(`LLVM: error: value doesn't match function result type '{ ptr, ptr }'`, in
+`opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code (`coordinate.codon` for
 `transform.py` and `map_manager.py`) declares only what the checked modules
@@ -869,6 +881,44 @@ What Codon 0.19 needs that Python does not, beyond
   derive from the checked `BaseScenario`, and their constructors' calls to
   `super().__init__()` would compile `BaseScenario.__init__`, which is
   `UNCALLED` (it stores the ego's class, `ego_type`).
+- **A class a checked package only re-exports** is declared in the model by
+  name and constructor: `GrpcAutowareBridgeServer`
+  (`autoware_bridge/grpc_server.codon`, grpc), `EgoDriverGrpcClient`
+  (`driver/egodriver_client.codon`, grpc) and `CarlaDriverEntity`
+  (`entity.codon`, grpc and carla_driver_interface's protocol), which the
+  checked `autoware_bridge`, `driver` and `entity` packages re-export and no
+  checked module builds or uses. Each constructor takes Python's parameters
+  and is a `compile_error`: its config (`AutowareBridgeConfig`,
+  `DriverClientConfig`) is a checked class the model does not have, so a
+  scenario that builds one fails its check rather than passing it with
+  arguments the run would refuse. Such a class derives from nothing in the
+  model: a subclass of the model's `EgoVehicle` that nothing builds breaks
+  Codon 0.19's code generation for every scenario (`LLVM: error: value
+  doesn't match function result type`). `test_typecheck_model.py` compares
+  each with the Python class, and checks that its constructor is the
+  `compile_error`.
+- **A Protocol a checked module takes** is modelled with what it calls:
+  `autoware_stack/launcher.codon` declares the `AutowareLauncher` that
+  `AutowareEgoEntity` starts, polls and stops (`start(*, name,
+  bridge_address)`, `poll()`, `stop()`) and the `AutowareEpisode` that
+  `start()` returns. Python cannot instantiate a Protocol, so the model's
+  constructor is a `compile_error`.
+- **A model function returning a checked class**: `to_map_frame`
+  (`coordinate.codon`, for `coordinate.transform`, which imports lanelet2)
+  returns autoware_bridge's `BridgePose`, which `_bridge_pose.codon` models
+  (`BridgePose`, its `Vector3` and `Quaternion`, as `@tuple`s, since they are
+  frozen, and `moved_forward()`); `REPLACED_MODELS` replaces it with the
+  checked `autoware_bridge.base`, so `AutowareEgoEntity` hands the pose
+  `to_map_frame` returns to the checked `AutowareBridge.configure()`.
+- **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
+  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`).
+- **A method that takes `**kwargs`, called on a value whose class a checked
+  subclass overrides it in**, is called through the base class under `if
+  TYPE_CHECKING:`, and as written in the `else` branch: `actions.turn` calls
+  `BackendDriven.turn_at_junction(entity, ...)` in the check, since
+  `AutowareEgoEntity` overrides it and Codon 0.19 calls an overridden method
+  through a dispatch thunk, which takes no keyword argument. The check calls
+  each override through its class.
 - **A name the model lacks at the boundary**: when a checked module imports a
   name of a modelled package that the model does not declare
   (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in

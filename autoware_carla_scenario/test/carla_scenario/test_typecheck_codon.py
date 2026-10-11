@@ -793,6 +793,60 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
     assert error.path == str(path)
 
 
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            "from autoware_carla_scenario.autoware_bridge.grpc_server import "
+            "GrpcAutowareBridgeServer\nGrpcAutowareBridgeServer()\n",
+            "GrpcAutowareBridgeServer()",
+            "GrpcAutowareBridgeServer is not modelled",
+        ),
+        (
+            "from autoware_carla_scenario.entity import CarlaDriverEntity\n"
+            "CarlaDriverEntity()\n",
+            "CarlaDriverEntity()",
+            "CarlaDriverEntity is not modelled",
+        ),
+        (
+            "from autoware_carla_scenario.driver.egodriver_client import "
+            "EgoDriverGrpcClient\nEgoDriverGrpcClient(None)\n",
+            "EgoDriverGrpcClient(None)",
+            "EgoDriverGrpcClient is not modelled",
+        ),
+        (
+            "from autoware_carla_scenario.autoware_stack.launcher import "
+            "AutowareLauncher\nAutowareLauncher()\n",
+            "AutowareLauncher()",
+            "AutowareLauncher is a Protocol",
+        ),
+    ],
+    ids=["grpc-bridge-server", "carla-driver-entity", "egodriver-client", "launcher"],
+)
+def test_a_class_the_model_declares_only_for_a_re_export_cannot_be_built(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # The checked packages re-export these, so the model declares them; their
+    # configs are not modelled (or, for a Protocol, Python refuses to build
+    # one), so a scenario that builds one is refused rather than passed.
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_a_scenario_may_read_the_pose_to_map_frame_returns(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "from autoware_carla_scenario.coordinate import to_map_frame\n"
+        "pose = to_map_frame(Lanelet2Pose(1, 0.0)).moved_forward(1.0)\n"
+        'logger.info("%f %f", pose.position.x, pose.rotation.w)\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 # ---------------------------------------------------------------------------
 # The runner's step
 # ---------------------------------------------------------------------------

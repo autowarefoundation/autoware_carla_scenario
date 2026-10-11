@@ -1,0 +1,13 @@
+# Model of autoware_carla_scenario.autoware_bridge.grpc_server (docs/typecheck.md),
+# which imports grpc. The checked autoware_bridge package re-exports
+# GrpcAutowareBridgeServer, and only the name is needed: no checked module
+# builds or uses one. Its constructor is declared as Python's, and any call to
+# it fails the check, as its config (the checked AutowareBridgeConfig) is not in
+# the model: a scenario cannot build one that the run would then refuse.
+
+
+class GrpcAutowareBridgeServer:
+    def __init__(self, config=None, *_kw, max_workers=4, autostart=True):
+        compile_error("GrpcAutowareBridgeServer is not modelled: the static check "
+                      "cannot build one (typecheck/codon/autoware_carla_scenario/"
+                      "autoware_bridge/grpc_server.codon)")

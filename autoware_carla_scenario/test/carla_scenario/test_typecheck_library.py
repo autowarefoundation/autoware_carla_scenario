@@ -209,6 +209,25 @@ def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
     assert _model_module(f"{_PACKAGE}.coordinate.transform") == f"{_PACKAGE}.coordinate"
 
 
+@pytest.mark.parametrize(
+    ("module", "sibling"),
+    [
+        ("autoware_bridge.grpc_server", "autoware_bridge.ros_bridge.client"),
+        ("autoware_stack.launcher", "autoware_stack.docker"),
+        ("driver.egodriver_client", "driver.renderer"),
+    ],
+)
+def test_a_re_exported_module_has_a_model_of_its_own(module: str, sibling: str) -> None:
+    # The checked autoware_bridge and driver packages re-export a class of a
+    # module that is not checked (grpc), and the checked AutowareEgoEntity
+    # takes an AutowareLauncher (subprocess): each such module has a model of
+    # its own, under a package directory of the model, and its package and
+    # the package's other modules have none.
+    assert _model_module(f"{_PACKAGE}.{module}") == f"{_PACKAGE}.{module}"
+    assert _model_module(f"{_PACKAGE}.{module.split('.')[0]}") is None
+    assert _model_module(f"{_PACKAGE}.{sibling}") is None
+
+
 def test_a_modelled_import_names_the_model_though_the_module_is_checked() -> None:
     # measures and scenario_base import each other: measures has scenario_base
     # through its model, scenario_base has measures from its source.
@@ -279,6 +298,18 @@ def test_the_ground_projection_model_re_exports_the_checked_config() -> None:
     assert problems == []
     assert out["_ground_projection"].splitlines() == [
         f"from {workspace_module(snap)} import GroundProjectionConfig",
+    ]
+
+
+def test_the_bridge_pose_model_re_exports_the_checked_pose() -> None:
+    # So the pose the model's to_map_frame returns is the one the checked
+    # AutowareBridge.configure() takes, which AutowareEgoEntity hands it.
+    (base,) = REPLACED_MODELS["_bridge_pose"]
+    problems: list = []
+    out = replaced_models(_trees(base), problems)
+    assert problems == []
+    assert out["_bridge_pose"].splitlines() == [
+        f"from {workspace_module(base)} import BridgePose, Quaternion, Vector3",
     ]
 
 
@@ -696,6 +727,9 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
         "entity.ego",
         "actions.turn",
         "actions.lane_change",
+        # AutowareEgoEntity overrides EgoVehicle.spawn(), and imports
+        # scenario_base through the model, as entity.ego does.
+        "entity.autoware_entity",
         # The run starts at coordinate.frames, which the model's _poses.codon
         # re-exports: the driver must read the model first.
         "coordinate.poses",

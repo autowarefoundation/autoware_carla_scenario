@@ -13,6 +13,7 @@ from ._tc import _keyword_only
 from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanelet2Pose,
                      OpenDrivePose)
 from ._ground_projection import GroundProjectionConfig
+from ._bridge_pose import BridgePose
 
 
 def _expect_pose(pose):
@@ -173,8 +174,7 @@ def find_traffic_lights_for_lanelet2_id(world: carla.World, lanelet2_tl_id: int
     raise NotImplementedError()
 
 
-def to_map_frame(pose):
-    # Returns autoware_bridge's BridgePose, which the model does not have.
+def to_map_frame(pose) -> BridgePose:
     _expect_pose(pose)
     raise NotImplementedError()
 

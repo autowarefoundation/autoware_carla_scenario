@@ -23,7 +23,13 @@ from typing import Any
 import pytest
 
 import autoware_carla_scenario as acs
+from autoware_carla_scenario.autoware_bridge import base as bridge_base
+from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
+from autoware_carla_scenario.autoware_stack import launcher as stack_launcher
+from autoware_carla_scenario.coordinate import transform as coordinate_transform
 from autoware_carla_scenario.coverage import items as coverage_items
+from autoware_carla_scenario.driver import egodriver_client
+from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
@@ -174,6 +180,7 @@ def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
 #: (typecheck/library.py), though the package does not export them: name ->
 #: (model module, the Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
+    "CarlaDriverEntity": ("entity", carla_driver_entity.CarlaDriverEntity),
     "CoverItem": ("coverage", coverage_items.CoverItem),
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "TrafficContext": ("traffic", traffic_context.TrafficContext),
@@ -192,6 +199,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
     "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
+    "to_map_frame": ("coordinate", coordinate_transform.to_map_frame),
 }
 
 
@@ -279,6 +287,79 @@ def _assert_declared_as_in_python(
         assert _model_params(method, drop_first=True) == _python_params(
             getattr(python, method_name), drop_first=True
         ), f"{name}.{method_name}(): the model's parameters differ"
+
+
+#: Model modules of one framework module each, which the library check
+#: compiles a checked module against (typecheck/library.py): model module ->
+#: the Python module it models and the names it declares, every one compared
+#: with the Python object below.
+_MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
+    "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
+    "autoware_bridge/grpc_server": (bridge_grpc_server, ("GrpcAutowareBridgeServer",)),
+    "autoware_stack/launcher": (
+        stack_launcher,
+        ("AutowareEpisode", "AutowareLauncher"),
+    ),
+    "driver/egodriver_client": (egodriver_client, ("EgoDriverGrpcClient",)),
+}
+
+#: Classes the model declares only so a checked package can re-export them:
+#: their constructors are a compile error, so a scenario cannot build one.
+_UNBUILDABLE: dict[str, str] = {
+    "AutowareLauncher": "autoware_stack/launcher",
+    "CarlaDriverEntity": "entity",
+    "EgoDriverGrpcClient": "driver/egodriver_client",
+    "GrpcAutowareBridgeServer": "autoware_bridge/grpc_server",
+}
+
+
+def test_a_module_model_declares_only_the_compared_names() -> None:
+    # A name the module lacks would pass a scenario's check and fail its run.
+    for module, (_python, names) in _MODULE_MODELS.items():
+        assert sorted(_definitions(module)) == sorted(names), module
+
+
+_MODULE_MODEL_NAMES = [
+    (module, name)
+    for module, (_python, names) in _MODULE_MODELS.items()
+    for name in names
+    if name != "AutowareLauncher"  # a Protocol: compared on its own below
+]
+
+
+@pytest.mark.parametrize(("module", "name"), _MODULE_MODEL_NAMES)
+def test_a_module_model_is_declared_as_in_python(module: str, name: str) -> None:
+    python_module, _names = _MODULE_MODELS[module]
+    _assert_declared_as_in_python(name, module, getattr(python_module, name))
+
+
+def test_the_launcher_model_is_the_protocol_s_methods() -> None:
+    # Python cannot instantiate a Protocol, so the model's constructor is a
+    # compile error (below); what AutowareEgoEntity calls is declared as Python's.
+    python = stack_launcher.AutowareLauncher
+    assert getattr(python, "_is_protocol", False)
+    node = _definitions("autoware_stack/launcher")["AutowareLauncher"][0]
+    assert isinstance(node, ast.ClassDef)
+    methods = {n: m for n, m in _methods(node).items() if n != "__init__"}
+    assert sorted(methods) == ["poll", "start", "stop"]
+    for method_name, method in methods.items():
+        assert _model_params(method, drop_first=True) == _python_params(
+            getattr(python, method_name), drop_first=True
+        ), f"AutowareLauncher.{method_name}(): the model's parameters differ"
+
+
+@pytest.mark.parametrize("name", sorted(_UNBUILDABLE))
+def test_a_class_only_re_exported_cannot_be_built_in_a_scenario(name: str) -> None:
+    node = _definitions(_UNBUILDABLE[name])[name][0]
+    assert isinstance(node, ast.ClassDef)
+    assert not node.bases, f"{name}: a base would bring methods to compare"
+    methods = _methods(node)
+    assert set(methods) <= {"__init__", "poll", "start", "stop"}, name
+    body = methods["__init__"].body
+    assert len(body) == 1 and isinstance(body[0], ast.Expr), name
+    call = body[0].value
+    assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    assert call.func.id == "compile_error", name
 
 
 #: The model of the third-party carla_driver_interface (its geometry): what the
