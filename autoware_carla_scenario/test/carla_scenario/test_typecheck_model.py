@@ -24,6 +24,7 @@ import pytest
 
 import autoware_carla_scenario as acs
 from autoware_carla_scenario.coverage import items as coverage_items
+from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
@@ -188,6 +189,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
         )
     },
     "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
+    "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
 }
 

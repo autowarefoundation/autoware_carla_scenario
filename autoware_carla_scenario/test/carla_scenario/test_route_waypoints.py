@@ -168,11 +168,13 @@ class TestTheRoutingActionHandsThemOn:
     @staticmethod
     def _execute(monkeypatch: pytest.MonkeyPatch, entity, waypoints) -> None:
         from autoware_carla_scenario.actions.routing import RoutingAction
+        from autoware_carla_scenario.entity import registry
 
-        monkeypatch.setattr(
-            "autoware_carla_scenario.actions.routing.find_entity_by_role_name",
-            lambda _name: entity,
-        )
+        # An entity of neither kind (a duck-typed one) is registered as both,
+        # so the action's typed lookups find it.
+        monkeypatch.setattr(registry, "_VEHICLES", {})
+        monkeypatch.setattr(registry, "_PEDESTRIANS", {})
+        registry.register_entity("ego", entity)
         RoutingAction(
             "ego", Lanelet2Pose(lanelet_id=3, s=7.0), waypoints=waypoints
         ).execute(object())  # type: ignore[arg-type]
@@ -215,3 +217,27 @@ class TestTheRoutingActionHandsThemOn:
         self._execute(monkeypatch, _Entity(), via)
 
         assert seen == list(via)
+
+    def test_an_entity_without_route_to_still_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An entity that cannot be routed fails as the call always did."""
+
+        class _Npc:
+            pass
+
+        with pytest.raises(AttributeError, match="route_to"):
+            self._execute(monkeypatch, _Npc(), ())
+
+    def test_an_entity_not_registered_is_skipped(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario.actions.routing import RoutingAction
+        from autoware_carla_scenario.entity import registry
+
+        monkeypatch.setattr(registry, "_VEHICLES", {})
+        monkeypatch.setattr(registry, "_PEDESTRIANS", {})
+        RoutingAction("npc1", Lanelet2Pose(lanelet_id=3, s=7.0)).execute(
+            object()  # type: ignore[arg-type]
+        )
+        assert "entity 'npc1' not found" in caplog.text

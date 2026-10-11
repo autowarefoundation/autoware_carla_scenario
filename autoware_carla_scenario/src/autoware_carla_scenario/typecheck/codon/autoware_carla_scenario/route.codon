@@ -1,7 +1,7 @@
-# Model of autoware_carla_scenario.route (docs/typecheck.md), for
-# conditions.route_progress, which is checked. The package itself is not
-# (typecheck/library.py; route.frame reaches lanelet2): this declares only what
-# checked modules read of it, the scenario's route and its frame.
+# Model of autoware_carla_scenario.route (docs/typecheck.md). route.model and
+# route.active are checked; route.frame, which reaches lanelet2, is not: this
+# declares what the scenario check and the checked modules read of the
+# package, the scenario's route and its frame.
 
 
 class RouteMatch:
@@ -10,6 +10,11 @@ class RouteMatch:
 
 
 class RouteFrame:
+    # Generic: the checked route.active hands it the checked RouteMatch, and
+    # MapManager's lanelet2 map and routing graph (coordinate.codon).
+    def __init__(self, match, lanelet_map, routing_graph):
+        pass
+
     def project(self, x: float, y: float, near: Optional[float] = None) -> Tuple[float, float]:
         raise NotImplementedError()
 

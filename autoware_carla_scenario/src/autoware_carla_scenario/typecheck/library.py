@@ -59,6 +59,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.base",
     "autoware_carla_scenario.actions.environment",
     "autoware_carla_scenario.actions.lane_change",
+    "autoware_carla_scenario.actions.routing",
     "autoware_carla_scenario.actions.set_speed",
     "autoware_carla_scenario.actions.traffic_signal",
     "autoware_carla_scenario.actions.traffic_signal_controller",
@@ -118,6 +119,9 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.kinematics.angle",
     "autoware_carla_scenario.kinematics.frames",
     "autoware_carla_scenario.kinematics.vector",
+    "autoware_carla_scenario.route",
+    "autoware_carla_scenario.route.active",
+    "autoware_carla_scenario.route.model",
     "autoware_carla_scenario.tools",
     "autoware_carla_scenario.traffic",
     "autoware_carla_scenario.traffic.base",
@@ -156,6 +160,12 @@ _FROM_MAPPING = (
     f"{_OPTIONS}, and checks its keys with utils.config, which reads a "
     "dataclass's fields from its class (`type`); utils.config is imported "
     "inside it, so it is not compiled"
+)
+
+#: The reason of a function that reads a YAML document's values.
+_YAML = (
+    "reads a YAML mapping of values of any type (`Any`: numbers, strings, "
+    "booleans, lists, mappings or None), which Codon cannot express"
 )
 
 #: Public functions and methods of checked modules the check does not call,
@@ -207,11 +217,16 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.config.TrafficConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.config.TrafficManagerBackendConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.traffic_manager.TrafficManagerBackend.describe": _DETAILS,
+    "autoware_carla_scenario.route.active.set_scenario_route": "takes lanelet2's map and routing graph (`Any`), which Codon cannot express, and builds the routing graph with sweeper.constraints (lanelet2), imported inside it",
+    "autoware_carla_scenario.route.model.Range.parse": _YAML,
+    "autoware_carla_scenario.route.model.RouteMatch.from_config": _YAML,
+    "autoware_carla_scenario.route.model.RouteMatch.to_config": _DETAILS,
+    "autoware_carla_scenario.route.model.parse_route_search": _YAML,
     "autoware_carla_scenario.scenario_base.BaseScenario.__init__": "takes and stores the ego's class (`ego_type: type[EgoVehicle] | None`), and Codon cannot hold a class as a value",
     "autoware_carla_scenario.scenario_base.BaseScenario.create_ego": "instantiates the ego's class held in `ego_type`, which Codon cannot hold as a value",
     "autoware_carla_scenario.scenario_base.BaseScenario.ego_requires_goal": "reads `requires_goal` off the ego's class (`type(entity)` or `ego_type`), which Codon cannot hold as a value",
     "autoware_carla_scenario.scenario_base.BaseScenario.require_goal": "asks ego_requires_goal, which reads the ego's class (`ego_type`)",
-    "autoware_carla_scenario.scenario_base.BaseScenario.register_route_to_goal": "asks require_goal, which reads the ego's class (`ego_type`), and registers a RoutingAction, which actions.routing (not checked) derives from the model's BaseAction rather than the checked one",
+    "autoware_carla_scenario.scenario_base.BaseScenario.register_route_to_goal": "asks require_goal, which reads the ego's class (`ego_type`)",
     "autoware_carla_scenario.scenario_base.BaseScenario.register_cover": "builds a CoverItem of values of any type (`expression: Callable[[carla.World], Any]`, `values: Iterable[Any]`, `ignore: Callable[[Any], bool]`, `event: SamplingEvent | BaseCondition`), which Codon cannot express; coverage.items is not checked",
     "autoware_carla_scenario.signals.controller.build_controllers": "reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed `list[Any]` so the runtime does not import authoring, with getattr defaults for fields older documents lack",
 }
@@ -221,7 +236,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, numpy, grpc and pytest ones included",
     "autoware_carla_scenario.actions.background_traffic": "imports yaml",
     "autoware_carla_scenario.actions.follow_trajectory": "imports carla_driver_interface",
-    "autoware_carla_scenario.actions.routing": "passes its waypoints (a variable-length tuple, which the check takes as a list) on as `**extra`, a dict, only when there are some, where Codon unpacks only a named tuple; its public `entity_name` returns the `Union[EntityRole, str]` it was given, an attribute Codon 0.19 cannot hold; it routes whatever entity has the role (find_entity_by_role_name, `Optional[Any]`), since entity.registry has no typed lookup for an entity with route_to",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (subprocess, shutil)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler",
@@ -323,11 +337,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.sources": "imports pathlib, subprocess, shutil, tempfile, tarfile, hashlib, fcntl, io, contextlib",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest",
     "autoware_carla_scenario.registry": "imports pathlib, omegaconf, importlib",
-    "autoware_carla_scenario.route": "re-exports route.model and route.active, which are not checked (their own reasons)",
-    "autoware_carla_scenario.route.active": "imports route.model and route.frame, which are not checked (their own reasons), and set_scenario_route takes lanelet2's map and routing graph (`Any`)",
     "autoware_carla_scenario.route.frame": "imports route.geometry and trajectory.relative_lane, which use lanelet2, and holds lanelet2's map, routing graph and lanelets (`Any`)",
     "autoware_carla_scenario.route.geometry": "imports lanelet2, autoware_lanelet2_extension_python",
-    "autoware_carla_scenario.route.model": "RouteSearchSpec.segments holds segments of two classes (`tuple[LaneSegmentSpec | JunctionSegmentSpec, ...]`), a variable-length tuple of a union, which the check does not translate into the `List[Union[...]]` Codon 0.19 would hold; JunctionSegmentSpec.crossing() reads an attribute named at run time (getattr), the module aliases `Literal[...]`, which the typing shim lacks, and Range.parse escapes a brace in an f-string (`{{`), which Codon's parser rejects. Its `tuple[int, ...]` fields would check as lists, and its YAML parsers (Range.parse, RouteMatch.from_config, parse_route_search, which take `Any`) would go in UNCALLED",
     "autoware_carla_scenario.route.positions": "imports route.frame and trajectory.relative_lane, which use lanelet2",
     "autoware_carla_scenario.route.search": "imports route.geometry (lanelet2) and sweeper.constraints, which are neither checked nor modelled, and walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",

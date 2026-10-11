@@ -1,12 +1,13 @@
 # Python's typing, for the scenario checker (docs/typecheck.md). Optional,
-# List, Dict, Set, Tuple, Callable, Union, ClassVar and Literal are Codon
-# builtins already; these are the names Codon lacks. An annotation the
+# List, Dict, Set, Tuple, Callable, Union and ClassVar are Codon builtins
+# already; these are the names Codon lacks. An annotation the
 # checker cannot express in Codon is dropped (typecheck/transform.py), so the
 # abstract collections only appear here for class-level declarations.
 
 # A compile-time constant, so `if TYPE_CHECKING: ... else: ...` compiles only
-# its first branch, as a type checker reads it.
-TYPE_CHECKING: Literal[bool] = True
+# its first branch, as a type checker reads it. (Static is Codon's Literal,
+# which this module names for Python's below.)
+TYPE_CHECKING: Static[bool] = True
 
 Sequence = List
 MutableSequence = List
@@ -42,3 +43,9 @@ class Protocol:
 
 def runtime_checkable(cls):
     return cls
+
+
+# Python's Literal, for the import: the checker reads `Literal["a", "b"]` as
+# the type of its values (typecheck/transform.py), which Codon's own Literal
+# (a compile-time value's type) is not.
+Literal = str
