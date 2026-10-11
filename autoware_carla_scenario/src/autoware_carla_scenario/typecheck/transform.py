@@ -199,6 +199,16 @@ _BUILTIN_EXCEPTIONS = frozenset(
 )
 _EXCEPTION_SUFFIXES = ("Error", "Exception")
 _FACTORY_LITERALS = {"list": "[]", "dict": "{}", "set": "set()", "tuple": "()"}
+#: The ``typing`` spellings of the generics a factory of
+#: :data:`_FACTORY_LITERALS` builds (``List[int]`` for ``list``).
+_TYPING_GENERICS = {
+    "List": "list",
+    "typing.List": "list",
+    "Dict": "dict",
+    "typing.Dict": "dict",
+    "Set": "set",
+    "typing.Set": "set",
+}
 
 
 @dataclass(frozen=True)
@@ -419,7 +429,11 @@ def _field_default(
 
     An empty collection takes the type of the field's *annotation* when Codon
     can express it (``list[int]()``): Codon types a bare ``[]`` from what is
-    put in it, and nothing is, so it would be a list of ``None``.
+    put in it, and nothing is, so it would be a list of ``None``.  One whose
+    annotation names ``Any`` (``dict[str, Any]``, a free-form mapping) takes
+    the annotation as written, as the class-level declaration keeps it: the
+    ``Any`` of the ``typing`` shim, an empty class, so the default has the
+    attribute's type and nothing can be put in it.
     """
     for kw in call.keywords:
         if kw.arg == "default":
@@ -433,9 +447,16 @@ def _field_default(
                 typed = (
                     codon_annotation(annotation, class_level=True)
                     if isinstance(annotation, ast.Subscript)
-                    and _dotted(annotation.value) == name
+                    and _builtin_generic(annotation.value) == name
                     else None
                 )
+                if (
+                    typed is None
+                    and isinstance(annotation, ast.Subscript)
+                    and _builtin_generic(annotation.value) == name
+                    and _names_any(annotation)
+                ):
+                    typed = edits.text(*edits.node_span(annotation))
                 return f"{typed}()" if typed is not None else _FACTORY_LITERALS[name]
             return edits.text(*edits.node_span(factory)) + "()"
     if annotation is not None and any(
@@ -451,6 +472,21 @@ def _field_default(
         if typed is not None:
             return f"{typed}()"
     return None
+
+
+def _names_any(annotation: ast.AST) -> bool:
+    """Whether *annotation* names ``Any`` (``dict[str, Any]``)."""
+    return any(
+        _dotted(n) in ("Any", "typing.Any")
+        for n in ast.walk(annotation)
+        if isinstance(n, (ast.Name, ast.Attribute))
+    )
+
+
+def _builtin_generic(node: ast.AST) -> str | None:
+    """The builtin a generic's base names: ``list`` for ``list`` or ``List``."""
+    name = _dotted(node)
+    return _TYPING_GENERICS.get(name, name) if name is not None else None
 
 
 class _Rewriter(ast.NodeVisitor):

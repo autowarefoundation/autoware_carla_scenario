@@ -434,6 +434,48 @@ def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
     ]
 
 
+_DATACLASS_FIELDS = """
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Union
+
+
+@dataclass
+class Run:
+    name: str
+    scenario: Straight | Turn = field(default_factory=Straight)
+    constraints: dict[str, Any] = field(default_factory=dict)
+    npc: Union[Straight, Turn, None] = None
+    timeout: float = 5.0
+
+
+@dataclass
+class Required:
+    options: dict[str, Any]
+"""
+
+
+def test_a_dataclass_is_constructed_with_each_member_of_a_union_field() -> None:
+    checks = render_library_checks(ast.parse(_DATACLASS_FIELDS))
+    calls = [c.strip() for c in checks.source.splitlines() if "Run(" in c]
+    # A dict[str, Any] field with a default is left out of the call, and the
+    # fields after it are passed by keyword.
+    assert calls == [
+        f"Run(_acs_value(str), _acs_value({scenario}), "
+        f"npc=_acs_value({npc}), timeout=_acs_value(float))"
+        for scenario in ("Straight", "Turn")
+        for npc in ("Straight", "Turn")
+    ]
+    label = checks.labels[checks.source.splitlines().index("    " + calls[-1]) + 1]
+    assert label == "Run.__init__(name: str, scenario: Turn, npc: Turn, timeout: float)"
+    # Without a default, the field cannot be left out: a problem, as before.
+    lines = _DATACLASS_FIELDS.splitlines()
+    assert [lines[line - 1].strip() for line, _ in checks.problems] == [
+        "options: dict[str, Any]"
+    ]
+
+
 def test_an_uncalled_function_is_left_out() -> None:
     checks = render_library_checks(
         ast.parse(_MODULE), ["angle", "Vector.norm", "Config.__init__", "generic"]
