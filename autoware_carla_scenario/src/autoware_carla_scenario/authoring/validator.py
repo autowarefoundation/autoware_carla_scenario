@@ -24,6 +24,14 @@ from .models import (
     ScenarioDocument,
     condition_refs,
 )
+from ..route.model import anchor_problem, parse_route_search
+from ..trajectory.authoring import (
+    parse_relative_vertices,
+    parse_route_vertices,
+    parse_vertices,
+    relative_vertex_problems,
+    vertex_problems,
+)
 from .registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -202,6 +210,21 @@ def _check_field(
                 f"{spec.label} must be a list of whole numbers.",
                 object_id,
             )
+    elif spec.kind == "trajectory":
+        try:
+            parse_vertices(value)
+        except ValueError as exc:
+            out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
+    elif spec.kind == "relative_lane_trajectory":
+        try:
+            parse_relative_vertices(value)
+        except ValueError as exc:
+            out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
+    elif spec.kind == "route_trajectory":
+        try:
+            parse_route_vertices(value)
+        except ValueError as exc:
+            out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
     elif spec.kind == "int_list_or_ref":
         if value != MAP_EXCLUSION_REF and not _is_int_list(value):
             out.error(
@@ -262,17 +285,31 @@ def _check_condition(
     node: ConditionNode,
     refs: _Refs,
     owner: str | None = None,
+    *,
+    departure: bool = False,
 ) -> None:
     """Validate one condition subtree.
 
     *owner* is the id of the action this subtree triggers, when it is a trigger
     at all.  An action whose trigger waits on its own completion can never fire,
     so that is an error rather than a scenario that quietly does nothing.
+
+    *departure* says the subtree is a vertex's whole waypoint condition, the
+    one place a ``trajectory_time`` means the trajectory's clock: anywhere
+    else -- inside a composition, a trigger, an assertion -- it would quietly
+    read the scenario clock instead, so it is refused there.
     """
     spec: ConditionSpec | None = get_condition_spec(node.type)
     if spec is None:
         out.error(path, f"Unknown condition type {node.type!r}.", node.id)
         return
+    if node.type == "trajectory_time" and not departure:
+        out.error(
+            path,
+            "Trajectory time is a vertex's departure time: it only goes on a "
+            "Follow Trajectory card's waypoint condition, as the whole of it.",
+            node.id,
+        )
 
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
@@ -396,9 +433,250 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
     _check_init_is_not_asked_to_wait(out, path, node)
+    if node.type == "follow_trajectory":
+        _check_follow_trajectory(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
+    _check_advance_conditions(out, path, node, spec.vertex_conditions, refs)
+
+
+def _check_advance_conditions(
+    out: _Collector, path: str, node: ActionNode, accepted: bool, refs: _Refs
+) -> None:
+    """Check an action's waypoint conditions: where they sit, and what they say.
+
+    Each condition tree is checked as a trigger is, and one that waits for
+    its own action to leave the running state is refused: the action is
+    running for as long as the entity waits, so it would wait for ever.
+    Where it sits is checked against the vertices the card lists: a vertex
+    it does not have, or one named twice -- a vertex departs on one
+    condition, its time included -- and the times the card's
+    ``trajectory_time`` conditions state follow the trajectory rules.  A lanelet
+    path's vertices are made by the map, every two metres, so they are
+    nothing an author could count; it takes none.
+    """
+    gates = node.advance_conditions
+    if not gates:
+        return
+    if not accepted:
+        out.error(
+            f"{path}.advance_conditions",
+            f"{node.type!r} follows no vertices, so it takes no waypoint "
+            "conditions.",
+            node.id,
+        )
+        return
+    count = _vertex_count(node)
+    seen: set[int] = set()
+    for index, gate in enumerate(gates):
+        where = f"{path}.advance_conditions[{index}]"
+        if gate.vertex in seen:
+            out.error(
+                f"{where}.vertex",
+                f"Vertex {gate.vertex} has two waypoint conditions; combine them "
+                "into one (All or Any).",
+                node.id,
+            )
+        seen.add(gate.vertex)
+        if count is None:
+            out.error(
+                f"{where}.vertex",
+                "Waypoint conditions need vertices written in the card (map "
+                "frame or relative); a lanelet path's vertices are generated.",
+                node.id,
+            )
+        elif count >= 2 and gate.vertex > count:
+            out.error(
+                f"{where}.vertex",
+                f"There is no vertex {gate.vertex}: the trajectory has {count}.",
+                node.id,
+            )
+        _check_condition(
+            out, f"{where}.condition", gate.condition, refs, departure=True
+        )
+        # Deliberately conservative: any reference to the card's own action
+        # but "is running" is refused, wherever it sits in the tree -- under
+        # a Not as well, where it could not deadlock.  Telling the two apart
+        # means reasoning about the composition, and a waypoint condition
+        # that waits on its own card is never needed: the card is running
+        # for as long as the entity waits.
+        for child in gate.condition.walk():
+            if node.id not in condition_refs(child, "action"):
+                continue
+            state = str(child.params.get("state", ""))
+            if child.type == "action_state" and state == "runningState":
+                continue
+            out.error(
+                f"{where}.condition",
+                f"Vertex {gate.vertex}'s condition waits for its own action to "
+                f"reach {state or 'another state'}, which it cannot while the "
+                "entity waits at the vertex: the action is running all that "
+                "time. Wait on another action, or end the run with until.",
+                child.id,
+            )
+
+    _check_vertex_times(out, path, node, count or 0)
+
+
+def _vertex_times(node: ActionNode) -> dict[int, Any]:
+    """Vertex (from 1) -> the time its ``trajectory_time`` condition states."""
+    return {
+        gate.vertex: gate.condition.params.get("time")
+        for gate in node.advance_conditions
+        if gate.condition.type == "trajectory_time"
+    }
+
+
+def _check_vertex_times(
+    out: _Collector, path: str, node: ActionNode, count: int
+) -> None:
+    """The timing rules of a trajectory, on the card's time conditions.
+
+    Once any vertex departs at a time, every vertex departs on a condition
+    (a time or another), and the times do not decrease along the path.
+    """
+    times = _vertex_times(node)
+    if not times or count < 2:
+        return
+    gated = {gate.vertex for gate in node.advance_conditions}
+    bare = [vertex for vertex in range(1, count + 1) if vertex not in gated]
+    if bare:
+        out.error(
+            f"{path}.advance_conditions",
+            "Either every vertex has a time or none has (a vertex with another "
+            f"waypoint condition counts as having one): vertex {bare[0]} has "
+            "none.",
+            node.id,
+        )
+    ordered = [
+        float(times[vertex])
+        for vertex in sorted(times)
+        if vertex <= count and _coercible_float(times[vertex])
+    ]
+    if any(later < earlier for earlier, later in zip(ordered, ordered[1:])):
+        out.error(
+            f"{path}.advance_conditions",
+            "The vertex times decrease along the path.",
+            node.id,
+        )
+
+
+def _vertex_count(node: ActionNode) -> Optional[int]:
+    """How many vertices a vertex-listing card has; ``None`` if it lists none.
+
+    A count that cannot be read -- a malformed line -- is reported against
+    its own field, and comes back as ``0`` here so nothing is said twice.
+    """
+    params = node.params
+    source = params.get("path_source", "vertices")
+    try:
+        if source == "vertices":
+            return len(parse_vertices(params.get("vertices")))
+        if source == "relative_lane":
+            return len(parse_relative_vertices(params.get("relative_vertices")))
+        if source == "route":
+            return len(parse_route_vertices(params.get("route_vertices")))
+    except ValueError:
+        return 0
+    return None
+
+
+def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> None:
+    """Check what the *Follow Trajectory* card's fields only mean together.
+
+    Each field is checked on its own by its kind; this is the part no single
+    field can say: which source needs what, and which time reference and mode
+    the hiding needs.  Stated here, a card that would raise at scenario setup
+    is a document error the editor shows instead.
+    """
+    params = node.params
+    source = params.get("path_source", "vertices")
+    domain = params.get("time_domain", "relative")
+    timed = domain != "none"
+    if source == "vertices":
+        try:
+            rows = parse_vertices(params.get("vertices"))
+        except ValueError:
+            return  # already reported against the field
+        for problem in vertex_problems(rows):
+            out.error(f"{path}.vertices", f"Vertices: {problem}.", node.id)
+        _check_times_for_reference(out, path, node, timed and bool(rows))
+    elif source == "relative_lane":
+        # Types and counts only: whether the lanes the vertices name exist
+        # depends on where the reference entity is when the action starts.
+        try:
+            relative_rows = parse_relative_vertices(params.get("relative_vertices"))
+        except ValueError:
+            return  # already reported against the field
+        for problem in relative_vertex_problems(relative_rows):
+            out.error(
+                f"{path}.relative_vertices", f"Relative vertices: {problem}.", node.id
+            )
+        _check_times_for_reference(out, path, node, timed and bool(relative_rows))
+    elif source == "route":
+        # Whether the route has what the vertices name -- an opposite lane, a
+        # crosswalk -- depends on the map, so only the shape and the anchors
+        # (checked against the route search) are known here.
+        try:
+            route_rows = parse_route_vertices(params.get("route_vertices"))
+        except ValueError:
+            return  # already reported against the field
+        for problem in vertex_problems(route_rows):
+            out.error(f"{path}.route_vertices", f"Route vertices: {problem}.", node.id)
+        _check_times_for_reference(out, path, node, timed and bool(route_rows))
+    elif source == "lanelets":
+        if not params.get("lanelet_ids"):
+            out.error(
+                f"{path}.lanelet_ids",
+                "A lanelet path needs at least one lanelet.",
+                node.id,
+            )
+        if timed and not _positive(params.get("speed_kmh")):
+            out.error(
+                f"{path}.speed_kmh",
+                "A time reference needs a speed to time the lanelet path by.",
+                node.id,
+            )
+    speed = params.get("speed_ms")
+    if not _is_blank(speed) and _coercible_float(speed) and float(str(speed)) < 0.0:
+        out.error(f"{path}.speed_ms", "Speed must not be negative.", node.id)
+    if not _positive(params.get("time_scale", 1.0)):
+        out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
+    if params.get("appear_on_start") and params.get("hidden_outside_trajectory"):
+        out.error(
+            f"{path}.appear_on_start",
+            "Appearing when the action starts and keeping the entity out of "
+            "the world outside its trajectory both decide when it enters; "
+            "choose one.",
+            node.id,
+        )
+    if params.get("hidden_outside_trajectory") and (
+        not timed or params.get("following_mode", "position") != "position"
+    ):
+        out.error(
+            f"{path}.hidden_outside_trajectory",
+            "Keeping the entity out of the world needs the Position mode and a "
+            "time reference.",
+            node.id,
+        )
+
+
+def _check_times_for_reference(
+    out: _Collector, path: str, node: ActionNode, timed: bool
+) -> None:
+    """A time reference applies to vertex times, so the card needs some."""
+    if timed and not _vertex_times(node):
+        out.error(
+            f"{path}.time_domain",
+            "A time reference needs a time on every vertex: give them "
+            "Trajectory time waypoint conditions, or choose None.",
+            node.id,
+        )
+
+
+def _positive(value: Any) -> bool:
+    return _coercible_float(value) and float(str(value).strip()) > 0.0
 
 
 def _check_init_is_not_asked_to_wait(
@@ -432,11 +710,35 @@ def _check_init_is_not_asked_to_wait(
     )
 
 
-def _check_entity(out: _Collector, path: str, entity: Entity) -> None:
-    """Validate one entity, its spawn definition and its goal."""
-    _check_goal(out, path, entity)
+def _check_entity(
+    out: _Collector,
+    path: str,
+    entity: Entity,
+    *,
+    routed: bool = False,
+    routed_goal: bool = False,
+) -> None:
+    """Validate one entity, its spawn definition and its goal.
+
+    *routed* says the document's route search places the ego, so the ego's own
+    spawn lanelet is only a placeholder; *routed_goal* that it gives the ego
+    its goal as well.
+    """
+    _check_goal(out, path, entity, routed=routed_goal)
     _check_model(out, path, entity)
     spawn = entity.spawn
+    if routed and (entity.kind == "ego" or spawn.hidden):
+        # Placed by the route search, or parked out of the world until an
+        # action brings it in: no lanelet of one particular map is needed.
+        return
+    if routed and spawn.mode == "fixed":
+        out.warn(
+            f"{path}.spawn",
+            f"{entity.display_name} spawns on lanelet {spawn.lanelet_id}, which "
+            "names a lanelet of one map, in a scenario whose route is found on "
+            "any map. Spawn it hidden and bring it in with a route trajectory.",
+            entity.id,
+        )
     # The search itself -- its constraints, and the default it falls back to --
     # is checked with every other searched lanelet in `_check_lanelet_slots`,
     # so a spawn, a goal and a condition's lanelet are held to one rule.
@@ -498,7 +800,9 @@ def _check_model(out: _Collector, path: str, entity: Entity) -> None:
         )
 
 
-def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
+def _check_goal(
+    out: _Collector, path: str, entity: Entity, *, routed: bool = False
+) -> None:
     """Check the entity's goal: the ego may have one, and an Autoware ego must.
 
     A goal is read by a vehicle that plans its own route, and the ego is the
@@ -524,7 +828,7 @@ def _check_goal(out: _Collector, path: str, entity: Entity) -> None:
             )
         return
     if entity.goal is None:
-        if entity.driven_by == "autoware":
+        if entity.driven_by == "autoware" and not routed:
             out.error(
                 f"{path}.goal",
                 "An Autoware ego has no goal. Pick one in the Goal section of "
@@ -656,6 +960,51 @@ def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
             )
 
 
+def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
+    """An entity spawned out of the world needs something to bring it in.
+
+    Only a *Follow Trajectory* card that keeps its entity out of the world
+    until its first vertex does that; without one the entity stays under the
+    map for the whole run -- allowed, but surely not what was meant.  The ego
+    is never hidden: the run is measured on it from the first tick.
+    """
+    brought_in = {
+        str(action.actor)
+        for action in document.actions
+        if action.type == "follow_trajectory"
+        and (
+            action.params.get("hidden_outside_trajectory")
+            or action.params.get("appear_on_start")
+        )
+    }
+    appearing = {
+        str(action.actor)
+        for action in document.actions
+        if action.type == "follow_trajectory" and action.params.get("appear_on_start")
+    }
+    for index, entity in enumerate(document.entities):
+        if entity.id in appearing and not entity.spawn.hidden and entity.kind != "ego":
+            out.warn(
+                f"entities[{index}].spawn.hidden",
+                f"{entity.display_name} appears when its Follow Trajectory card "
+                "starts, but is not spawned out of the world, so it stands at "
+                "its spawn until then. Spawn it hidden.",
+                entity.id,
+            )
+        if not entity.spawn.hidden:
+            continue
+        path = f"entities[{index}].spawn.hidden"
+        if entity.kind == "ego":
+            out.error(path, "The ego cannot spawn out of the world.", entity.id)
+        elif entity.id not in brought_in:
+            out.warn(
+                path,
+                f"{entity.display_name} spawns out of the world and no Follow "
+                "Trajectory card brings it in, so it stays there for the run.",
+                entity.id,
+            )
+
+
 def validate_document(document: ScenarioDocument) -> ValidationReport:
     """Return every problem found in *document*.
 
@@ -670,7 +1019,13 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
         if entity.id in entity_ids:
             out.error(path, f"Duplicate entity id {entity.id!r}.", entity.id)
         entity_ids.add(entity.id)
-        _check_entity(out, path, entity)
+        _check_entity(
+            out,
+            path,
+            entity,
+            routed=document.route is not None,
+            routed_goal=_route_sets_goal(document),
+        )
 
     egos = [e for e in document.entities if e.kind == "ego"]
     if not egos:
@@ -702,6 +1057,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_untriggered_actions(out, document)
     _check_init_triggers(out, document)
     _check_duplicate_ego_routing(out, document)
+    _check_hidden_spawns(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)
@@ -725,8 +1081,103 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_lanelet_slots(out, document)
     _check_sweep_shape(out, document)
     _check_signal_controllers(out, document)
+    _check_route(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
+
+
+def _route_sets_goal(document: ScenarioDocument) -> bool:
+    """Whether the document's route search places the ego and gives it its goal."""
+    return document.route is not None and document.route.ego_goal
+
+
+def _check_route(out: _Collector, document: ScenarioDocument) -> None:
+    """Check a logical scenario's route search, and everything measured on it.
+
+    The search is checked as the route search will read it; what the map has
+    is only known when it runs.  Every route vertex and ``route_progress``
+    condition needs a route search to be measured on, and every anchor and
+    junction index they name has to exist in its pattern -- which, unlike the
+    map, is known here.
+    """
+    route = document.route
+    if route is not None:
+        if not route.segments:
+            out.error("route.segments", "A route search needs at least one segment.")
+        else:
+            try:
+                parse_route_search(route.to_sweep_dict())
+            except ValueError as exc:
+                out.error("route", f"Route search: {exc}.")
+        if route.match_index >= route.max_matches:
+            out.error(
+                "route.match_index",
+                f"match_index {route.match_index} can never be taken: the "
+                f"search returns at most max_matches={route.max_matches} "
+                "matches, counted from 0.",
+            )
+        for slot in document.searched_lanelet_slots():
+            out.error(
+                slot.key,
+                f"{slot.label} is searched for, but the scenario's route search "
+                "already decides what it is expanded over. Pin the lanelet, or "
+                "drop the route search.",
+                slot.owner_id,
+            )
+        ego = document.ego
+        if ego is not None and ego.goal is not None and route.ego_goal:
+            out.error(
+                f"entities[{document.entities.index(ego)}].goal",
+                "The route search sends the ego to the route's end, and the ego "
+                "names a goal of its own. Drop the ego's goal, or set "
+                "route.ego_goal to false to keep it.",
+                ego.id,
+            )
+    segments = len(route.segments) if route is not None else 0
+    junctions = route.junction_count if route is not None else 0
+
+    for index, action in enumerate(document.actions):
+        params = action.params
+        if action.type != "follow_trajectory" or params.get("path_source") != "route":
+            continue
+        where = f"actions[{index}].route_vertices"
+        if route is None:
+            out.error(
+                where,
+                "Route vertices are placed on the scenario's route, and this "
+                "scenario has no route search.",
+                action.id,
+            )
+            continue
+        try:
+            rows = parse_route_vertices(params.get("route_vertices"))
+        except ValueError:
+            continue  # already reported against the field
+        for number, row in enumerate(rows, start=1):
+            problem = anchor_problem(row.get("anchor"), segments, junctions)
+            if problem is None and "junction" in row and row["junction"] >= junctions:
+                problem = (
+                    f"junction {row['junction']}: the route search has "
+                    f"{junctions} junction segment(s)"
+                )
+            if problem is not None:
+                out.error(where, f"Route vertex {number}: {problem}.", action.id)
+
+    for root in document.condition_roots():
+        for node in root.walk():
+            if node.type != "route_progress":
+                continue
+            if route is None:
+                out.error(
+                    node.id,
+                    "Route progress is measured on the scenario's route, and "
+                    "this scenario has no route search.",
+                    node.id,
+                )
+                continue
+            problem = anchor_problem(node.params.get("anchor"), segments, junctions)
+            if problem is not None:
+                out.error(node.id, f"Route progress: {problem}.", node.id)
 
 
 def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
@@ -1301,6 +1752,10 @@ def _signal_controller_nodes(
             found.append((path, action))
         if action.trigger is not None:
             walk_condition(f"{path}.trigger", action.trigger)
+        for gate_index, gate in enumerate(action.advance_conditions):
+            walk_condition(
+                f"{path}.advance_conditions[{gate_index}].condition", gate.condition
+            )
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         walk_condition(f"assertions.pass[{index}]", condition)

@@ -1,0 +1,78 @@
+{% import "partials/condition_node.html" as pred %}
+{% import "partials/icons.html" as ic %}
+{# Waypoint conditions of an action that follows vertices: what each vertex
+   is departed on. A vertex has one -- a time (a Trajectory time condition)
+   or any other condition -- or none, and is then passed through on arrival.
+
+   Each is an ordinary condition tree, drawn and edited with the same pieces
+   as a trigger -- click it for its inspector, add children to a composition
+   in place -- so nothing here knows any condition type. Only *where* it sits
+   is new: a vertex number, the Nth vertex of the list (blank and comment
+   lines are not counted). #}
+{% macro gate_row(action, gate, index, draft, selected, document) %}
+  <div class="ed-gate">
+    <div class="ed-gate-head">
+      <form hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}"
+            hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
+            class="ed-gate-vertex">
+        <span>depart vertex</span>
+        <input type="number" name="vertex" min="1" step="1" value="{{ gate.vertex }}"
+               class="ed-input-xs" aria-label="Vertex" style="width:4.5em">
+        <span>{{ 'at' if gate.condition.type == 'trajectory_time' else 'when' }}</span>
+      </form>
+      <button class="ed-btn-xs" title="Remove this waypoint condition"
+              hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}/delete"
+              hx-target="#editor-body" hx-swap="innerHTML">{{ ic.icon('trash', 11) }}</button>
+    </div>
+    <div class="ed-trigger">{{ pred.render(gate.condition, draft, selected, document) }}</div>
+  </div>
+{% endmacro %}
+
+{% macro section(action, draft, selected, document) %}
+  <div class="ed-field ed-gates" id="gates-{{ action.id }}">
+    <label class="ed-label">Waypoint conditions</label>
+    <p class="ed-help">
+      What each vertex is departed on: a time on the trajectory's clock
+      (<em>Trajectory time</em>) or any other condition -- one per vertex --
+      or, with none, on arrival. The entity waits at the vertex until it holds,
+      checked from when it gets there (in Follow mode from braking distance
+      already, but for the last vertex). After a vertex, it arrives at the next
+      vertex's time if that is still to come, and goes at the card's speed
+      otherwise. Vertex N is the Nth vertex (blank and comment lines are not
+      counted); on the last one, the run ends when its condition holds.
+    </p>
+    {%- set gates = action.advance_conditions -%}
+    {% if gates|length > 12 %}
+      {# A recording gives every vertex a time: hundreds of rows. #}
+      <details class="ed-gate-list">
+        <summary class="ed-add-btn">{{ gates|length }} waypoint conditions
+          ({{ gates|selectattr('condition.type', 'equalto', 'trajectory_time')|list|length }} times)</summary>
+        {% for gate in gates %}{{ gate_row(action, gate, loop.index0, draft, selected, document) }}{% endfor %}
+      </details>
+    {% else %}
+      {% for gate in gates %}
+        {{ gate_row(action, gate, loop.index0, draft, selected, document) }}
+      {% else %}
+        <p class="ed-static">Every vertex is passed through on arrival.</p>
+      {% endfor %}
+    {% endif %}
+    {%- set used = gates|map(attribute='vertex')|list -%}
+    {%- set ns = namespace(free=1) -%}
+    {%- for _ in range(used|length + 1) -%}{%- if ns.free in used -%}{%- set ns.free = ns.free + 1 -%}{%- endif -%}{%- endfor -%}
+    <details class="ed-add">
+      <summary class="ed-add-btn" title="Add a waypoint condition">{{ ic.icon('plus', 11) }} waypoint condition</summary>
+      <form hx-post="/draft/{{ draft.id }}/condition" hx-target="#editor-body" hx-swap="innerHTML"
+            class="ed-add-form">
+        <input type="hidden" name="slot" value="advance:{{ action.id }}">
+        <input type="number" name="vertex" min="1" step="1" value="{{ ns.free }}"
+               class="ed-input-xs" aria-label="Vertex" title="Vertex, counted from 1" style="width:4.5em">
+        <select name="type_id" class="ed-input-xs" style="flex:1">
+          {% for spec in condition_specs() %}
+            <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+      </form>
+    </details>
+  </div>
+{% endmacro %}

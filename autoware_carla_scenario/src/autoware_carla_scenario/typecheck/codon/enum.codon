@@ -1,0 +1,61 @@
+# Python's enum, for the static check (docs/typecheck.md).
+#
+# Codon has no enum module. The checker rewrites an Enum class
+# (typecheck/transform.py) into a subclass of Enum[T], T the type of its
+# values, with each member a class variable holding an instance:
+#
+#     class Color(Enum):           class Color(Enum[str]):
+#         RED = "red"        ->        RED: ClassVar[Color] = Color("RED", "red")
+#
+# so `Color.RED.value` is a str, `Color.RED.name` a str, and a Color is a type
+# of its own. Looking a member up by value (`Color("red")`) or by name
+# (`Color["RED"]`) and iterating over the class are not modelled.
+
+
+class Enum:
+    # The type of the values (Codon's generic parameter, in a form Python
+    # can parse too: `class Enum[T]` needs Python 3.12).
+    T: type
+    _name_: str
+    _value_: T
+
+    def __init__(self, name: str, value: T):
+        self._name_ = name
+        self._value_ = value
+
+    @property
+    def name(self) -> str:
+        return self._name_
+
+    @property
+    def value(self) -> T:
+        return self._value_
+
+    def __eq__(self, other) -> bool:
+        return self._name_ == other._name_
+
+    def __ne__(self, other) -> bool:
+        return self._name_ != other._name_
+
+    def __hash__(self) -> int:
+        return hash(self._name_)
+
+    def __str__(self) -> str:
+        return self.__class__.__name__ + "." + self._name_
+
+    def __repr__(self) -> str:
+        return "<" + self.__class__.__name__ + "." + self._name_ + ">"
+
+
+IntEnum = Enum
+StrEnum = Enum
+Flag = Enum
+IntFlag = Enum
+
+
+def auto() -> int:
+    return 0
+
+
+def unique(cls):
+    return cls

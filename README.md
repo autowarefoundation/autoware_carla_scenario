@@ -29,7 +29,24 @@ Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 
 ## Quick start
 
-Python 3.10 to 3.12. Every dependency installs from a wheel or from git — no apt
+To test a driving policy in a project of your own -- no ROS 2, no Autoware, one
+command once CARLA is downloaded:
+
+```bash
+uv add autoware-carla-scenario
+uv run scenario-setup     # downloads CARLA's nightly build into ~/.autoware_carla_scenario/bin
+uv run scenario scenario=cut_in/left map=town10hd_opt \
+  ego.spawn_lanelet_id=324 scenario.npc_lanelet_id=446 \
+  ego.entity=carla_driver driver.policy=route_follower
+```
+
+The last command launches CARLA, serves the policy in its own process and runs the
+scenario. [`docs/quickstart.md`](autoware_carla_scenario/docs/quickstart.md) walks
+through it, your own policy included.
+
+### Working on this repository
+
+Python 3.10 to 3.14. Every dependency installs from a wheel or from git — no apt
 packages, no C++ toolchain, no container. `git` has to be on `PATH`, because
 uv clones the converter.
 
@@ -38,7 +55,7 @@ uv sync --dev
 ```
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla)
-(CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64), imported as
+(CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64 and aarch64), imported as
 `import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython
 package prebuilt, so the sync above is the whole install; see
 [installation](autoware_carla_scenario/docs/installation.md) for the cases that
@@ -78,19 +95,30 @@ merged into `master` with exactly one version bump label (`bump patch`,
 `bump minor` or `bump major`). The workflow bumps `version` in
 `autoware_carla_scenario/pyproject.toml`, re-locks, tags `v<version>`, creates
 the GitHub Release with the documentation attached, and deploys the docs to
-GitHub Pages. A merge without a label releases nothing.
+GitHub Pages. It then builds the wheel and sdist, installs the wheel on every
+supported Python (3.10 to 3.14), and publishes both to
+[PyPI](https://pypi.org/project/autoware-carla-scenario/) as
+`autoware-carla-scenario`. A merge without a label releases nothing.
+
+PyPI uploads use Trusted Publishing, so no API token is stored. Before the
+first release, add a (pending) trusted publisher on PyPI with owner
+`autowarefoundation`, repository `autoware_carla_scenario`, workflow
+`release.yml` and environment `pypi`, and create the `pypi` environment in
+this repository's settings.
 
 If a labelled merge bumped the version but a later step failed, run the
 workflow by hand (Actions → Release → Run workflow) with that version, e.g.
 `2.63.0`. A manual run does not bump: it builds from the version's tag, or else
 from its `chore: bump version to X` commit on `master`, so merges that landed
 since do not leak in, and it reuses any tag, Release or asset the failed run
-already created. Do not re-run the failed push run: it would bump a second time
-from the old merge commit.
+already created and uploads to PyPI only the files that are not there yet. Do
+not re-run the failed push run: it would bump a second time from the old merge
+commit.
 
 The version line continues from `autoware_lanelet2_to_opendrive`, where this
 package started: it was split out at 2.62.0, so the first release here is
-2.62.1. The workflow pushes with the `GH_PAT` repository secret.
+2.62.1. The workflow pushes with the `GH_PAT` repository secret when there is
+one, and with `GITHUB_TOKEN` otherwise.
 
 ## License
 

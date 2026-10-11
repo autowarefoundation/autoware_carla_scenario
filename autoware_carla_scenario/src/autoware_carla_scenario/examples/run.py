@@ -29,10 +29,12 @@ Usage examples::
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import typesafe_carla.carla as carla
 import hydra
@@ -53,11 +55,14 @@ from autoware_carla_scenario import (
     TrafficSinkAction,
     TrafficSourceAction,
 )
+from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
+    check_odd,
     check_registered_scenario,
     typecheck_mode,
 )
@@ -204,6 +209,107 @@ def build_waypoint_poses(cfg: DictConfig) -> list[Lanelet2Pose]:
     return [Lanelet2Pose(lanelet_id=int(x), s=0.0) for x in lanelet_ids]
 
 
+def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
+    """The route the config sends the ego along, for checking it against an ODD.
+
+    Raises :class:`~autoware_carla_scenario.odd.route.RouteError` when the
+    config names no spawn lanelet.
+
+    From ``ego.spawn_lanelet_id`` / ``ego.spawn_s``, through
+    ``ego.waypoint_lanelet_ids``, to ``ego.goal_lanelet_id`` / ``ego.goal_s``:
+    the poses a run hands the ego (``scenario-odd route``, docs/odd.md).
+
+    A scenario may derive its goal and waypoints in ``setup()``, which needs
+    CARLA.  The one way a built-in scenario does -- the goal from
+    ``scenario.expected_route_lanelet_ids``, with
+    :meth:`~autoware_carla_scenario.BaseScenario.derive_goal_from_route` --
+    is followed here with the same rule (a configured goal wins).  Any other
+    is not known before the run: the route then has no goal.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    spawn_lanelet_id = ego_cfg.get("spawn_lanelet_id")
+    if spawn_lanelet_id is None:
+        raise RouteError("no ego.spawn_lanelet_id: the route has no start")
+    start = Lanelet2Pose(
+        lanelet_id=int(spawn_lanelet_id),
+        s=float(ego_cfg.get("spawn_s", 0.0)),
+    )
+    goal = build_goal_pose(cfg)
+    scenario_cfg = cfg.get("scenario") or {}
+    expected = scenario_cfg.get("expected_route_lanelet_ids") or []
+    if goal is None and expected:
+        goal = Lanelet2Pose(lanelet_id=int(expected[-1]), s=0.0)
+    via = build_waypoint_poses(cfg)
+    return PlannedRoute(start=start, goal=goal, via=tuple(via), name=name)
+
+
+#: One launcher per launcher configuration in this process: every Autoware ego
+#: of a batch, and the queue running them, share the launcher that builds the
+#: workspace once and starts one stack at a time.
+_AUTOWARE_LAUNCHERS: dict[str, AutowareLauncher] = {}
+
+
+def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
+    """The launcher that starts Autoware for each scenario, per ``autoware.launcher``.
+
+    ``autoware.launcher.type`` is ``none`` (Autoware is started by someone
+    else -- the default), ``docker`` (a local Autoware workspace, built and run
+    in its dev container) or ``command`` (``autoware.launcher.command`` run on
+    this host).  Only an ``ego.entity=autoware`` run has one.  The same
+    configuration yields the same launcher, so a batch's egos and its queue
+    share it.
+
+    Raises:
+        ValueError: If ``autoware.launcher.type`` names an unknown launcher.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    if str(ego_cfg.get("entity", "autopilot")) != "autoware":
+        return None
+    autoware_cfg = cfg.get("autoware")
+    launcher_cfg = None if autoware_cfg is None else autoware_cfg.get("launcher")
+    if launcher_cfg is None:
+        return None
+    settings = _to_dict(launcher_cfg)
+    kind = str(settings.pop("type", "none"))
+    if kind == "none":
+        return None
+
+    key = json.dumps({"type": kind, **settings}, sort_keys=True, default=str)
+    cached = _AUTOWARE_LAUNCHERS.get(key)
+    if cached is not None:
+        return cached
+
+    from autoware_carla_scenario.autoware_stack import (  # noqa: PLC0415
+        CommandAutowareLauncher,
+        DockerAutowareConfig,
+        DockerAutowareLauncher,
+    )
+
+    launcher: AutowareLauncher
+    if kind == "docker":
+        fields = DockerAutowareConfig.__dataclass_fields__
+        options = {k: v for k, v in settings.items() if k in fields}
+        options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
+        for name in ("launch", "colcon_args", "docker_args", "ros_domain_ids"):
+            if name in options:
+                options[name] = tuple(options[name] or ())
+        launcher = DockerAutowareLauncher(DockerAutowareConfig(**options))
+    elif kind == "command":
+        launcher = CommandAutowareLauncher(
+            tuple(str(arg) for arg in settings.get("command") or ()),
+            env={str(k): str(v) for k, v in (settings.get("env") or {}).items()},
+            stop_timeout_s=float(settings.get("stop_timeout_s", 20.0)),
+        )
+    else:
+        msg = (
+            f"Unknown autoware.launcher.type: {kind!r}. "
+            "Expected one of: 'none', 'docker', 'command'."
+        )
+        raise ValueError(msg)
+    _AUTOWARE_LAUNCHERS[key] = launcher
+    return launcher
+
+
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     """Build the ego entity selected by ``cfg.ego.entity``.
 
@@ -222,9 +328,10 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         return None
 
     if entity == "autoware":
-        # The closed-loop entity: it attaches to the ego the interface node
-        # spawns and hands Autoware the scenario's mission over the bridge the
-        # framework hosts.  The mission itself comes from the scenario, whose
+        # The closed-loop entity: it spawns the ego, hands Autoware the
+        # scenario's mission over the bridge the framework hosts and -- given a
+        # launcher (autoware.launcher) -- starts a fresh Autoware for the
+        # scenario and removes it afterwards.  The mission itself comes from the scenario, whose
         # ``setup()`` registers a ``RoutingAction`` for the spawn and
         # the goal its ``EgoConfig`` carries, snapped onto the live map -- poses
         # that do not exist before then -- and the runner performs it in the init
@@ -250,9 +357,12 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # autostart=False: in a batch every scenario is built before the first
         # one runs, and two bridges cannot hold the same address at once.  The
         # entity starts this one when its own scenario starts.
+        scenario_cfg = cfg.get("scenario") or {}
         return AutowareEgoEntity(
             bridge_cfg,
             bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
+            launcher=build_autoware_launcher(cfg),
+            episode_name=str(scenario_cfg.get("name", "")),
         )
 
     if entity == "carla_driver":
@@ -392,6 +502,8 @@ def run_scenario_with_queue(
     max_tick_rate_hz: float | None = None,
     projector_type: str | None = None,
     traffic_backend: TrafficBackend | None = None,
+    odd: str | None = None,
+    autoware_launcher: AutowareLauncher | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -421,6 +533,8 @@ def run_scenario_with_queue(
         max_tick_rate_hz=max_tick_rate_hz,
         projector_type=projector_type,
         traffic_backend=traffic_backend,
+        odd=odd,
+        autoware_launcher=autoware_launcher,
     )
     queue.add(scenario)
     with queue:
@@ -431,6 +545,12 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def _odd_spec(cfg: DictConfig) -> str | None:
+    """The ``odd`` the config names (docs/odd.md), or ``None`` for the default."""
+    value = cfg.get("odd")
+    return None if value is None else str(value)
 
 
 def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
@@ -657,6 +777,27 @@ def run_batch(
         )
         sys.exit(1)
 
+    # One launcher for the whole batch: the queue prepares it (and puts its
+    # logs in the batch's output directory) and every ego starts its stacks
+    # with it, so a scenario configuring an Autoware of its own is refused.
+    launcher_cfgs = {
+        json.dumps(
+            _to_dict(cfg.autoware.launcher)
+            if cfg.get("autoware") is not None
+            and cfg.autoware.get("launcher") is not None
+            else None,
+            sort_keys=True,
+            default=str,
+        )
+        for cfg in configs
+    }
+    if len(launcher_cfgs) > 1:
+        print(  # noqa: T201
+            "Error: batch scenarios must share autoware.launcher; set it on the "
+            "command line rather than in a scenario's config"
+        )
+        sys.exit(1)
+
     # Log detailed execution plan before building anything.
     _log_batch_plan(scenario_names, configs, overrides)
 
@@ -669,6 +810,8 @@ def run_batch(
         scenarios.append(scenario)
 
     first_cfg = configs[0]
+    # The ODD every run is measured against, checked once when it is Python.
+    check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
 
@@ -694,6 +837,8 @@ def run_batch(
         max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(first_cfg),
+        odd=_odd_spec(first_cfg),
+        autoware_launcher=build_autoware_launcher(first_cfg),
     )
 
     for cfg, scenario in zip(configs, scenarios):
@@ -734,6 +879,7 @@ def build_scenario(
         ego, scenario = build_scenario_fn(cfg)
         _apply_ego_config(cfg, scenario)
         add_background_traffic(cfg, scenario)
+        add_environment(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -760,7 +906,32 @@ def build_scenario(
     if ego_entity is not None:
         scenario.ego_entity = ego_entity
     add_background_traffic(cfg, scenario)
+    add_environment(cfg, scenario)
     return ego, scenario
+
+
+def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Set the weather and the sun the config's ``environment`` names, if any.
+
+    An :class:`~autoware_carla_scenario.EnvironmentAction` registered for
+    initialization, so the world is in it before the run starts.  It is
+    registered before the scenario's own ``setup()`` runs, so a scenario that
+    sets the weather itself has the last word.  Nothing is registered when
+    every field is ``null`` (the default).
+    """
+    env_cfg = cfg.get("environment")
+    if env_cfg is None:
+        return
+    settings: dict[str, Any] = {
+        str(key): float(value)
+        for key, value in _to_dict(env_cfg).items()
+        if value is not None
+    }
+    if not settings:
+        return
+    from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
+
+    scenario.register_init(EnvironmentAction(**settings, label="config.environment"))
 
 
 def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
@@ -871,6 +1042,8 @@ def run_scenario(
     logger.info("Resolved config:\n%s", OmegaConf.to_yaml(cfg))
 
     _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
+    # The ODD the run is measured against, checked when it is Python.
+    check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     map_paths = resolve_map_paths(cfg.map)
     cooldown = float(cfg.server.get("cooldown_seconds", 0.0))
@@ -899,6 +1072,8 @@ def run_scenario(
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(cfg),
+        odd=_odd_spec(cfg),
+        autoware_launcher=build_autoware_launcher(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

@@ -2,8 +2,8 @@
 
 The scenario framework plays the *runtime* role of the alpasim ``egodriver`` contract:
 it owns the CARLA world, renders observations, and asks a policy what to do.  The policy
-runs as a separate gRPC server, typically
-`carla_driver_interface <https://github.com/hakuturu583/carla_driver_interface>`_::
+runs as a separate gRPC server, typically built on ``carla-driver-interface`` (the
+policy-side package in this workspace)::
 
     carla-driver-interface serve --policy route_follower --port 50051
 
@@ -23,6 +23,7 @@ from .base import (
     DriveOutcome,
     DriverCameraConfig,
     DriverClientConfig,
+    DriverLidarConfig,
     EgoObservation,
 )
 from .control import ControlConfig, TrajectoryFollower, VehicleCommand
@@ -35,6 +36,7 @@ __all__ = [
     "DriveOutcome",
     "DriverCameraConfig",
     "DriverClientConfig",
+    "DriverLidarConfig",
     "EgoDriverGrpcClient",
     "EgoObservation",
     "Pose",

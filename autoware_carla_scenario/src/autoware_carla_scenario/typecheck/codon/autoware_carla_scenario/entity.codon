@@ -179,7 +179,18 @@ class EgoVehicle:
         raise NotImplementedError()
 
     @property
+    def carried_actor_ids(self) -> Set[int]:
+        raise NotImplementedError()
+
+    def set_initial_speeds(self, speeds_mps: Dict[int, float]) -> None:
+        raise NotImplementedError()
+
+    @property
     def termination_requested(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def termination_reason(self) -> Optional[str]:
         raise NotImplementedError()
 
     def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,

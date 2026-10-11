@@ -7,9 +7,9 @@ repos:
       # protoc output checked byte-for-byte by test_proto_generated.py. Reformatting
       # either would break that guarantee.
       - id: trailing-whitespace
-        exclude: '^autoware_carla_scenario/(proto/|src/autoware_carla_scenario/driver/_proto/)'
+        exclude: '^autoware_carla_scenario/proto/'
       - id: end-of-file-fixer
-        exclude: '^autoware_carla_scenario/(proto/|src/autoware_carla_scenario/driver/_proto/)'
+        exclude: '^autoware_carla_scenario/proto/'
       - id: check-yaml
         exclude: 'mkdocs\.yml$'
       - id: check-added-large-files

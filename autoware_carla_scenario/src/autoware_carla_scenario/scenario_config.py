@@ -40,6 +40,7 @@ __all__ = [
     "EgoVehicleConfig",
     "NpcVehicleConfig",
     "DriverCameraSpec",
+    "DriverLidarSpec",
     "DriverControlSpec",
     "DriverConfig",
     "SweepConfig",
@@ -242,25 +243,58 @@ class DriverCameraSpec:
 
 
 @dataclass
+class DriverLidarSpec:
+    """One LiDAR mounted on the ego, its sweeps sent to the driver policy.
+
+    Mirrors :class:`~autoware_carla_scenario.driver.base.DriverLidarConfig`; see that
+    class for the meaning of each field.  The mount uses CARLA's convention relative
+    to the vehicle (x forward, y right, z up; angles in degrees), as for a camera.
+    """
+
+    logical_id: str = "lidar_top"
+    channels: int = 64
+    range_m: float = 100.0
+    points_per_second: int = 1200000
+    upper_fov_deg: float = 15.0
+    lower_fov_deg: float = -25.0
+    dropoff_general_rate: float = 0.0
+    position_x: float = 0.0
+    position_y: float = 0.0
+    position_z: float = 2.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+
+@dataclass
 class DriverControlSpec:
     """Gains for the controller that tracks the policy's plan.
 
     Mirrors :class:`~autoware_carla_scenario.driver.control.ControlConfig`; see that
-    class for the meaning of each field.  ``max_steer_angle_deg`` is expressed in
-    degrees here for readability and converted on the way in.
+    class for the meaning of each field.  ``max_steer_angle_deg`` and
+    ``yaw_rate_trim_limit_deg`` are expressed in degrees here for readability and
+    converted on the way in.
     """
 
-    lookahead_gain_s: float = 0.9
+    lookahead_gain_s: float = 0.6
     min_lookahead_m: float = 4.0
     max_lookahead_m: float = 20.0
     wheelbase_m: float = 2.8
-    max_steer_angle_deg: float = 70.0
+    max_steer_angle_deg: float = 56.0
+    steer_exponent: float = 2.0
     max_steer_rate: float = 4.0
-    speed_kp: float = 0.6
-    speed_ki: float = 0.15
-    speed_kd: float = 0.05
-    integral_limit: float = 1.0
-    stop_speed_mps: float = 0.2
+    yaw_rate_ki: float = 3.0
+    yaw_rate_trim_limit_deg: float = 25.0
+    yaw_rate_min_speed_mps: float = 1.0
+    speed_kp: float = 1.0
+    speed_ki: float = 0.1
+    integral_limit: float = 3.0
+    position_gain: float = 0.5
+    max_position_correction_mps: float = 6.0
+    speed_preview_s: float = 1.0
+    throttle_deadband: float = 0.25
+    standstill_speed_mps: float = 0.5
+    stop_distance_m: float = 0.5
     stop_brake: float = 0.6
 
 
@@ -268,13 +302,19 @@ class DriverControlSpec:
 class DriverConfig:
     """Connection settings for an external driver policy.
 
-    Only used when ``ego.entity`` is ``"carla_driver"``.  The policy is expected to
-    serve ``egodriver.EgodriverService`` at :attr:`address` -- for example
+    Only used when ``ego.entity`` is ``"carla_driver"``.  The policy serves
+    ``egodriver.EgodriverService`` at :attr:`address`: from this process when
+    :attr:`policy` names it, or as a process of its own -- for example
     ``carla-driver-interface serve --policy route_follower --port 50051``.
     """
 
     #: ``host:port`` of the policy's gRPC server.
     address: str = "localhost:50051"
+
+    #: A policy the run serves itself, in its own process, instead of dialling
+    #: :attr:`address` -- ``route_follower``, or ``package.module:Class`` -- or
+    #: ``None`` to dial a policy already serving there.
+    policy: str | None = None
 
     #: Per-RPC deadline in seconds.
     timeout_s: float = 60.0
@@ -285,6 +325,12 @@ class DriverConfig:
 
     #: JPEG quality (1-100) for streamed camera frames.
     image_quality: int = 90
+
+    #: Seconds of run-up onto the scenario's first frame, every vehicle and
+    #: pedestrian carried onto its first-frame pose at its initial speed and the
+    #: policy planning but not driving, so a policy that reads a history starts
+    #: with one.  0 starts the policy cold.
+    warmup_s: float = 0.0
 
     #: How far ahead the submitted route extends, in metres.
     route_horizon_m: float = 80.0
@@ -325,6 +371,25 @@ class DriverConfig:
         default_factory=lambda: [DriverCameraSpec()]
     )
 
+    #: LiDARs mounted on the ego, their sweeps sent in ``renderer_data``.  None by
+    #: default: a sweep is megabytes per policy step and most policies read none.
+    lidars: list[DriverLidarSpec] = field(default_factory=list)
+
+    #: Where the world's map is written at scenario start, as
+    #: ``<map_dir>/<map_id>/``, for the policy to read from its own copy; every
+    #: light is then sent with where to stop for it.  ``null`` writes no map.
+    #: Needs roadgen (the ``map`` extra).
+    map_dir: str | None = None
+
+    #: The formats to write, by roadgen exporter name.
+    map_formats: list[str] = field(default_factory=lambda: ["lanelet2"])
+
+    #: A local Lanelet2 (``.osm``) file written into the map set as it is,
+    #: instead of the one roadgen converts from the world's OpenDRIVE.  ``null``
+    #: converts it with roadgen.  Needs ``map_dir``.  It carries no roadgen
+    #: trace, so stop lines resolved against it name no lanelets.
+    lanelet2_path: str | None = None
+
     #: Trajectory-following gains.
     control: DriverControlSpec = field(default_factory=DriverControlSpec)
 
@@ -341,6 +406,7 @@ class SweepConfig:
     ``constraints`` maps a target key (e.g. ``ego.spawn_lanelet_id``) to a
     list of constraint dicts.  ``bindings`` maps a target key
     (e.g. ``ego.spawn_s``) to a binding dict that auto-derives the value.
+    ``odd_sample`` draws the settings of each case from the ODD.
     """
 
     constraints: dict[str, Any] = field(default_factory=dict)
@@ -354,3 +420,9 @@ class SweepConfig:
     #: 1-indexed job number to resume from.  Jobs before this index are
     #: skipped.  0 (default) means execute all jobs from the beginning.
     resume_from: int = 0
+
+    #: Concrete cases drawn from the ODD (``docs/odd.md``, "Sampling
+    #: scenarios from the ODD"): ``count``, ``seed``, ``strategy``
+    #: (``uniform`` or ``coverage``), ``odd``, ``coverage_from``, ``knobs``.
+    #: Empty draws nothing.
+    odd_sample: dict[str, Any] = field(default_factory=dict)

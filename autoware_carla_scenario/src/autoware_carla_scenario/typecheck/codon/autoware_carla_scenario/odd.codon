@@ -1,0 +1,243 @@
+# Model of autoware_carla_scenario.odd (docs/odd.md, docs/typecheck.md).
+#
+# An ODD written in Python is compiled against this, like a scenario: the
+# builder function is called, every attribute's probe is called with a world,
+# and every condition a module holds must be one an attribute built.
+
+import typesafe_carla.carla as carla
+
+from ._tc import _keyword_only, _expect_float, _expect_optional_float
+from .coverage import _expect_cover_expression, _expect_optional_range, _expect_optional_edges
+
+
+NEARBY_RADIUS_M: float = 50.0
+ILLUMINATION_LEVELS: List[str] = ["day", "low_sun", "twilight", "night"]
+INTENSITY_LEVELS: List[str] = ["none", "light", "moderate", "heavy"]
+TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
+
+
+class OddCondition:
+    _unused: int
+
+    def __init__(self):
+        self._unused = 0
+
+
+def _expect_optional_conditions(conditions):
+    """An Optional[Sequence[OddCondition]] argument."""
+    if isinstance(conditions, None):
+        pass
+    elif isinstance(conditions, Optional[NoneType]):
+        pass
+    elif isinstance(conditions, List[NoneType]):
+        pass
+    else:
+        for condition in conditions:
+            c: OddCondition = condition
+
+
+def _expect_optional_labels(labels):
+    """An Optional[Sequence[str]] argument."""
+    if isinstance(labels, None):
+        pass
+    elif isinstance(labels, Optional[NoneType]):
+        pass
+    elif isinstance(labels, List[NoneType]):
+        pass
+    else:
+        for label in labels:
+            s: str = label
+
+
+class OddAttribute:
+    name: str
+    unit: str
+    text: str
+
+    def __init__(self, name: str, probe, *_kw, unit: str = "", range = None,
+                 every = None, buckets = None, values = None, text: str = "",
+                 target = 1.0, cover_by: str = "hits", min_stay = None):
+        _keyword_only(_kw, "OddAttribute(): every argument but name and probe")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
+        _expect_cover_expression(probe)
+        _expect_optional_range(range)
+        _expect_optional_float(every)
+        _expect_optional_edges(buckets)
+        self.name = name
+        self.unit = unit
+        self.text = text
+
+    def is_in(self, values) -> OddCondition:
+        for value in values:
+            pass
+        raise NotImplementedError()
+
+    def equals(self, value) -> OddCondition:
+        raise NotImplementedError()
+
+    def between(self, low, high) -> OddCondition:
+        _expect_float(low)
+        _expect_float(high)
+        raise NotImplementedError()
+
+    def at_least(self, bound) -> OddCondition:
+        _expect_float(bound)
+        raise NotImplementedError()
+
+    def at_most(self, bound) -> OddCondition:
+        _expect_float(bound)
+        raise NotImplementedError()
+
+    def greater_than(self, bound) -> OddCondition:
+        _expect_float(bound)
+        raise NotImplementedError()
+
+    def less_than(self, bound) -> OddCondition:
+        _expect_float(bound)
+        raise NotImplementedError()
+
+    def is_unknown(self) -> OddCondition:
+        raise NotImplementedError()
+
+
+def _expect_conditions(conditions):
+    """A Sequence[OddCondition] argument (a list or a tuple)."""
+    for condition in conditions:
+        c: OddCondition = condition
+
+
+def all_of(conditions) -> OddCondition:
+    _expect_conditions(conditions)
+    raise NotImplementedError()
+
+
+def any_of(conditions) -> OddCondition:
+    _expect_conditions(conditions)
+    raise NotImplementedError()
+
+
+def module_holds(name: str, holds: bool = True) -> OddCondition:
+    raise NotImplementedError()
+
+
+class OddModule:
+    name: str
+    active: bool
+    text: str
+
+    def __init__(self, name: str, *_kw, include_and = None, include_or = None,
+                 exclude_and = None, exclude_or = None, labels = None,
+                 active: bool = True, text: str = "", situation: bool = False,
+                 target = 1.0, cover_by: str = "hits", min_stay = None):
+        _keyword_only(_kw, "OddModule(): every argument but name")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
+        if not (isinstance(include_and, None) or isinstance(include_and, Optional[NoneType])):
+            if not (isinstance(include_or, None) or isinstance(include_or, Optional[NoneType])):
+                compile_error("OddModule(): one include section, include_and or include_or")
+        if not (isinstance(exclude_and, None) or isinstance(exclude_and, Optional[NoneType])):
+            if not (isinstance(exclude_or, None) or isinstance(exclude_or, Optional[NoneType])):
+                compile_error("OddModule(): one exclude section, exclude_and or exclude_or")
+        _expect_optional_conditions(include_and)
+        _expect_optional_conditions(include_or)
+        _expect_optional_conditions(exclude_and)
+        _expect_optional_conditions(exclude_or)
+        _expect_optional_labels(labels)
+        self.name = name
+        self.active = active
+        self.text = text
+
+
+def _expect_optional_modules(modules):
+    """An Optional[Sequence[OddModule]] argument."""
+    if isinstance(modules, None):
+        pass
+    elif isinstance(modules, Optional[NoneType]):
+        pass
+    elif isinstance(modules, List[NoneType]):
+        pass
+    else:
+        for module in modules:
+            m: OddModule = module
+
+
+class OddDefinition:
+    name: str
+    text: str
+
+    def __init__(self, name: str, attributes, modules = None, *_kw,
+                 roots = None, text: str = ""):
+        _keyword_only(_kw, "OddDefinition(): roots and text")
+        for attribute in attributes:
+            a: OddAttribute = attribute
+        _expect_optional_modules(modules)
+        _expect_optional_labels(roots)
+        self.name = name
+        self.text = text
+
+
+def default_odd() -> OddDefinition:
+    raise NotImplementedError()
+
+
+def register_odd(name: str, builder) -> None:
+    odd: OddDefinition = builder()
+
+
+def ego_speed_kph(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def in_junction(world: carla.World) -> Optional[bool]:
+    raise NotImplementedError()
+
+
+def speed_limit_kph(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def lane_count(world: carla.World) -> Optional[int]:
+    raise NotImplementedError()
+
+
+def lanelet_location(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def lanelet_subtype(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def lanelet_speed_limit_kph(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def illumination(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def rain(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def fog(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def traffic_density(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def pedestrian_nearby(world: carla.World) -> Optional[bool]:
+    raise NotImplementedError()
+
+
+
+def scenario_measure(key: str):
+    """The probe reading the running scenario's measure *key* (Python's returns
+    a ScenarioMeasure; its values are the measure's, numbers for the built-in
+    ones)."""
+    def probe(world: carla.World) -> Optional[float]:
+        raise NotImplementedError()
+    return probe

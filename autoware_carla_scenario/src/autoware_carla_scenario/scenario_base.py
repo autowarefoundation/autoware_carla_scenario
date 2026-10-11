@@ -5,7 +5,17 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Union,
+)
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
@@ -16,6 +26,7 @@ import typesafe_carla.carla as carla
 from .actions import BaseAction, RoutingAction
 from .conditions import BaseCondition, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
+from .coverage.items import CoverItem, CrossItem, SamplingEvent
 from .coordinate import (
     CarlaWorldPose,
     GroundProjectionConfig,
@@ -28,6 +39,7 @@ from .entity._spawn import SpawnLocation, SpawnTransform  # noqa: F401 - re-expo
 from .entity.ego_config import EgoConfig
 from .entity.registry import register_entity as _register_entity
 from .entity.vehicle_entity import VehicleEntity
+from .measures import BUILT_IN_MEASURES, Measure
 from .traffic.base import TrafficBackend
 
 logger = logging.getLogger(__name__)
@@ -119,6 +131,9 @@ class BaseScenario(ABC):
         self._pass_conditions: List[BaseCondition] = []
         self._fail_conditions: List[BaseCondition] = []
         self._spectator_camera_config: Optional[SpectatorCameraConfig] = None
+        self._cover_items: List[CoverItem] = []
+        self._cross_items: List[CrossItem] = []
+        self._measures: dict[str, Measure] = dict(BUILT_IN_MEASURES)
 
     # ------------------------------------------------------------------
     # Ego construction
@@ -612,6 +627,225 @@ class BaseScenario(ABC):
         self._fail_conditions.append(condition)
 
     # ------------------------------------------------------------------
+    # Coverage
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Measures
+    # ------------------------------------------------------------------
+
+    def register_measure(
+        self,
+        key: str,
+        read: Callable[["carla.World"], Any],
+        *,
+        unit: str = "",
+        text: str = "",
+    ) -> None:
+        """Measure *key* with *read*: add a measure, or replace a built-in one.
+
+        Every scenario has the built-in measures
+        (:data:`~autoware_carla_scenario.measures.BUILT_IN_MEASURES`), which read
+        the world generically.  A scenario that knows better -- which actor is
+        its cut-in vehicle -- replaces one under the same key, so an ODD that
+        maps its taxonomy onto the key reads the better value without knowing
+        the scenario.  A key of its own names something only it sets up.
+
+        Args:
+            key: The measure's key, e.g.
+                :data:`~autoware_carla_scenario.measures.VEHICLE_AHEAD_GAP_M`.
+            read: Reads it from the world; ``None`` when there is nothing to
+                read.
+            unit: The unit it is read in -- a built-in key's own unit when
+                replacing one.
+            text: A description.
+        """
+        if not key:
+            raise ValueError("register_measure(): key must not be empty")
+        from .odd.units import normalize_unit  # noqa: PLC0415
+
+        built_in = BUILT_IN_MEASURES.get(key)
+        if (
+            built_in is not None
+            and unit
+            and normalize_unit(unit) != normalize_unit(built_in.unit)
+        ):
+            raise ValueError(
+                f"register_measure({key}): the built-in measure is in "
+                f"{built_in.unit!r}, not {unit!r}"
+            )
+        if built_in is not None:
+            unit = built_in.unit
+        self._measures[key] = Measure(key, read, unit, text)
+
+    def _restore_measures(self) -> None:
+        """Back to the measures the scenario had before its first attempt.
+
+        Called by the runner before every attempt: the first remembers them,
+        so a measure ``setup()`` registered -- one reading that attempt's NPC,
+        say -- does not outlive it into a retry, while those registered in
+        ``__init__`` stay.
+        """
+        initial = getattr(self, "_initial_measures", None)
+        if initial is None:
+            self._initial_measures = dict(self._measures)
+        else:
+            self._measures = dict(initial)
+
+    def measure(self, key: str, world: "carla.World") -> Any:
+        """This scenario's measure *key* in *world*.
+
+        ``None`` when there is nothing to read, when the scenario does not
+        measure *key*, or when the measure raised.
+        """
+        found = self._measures.get(key)
+        if found is None:
+            return None
+        try:
+            return found.read(world)
+        except Exception:
+            logger.debug("measure %s raised", key, exc_info=True)
+            return None
+
+    @property
+    def measures(self) -> dict[str, Measure]:
+        """The scenario's measures, built-in and its own, by key."""
+        return dict(self._measures)
+
+    def register_cover(
+        self,
+        name: str,
+        expression: Callable[["carla.World"], Any],
+        *,
+        unit: str = "",
+        range: Optional[tuple[float, float]] = None,
+        every: Optional[float] = None,
+        buckets: Optional[Sequence[float]] = None,
+        values: Optional[Iterable[Any]] = None,
+        ignore: Optional[Callable[[Any], bool]] = None,
+        event: Union[SamplingEvent, BaseCondition] = SamplingEvent.END,
+        text: str = "",
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
+    ) -> None:
+        """Declare a cover item: a value sampled during the run, in buckets.
+
+        The counterpart of ``cover()`` in OpenSCENARIO DSL.  On each *event*
+        the runner calls *expression* with the world and counts a hit in the
+        bucket the value falls in; ``scenario-coverage`` merges the hits of
+        many runs and lists the buckets none of them hit.  An expression that
+        returns ``None`` (or raises) has taken no sample.
+
+        Give exactly one of:
+
+        * *range* and *every* -- equal buckets, ``range=(10, 130), every=10``
+          making twelve;
+        * *buckets* -- explicit edges, ``N`` of them making ``N - 1`` buckets;
+        * *values* -- one bucket per value: an enum class, ``[False, True]``,
+          a list of strings.
+
+        Each numeric bucket holds its lower edge, and the last its upper edge
+        too.  A value outside every bucket is counted apart, as out of range.
+
+        Args:
+            name: The item's name, unique within the scenario.
+            expression: Reads the value from the world.
+            unit: The unit *expression* returns, for the report.  Nothing is
+                converted.
+            range: ``(low, high)`` of the buckets made with *every*.
+            every: The width of each bucket over *range*.
+            buckets: Explicit bucket edges, ascending.
+            values: The values, one bucket each.
+            ignore: Called with each sampled value; a sample it returns true
+                for is left out.
+            event: When to sample: a :class:`SamplingEvent` (``END`` by
+                default, as in the DSL; ``START``; ``TICK`` for every tick), or
+                a :class:`BaseCondition`, to sample each time it becomes
+                satisfied.  A condition is checked once per tick for this, so
+                pass one that is not also a pass or fail condition.
+            text: A description for the report.
+            target: What a bucket needs to count as covered, in *cover_by*.
+            cover_by: What *target* counts: ``"hits"`` (samples, the
+                default), or for a ``TICK`` item ``"seconds"`` spent in the
+                bucket, ``"meters"`` the ego drove in it, or ``"entries"``
+                into it.
+            min_stay: For a ``TICK`` item: stays in a bucket shorter than
+                this many seconds do not count towards *target*.
+        """
+        self._require_unused_coverage_name(name)
+        self._cover_items.append(
+            CoverItem(
+                name=name,
+                expression=expression,
+                unit=unit,
+                range=range,
+                every=every,
+                buckets=buckets,
+                values=values,
+                ignore=ignore,
+                event=event,
+                text=text,
+                target=target,
+                cover_by=cover_by,
+                min_stay=min_stay,
+            )
+        )
+
+    def register_cross(
+        self,
+        name: str,
+        items: Sequence[str],
+        *,
+        text: str = "",
+        target: float = 1,
+        cover_by: str = "hits",
+        min_stay: Optional[float] = None,
+    ) -> None:
+        """Declare cross coverage of cover items already registered.
+
+        Every combination of the items' buckets is a cell, hit when all the
+        items hit those buckets on the same sample -- ``cover(name, items:
+        [...])`` in OpenSCENARIO DSL.  The items must share their *event*.
+
+        Args:
+            name: The cross's name, unique within the scenario.
+            items: Names of cover items registered with :meth:`register_cover`.
+            text: A description for the report.
+            target: What a cell needs to count as covered, in *cover_by*.
+            cover_by: As for :meth:`register_cover`.
+            min_stay: As for :meth:`register_cover`.
+        """
+        self._require_unused_coverage_name(name)
+        by_name = {i.name: i for i in self._cover_items}
+        missing = [n for n in items if n not in by_name]
+        if missing:
+            raise ValueError(
+                f"register_cross({name!r}): no cover item named {missing}; "
+                "register the items with register_cover() first"
+            )
+        self._cross_items.append(
+            CrossItem(
+                name=name,
+                items=[by_name[n] for n in items],
+                text=text,
+                target=target,
+                cover_by=cover_by,
+                min_stay=min_stay,
+            )
+        )
+
+    def _require_unused_coverage_name(self, name: str) -> None:
+        if name.startswith("odd."):
+            raise ValueError(
+                f"coverage: {name!r}: names starting with 'odd.' are the ODD's"
+            )
+        taken = {i.name for i in self._cover_items}
+        taken |= {c.name for c in self._cross_items}
+        if name in taken:
+            raise ValueError(f"coverage: {name!r} is already registered")
+
+    # ------------------------------------------------------------------
     # Convenience helpers for common post-tick patterns
     # ------------------------------------------------------------------
 
@@ -705,6 +939,23 @@ class BaseScenario(ABC):
     # ------------------------------------------------------------------
     # Initial speed (called by ScenarioRunner after warm-up)
     # ------------------------------------------------------------------
+
+    def initial_speeds_mps(
+        self, ego_actor: Optional["carla.Actor"]
+    ) -> Dict[int, float]:
+        """The speed each vehicle starts the scenario at, by actor id, in m/s.
+
+        What :meth:`set_initial_speed` will apply: the registered entities and
+        the ego.  A vehicle not named starts still.
+        """
+        speeds = {
+            entity.actor.id: entity.initial_speed_kmh / 3.6
+            for entity in self._entities
+            if entity.actor is not None and entity.initial_speed_kmh > 0.0
+        }
+        if ego_actor is not None and self.ego_config.initial_speed_kmh > 0.0:
+            speeds[ego_actor.id] = self.ego_config.initial_speed_kmh / 3.6
+        return speeds
 
     def set_initial_speed(self, ego_actor: "carla.Actor") -> None:
         """Apply initial speed to all registered entities and the ego vehicle.

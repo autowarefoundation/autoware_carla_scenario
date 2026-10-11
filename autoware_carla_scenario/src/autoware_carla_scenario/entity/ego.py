@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, FrozenSet, Optional
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -72,6 +72,24 @@ class EgoVehicle(BackendDriven):
         return True
 
     @property
+    def carried_actor_ids(self) -> FrozenSet[int]:
+        """The vehicles the entity itself moves while it is not yet initialized.
+
+        :class:`ScenarioRunner` holds every vehicle on its brakes through the wait
+        for :attr:`is_initialized`; an entity that carries vehicles somewhere in
+        that time (a run-up onto the first frame) names them, and the hold
+        spares them.
+        """
+        return frozenset()
+
+    def set_initial_speeds(self, speeds_mps: Mapping[int, float]) -> None:
+        """Be told the speed each vehicle starts the scenario at, by actor id.
+
+        Called by :class:`ScenarioRunner` just before :meth:`on_scenario_start`.
+        Ignored here; an entity that plays the run-up to the first frame reads it.
+        """
+
+    @property
     def termination_requested(self) -> bool:
         """Whether this entity has asked to end the scenario early.
 
@@ -79,6 +97,15 @@ class EgoVehicle(BackendDriven):
         condition that fires on the same tick still decides the outcome.
         """
         return False
+
+    @property
+    def termination_reason(self) -> Optional[str]:
+        """Why this entity asked to end the scenario, when it says.
+
+        Part of the result's message when :attr:`termination_requested` ends a
+        run; ``None`` leaves the message generic.
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Public API

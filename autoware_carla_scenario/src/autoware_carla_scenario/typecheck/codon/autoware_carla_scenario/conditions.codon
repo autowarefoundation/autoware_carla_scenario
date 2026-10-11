@@ -6,7 +6,8 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only, _expect_float, _Required, _required_str
+from ._tc import (_keyword_only, _expect_float, _expect_optional_str, _Required,
+                  _required_str)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
                          _expect_optional_pose, _expect_pose_list)
 from .entity_role import EntityRole, _expect_role, _expect_optional_role
@@ -229,6 +230,16 @@ class ElapsedTimeCondition(BaseCondition):
         raise NotImplementedError()
 
 
+class TrajectoryTimeCondition(BaseCondition):
+    def __init__(self, time: float, *_kw, label: str = "trajectory_time"):
+        _keyword_only(_kw, "TrajectoryTimeCondition(): label")
+        super().__init__(label)
+
+    @property
+    def time(self) -> float:
+        raise NotImplementedError()
+
+
 class TimeoutCondition(BaseCondition):
     def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
         _keyword_only(_kw, "TimeoutCondition(): label")
@@ -283,6 +294,21 @@ class SpeedCondition(BaseCondition):
         _expect_role(entity_name)
         _expect_optional_role(reference_entity_name)
         super().__init__(_required_str(label, "SpeedCondition(): label"))
+
+
+class RouteProgressCondition(BaseCondition):
+    def __init__(self, entity_name = None, value = 0.0,
+                 rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
+                 anchor = None, tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "RouteProgressCondition(): label")
+        _expect_optional_role(entity_name)
+        _expect_float(value)
+        _expect_optional_str(anchor)
+        super().__init__(_required_str(label, "RouteProgressCondition(): label"))
+
+    @property
+    def progress(self) -> Optional[float]:
+        raise NotImplementedError()
 
 
 class RelativeSpeedCondition(BaseCondition):

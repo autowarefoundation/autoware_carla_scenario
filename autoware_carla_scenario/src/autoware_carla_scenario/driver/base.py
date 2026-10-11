@@ -2,9 +2,9 @@
 
 The scenario framework plays the *runtime* role of the alpasim contract: it owns the
 world, renders the observations, and asks a driver policy what to do next.  The policy
-runs elsewhere -- typically as a
-`carla_driver_interface <https://github.com/hakuturu583/carla_driver_interface>`_ gRPC
-server -- and this module defines the seam between the two.
+runs elsewhere -- typically as a gRPC server built on ``carla-driver-interface``, the
+policy-side package in this workspace -- and this module defines the seam between the
+two.
 
 :class:`BaseEgoDriverClient` is deliberately transport-agnostic so tests can substitute a
 fake, mirroring how :class:`~autoware_carla_scenario.sensor.base.CameraSensorBase`
@@ -21,6 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..sensor.carla_camera import CarlaCameraSensorConfig
+from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from ..utils.config import checked_options as _checked
 from .geometry import Pose, Trajectory
 
@@ -30,6 +31,7 @@ __all__ = [
     "DriveOutcome",
     "DriverCameraConfig",
     "DriverClientConfig",
+    "DriverLidarConfig",
     "EgoObservation",
 ]
 
@@ -43,8 +45,8 @@ class DriverCameraConfig:
     """One camera exposed to the driver policy.
 
     Pairs the alpasim *logical id* a policy addresses the camera by with the CARLA
-    camera parameters used to render it.  Defaults match the front-wide camera of
-    ``carla_driver_interface``'s default rig.
+    camera parameters used to render it.  Defaults match alpasim's front-wide camera,
+    which ``carla-driver-interface``'s reference policies look for.
 
     Extrinsics are relative to the vehicle's ``base_link``, in CARLA's convention
     (x forward, y right, z up, degrees).
@@ -88,11 +90,43 @@ class DriverCameraConfig:
 
 
 @dataclass(frozen=True)
+class DriverLidarConfig(CarlaLidarSensorConfig):
+    """One LiDAR mounted on the ego, its sweeps sent to the policy.
+
+    Sweeps ride in ``CarlaRendererData.lidar``, converted into the rig frame, since
+    the egodriver contract has no LiDAR submission RPC.  See
+    :class:`~autoware_carla_scenario.sensor.carla_lidar.CarlaLidarSensorConfig` for the
+    sensor fields; this adds the logical id a policy addresses the sweep by.
+    """
+
+    logical_id: str = "lidar_top"
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverLidarConfig":
+        """Return a LiDAR config built from a plain mapping (e.g. a Hydra node).
+
+        Raises:
+            ValueError: If *mapping* holds a key this config does not define.
+        """
+        return cls(**_checked(cls, mapping))
+
+
+@dataclass(frozen=True)
 class DriverClientConfig:
     """Connection and cadence settings for an external driver policy."""
 
     address: str = "localhost:50051"
     """``host:port`` of the driver's gRPC server."""
+
+    policy: Optional[str] = None
+    """A policy to serve from this process instead of dialling :attr:`address`.
+
+    A name the reference policies are registered under (``route_follower``) or
+    ``package.module:Class``. Set, the run serves it itself, once, on a free local
+    port -- one command starts everything; unset, the policy is a separate process
+    already serving at :attr:`address` (``carla-driver-interface serve``, an
+    alpasim driver, ...).
+    """
 
     timeout_s: float = 60.0
     """Per-RPC deadline in seconds."""
@@ -110,6 +144,25 @@ class DriverClientConfig:
 
     image_quality: int = 90
     """JPEG quality (1-100) for the streamed camera frames."""
+
+    lidars: Tuple[DriverLidarConfig, ...] = ()
+    """LiDARs mounted on the ego, their sweeps sent in ``CarlaRendererData.lidar``.
+
+    None by default: a sweep is megabytes per policy step and most policies read none.
+    Needs :attr:`send_renderer_data`.
+    """
+
+    warmup_s: float = 0.0
+    """Length of a run-up onto the scenario's first frame, or 0 for none.
+
+    A policy that reads a history (past LiDAR maps, past poses) has none at the
+    first step and plans as if the ego had stood still.  With a run-up, the
+    ``warmup_s`` before the first frame are played by rule: every vehicle is
+    carried along its lane, and every pedestrian in a straight line, onto its
+    first-frame pose at its initial speed, with the policy planning all the way
+    but not driving and the lights frozen.  The scenario's clock starts on
+    arrival.  Set it to the history the policy reads.
+    """
 
     route_horizon_m: float = 80.0
     """How far ahead the route sent to the policy extends."""
@@ -163,6 +216,40 @@ class DriverClientConfig:
     random_seed: int = 0
     """Seed handed to the policy in ``start_session``."""
 
+    map_dir: Optional[str] = None
+    """Where the world's map is written at scenario start, as ``<map_dir>/<map_id>/``.
+
+    A policy reads it from its own copy of the directory, by the ``map_id`` every
+    ``CarlaRendererData`` carries, and resolves ``CarlaRendererData.traffic_lights``
+    against it (``carla_driver_interface.hdmap``).  ``None`` writes no map and sends
+    no lights.  Needs roadgen (the ``map`` extra) and :attr:`send_renderer_data`.
+    """
+
+    map_formats: Tuple[str, ...] = ("lanelet2",)
+    """The formats to write, by roadgen exporter name.  The OpenDRIVE source,
+    roadgen's IR and its read trace are always written as well (empty when no
+    format is converted); a policy resolves lights through them."""
+
+    lanelet2_path: Optional[str] = None
+    """A local Lanelet2 (``.osm``) file written into the map set as its Lanelet2 map,
+    as it is, instead of the one roadgen converts from the world's OpenDRIVE.
+
+    Implies ``lanelet2`` in :attr:`map_formats`.  The file carries no roadgen
+    trace, so the stop lines a policy resolves against it hold each light's stop
+    point and OpenDRIVE lane but no lanelet ids.  roadgen is needed only for the
+    other formats :attr:`map_formats` names, if any.  Needs :attr:`map_dir`.
+    """
+
+    def __post_init__(self) -> None:
+        ids = [lidar.logical_id for lidar in self.lidars]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"LiDAR logical ids must be unique, got {ids}")
+        if self.lanelet2_path is not None and self.map_dir is None:
+            raise ValueError(
+                "driver.lanelet2_path is written into the map set under "
+                "driver.map_dir, which is unset; set map_dir too"
+            )
+
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverClientConfig":
         """Return a client config built from a plain mapping (e.g. a Hydra node).
@@ -180,6 +267,14 @@ class DriverClientConfig:
             values["cameras"] = tuple(
                 DriverCameraConfig.from_mapping(camera) for camera in cameras
             )
+        lidars = values.pop("lidars", None)
+        if lidars is not None:
+            values["lidars"] = tuple(
+                DriverLidarConfig.from_mapping(lidar) for lidar in lidars
+            )
+        formats = values.pop("map_formats", None)
+        if formats is not None:
+            values["map_formats"] = tuple(formats)
         return cls(**values)
 
 

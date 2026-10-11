@@ -38,6 +38,8 @@ from .entity_existence import EntityExistenceCondition
 from .not_condition import NotCondition
 from .or_condition import OrCondition
 from .persistent import PersistentCondition
+from .route_progress import RouteProgressCondition
+from .trajectory_time import TrajectoryTimeCondition
 from .lane_change_settled import LaneChangeSettledCondition
 from .sticky import StickyCondition
 from .timeout import TimeoutCondition
@@ -57,6 +59,7 @@ __all__ = [
     "ConditionStatus",
     "compare",
     "ElapsedTimeCondition",
+    "TrajectoryTimeCondition",
     "DistanceCoordinateSystem",
     "EntityDistanceCondition",
     "EntityExistenceCondition",
@@ -69,6 +72,7 @@ __all__ = [
     "PersistentCondition",
     "RelativeDistanceType",
     "RelativeSpeedCondition",
+    "RouteProgressCondition",
     "ScalarComparisonRule",
     "ScenarioResult",
     "SpeedCondition",

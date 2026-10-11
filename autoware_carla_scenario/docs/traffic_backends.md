@@ -114,6 +114,7 @@ own hooks:
 | `adopt(entity)` | As the ego and each authored NPC join the run. The vehicle stays the scenario's. |
 | `start(world, skip_actor_ids=…)` | After warm-up and the init phase, immediately before the scenario clock starts. |
 | `tick(world, elapsed)` | Once per `world.tick()`. A backend driving a second simulator steps it exactly once here. |
+| `release(entity, world)` | When an action takes a vehicle over (a `FollowTrajectoryAction`). Stop driving it; may come before or after `start`. |
 | `close()` | During teardown, while the world is still alive. Called even when the run failed. |
 
 One backend serves a whole queue: `ScenarioQueue` builds one runner, so over a
@@ -201,6 +202,16 @@ values. A backend that has no answer for one simply does not override it: the
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what `LaneChangeAction` sees when it asks whether the
 manoeuvre finished.
+
+### Handing a vehicle back
+
+`release(entity, world)` is the one-authority-per-vehicle rule of
+`skip_actor_ids`, applied during the run: an action that drives a vehicle
+itself -- `FollowTrajectoryAction` places it on a trajectory every tick -- asks
+the backend to stop driving it first. The TrafficManager takes it off autopilot
+(and never puts it on, if `start` has not run yet); SUMO keeps it in its own
+simulation but publishes it from CARLA, as it does the ego. The base class does
+nothing, which is right for a backend that never drives the scenario's vehicles.
 
 ## Using a backend from Python
 

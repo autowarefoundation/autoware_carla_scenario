@@ -37,11 +37,18 @@ from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
 from .scenario_base import BaseScenario, EgoConfig
 
 if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
+
     from .coordinate import OpenDrivePose
+    from .route.model import RouteMatch
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DeclarativeScenario", "DeclarativeScenarioConfig"]
+__all__ = ["DeclarativeScenario", "DeclarativeScenarioConfig", "TURN_LOOKAHEAD_M"]
+
+#: How far (m) before a route junction an ego the TrafficManager drives is told
+#: which way to turn there -- within the turn action's own search distance.
+TURN_LOOKAHEAD_M = 100.0
 
 
 @dataclass
@@ -70,6 +77,10 @@ class DeclarativeScenarioConfig:
             an action or a condition names: a document may leave that lanelet to
             the constraint sweeper too, and the sweeper only knows how to write
             a Hydra key.
+        route: A logical scenario's route match, as ``scenario-expand``
+            writes it (:meth:`~autoware_carla_scenario.route.model.RouteMatch.to_config`).
+            Empty -- a run that was not expanded -- searches the map the run
+            is on and takes the document's ``route.match_index``.
     """
 
     name: str = "declarative"
@@ -77,6 +88,7 @@ class DeclarativeScenarioConfig:
     timeout_seconds: Optional[float] = None
     spawn_overrides: dict[str, Any] = field(default_factory=dict)
     param_overrides: dict[str, Any] = field(default_factory=dict)
+    route: dict[str, Any] = field(default_factory=dict)
 
 
 class DeclarativeScenario(BaseScenario):
@@ -250,8 +262,119 @@ class DeclarativeScenario(BaseScenario):
                 ", ".join(c.name for c in controllers),
             )
 
+    def _prepare_route(self) -> None:
+        """Choose a logical scenario's route, and put the ego on it.
+
+        The match an expansion wrote (``scenario.route``) is taken as it is;
+        the ego's spawn and goal came with it.  Without one the route search
+        runs on the loaded map and match ``route.match_index`` is taken, the
+        ego spawning ``ego_spawn_s`` along it and -- unless the run named a
+        goal -- sent to its end.  Either way the route becomes the scenario's
+        (:func:`~autoware_carla_scenario.route.set_scenario_route`), and the ego
+        is sent along it: an Autoware ego through the route's lanelets as
+        waypoints, an ego the TrafficManager drives by a turn at each of the
+        route's junctions as it comes to it.
+
+        Raises:
+            ValueError: If the map has no matching route, or fewer matches than
+                ``match_index`` asks for.
+        """
+        from .coordinate.map_manager import MapManager  # noqa: PLC0415
+        from .route import clear_scenario_route, set_scenario_route  # noqa: PLC0415
+        from .route.model import RouteMatch, parse_route_search  # noqa: PLC0415
+
+        clear_scenario_route()
+        search = self._document.route
+        if search is None:
+            return
+        from .route.frame import RouteFrame, ego_placement  # noqa: PLC0415
+
+        manager = MapManager.get_instance()
+        lanelet_map, routing_graph = manager.lanelet_map, manager.routing_graph
+        spec = parse_route_search(search.to_sweep_dict())
+        match = RouteMatch.from_config(self._config.route or {})
+        if match is None:
+            from .route.search import find_route_matches  # noqa: PLC0415
+
+            matches = find_route_matches(spec, lanelet_map, routing_graph)
+            if not matches:
+                raise ValueError(
+                    f"DeclarativeScenario '{self._document.id}': no route of "
+                    "this map matches the document's route search"
+                )
+            if spec.match_index >= len(matches):
+                raise ValueError(
+                    f"DeclarativeScenario '{self._document.id}': route.match_index "
+                    f"is {spec.match_index}, but this map has {len(matches)} "
+                    "matching route(s)"
+                )
+            match = matches[spec.match_index]
+            frame = RouteFrame(match, lanelet_map, routing_graph)
+            (spawn_id, spawn_s), goal = ego_placement(
+                frame, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
+            )
+            self._spawn_pose = Lanelet2Pose(lanelet_id=spawn_id, s=spawn_s)
+            if goal is not None and self.goal_pose is None:
+                self.goal_pose = Lanelet2Pose(lanelet_id=goal[0], s=goal[1])
+        set_scenario_route(match, lanelet_map, routing_graph)
+        logger.info(
+            "DeclarativeScenario '%s': route match %d through lanelets %s "
+            "(%.1f m, %d segment(s))",
+            self._document.id,
+            match.index,
+            list(match.lanelet_ids),
+            match.length,
+            len(match.segments),
+        )
+        self._send_ego_along(match)
+
+    def _send_ego_along(self, match: "RouteMatch") -> None:
+        """Make the route the ego's: waypoints for Autoware, turns for the rest."""
+        if self.ego_requires_goal:
+            if self.waypoint_poses:
+                return
+            ids = list(match.lanelet_ids)
+            spawn = self._spawn_pose.lanelet_id if self._spawn_pose else None
+            goal = self.goal_pose.lanelet_id if self.goal_pose else None
+            first = ids.index(spawn) + 1 if spawn in ids else 0
+            last = ids.index(goal) if goal in ids else len(ids)
+            self.waypoint_poses = [
+                Lanelet2Pose(lanelet_id=lanelet_id, s=0.0)
+                for lanelet_id in ids[first:last]
+            ]
+            return
+        from .conditions import RouteProgressCondition  # noqa: PLC0415
+        from .actions import TurnAction  # noqa: PLC0415
+        from .constants import EGO_ROLE_NAME  # noqa: PLC0415
+        from .traffic import TurnDirection  # noqa: PLC0415
+
+        previous_exit = 0.0
+        for index, junction in enumerate(match.junctions):
+            if junction.turn not in ("left", "right", "straight"):
+                logger.warning(
+                    "Route junction %d turns both ways (%s); the ego is not "
+                    "steered through it",
+                    index,
+                    junction.turn,
+                )
+                previous_exit = junction.end
+                continue
+            arm_at = max(previous_exit, junction.start - TURN_LOOKAHEAD_M)
+            self.register_pre_tick(
+                TurnAction(
+                    EGO_ROLE_NAME,
+                    TurnDirection(junction.turn),
+                    condition=RouteProgressCondition(
+                        EGO_ROLE_NAME, arm_at, label=f"route_junction_{index}_ahead"
+                    ),
+                    label=f"route_turn_{index}",
+                )
+            )
+            previous_exit = junction.end
+
     def setup(self) -> None:
         """Spawn the entities and register the document's actions and assertions."""
+        self._prepare_route()
         od_pose: OpenDrivePose = self._setup_ego_spawn()
         logger.info(
             "DeclarativeScenario '%s': ego spawned on OpenDRIVE road '%s'",
@@ -310,18 +433,48 @@ class DeclarativeScenario(BaseScenario):
     # Entity spawning
     # ------------------------------------------------------------------
 
+    def _parked(self, entity: Entity) -> bool:
+        """Whether *entity* waits out of the world with no lanelet of its own.
+
+        A logical scenario's road users are brought in by their actions, on
+        whatever map the route was found; the lanelet a hidden one spawns on
+        would name a lanelet of one map only, so it is not asked for.
+        """
+        return entity.spawn.hidden and (
+            self._document.route is not None or entity.spawn.lanelet_id <= 0
+        )
+
+    def _parking_transform(self, entity: Entity) -> "carla.Transform":
+        """Where a parked entity waits: under the ego's spawn, 10 m apart."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+        from .coordinate.transform import to_carla_world  # noqa: PLC0415
+
+        assert self._spawn_pose is not None  # noqa: S101 -- set before NPCs spawn
+        base = to_carla_world(self._spawn_pose)
+        slot = 1 + [e.id for e in self._compiled.npcs].index(entity.id)
+        return carla.Transform(
+            carla.Location(x=base.x + 10.0 * slot, y=base.y, z=base.z - HIDDEN_DEPTH_M),
+            carla.Rotation(yaw=base.yaw),
+        )
+
     def _spawn_npcs(self) -> None:
         """Spawn every non-ego entity at its document spawn position."""
         world = self.world
         for entity in self._compiled.npcs:
             if entity.kind == "pedestrian":
                 walker = self._build_pedestrian(entity, world)
-                walker.spawn(world)
+                actor = walker.spawn(world)
                 self.register_pedestrian(walker)
             else:
                 npc_entity = self._build_npc(entity, world)
-                npc_entity.spawn(world)
+                actor = npc_entity.spawn(world)
                 self.register_entity(npc_entity)
+            if entity.spawn.hidden:
+                # Under the map, where it would otherwise fall for as long as
+                # it waits to be brought in.
+                actor.set_simulate_physics(False)
             logger.info(
                 "Spawned %s %s (%s) on lanelet %d at s=%.1f",
                 entity.kind,
@@ -348,12 +501,17 @@ class DeclarativeScenario(BaseScenario):
         from .coordinate.transform import to_carla_world  # noqa: PLC0415
 
         del world
+        transform = (
+            self._parking_transform(entity)
+            if self._parked(entity)
+            else _hidden_if_asked(
+                entity, to_carla_world(_spawn_pose(entity)).to_carla_transform()
+            )
+        )
         return PedestrianEntity(
             PedestrianEntityConfig(
                 role_name=self._compiled.role_of(entity.id),
-                spawn_location=SpawnTransform(
-                    to_carla_world(_spawn_pose(entity)).to_carla_transform()
-                ),
+                spawn_location=SpawnTransform(transform),
                 walker_type=entity.vehicle_type,
             )
         )
@@ -362,6 +520,20 @@ class DeclarativeScenario(BaseScenario):
         """Return the :class:`VehicleEntity` for *entity*, snapped to the road."""
         from .coordinate.transform import to_opendrive  # noqa: PLC0415
 
+        if self._parked(entity):
+            return VehicleEntity(
+                VehicleEntityConfig(
+                    role_name=self._compiled.role_of(entity.id),
+                    spawn_location=SpawnTransform(self._parking_transform(entity)),
+                    vehicle_type=entity.vehicle_type,
+                    initial_speed_kmh=entity.initial_speed_kmh,
+                    spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
+                    spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
+                    spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
+                    od_pose=None,
+                    ground_projection=self._ground_projection,
+                )
+            )
         pose = _spawn_pose(entity)
         # Snapped as the Lanelet2 pose it was authored as; the OpenDRIVE pose is
         # carried on to the entity only to enable the spawn retries (which
@@ -376,16 +548,34 @@ class DeclarativeScenario(BaseScenario):
                 # Deriving it a second time here is how a vehicle ends up
                 # spawned under a name no condition is watching.
                 role_name=self._compiled.role_of(entity.id),
-                spawn_location=SpawnTransform(snapped.to_carla_transform()),
+                spawn_location=SpawnTransform(
+                    _hidden_if_asked(entity, snapped.to_carla_transform())
+                ),
                 vehicle_type=entity.vehicle_type,
                 initial_speed_kmh=entity.initial_speed_kmh,
                 spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
                 spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
                 spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
-                od_pose=od_pose,
+                # Under the map nothing is in the way, so no retries either.
+                od_pose=None if entity.spawn.hidden else od_pose,
                 ground_projection=self._ground_projection,
             )
         )
+
+
+def _hidden_if_asked(entity: Entity, transform: "carla.Transform") -> "carla.Transform":
+    """*transform*, moved under the map when *entity* spawns out of the world."""
+    if not entity.spawn.hidden:
+        return transform
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+
+    location = transform.location
+    return carla.Transform(
+        carla.Location(x=location.x, y=location.y, z=location.z - HIDDEN_DEPTH_M),
+        transform.rotation,
+    )
 
 
 def _spawn_pose(entity: Entity) -> Lanelet2Pose:

@@ -1,0 +1,255 @@
+# Model of autoware_carla_scenario.trajectory (docs/typecheck.md).
+#
+# A vertex's position is a Union (Lanelet2Pose, OpenDrivePose, CarlaWorldPose,
+# MapPose, RelativeLanePose or one of the route poses), which Codon cannot store: TrajectoryVertex checks the position it
+# is given with _expect_trajectory_position and keeps only its advance condition,
+# which is all the model needs -- it is compiled, never run.
+
+from ._tc import (_expect_float, _expect_int, _expect_optional_float,
+                  _expect_optional_str, _expect_str)
+from .conditions import BaseCondition, _expect_condition, _expect_optional_condition
+from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from .entity_role import EntityRole, _expect_optional_role
+
+
+class MapPose:
+    x: float
+    y: float
+    yaw: Optional[float]
+    z: Optional[float]
+
+    def __init__(self, x: float, y: float, yaw = None, z = None):
+        self.x = x
+        self.y = y
+        self.yaw = _expect_optional_float(yaw)
+        self.z = _expect_optional_float(z)
+
+
+class RelativeLanePose:
+    ds: float
+    offset: float
+    d_lane: int
+    yaw: Optional[float]
+    entity_ref: Optional[EntityRole]
+
+    def __init__(self, ds = 0.0, offset = 0.0, d_lane: int = 0, yaw = None,
+                 entity_ref = None):
+        self.ds = _expect_float(ds)
+        self.offset = _expect_float(offset)
+        self.d_lane = d_lane
+        self.yaw = _expect_optional_float(yaw)
+        self.entity_ref = _expect_optional_role(entity_ref)
+
+
+class RouteLanePose:
+    ds: float
+    offset: float
+    d_lane: int
+    yaw: Optional[float]
+    anchor: Optional[str]
+
+    def __init__(self, ds = 0.0, offset = 0.0, d_lane: int = 0, yaw = None,
+                 anchor = None):
+        self.ds = _expect_float(ds)
+        self.offset = _expect_float(offset)
+        self.d_lane = d_lane
+        self.yaw = _expect_optional_float(yaw)
+        self.anchor = _expect_optional_str(anchor)
+
+
+class RouteOppositePose:
+    ds: float
+    lane: int
+    offset: float
+    yaw: Optional[float]
+    anchor: Optional[str]
+
+    def __init__(self, ds = 0.0, lane: int = 1, offset = 0.0, yaw = None,
+                 anchor = None):
+        self.ds = _expect_float(ds)
+        self.lane = lane
+        self.offset = _expect_float(offset)
+        self.yaw = _expect_optional_float(yaw)
+        self.anchor = _expect_optional_str(anchor)
+
+
+class RouteCrossingPose:
+    junction: int
+    approach: str
+    distance: float
+    turn: Optional[str]
+    offset: float
+    yaw: Optional[float]
+
+    def __init__(self, junction: int = 0, approach: str = "left", distance = 0.0,
+                 turn = None, offset = 0.0, yaw = None):
+        self.junction = junction
+        self.approach = approach
+        self.distance = _expect_float(distance)
+        self.turn = _expect_optional_str(turn)
+        self.offset = _expect_float(offset)
+        self.yaw = _expect_optional_float(yaw)
+
+
+class RouteCrosswalkPose:
+    junction: int
+    leg: str
+    side: str
+    along: float
+    yaw: Optional[float]
+
+    def __init__(self, junction: int = 0, leg: str = "entry", side: str = "right",
+                 along = 0.0, yaw = None):
+        self.junction = junction
+        self.leg = leg
+        self.side = side
+        self.along = _expect_float(along)
+        self.yaw = _expect_optional_float(yaw)
+
+
+class RouteRoadsidePose:
+    ds: float
+    side: str
+    kerb_distance: float
+    yaw: Optional[float]
+    anchor: Optional[str]
+
+    def __init__(self, ds = 0.0, side: str = "left", kerb_distance = 0.5, yaw = None,
+                 anchor = None):
+        self.ds = _expect_float(ds)
+        self.side = side
+        self.kerb_distance = _expect_float(kerb_distance)
+        self.yaw = _expect_optional_float(yaw)
+        self.anchor = _expect_optional_str(anchor)
+
+
+def _expect_trajectory_position(position):
+    """A TrajectoryPosition argument."""
+    if isinstance(position, MapPose):
+        pass
+    elif isinstance(position, RelativeLanePose):
+        pass
+    elif isinstance(position, RouteLanePose):
+        pass
+    elif isinstance(position, RouteOppositePose):
+        pass
+    elif isinstance(position, RouteCrossingPose):
+        pass
+    elif isinstance(position, RouteCrosswalkPose):
+        pass
+    elif isinstance(position, RouteRoadsidePose):
+        pass
+    elif isinstance(position, Lanelet2Pose):
+        pass
+    elif isinstance(position, OpenDrivePose):
+        pass
+    elif isinstance(position, CarlaWorldPose):
+        pass
+    else:
+        compile_error("expected a trajectory position: a MapPose, a RelativeLanePose, "
+                      "a route pose (RouteLanePose, RouteOppositePose, "
+                      "RouteCrossingPose, RouteCrosswalkPose, RouteRoadsidePose), "
+                      "a Lanelet2Pose, an OpenDrivePose or a CarlaWorldPose")
+
+
+class TrajectoryVertex:
+    advance: Optional[BaseCondition]
+
+    def __init__(self, position, advance = None):
+        _expect_trajectory_position(position)
+        self.advance = _expect_optional_condition(advance)
+
+    @property
+    def time(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def gate(self) -> Optional[BaseCondition]:
+        raise NotImplementedError()
+
+
+class Trajectory:
+    name: str
+    vertices: List[TrajectoryVertex]
+    closed: bool
+
+    def __init__(self, name: str, vertices, closed: bool = False):
+        self.vertices = List[TrajectoryVertex]()
+        for vertex in vertices:
+            self.vertices.append(_expect_vertex(vertex))
+        self.name = name
+        self.closed = closed
+
+    @property
+    def is_timed(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def has_times(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def is_relative(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def is_gated(self) -> bool:
+        raise NotImplementedError()
+
+    def gated(self, advance) -> Trajectory:
+        """advance: a mapping of vertex index to its departure condition."""
+        for index, condition in advance.items():
+            vertex_index: int = index
+            _expect_condition(condition)
+        raise NotImplementedError()
+
+
+def _expect_vertex(vertex: TrajectoryVertex) -> TrajectoryVertex:
+    return vertex
+
+
+@tuple
+class ReferenceContext:
+    value: str
+    ABSOLUTE: ClassVar[ReferenceContext] = ReferenceContext("absolute")
+    RELATIVE: ClassVar[ReferenceContext] = ReferenceContext("relative")
+
+
+class TrajectoryTiming:
+    domain: ReferenceContext
+    scale: float
+    offset: float
+
+    def __init__(self, domain: ReferenceContext = ReferenceContext("relative"),
+                 scale: float = 1.0, offset: float = 0.0):
+        self.domain = domain
+        self.scale = scale
+        self.offset = offset
+
+    def trajectory_time(self, scenario_time: float, action_start: float) -> float:
+        raise NotImplementedError()
+
+
+@tuple
+class TrajectoryFollowingMode:
+    value: str
+    POSITION: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("position")
+    FOLLOW: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("follow")
+
+
+def _expect_optional_timing(timing) -> Optional[TrajectoryTiming]:
+    """An Optional[TrajectoryTiming] argument."""
+    if isinstance(timing, None):
+        return None
+    elif isinstance(timing, Optional[NoneType]):
+        return None
+    elif isinstance(timing, Optional):
+        if timing is None:
+            return None
+        return _expect_timing(unwrap(timing))
+    else:
+        return _expect_timing(timing)
+
+
+def _expect_timing(timing: TrajectoryTiming) -> TrajectoryTiming:
+    return timing

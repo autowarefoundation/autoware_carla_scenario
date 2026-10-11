@@ -75,6 +75,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Quick Start: quickstart.md
   - Installation: installation.md
   - Tutorial: tutorial.md
   - Usage: usage.md
@@ -88,8 +89,13 @@ nav:
       - Pedestrian Dart-out: scenarios/pedestrian_dart_out.md
       - Cut-in: scenarios/cut_in.md
   - HD Maps: maps.md
+  - Autoware as the Ego: autoware.md
   - External Driver Interface: driver_interface.md
   - Traffic Backends: traffic_backends.md
+  - Trajectories and Recorded-Scene Replay: trajectory.md
+  - Logical Scenarios from Routes: logical_scenarios.md
+  - Coverage: coverage.md
+  - ODD: odd.md
   - Static Check: typecheck.md
   - Standalone Binaries: standalone.md
   - Container Image: docker.md

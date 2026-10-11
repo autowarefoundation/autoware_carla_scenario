@@ -242,7 +242,10 @@ Three rules make it readable:
   how much later is not on screen because the document does not know.
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
   the action it fires and joined to it by a solid line, so cause and effect are
-  next to each other instead of being correlated across the screen.
+  next to each other instead of being correlated across the screen. A
+  *Follow Trajectory* card can also hold conditions on its vertices --
+  [waypoint conditions](trajectory.md#waypoint-conditions), edited in its
+  inspector with the same condition controls.
 * **One actor reacting to another is a reference, not a coincidence.**
   "Swerve once NPC1 has cut in" is a `Lane Change` clip on the ego track whose
   trigger is an **Action state** condition naming NPC1's cut-in and the state
@@ -538,6 +541,20 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
+## A logical scenario: the route search
+
+A document may describe the ego's drive as a pattern of road instead of
+lanelets -- a [logical scenario](logical_scenarios.md). The scenario inspector's
+**Route search** section lists the pattern one segment per line ("lane 30-60 m,
+opposite lane: yes", "junction, turn left, traffic light: yes") with where the
+ego spawns and is sent, and edits it as the YAML the document stores (an empty
+box removes it; a malformed one is refused with the reason). A *Follow
+Trajectory* card's **Path** then offers *Along the scenario's route*, whose
+**Route vertices** are edited as text, one `kind key=value ...` per line, and
+the **Route progress** condition is offered for triggers, assertions and
+waypoint conditions. **Appear at the first vertex when the action starts**
+(`appear_on_start`) brings a hidden entity in.
+
 ## Ego: who drives, and where to
 
 The ego's inspector opens with **Driven by** — the stack that drives it, exported
@@ -706,9 +723,9 @@ wheel with no matching tag -- export from a matching machine instead.
 
 The interpreter is not that kind of constraint. Resolution is done once per
 interpreter the package supports, all into the same directory. *Which*
-interpreters those are is the CI-tested range -- 3.10, 3.11 and 3.12 -- narrowed
+interpreters those are is the CI-tested range -- 3.10 through 3.14 -- narrowed
 to what the package's `requires-python` admits; the package inherits the
-framework's, so normally all three. The pure-Python wheels are shared between
+framework's, so normally all five. The pure-Python wheels are shared between
 the passes and the compiled ones sit side by side with their own tag, so pip
 installs whichever matches. That is what lets one export serve ROS 2 Humble,
 whose Python is 3.10, and Jazzy, whose Python is 3.12: the alternative is a
@@ -750,12 +767,12 @@ The manifest records only values that were actually observed:
 ```yaml
 format_version: 3
 scenario: {id: cut_in, title: Cut in, document_version: 1, package: cut-in-scenario}
-runtime: {python: 3.12.10, uv: 0.12.0, requires_python: '>=3.10,<3.13'}
+runtime: {python: 3.12.10, uv: 0.12.0, requires_python: '>=3.10,<3.15'}
 wheelhouse:
   directory: cut_in_scenario_wheelhouse
   install: pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
   wheels: 104
-  python: ['3.10', '3.11', '3.12']
+  python: ['3.10', '3.11', '3.12', '3.13', '3.14']
 autoware_carla_scenario:
   source: git
   repository: https://github.com/hakuturu583/autoware_carla_scenario

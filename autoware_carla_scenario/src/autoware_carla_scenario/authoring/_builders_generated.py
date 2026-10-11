@@ -41,6 +41,7 @@ __all__ = [
     "build_entity_lane_of_condition",
     "build_entity_lane_position_condition",
     "build_entity_road_position_condition",
+    "build_route_progress_condition",
     "build_speed_condition",
     "build_standstill_condition",
     "build_temporary_stop_condition",
@@ -58,12 +59,14 @@ __all__ = [
     "build_traffic_signal_controller_condition",
     "build_timeout_condition",
     "build_traffic_signal_condition",
+    "build_trajectory_time_condition",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
     "build_traffic_sink_action",
     "build_traffic_source_action",
     "build_walk_straight_action",
+    "build_follow_trajectory_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
@@ -342,6 +345,25 @@ def build_entity_road_position_condition(
         entity_name=str(params["entity"]),
         position=position,
         rules=rules,
+        label=compiled.label,
+    )
+
+
+def build_route_progress_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`RouteProgressCondition`."""
+    from ..conditions import RouteProgressCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    return RouteProgressCondition(
+        entity_name=(str(params["entity"]) if params["entity"] is not None else None),
+        value=params["value"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        anchor=(str(params["anchor"]) if params["anchor"] is not None else None),
         label=compiled.label,
     )
 
@@ -685,6 +707,21 @@ def build_traffic_signal_condition(
     )
 
 
+def build_trajectory_time_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TrajectoryTimeCondition`."""
+    from ..conditions import TrajectoryTimeCondition  # noqa: PLC0415
+
+    params = compiled.params
+    return TrajectoryTimeCondition(
+        time=params["time"],
+        label=compiled.label,
+    )
+
+
 def build_traffic_signal_controller_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -832,6 +869,53 @@ def build_walk_straight_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+    )
+
+
+def build_follow_trajectory_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`FollowTrajectoryAction`."""
+    from ..actions import FollowTrajectoryAction  # noqa: PLC0415
+    from ..trajectory.authoring import authored_trajectory  # noqa: PLC0415
+    from .builders import instantiate_advance_conditions  # noqa: PLC0415
+    from ..trajectory.authoring import authored_timing  # noqa: PLC0415
+    from ..trajectory.model import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    trajectory = authored_trajectory(
+        path_source=params["path_source"],
+        vertices=params["vertices"],
+        lanelet_ids=params["lanelet_ids"],
+        speed_kmh=params["speed_kmh"],
+        lateral_offset_m=params["lateral_offset_m"],
+        relative_vertices=params["relative_vertices"],
+        reference_entity=params["reference_entity"],
+        route_vertices=params["route_vertices"],
+        advance=instantiate_advance_conditions(compiled, ctx),
+    )
+    time_reference = authored_timing(
+        time_domain=params["time_domain"],
+        scale=params["time_scale"],
+        offset=params["time_offset"],
+    )
+    return FollowTrajectoryAction(
+        entity_name=compiled.actor_role,
+        trajectory=trajectory,
+        time_reference=time_reference,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+        initial_distance_offset=params["initial_distance_offset"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        hidden_outside_trajectory=params["hidden_outside_trajectory"],
+        speed=params["speed_ms"],
+        appear_on_start=params["appear_on_start"],
     )
 
 

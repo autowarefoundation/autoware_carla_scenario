@@ -118,7 +118,7 @@ cp "${framework_dir}/uv.lock" "${out_dir}/framework/uv.lock"
 # member missed here would ship an image quietly lacking that wheel.
 resolve_declared_members() {
     local interpreter
-    for interpreter in python3 python3.13 python3.12 python3.11; do
+    for interpreter in python3 python3.14 python3.13 python3.12 python3.11; do
         command -v "${interpreter}" >/dev/null 2>&1 || continue
         "${interpreter}" -c 'import tomllib' >/dev/null 2>&1 || continue
         "${interpreter}" - "${framework_dir}" <<'PY'

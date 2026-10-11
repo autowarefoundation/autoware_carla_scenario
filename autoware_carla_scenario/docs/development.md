@@ -70,7 +70,7 @@ autoware_carla_scenario/
 # Run unit tests only (skip the `integration` marker)
 uv run pytest -v -m "not integration" autoware_carla_scenario/test/
 
-# Run integration tests too (requires a running CARLA server and CARLA_EXECUTABLE)
+# Run integration tests too (requires a running CARLA server, or one to launch: `scenario-setup` or CARLA_EXECUTABLE)
 uv run pytest -v autoware_carla_scenario/test/
 ```
 

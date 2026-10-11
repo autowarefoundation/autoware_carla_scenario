@@ -1,14 +1,21 @@
 # @package _global_
 #
-# Settings for an external driver policy, used when `ego.entity: carla_driver`.
-# The policy is expected to serve `egodriver.EgodriverService`, e.g.
-#   carla-driver-interface serve --policy route_follower --port 50051
+# Settings for a driver policy, used when `ego.entity: carla_driver`.
+# The policy serves `egodriver.EgodriverService` at `address`.
 driver:
   address: localhost:50051
+  # A policy the run serves itself, in its own process, instead of dialling
+  # `address`: `route_follower`, `constant_speed`, or `package.module:Class` for your
+  # own BaseDriver. null dials a policy serving at `address` in a process of its own:
+  #   carla-driver-interface serve --policy route_follower --port 50051
+  policy: null
   timeout_s: 60.0
   # Must be a positive integer multiple of the 0.05 s simulation step.
   policy_timestep_s: 0.1
   image_quality: 90
+  # Seconds of run-up onto the spawn pose, the policy planning but not driving,
+  # so a policy that reads a history starts with one. 0 starts it cold.
+  warmup_s: 0.0
   route_horizon_m: 80.0
   route_resolution_m: 2.0
   # null derives the rig origin offset from the vehicle's wheel physics.
@@ -35,16 +42,40 @@ driver:
       roll: 0.0
       pitch: 0.0
       yaw: 0.0
+  # LiDARs whose sweeps ride in renderer_data (rig frame), e.g.
+  #   lidars:
+  #     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
+  lidars: []
+  # Write the world's map here at scenario start (<map_dir>/<map_id>/, via roadgen:
+  # the `map` extra); every traffic light is then sent with where to stop for it.
+  map_dir: null
+  map_formats: [lanelet2]
+  # A local Lanelet2 .osm to write as the set's Lanelet2 map instead of the one
+  # roadgen converts (needs map_dir); null converts it with roadgen.
+  lanelet2_path: null
   control:
-    lookahead_gain_s: 0.9
+    lookahead_gain_s: 0.6
     min_lookahead_m: 4.0
     max_lookahead_m: 20.0
     wheelbase_m: 2.8
-    max_steer_angle_deg: 70.0
+    # CARLA 0.10 turns the wheels by about 56 deg * steer**2 (see ControlConfig).
+    max_steer_angle_deg: 56.0
+    steer_exponent: 2.0
     max_steer_rate: 4.0
-    speed_kp: 0.6
-    speed_ki: 0.15
-    speed_kd: 0.05
-    integral_limit: 1.0
-    stop_speed_mps: 0.2
+    # Integral trim on the measured yaw rate; 0 steers open-loop.
+    yaw_rate_ki: 3.0
+    # The plan's acceleration plus a PI on its speed, in m/s², turned into pedals by the
+    # ego's powertrain model (read from its CARLA physics control).
+    speed_kp: 1.0
+    speed_ki: 0.1
+    integral_limit: 3.0
+    position_gain: 0.5
+    max_position_correction_mps: 6.0
+    # Read the plan's acceleration over this much of it, so a gentle pull-away is not a stop.
+    speed_preview_s: 1.0
+    # CARLA 0.10's MKZ pulls away at 0.25 throttle; a standing car asked to go gets at least this.
+    throttle_deadband: 0.25
+    standstill_speed_mps: 0.5
+    # A plan travelling less than this over its horizon holds the vehicle still.
+    stop_distance_m: 0.5
     stop_brake: 0.6

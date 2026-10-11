@@ -7,8 +7,10 @@ members = [
 dev = [
     "black>=25.11.0",
     # Regenerates the vendored alpasim protobuf modules; must stay on the protobuf 4.x
-    # line so the generated code matches the pinned runtime.
-    "grpcio-tools>=1.60,<1.63",
+    # line so the generated code matches the pinned runtime. That line has no wheels
+    # for 3.13+ and no longer builds there, so regenerate on 3.10-3.12; the runtime
+    # never needs it.
+    "grpcio-tools>=1.60,<1.63; python_version < '3.13'",
     # Required by starlette.testclient, which the Scenario Editor route tests
     # drive the app through.
     "httpx2>=2.12.0",
@@ -29,11 +31,13 @@ dev = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.14.0",
+    # ...and the `map` extra (driver map files) and its tests.
+    "roadgen>=0.18.0",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",
     "weasyprint>=68.0",
+    "hypothesis>=6.100",
 ]
 
 [tool.ruff]

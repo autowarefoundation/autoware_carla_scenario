@@ -15,6 +15,7 @@ overrides it when the derived value is wrong.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from typing import TYPE_CHECKING, List, Optional
@@ -32,12 +33,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AccelerationEstimate",
     "camera_extrinsics_to_rig",
     "encode_frame_jpeg",
     "ego_observation",
+    "lidar_points_to_rig",
     "rear_axle_offset",
     "route_reference_trajectory",
     "route_waypoints_in_rig",
+    "sensor_pose_in_rig",
     "to_local_pose",
     "to_local_vector",
 ]
@@ -95,9 +99,13 @@ def camera_extrinsics_to_rig(
 ) -> Pose:
     """Return a camera's ``base_link -> camera`` extrinsics as a rig-frame pose.
 
+    The pose is the camera **body**'s (x along the optical axis, y left, z up), the
+    frame a CARLA sensor is mounted in. ``rig_to_camera`` on the wire is the optical
+    frame's (``carla_driver_interface.geometry.body_to_optical`` of this pose).
+
     Camera extrinsics are configured in CARLA's convention (x forward, y right, z
-    up, degrees), whereas the pose the contract advertises as ``rig_to_camera`` is
-    right-handed (x forward, y left, z up).  Crossing that boundary is the same
+    up, degrees), whereas the rig frame is right-handed (x forward, y left, z
+    up).  Crossing that boundary is the same
     ``y`` reflection this module applies elsewhere: the translation's ``y`` flips,
     and CARLA's ``yaw * pitch * roll`` rotation, rebuilt in the right-handed frame,
     is the same rotation with the yaw and pitch angles negated and the roll kept.
@@ -111,6 +119,48 @@ def camera_extrinsics_to_rig(
     )
     position = np.array([position_x, -position_y, position_z], dtype=np.float64)
     return Pose(position, rotation.quat_xyzw)
+
+
+def sensor_pose_in_rig(
+    position_x: float,
+    position_y: float,
+    position_z: float,
+    roll_deg: float,
+    pitch_deg: float,
+    yaw_deg: float,
+    rear_axle_offset_m: float,
+) -> Pose:
+    """Return a sensor mount, relative to the vehicle actor, as a pose in the rig frame.
+
+    :func:`camera_extrinsics_to_rig` reads the mount as if it were relative to the rig
+    origin; this also moves it from the actor origin to the rig origin (the rear axle),
+    which is what points carried into the rig frame need.
+    """
+    mount = camera_extrinsics_to_rig(
+        position_x, position_y, position_z, roll_deg, pitch_deg, yaw_deg
+    )
+    return Pose.from_xyz_yaw(-rear_axle_offset_m, 0.0, 0.0, 0.0) @ mount
+
+
+def lidar_points_to_rig(
+    points_xyzi_in_sensor: NDArray[np.float32], pose_in_rig: Pose
+) -> NDArray[np.float32]:
+    """Return a raw ``sensor.lidar.ray_cast`` buffer as ``[N, 4]`` rig-frame points.
+
+    CARLA reports the points in the sensor's own frame, which is left-handed like the
+    rest of CARLA: mirroring y makes them right-handed in the sensor frame, and the
+    mount (*pose_in_rig*, from :func:`sensor_pose_in_rig`) then carries them into the
+    rig.  Intensity passes through untouched.
+    """
+    raw = np.asarray(points_xyzi_in_sensor, dtype=np.float32).reshape(-1, 4)
+    # The mirror folded into the rotation, and float32 throughout: a sweep is up to
+    # ~10^5-10^6 points, and float32 is centimetre-exact at LiDAR range.
+    rotation = pose_in_rig.rotation_matrix * np.array([1.0, -1.0, 1.0])
+    out = np.empty_like(raw)
+    np.matmul(raw[:, :3], rotation.T.astype(np.float32), out=out[:, :3])
+    out[:, :3] += pose_in_rig.position.astype(np.float32)
+    out[:, 3] = raw[:, 3]
+    return out
 
 
 def rear_axle_offset(actor: "carla.Actor", override: Optional[float] = None) -> float:
@@ -209,6 +259,51 @@ def ego_observation(
         linear_acceleration=rotation.T @ accel_local,
         speed_mps=float(np.linalg.norm(linear_local)),
     )
+
+
+class AccelerationEstimate:
+    """The ego's acceleration as Autoware's localization reports it.
+
+    CARLA's ``get_acceleration`` is the physics step's own: a seam in the road
+    reads as -2 to -6 m/s² for a tick.  A policy trained on Autoware's logs has
+    seen ``twist2accel``'s instead -- the twist differentiated in the vehicle
+    frame and low-passed, ``a = g * a + (1 - g) * dv / dt`` with ``g = 0.9`` on
+    a 50 Hz twist -- and it plans the acceleration it is given onward, so a raw
+    spike becomes a hard stop.  This applies that filter, its gain rescaled to
+    the interval between observations so its time constant stays Autoware's.
+
+    Args:
+        gain: ``twist2accel``'s ``accel_lowpass_gain``.
+        rate_hz: The rate that gain applies at.
+    """
+
+    def __init__(self, gain: float = 0.9, rate_hz: float = 50.0) -> None:
+        self._gain = gain
+        self._rate_hz = rate_hz
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget the history: the next observation starts at zero acceleration."""
+        self._last: Optional[EgoObservation] = None
+        self._acceleration = np.zeros(3)
+
+    def __call__(self, observation: EgoObservation) -> EgoObservation:
+        """Return *observation* with its acceleration replaced by the estimate.
+
+        Idempotent per instant: a second observation at the same time gets the
+        same estimate.
+        """
+        last = self._last
+        if last is not None and observation.timestamp_us > last.timestamp_us:
+            dt_s = (observation.timestamp_us - last.timestamp_us) * 1e-6
+            gain = self._gain ** (dt_s * self._rate_hz)
+            rate = (observation.linear_velocity - last.linear_velocity) / dt_s
+            self._acceleration = gain * self._acceleration + (1.0 - gain) * rate
+        if last is None or observation.timestamp_us > last.timestamp_us:
+            self._last = observation
+        return dataclasses.replace(
+            observation, linear_acceleration=self._acceleration.copy()
+        )
 
 
 def encode_frame_jpeg(

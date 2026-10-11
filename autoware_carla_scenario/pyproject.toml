@@ -1,7 +1,8 @@
 [project]
 name = "autoware-carla-scenario"
-version = "3.1.2"
+version = "7.5.1"
 description = "CARLA scenario testing framework for Autoware"
+readme = "README.md"
 license = "Apache-2.0"
 # A copy of the repository's LICENSE: license files have to live inside the
 # package directory to reach the sdist and wheel.
@@ -9,18 +10,31 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
 ]
-# The interpreters CI tests. The ceiling came from the official CARLA client
-# (its wheels stopped at cp312), which the framework no longer uses: the CARLA
-# client is typesafe_carla, whose wheel carries its CPython package prebuilt
-# for any Python 3.10+. Raise it together with CI's interpreter matrix.
-requires-python = ">=3.10,<3.13"
+# The interpreters CI tests: every CPython line upstream still supports, 3.10
+# (Autoware's own environment, and ROS 2 Humble's) through 3.14. The CARLA
+# client, typesafe_carla, carries its CPython package prebuilt for any Python
+# 3.10+, and every other dependency ships wheels for the whole range. Raise the
+# ceiling together with CI's interpreter matrix and
+# `authoring.wheelhouse.TESTED_PYTHONS` (a test checks the three agree).
+requires-python = ">=3.10,<3.15"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     # The CARLA client: `import typesafe_carla.carla as carla` at run time (its
     # CPython package, prebuilt in the wheel; docs/installation.md), and its
     # Codon library for the static check (typecheck/). It pulls in
     # typesafe-carla-toolchain, the pinned Codon the check needs. Both ship for
-    # Linux x86_64 only, as CARLA's own client did.
-    "typesafe-carla>=0.3.0,<0.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Linux x86_64 and aarch64 (aarch64 from typesafe-carla 0.4.0 on).
+    "typesafe-carla>=0.4.0,<0.5; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
     "pyxodr>=0.1.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
@@ -49,12 +63,26 @@ dependencies = [
     "tomli>=1.1.0; python_version < '3.11'",
     "pydantic>=2.0.0",
     "ffmpeg-python>=0.2.0",
-    # Speaks the alpasim `egodriver` gRPC contract to an external driver policy.
-    # The protobuf definitions are vendored rather than pulled from
-    # `alpasim-grpc`; proto/README.md says why.
+    # Speaks the alpasim `egodriver` gRPC contract to an external driver policy:
+    # the contract (vendored protos, geometry, the policy-side server) is
+    # hakuturu583/carla_driver_interface. A range, not a pin: a policy and a
+    # scenario package share an environment whenever their majors agree. A policy
+    # in another process may be on another major: the contract revision each side
+    # declares on the wire (`carla_driver_interface.contract`) covers that.
+    "carla-driver-interface>=2.0,<3",
     "grpcio>=1.60",
-    "protobuf>=4.25.0,<5.0.0",
+    # The vendored modules are protobuf 4.25 gencode, which every runtime from
+    # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
+    # so the range has to reach past it; the ceiling is the newest major tested.
+    "protobuf>=4.25.0,<8",
 ]
+
+[project.urls]
+Homepage = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Documentation = "https://autowarefoundation.github.io/autoware_carla_scenario/"
+Repository = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Issues = "https://github.com/autowarefoundation/autoware_carla_scenario/issues"
+Changelog = "https://github.com/autowarefoundation/autoware_carla_scenario/releases"
 
 [project.optional-dependencies]
 # The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the
@@ -67,6 +95,12 @@ sumo = [
     "sumolib>=1.23",
     "traci>=1.23",
     "roadgen>=0.16.0",
+]
+# Map files for a driver policy (`driver.map_dir`): roadgen converts the
+# world's OpenDRIVE into Lanelet2 and friends, with the stop lines and the
+# traffic-light regulatory elements on the approach lanes (0.18).
+map = [
+    "roadgen>=0.18.0",
 ]
 
 [build-system]
@@ -90,7 +124,13 @@ scenario = "autoware_carla_scenario.examples.run:main"
 scenario-expand = "autoware_carla_scenario.examples.expand:main"
 # Compile scenarios with Codon (the static check the runner makes before a run).
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
+# Merge the coverage files of scenario runs into an ODD/scenario coverage report.
+scenario-coverage = "autoware_carla_scenario.coverage.report:main"
+# Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets.
+scenario-odd = "autoware_carla_scenario.odd.cli:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"
+# Download a CARLA server (the nightly build by default) for the runner to launch.
+scenario-setup = "autoware_carla_scenario.carla_install:main"
 detect-no-3d-model = "autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main"
 viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not

@@ -6,31 +6,37 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### Operating System
 
-- **Linux x86_64** (Ubuntu 22.04 is the reference; CI runs on
-  `ubuntu-latest`). Every dependency resolves to a wheel, the CARLA client's
-  CPython package included (see [CARLA client](#carla-client)), so nothing
-  is compiled on install.
+- **Linux x86_64 or aarch64** (Ubuntu 22.04 is the reference; CI runs on
+  `ubuntu-latest` and `ubuntu-24.04-arm`). Every runtime dependency resolves
+  to a wheel on both, the CARLA client's CPython package included (see
+  [CARLA client](#carla-client)), so nothing is compiled on install.
+- On aarch64 the framework, its CARLA client and the static check all run,
+  but CARLA itself does not: its server is built for x86_64 only. Run the
+  server on an x86_64 host and point the runner at it with
+  `server.host=<address>` (a server already listening is used rather than
+  launched); `scenario-setup` refuses to download the nightly there.
 
 ### Python Version
 
-- **Python 3.10 – 3.12** — `pyproject.toml` declares
-  `requires-python = ">=3.10,<3.13"`: the interpreters CI tests. No
+- **Python 3.10 – 3.14** — `pyproject.toml` declares
+  `requires-python = ">=3.10,<3.15"`: the interpreters CI tests. No
   dependency caps it any more; it is raised together with CI's interpreter
   matrix. Check your version with `python --version`.
 
 ### CARLA Simulator
 
 The framework targets CARLA UE5 (`0.10.0` and `ue5-dev`). CARLA 0.9.x (UE4)
-is not supported. Follow the
-[CARLA installation guide](https://carla.readthedocs.io/) to set up the
-simulator binary itself.
+is not supported. `uv run scenario-setup` downloads CARLA's nightly Linux
+build into `~/.autoware_carla_scenario/bin/carla`, and the runner launches it
+from there (see the [Quick Start](quickstart.md)). A CARLA installed any other
+way is used through `CARLA_EXECUTABLE`.
 
 ### CARLA client
 
 The Python client is
 [typesafe_carla](https://github.com/hakuturu583/typesafe_carla), a plain
-dependency of the package (`typesafe-carla>=0.3.0,<0.4`, from PyPI, Linux
-x86_64 only), imported as `import typesafe_carla.carla as carla`. It also
+dependency of the package (`typesafe-carla>=0.4.0,<0.5`, from PyPI, Linux
+x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
 `carla` wheels are not used, and no extra has to be requested.
@@ -114,7 +120,8 @@ package, or by loading a `.env` file (the package depends on
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CARLA_EXECUTABLE` | when `ScenarioQueue` launches its own server | Path to `CarlaUE5.sh`. Pytest tests skip when this is unset. |
+| `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither. |
+| `AUTOWARE_CARLA_SCENARIO_HOME` | optional | Moves `~/.autoware_carla_scenario`, where `scenario-setup` installs CARLA (`bin/carla`). |
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
 | `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
 | `NISHISHINJUKU_LANELET2_PATH` | optional | Override the default Lanelet2 `.osm` path. |
@@ -130,14 +137,14 @@ python -c "import autoware_carla_scenario; print('Installation successful!')"
 ```
 
 This works without CARLA — running an actual scenario additionally
-requires the built CARLA client, a live CARLA server and a valid
-`CARLA_EXECUTABLE`.
+requires a CARLA server: a live one, or one to launch (`scenario-setup`, or
+`CARLA_EXECUTABLE`).
 
 ## Dependencies
 
 The package's runtime dependencies (declared in `pyproject.toml`):
 
-- `typesafe-carla>=0.3.0,<0.4` (Linux x86_64) — the CARLA client and its Codon
+- `typesafe-carla>=0.4.0,<0.5` (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
 - `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)

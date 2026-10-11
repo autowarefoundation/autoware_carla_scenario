@@ -1,6 +1,7 @@
 {% import "partials/fields.html" as f %}
 {% import "partials/lanelet_search.html" as ls %}
 {% import "partials/icons.html" as ic %}
+{% import "partials/vertex_conditions.html" as gates %}
 {# The inspector renders whatever object the canvas selected.
 
    Every section below is built from registry metadata, so a newly registered
@@ -87,6 +88,12 @@
        a pinned lanelet and a constraint search. Outside the form above: the
        search is made of forms, and a form cannot nest. #}
     {% if spec %}{{ ls.modals(spec.fields, target.params, draft, document, target.id, selected) }}{% endif %}
+    {# Outside the form for the same reason: each waypoint condition is edited
+       with forms of its own. Offered only where the spec says the action
+       follows vertices. #}
+    {% if spec and spec.vertex_conditions %}
+      {{ gates.section(target, draft, selected, document) }}
+    {% endif %}
     <button class="ed-btn-danger" style="width:100%"
             hx-post="/draft/{{ draft.id }}/action/{{ target.id }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML">
@@ -95,6 +102,17 @@
 
   {% elif selected_kind == 'condition' %}
     {% set spec = get_condition_spec(target.type) %}
+    {# A waypoint condition lives in an action's inspector rather than on the
+       canvas, so it says whose it is and leads back there. #}
+    {% set gate_owner = document.vertex_condition_of(target.id) %}
+    {% if gate_owner %}
+      <p class="ed-help" style="margin-bottom:10px">
+        Waypoint condition: the entity of
+        <a href="#" hx-get="/draft/{{ draft.id }}/inspector/{{ gate_owner[0].id }}"
+           hx-target="#inspector" hx-swap="innerHTML">{{ gate_owner[0].title or gate_owner[0].type }}</a>
+        departs vertex {{ gate_owner[1].vertex }} when it holds.
+      </p>
+    {% endif %}
     <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
       <p class="ed-kicker">{{ spec.category if spec else 'Predicate' }}</p>

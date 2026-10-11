@@ -937,6 +937,13 @@ textarea.ed-input { resize: vertical; min-height: 58px; line-height: 1.5; }
 .ed-op-sticky { background: #0891b2; }
 .ed-op-persistent { background: #7c3aed; }
 .ed-op-note { font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+/* Waypoint conditions, in the action inspector: a vertex number above an
+ * ordinary condition tree. */
+.ed-gates { display: flex; flex-direction: column; gap: 8px; }
+.ed-gate { display: flex; flex-direction: column; gap: 6px; }
+.ed-gate-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ed-gate-vertex { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-faint); }
+
 .ed-cond-children {
   display: flex;
   flex-direction: column;

@@ -224,8 +224,8 @@ If pre-commit hooks fail:
 
 - **simple-lanelet2** (>=1.1.2) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
-- **typesafe-carla** (>=0.3.0) - The CARLA client (CARLA UE5 only; Linux
-  x86_64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel
+- **typesafe-carla** (>=0.4.0) - The CARLA client (CARLA UE5 only; Linux
+  x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel
   carries the CPython package prebuilt (`typesafe_carla/carla/_prebuilt`, one
   build for every Python 3.10+), so installing it compiles nothing and needs
   no `cc`. Only where no matching prebuilt package exists (a source checkout
@@ -237,9 +237,9 @@ If pre-commit hooks fail:
   prebuilt package); `TYPESAFE_CARLA_PYCARLA_BUILD=0` turns a missing build
   into an `ImportError`, as the Docker image does.
   The official `carla` package is not a dependency and must not be imported.
-- Python 3.10 through 3.12. `autoware_carla_scenario` declares
-  `requires-python = ">=3.10,<3.13"` -- the comment on that line is the
-  canonical explanation. CI runs the suite on 3.10, 3.11 and 3.12
+- Python 3.10 through 3.14. `autoware_carla_scenario` declares
+  `requires-python = ">=3.10,<3.15"` -- the comment on that line is the
+  canonical explanation. CI runs the suite on 3.10, 3.11, 3.12, 3.13 and 3.14
 
 ## Static Check (Codon)
 
@@ -259,8 +259,15 @@ against the typed model in `typecheck/codon/`, not the Python package, so:
   functions that take or return CARLA types with typesafe_carla's types.
 - A scenario class declares the attributes it assigns on `self` at class level
   (`_config: MyConfig`): a bare annotation, so nothing changes at run time.
+- The framework's own source is checked too, a module at a time
+  (`uv run scenario-check --library`, `test_typecheck_library.py`):
+  `typecheck/library.py` lists every module of the package as `CHECKED` or
+  `EXCLUDED` (with a reason). A new module needs an entry there; moving a
+  module into `CHECKED` means making it compile with annotations and
+  Codon-friendly rewrites only, no change in behaviour (`docs/typecheck.md`,
+  "Checking the framework itself").
 - Codon is the `typesafe-carla-toolchain` that `typesafe-carla` depends on (a
-  run-time dependency, Linux x86_64), found by typesafe_carla's own
+  run-time dependency, Linux x86_64 and aarch64), found by typesafe_carla's own
   lookup (`typecheck/toolchain.py` wraps `typesafe_carla.toolchain` and
   `typesafe_carla.paths`).
 
@@ -610,6 +617,22 @@ If you encounter false positives or need to exclude specific URLs:
 - **Saves time**: Automated checking is faster than manual verification
 - **Professional standards**: Maintains high-quality documentation and references
 - **Early detection**: Weekly scans catch external link changes proactively
+
+## DCO Sign-off
+
+Every commit in a pull request needs a `Signed-off-by` line matching its
+author (the DCO check). Commit with `git commit -s`.
+
+If a commit was pushed without one, do not amend and force-push (forbidden
+below). Push a **remediation commit** instead, allowed by `.github/dco.yml`;
+it must be authored by the same person as the commits it covers:
+
+```bash
+git commit --allow-empty -s -m "DCO Remediation Commit for Name <email>
+
+I, Name <email>, hereby add my Signed-off-by to this commit: <sha1>
+I, Name <email>, hereby add my Signed-off-by to this commit: <sha2>"
+```
 
 ## Git Operation Restrictions
 

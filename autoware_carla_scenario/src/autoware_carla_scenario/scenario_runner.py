@@ -7,7 +7,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Collection, Optional
 
 import typesafe_carla.carla as carla
 
@@ -22,6 +22,9 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
+from .coverage.collector import CoverageCollector
+from .measures import set_measured_scenario
+from .odd import OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import set_warmup_done
 from .scenario_base import BaseScenario
@@ -299,6 +302,7 @@ class ScenarioRunner:
         output_dir: Path = Path("scenario_outputs"),
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
+        odd: Optional[OddDefinition] = None,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -321,7 +325,11 @@ class ScenarioRunner:
                 author.  *None* selects CARLA's TrafficManager on *tm_port*,
                 which is what every scenario written before the backend seam
                 existed expects.
+            odd: The ODD every run is measured against: its attributes are
+                the ODD coverage, its modules say which ticks were outside it
+                (docs/odd.md).  *None* selects the built-in ``default`` ODD.
         """
+        self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
         self._tm_port = tm_port
@@ -413,7 +421,7 @@ class ScenarioRunner:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hold_vehicles_still(world: "carla.World") -> None:
+    def _hold_vehicles_still(world: "carla.World", spare: Collection[int] = ()) -> None:
         """Keep every vehicle stopped while the run is still being set up.
 
         See :func:`~autoware_carla_scenario.utils.vehicles.hold_vehicles_still`;
@@ -421,16 +429,53 @@ class ScenarioRunner:
         """
         from .utils.vehicles import hold_vehicles_still  # noqa: PLC0415
 
-        hold_vehicles_still(world)
+        hold_vehicles_still(world, spare)
 
     @staticmethod
     def _release_vehicles(world: "carla.World") -> None:
         """Let go of the brakes the init phase held on."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
+        from .utils.vehicles import release_vehicle  # noqa: PLC0415
 
-        released = carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False)
         for actor in world.get_actors().filter("vehicle.*"):
-            actor.apply_control(released)
+            release_vehicle(actor)
+
+    def _warn_if_route_leaves_odd(
+        self, scenario_name: str, scenario: "BaseScenario"
+    ) -> None:
+        """Warn when the ego's planned route leaves the ODD (docs/odd.md).
+
+        The route is planned on the loaded Lanelet2 map from the spawn pose,
+        through the waypoints, to the goal that ``setup()`` has settled.  A
+        warning, never a failure: the run is what measures the ODD, and
+        anything that keeps the route from being planned (no goal, no map, no
+        path) is only logged at debug level.  An ODD with no modules rules
+        nothing out, so it is not even planned.
+        """
+        try:
+            if not self.odd.modules or scenario.goal_pose is None:
+                return
+            from .odd.route import plan_route_coverage  # noqa: PLC0415
+
+            coverage = plan_route_coverage(self.odd, scenario)
+        except Exception as error:  # noqa: BLE001 - must never fail the run
+            logger.debug(
+                "[%s] Planned route not checked against the ODD: %s",
+                scenario_name,
+                error,
+            )
+            return
+        outside = coverage.outside()
+        if outside:
+            logger.warning(
+                "[%s] The planned route leaves ODD %s: %.1f m of %.1f m on "
+                "lanelets %s (modules: %s)",
+                scenario_name,
+                coverage.odd,
+                coverage.outside_m,
+                coverage.length_m,
+                ", ".join(str(ll.lanelet_id) for ll in outside),
+                ", ".join(sorted({m for ll in outside for m in ll.failing_modules})),
+            )
 
     def _wait_for_ego(
         self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
@@ -455,7 +500,7 @@ class ScenarioRunner:
         logger.info("[%s] Waiting for the ego to be ready ...", scenario_name)
         waited_ticks = 0
         while not ego.is_initialized and not ego.termination_requested:
-            self._hold_vehicles_still(world)
+            self._hold_vehicles_still(world, ego.carried_actor_ids)
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)
@@ -705,6 +750,7 @@ class ScenarioRunner:
         )
         tick_count = 0
         result: Optional[ScenarioResult] = None
+        coverage: Optional[CoverageCollector] = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -734,12 +780,25 @@ class ScenarioRunner:
             # Before setup(), because setup() is where a scenario spawns and
             # registers its NPCs, and register_entity() passes the backend on.
             scenario.set_traffic_backend(backend)
+            # setup() declares the cover items again on a retry of the same
+            # scenario, so the ones from an attempt that failed are dropped.
+            scenario._cover_items.clear()
+            scenario._cross_items.clear()
+            scenario._restore_measures()
+            # A logical scenario's route is process-wide, like the signal
+            # controllers: one left by the previous scenario of a batch must
+            # not be read as this one's.  A scenario with a route sets its own
+            # in setup().
+            from .route import clear_scenario_route  # noqa: PLC0415
+
+            clear_scenario_route()
             scenario.setup()
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once
             # setup returns -- and here rather than inside `_setup_ego_spawn`,
             # which a scenario that snaps its own spawn never calls.
             scenario.require_goal()
+            self._warn_if_route_leaves_odd(scenario_name, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             ego_actor = ego.spawn(world, scenario.ego_config)
             logger.info(
@@ -774,7 +833,9 @@ class ScenarioRunner:
 
             # Let the ego entity bring up whatever it needs now that the actor
             # exists and physics have settled (e.g. sensors and an external
-            # driver session).
+            # driver session).  It is told first what every vehicle starts at,
+            # for an entity that plays the run-up to the first frame.
+            ego.set_initial_speeds(scenario.initial_speeds_mps(ego_actor))
             ego.on_scenario_start(world)
 
             self._wait_for_ego(world, ego, scenario_name)
@@ -835,6 +896,17 @@ class ScenarioRunner:
             # the world from outside.
             trajectory.start(world)
             trajectory.record(world, clock.simulated)
+            # What the run covers: the attributes of the run's ODD, sampled
+            # on every tick and judged against its modules, then the
+            # scenario's own items, declared in setup() with register_cover().
+            reset_probes()
+            # An ODD that maps its taxonomy onto scenario measures reads this
+            # scenario's, its own replacements included.
+            set_measured_scenario(scenario)
+            coverage = CoverageCollector(
+                scenario._cover_items, scenario._cross_items, odd=self.odd
+            )
+            coverage.start(world, clock.simulated)
 
             # Tick loop
             while not scenario.is_done():
@@ -880,6 +952,9 @@ class ScenarioRunner:
                 # Post-tick callbacks
                 for cb in scenario._post_tick_callbacks:
                     cb(world)
+
+                # Coverage samples the world the hooks above have acted on.
+                coverage.tick(world, elapsed)
 
                 # Periodic ego OpenDRIVE position log
                 if tick_count % _CONDITION_LOG_INTERVAL == 0:
@@ -955,9 +1030,11 @@ class ScenarioRunner:
                         elapsed,
                         tick_count,
                     )
+                    reason = ego.termination_reason
                     result = ScenarioResult(
                         passed=False,
-                        message="Ego entity requested session termination",
+                        message="Ego entity requested session termination"
+                        + ("" if reason is None else f": {reason}"),
                         elapsed_seconds=elapsed,
                         condition_statuses=_collect_condition_statuses(
                             scenario, world, elapsed, scenario_name
@@ -974,7 +1051,11 @@ class ScenarioRunner:
                     elapsed_seconds=elapsed,
                 )
 
+            # Sampled before teardown, while the ego still exists.
+            coverage.end(world, clock.simulated)
+
         finally:
+            set_measured_scenario(None)
             logger.info("[%s] === Cleanup start ===", scenario_name)
             set_warmup_done(False)
 
@@ -1037,6 +1118,20 @@ class ScenarioRunner:
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(result.to_json(indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
+            if coverage is not None:
+                # A batch can run one scenario class more than once: each
+                # run keeps a file of its own, all matching *_coverage.json.
+                coverage_path = self.output_dir / f"{scenario_name}_coverage.json"
+                counter = 1
+                while coverage_path.exists():
+                    coverage_path = (
+                        self.output_dir / f"{scenario_name}-{counter}_coverage.json"
+                    )
+                    counter += 1
+                coverage.write(coverage_path, scenario_name)
+                logger.info(
+                    "[%s] Coverage written to: %s", scenario_name, coverage_path
+                )
 
         # Render video from the CARLA recording after scenario cleanup
         if (

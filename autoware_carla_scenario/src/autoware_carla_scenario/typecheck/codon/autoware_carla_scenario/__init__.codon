@@ -6,18 +6,21 @@
 # here runs. test_typecheck_model.py keeps each declaration in step with the
 # Python one it models.
 
-from .actions import (BaseAction, EnvironmentAction, LaneChangeAction, RoutingAction,
+from .actions import (BaseAction, EnvironmentAction, FollowTrajectoryAction,
+                      LaneChangeAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
 from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,
                          AndCondition, BaseCondition, CollisionCondition, CollisionTargetType,
                          ComparisonRule, DistanceCoordinateSystem, ElapsedTimeCondition,
+                         TrajectoryTimeCondition,
                          EntityDistanceCondition, EntityExistenceCondition,
                          EntityLaneOfCondition, EntityLanePositionCondition,
                          EntityPositionDistanceCondition,
                          NotCondition, OrCondition, PersistentCondition, RelativeDistanceType,
-                         RelativeSpeedCondition, ScalarComparisonRule, ScenarioResult,
+                         RelativeSpeedCondition, RouteProgressCondition,
+                         ScalarComparisonRule, ScenarioResult,
                          SpeedCondition, SpeedCoordinateSystem, SpeedDirection,
                          StandstillCondition, StickyCondition, TemporaryStopCondition,
                          TimeHeadwayCondition, TimeToCollisionCondition, TimeoutCondition,
@@ -36,8 +39,15 @@ from .entity import (EgoVehicle, PedestrianEntity, PedestrianEntityConfig, Spawn
 from .entity_role import EntityRole
 from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
                          FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
+from .coverage import SamplingEvent
+from .odd import (OddAttribute, OddCondition, OddDefinition, OddModule, all_of, any_of,
+                  default_odd, module_holds, register_odd)
 from .scenario_base import BaseScenario, EgoConfig
-from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec,
+from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import LaneChangeDirection, TurnDirection
+from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, RouteCrossingPose,
+                         RouteCrosswalkPose, RouteLanePose, RouteOppositePose,
+                         RouteRoadsidePose, Trajectory, TrajectoryFollowingMode,
+                         TrajectoryTiming, TrajectoryVertex)

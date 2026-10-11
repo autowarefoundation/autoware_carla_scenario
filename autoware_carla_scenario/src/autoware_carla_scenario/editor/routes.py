@@ -593,6 +593,41 @@ async def move_action(request: Request, draft_id: str, action_id: str) -> HTMLRe
     )
 
 
+@router.post(
+    "/draft/{draft_id}/action/{action_id}/advance/{index}", response_class=HTMLResponse
+)
+async def move_vertex_condition(
+    request: Request, draft_id: str, action_id: str, index: int
+) -> HTMLResponse:
+    """Put a waypoint condition on another vertex."""
+    form = await request.form()
+    vertex = form.get("vertex") or ""
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        action_id,
+        lambda doc: service.move_vertex_condition(doc, action_id, index, vertex),
+    )
+
+
+@router.post(
+    "/draft/{draft_id}/action/{action_id}/advance/{index}/delete",
+    response_class=HTMLResponse,
+)
+def delete_vertex_condition(
+    request: Request, draft_id: str, action_id: str, index: int
+) -> HTMLResponse:
+    """Remove a waypoint condition: the vertex goes back to the clock."""
+    service = _service(request)
+    return _apply(
+        request,
+        draft_id,
+        action_id,
+        lambda doc: service.delete_vertex_condition(doc, action_id, index),
+    )
+
+
 @router.post("/draft/{draft_id}/actors", response_class=HTMLResponse)
 async def reorder_actors(request: Request, draft_id: str) -> HTMLResponse:
     """Set the swimlane order.  Layout only, never semantics."""
@@ -776,6 +811,9 @@ async def add_condition(request: Request, draft_id: str) -> HTMLResponse:
     """Add a condition to an action trigger, a composition, or an assertion."""
     form = dict(await request.form())
     slot = str(form.get("slot", ""))
+    if "vertex" in form:
+        # The waypoint-condition form asks for the vertex beside the type.
+        slot = f"{slot}:{str(form['vertex']).strip()}"
     type_id = str(form.get("type_id", ""))
     service = _service(request)
     return _apply(

@@ -9,6 +9,13 @@ defaults:
   - scenario: intersection_passing/left_turn
   - map: nishishinjuku
 
+# The ODD every run is measured against (docs/odd.md): "default", a name
+# registered with register_odd() or an entry point, an OpenODD YAML file
+# (odd=path/to/odd.yaml), or package.module:function.  Its attributes are the
+# ODD coverage in {Scenario}_coverage.json; its modules say which ticks were
+# outside it.
+odd: default
+
 # Compile the scenario with Codon before it runs, and refuse it if it does not
 # type-check (docs/typecheck.md): auto (when Codon is installed), required, off.
 typecheck: auto
@@ -33,6 +40,49 @@ map:
   xodr_path: null
   lanelet2_path: null
   no_3d_model_lanelet_ids: []
+
+# Autoware as the ego (ego.entity=autoware; docs/autoware.md).
+autoware:
+  # The bridge server Autoware's scenario_bridge node dials for the mission.
+  address: localhost:50052
+  # Ticks Autoware has to localize, route and engage once it reached the bridge.
+  ready_timeout_ticks: 1200
+  # Wall-clock seconds a launched stack has to reach the bridge.
+  boot_timeout_s: 300.0
+  # Who starts Autoware for each scenario, and removes it after:
+  #   none    - someone else does (launched by hand, or Autoware launches the
+  #             scenario through with_scenario)
+  #   docker  - a local Autoware workspace, built and run in its dev container
+  #   command - `command` below, run on this host
+  # A fresh Autoware per scenario is what lets a batch or a sweep run scenario
+  # after scenario:
+  #   uv run scenario 'scenario=intersection_passing/*' ego.entity=autoware \
+  #     autoware.launcher.type=docker autoware.launcher.workspace=$HOME/autoware \
+  #     'autoware.launcher.launch=[autoware_launch,e2e_simulator.launch.xml,"bridge_address:={bridge_address}",...]'
+  launcher:
+    type: none
+    # docker: a clone of autowarefoundation/autoware with its sources in src/.
+    workspace: ~/autoware
+    # The .devcontainer/ variant whose image and workspace mount are used.
+    devcontainer: universe-devel-cuda
+    image: null
+    workspace_mount: null
+    # auto (when install/ is missing) | always | never
+    build: auto
+    colcon_args: [--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]
+    # ros2 launch <package> <file> <name:=value>...; {bridge_address} is the
+    # bridge's address, to be handed to scenario_bridge.
+    launch: []
+    mounts:
+      ~/autoware_data: /home/aw/autoware_data
+    env: {}
+    ros_domain_ids: []
+    gpus: all
+    user: null
+    docker_args: []
+    # command: the command line, with {bridge_address}, {index} and {name}.
+    command: []
+    stop_timeout_s: 20.0
 
 ego:
   vehicle_type: vehicle.mini.cooper
@@ -89,6 +139,32 @@ background_traffic:
               rule: greater_than_or_equal
               value: 0.0
     stop_after_seconds: null
+
+# What the scenario's parameters set, by scenario measure (measures.py: the
+# framework's fixed keys, which an ODD maps its taxonomy onto). A sweep's
+# odd_sample (docs/odd.md) draws them from the ODD through that mapping. A
+# scenario declares its own; it names no ODD, and the ODD names no scenario.
+# The weather and the sun (`environment` below) are set for every scenario.
+#
+#   controls:
+#     vehicle_ahead_gap_m: {key: scenario.npc_ahead_m, range: [6, 30]}
+controls: {}
+
+# The weather and the sun every run starts in (EnvironmentAction, during
+# initialization); null leaves the world's own. A sweep's odd_sample draws
+# these from the ODD (docs/odd.md), as can a single run:
+#
+#   uv run scenario ... environment.precipitation=80 environment.sun_altitude_angle=-10
+environment:
+  cloudiness: null
+  precipitation: null
+  precipitation_deposits: null
+  wetness: null
+  wind_intensity: null
+  fog_density: null
+  fog_distance: null
+  sun_altitude_angle: null
+  sun_azimuth_angle: null
 
 entity:
   ground_projection_ray_distance_upper: 5.0

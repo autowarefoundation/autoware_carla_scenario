@@ -1,7 +1,7 @@
 """Locates the Codon compiler and typesafe_carla's Codon library.
 
 Both come from typesafe_carla (https://github.com/hakuturu583/typesafe_carla),
-the framework's CARLA client (a dependency on Linux x86_64): the compiler is found by
+the framework's CARLA client (a dependency on Linux x86_64 and aarch64): the compiler is found by
 ``typesafe_carla.toolchain.find_codon``, so one Codon setup serves both
 projects, in its order:
 
@@ -48,7 +48,7 @@ ENV_CODON = "TYPESAFE_CODON"
 
 _NOT_INSTALLED = (
     "typesafe-carla is not installed: it is a dependency of autoware-carla-scenario "
-    "on Linux x86_64, the only platform it ships for"
+    "on Linux x86_64 and aarch64, the only platforms it ships for"
 )
 
 

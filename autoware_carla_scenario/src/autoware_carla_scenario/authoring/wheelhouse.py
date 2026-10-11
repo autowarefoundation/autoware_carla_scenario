@@ -93,7 +93,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 #: is resolved for each of them the package's ``requires-python`` admits -- see
 #: :func:`supported_pythons`.  Raise it together with CI's interpreter matrix
 #: and the framework's ``requires-python`` (a test checks the two agree).
-TESTED_PYTHONS: tuple[str, ...] = ("3.10", "3.11", "3.12")
+TESTED_PYTHONS: tuple[str, ...] = ("3.10", "3.11", "3.12", "3.13", "3.14")
 
 _EXPORT_TIMEOUT_SECONDS = 300
 _BUILD_TIMEOUT_SECONDS = 900

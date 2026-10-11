@@ -25,6 +25,43 @@
   </div>
 </form>
 
+<h4 class="ed-subheading">{{ ic.icon('map', 12) }} Route search <span class="unit">(logical scenario)</span></h4>
+
+{# A logical scenario names the ego's drive as a pattern of road rather than
+   lanelets; the run finds it on whatever map it is on.  Read as a list here,
+   edited as the YAML the document stores (docs/logical_scenarios.md). #}
+{% if document.route %}
+  <ol class="ed-help" style="padding-left:18px;margin:4px 0 8px">
+    {% for segment in document.route.segments %}
+      <li><span class="mono">{{ loop.index0 }}</span> {{ segment.summary() }}</li>
+    {% endfor %}
+  </ol>
+  <p class="ed-help">
+    Ego spawns {{ document.route.ego_spawn_s }} m along the route;
+    {% if document.route.ego_goal %}its goal is the route's end{% if document.route.ego_goal_margin %} less {{ document.route.ego_goal_margin }} m{% endif %}{% else %}it keeps its own goal{% endif %}.
+    Up to {{ document.route.max_matches }} matches{% if document.route.seed is not none %} (seed {{ document.route.seed }}){% endif %};
+    an unexpanded run takes match {{ document.route.match_index }}.
+  </p>
+{% else %}
+  <p class="ed-help">None: the ego spawns where its card says.</p>
+{% endif %}
+<form hx-post="/draft/{{ draft.id }}/scenario"
+      hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <div class="ed-field">
+    <label class="ed-label">Route search <span class="unit">YAML</span></label>
+    <textarea name="route_yaml" rows="8" class="ed-input mono" spellcheck="false"
+              style="font-size:11.5px"
+              placeholder="segments:&#10;  - {kind: lane, length: {min: 30, max: 60}}&#10;  - {kind: junction, turn: left}&#10;  - {kind: lane, length: {max: 40}}">{{ route_yaml(document) }}</textarea>
+    <p class="ed-help">
+      Segments in driving order: <code>lane</code> (length, lanes_left,
+      lanes_right, opposite_lane, shape, stop_line, traffic_light_stop_line) and
+      <code>junction</code> (turn, traffic_light, crossing_from_left / right /
+      opposite, crosswalk_entry / exit), plus ego_spawn_s, ego_goal,
+      ego_goal_margin, match_index, max_matches, seed. Empty removes it.
+    </p>
+  </div>
+</form>
+
 <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Map</h4>
 
 {# The source and its actions come first: a scenario that names a repository

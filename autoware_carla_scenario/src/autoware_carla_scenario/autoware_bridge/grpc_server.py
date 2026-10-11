@@ -117,26 +117,44 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             Tuple[BridgePose, BridgePose, Tuple[BridgePose, ...]]
         ] = None
         self._ready: bool = False
+        self._contacted: bool = False
         self._closed: bool = False
+        self._max_workers = max_workers
+        self._server: Optional[grpc.Server] = None
+        self._port: Optional[int] = None
+        if autostart:
+            self.start()
 
-        self._server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=max_workers),
+    def _new_server(self) -> grpc.Server:
+        server = grpc.server(
+            futures.ThreadPoolExecutor(max_workers=self._max_workers),
             # so_reuseport=0 disables gRPC's default SO_REUSEPORT so that binding
             # an already-used port fails (returns 0) instead of silently sharing
             # the port with another server and splitting RPCs between them.
             options=[*server_options(), ("grpc.so_reuseport", 0)],
         )
         pb2_grpc.add_AutowareBridgeServicer_to_server(
-            _AutowareBridgeServicer(self), self._server
+            _AutowareBridgeServicer(self), server
         )
-        self._port: Optional[int] = None
-        if autostart:
-            self.start()
+        return server
 
     def start(self) -> None:
-        """Bind the configured address and start serving.  A no-op once started."""
-        if self._port is not None:
+        """Bind the configured address and start serving.  A no-op while serving.
+
+        A bridge that was closed starts afresh -- no mission, not ready, no
+        client yet -- which is what a retried scenario, whose entity and bridge
+        are the attempt before's, needs from it: a gRPC server cannot be
+        restarted, so a new one is made.
+        """
+        if self._port is not None and not self._closed:
             return
+        with self._lock:
+            self._mission = None
+            self._ready = False
+            self._contacted = False
+        self._closed = False
+        self._port = None
+        self._server = self._new_server()
         port = self._server.add_insecure_port(self._config.address)
         # add_insecure_port returns 0 both when it binds an ephemeral port (the
         # caller asked for ":0") and when the bind fails.  Only the latter is an
@@ -165,6 +183,26 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         """The port the server is listening on, or ``None`` before :meth:`start`."""
         return self._port
 
+    @property
+    def client_connected(self) -> bool:
+        """Whether the interface node has called either RPC yet."""
+        with self._lock:
+            return self._contacted
+
+    @property
+    def client_address(self) -> Optional[str]:
+        """The address the client dials: the bound port, on this host.
+
+        A server bound to every interface (``0.0.0.0``, ``[::]``) is dialed on
+        ``localhost``, which is where a stack on this host's network finds it.
+        """
+        if self._port is None:
+            return None
+        host = self._config.address.rsplit(":", 1)[0]
+        if host in ("", "0.0.0.0", "[::]", "::"):  # noqa: S104 - a bind address, not a bind
+            host = "localhost"
+        return f"{host}:{self._port}"
+
     # ------------------------------------------------------------------
     # Servicer callbacks (run on the server thread pool)
     # ------------------------------------------------------------------
@@ -173,6 +211,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         """Build the ``GetMission`` response from the current mission state."""
         with self._lock:
             mission = self._mission
+            self._contacted = True
         if mission is None:
             return pb2.GetMissionResponse(available=False)
         initial, goal, waypoints = mission
@@ -193,6 +232,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         sides consistent and robust to report ordering.
         """
         with self._lock:
+            self._contacted = True
             if self._ready:
                 return
             self._ready = ready
@@ -224,7 +264,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         if self._closed:
             return
         self._closed = True
-        if self._port is None:
+        if self._port is None or self._server is None:
             # Never bound: there is nothing listening to stop.
             return
         # grace=None stops immediately; only one short-lived client ever connects.

@@ -18,6 +18,10 @@ CARLA session cannot be established.
 
 from __future__ import annotations
 
+import socket
+
+import pytest
+
 import typesafe_carla.carla as _carla
 
 from autoware_carla_scenario import (
@@ -78,3 +82,11 @@ another_immediate_result = CarlaScenarioFixture(
 # ---------------------------------------------------------------------------
 
 carla_queue = _queue.as_fixture()
+
+
+@pytest.fixture
+def free_port() -> int:
+    """A local TCP port nothing listens on."""
+    with socket.socket() as probe:
+        probe.bind(("localhost", 0))
+        return int(probe.getsockname()[1])

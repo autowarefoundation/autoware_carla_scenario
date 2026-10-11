@@ -70,6 +70,21 @@ def test_congruent_segments_are_loadable(slim: ModuleType, tmp_path: Path) -> No
     assert slim.is_loadable(path)
 
 
+def test_alignment_is_the_largest_page_size_that_fits(
+    slim: ModuleType, tmp_path: Path
+) -> None:
+    """aarch64 kernels may use 16 or 64 KiB pages, so the coarsest fit counts."""
+    cases = {
+        0x3AE0: 4096,  # 0x2AE0 vs 0x3AE0: congruent at 4 KiB only
+        0x12AE0: 65536,  # 0x10000 apart: every page size
+        0x6AE0: 16384,  # 0x4000 apart: 4 and 16 KiB
+    }
+    for vaddr, expected in cases.items():
+        path = tmp_path / f"{vaddr:x}.so"
+        path.write_bytes(_elf64([(_PT_LOAD, 0x0, 0x0), (_PT_LOAD, 0x2AE0, vaddr)]))
+        assert slim.page_alignment(path) == expected
+
+
 def test_misaligned_segment_is_rejected(slim: ModuleType, tmp_path: Path) -> None:
     """This is exactly what a bad strip produces, and what the loader refuses."""
     path = tmp_path / "bad.so"
@@ -99,3 +114,27 @@ def test_object_without_load_segments_is_left_alone(
     path = tmp_path / "empty.so"
     path.write_bytes(_elf64([(_PT_NOTE, 0x1000, 0x1000)]))
     assert not slim.is_loadable(path)
+
+
+def test_prune_removes_test_suites(slim: ModuleType, tmp_path: Path) -> None:
+    suite = tmp_path / "pkg" / "tests"
+    suite.mkdir(parents=True)
+    (suite / "test_pkg.py").write_text("")
+    (tmp_path / "pkg" / "__init__.pyi").write_text("")
+    slim.prune(tmp_path)
+    assert not suite.exists()
+    assert not (tmp_path / "pkg" / "__init__.pyi").exists()
+
+
+def test_prune_keeps_what_numpy_testing_imports(
+    slim: ModuleType, tmp_path: Path
+) -> None:
+    """numpy 2's ``numpy.testing`` imports ``numpy._core.tests._natype``."""
+    suite = tmp_path / "numpy" / "_core" / "tests"
+    (suite / "data").mkdir(parents=True)
+    (suite / "_natype.py").write_text("pd_NA = None\n")
+    (suite / "test_core.py").write_text("")
+    (suite / "data" / "fixture.csv").write_text("")
+    (suite / "__pycache__").mkdir()
+    slim.prune(tmp_path)
+    assert sorted(p.name for p in suite.iterdir()) == ["_natype.py"]

@@ -4,13 +4,15 @@ This is the *runtime* half of the conversation: the scenario framework renders
 observations from CARLA and asks a driver policy -- running as a separate gRPC server,
 for example ``carla-driver-interface serve`` -- what to do next.
 
-Because the generated stubs come from the vendored alpasim protos, the messages are wire
-compatible with an upstream alpasim driver as well; see
-``autoware_carla_scenario/proto/README.md``.
+The generated stubs come from the alpasim protos vendored in ``carla-driver-interface``,
+so the messages are wire compatible with an upstream alpasim driver as well; see
+``carla_driver_interface/proto/README.md``.
 """
 
 from __future__ import annotations
 
+import atexit
+import functools
 import logging
 from typing import Optional, Sequence
 
@@ -19,13 +21,26 @@ import numpy as np
 from google.protobuf.message import DecodeError
 from numpy.typing import NDArray
 
-from ._proto import (
+from carla_driver_interface.contract import (
+    CONTRACT_REVISION,
+    cameras_to_revision,
+    contract_metadata,
+    negotiate,
+)
+from carla_driver_interface.geometry import body_to_optical
+from carla_driver_interface.policies import load_policy
+from carla_driver_interface.server import build_server
+from carla_driver_interface.protocol import (
+    EGODRIVER_SERVICE_FULL_NAME,
+    MAX_MESSAGE_BYTES,
     carla_driver_pb2,
+    channel_options,
     common_pb2,
     egodriver_pb2,
     egodriver_pb2_grpc,
     sensorsim_pb2,
 )
+
 from .base import BaseEgoDriverClient, DriveOutcome, DriverClientConfig, EgoObservation
 from .geometry import Trajectory, waypoints_to_proto
 from .observation import camera_extrinsics_to_rig
@@ -33,21 +48,13 @@ from .observation import camera_extrinsics_to_rig
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EgoDriverGrpcClient"]
-
-#: Maximum gRPC message size, matching alpasim's own limit.  Camera frames dominate.
-MAX_MESSAGE_BYTES: int = 64 * 1024 * 1024
-
-#: Full service name, used only for log messages and error text.
-EGODRIVER_SERVICE_FULL_NAME: str = "egodriver.EgodriverService"
-
-
-def channel_options() -> list[tuple[str, int]]:
-    """Return the gRPC channel options used for driver connections."""
-    return [
-        ("grpc.max_send_message_length", MAX_MESSAGE_BYTES),
-        ("grpc.max_receive_message_length", MAX_MESSAGE_BYTES),
-    ]
+# The wire constants live with the contract; re-exported for existing callers.
+__all__ = [
+    "EGODRIVER_SERVICE_FULL_NAME",
+    "MAX_MESSAGE_BYTES",
+    "EgoDriverGrpcClient",
+    "channel_options",
+]
 
 
 class EgoDriverGrpcClient(BaseEgoDriverClient):
@@ -85,14 +92,21 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         if self._stub is not None:
             return self._stub
         if self._channel is None:
-            self._channel = grpc.insecure_channel(
-                self._config.address, options=channel_options()
+            target = (
+                self._config.address
+                if self._config.policy is None
+                else f"localhost:{_serve_in_process(self._config.policy)}"
             )
+            self._channel = grpc.insecure_channel(target, options=channel_options())
         self._stub = egodriver_pb2_grpc.EgodriverServiceStub(self._channel)
         return self._stub
 
     def _camera_specs(self) -> list:
-        """Return the ``AvailableCamera`` entries describing the configured rig."""
+        """Return the ``AvailableCamera`` entries describing the configured rig.
+
+        As contract revision 2 declares them: ``rig_to_camera`` is the camera's
+        optical frame in the rig (x right, y down, z along the optical axis).
+        """
         cameras = []
         for camera in self._config.cameras:
             sensor = camera.to_sensor_config()
@@ -113,13 +127,15 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
                     # Without this the policy sees the protobuf-default (identity,
                     # origin) pose and reads every frame from the wrong viewpoint,
                     # not even the configured (1.5, 0, 1.6) mount.
-                    rig_to_camera=camera_extrinsics_to_rig(
-                        camera.position_x,
-                        camera.position_y,
-                        camera.position_z,
-                        camera.roll,
-                        camera.pitch,
-                        camera.yaw,
+                    rig_to_camera=body_to_optical(
+                        camera_extrinsics_to_rig(
+                            camera.position_x,
+                            camera.position_y,
+                            camera.position_z,
+                            camera.roll,
+                            camera.pitch,
+                            camera.yaw,
+                        )
                     ).to_proto(),
                     logical_id=camera.logical_id,
                 )
@@ -135,19 +151,25 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
 
         Also calls ``get_version`` first so that an unreachable or mismatched policy
         fails immediately with a clear message rather than midway through the scenario.
+        Its answer says which contract revision the policy speaks
+        (``carla_driver_interface.contract``); the cameras are declared in that
+        revision, so a policy on carla-driver-interface 1.x still reads them right.
 
         Raises:
             grpc.RpcError: If the policy cannot be reached.
+            carla_driver_interface.contract.ContractError: If the policy speaks a
+                revision this release cannot translate.
         """
         stub = self._connect()
 
-        version = stub.get_version(common_pb2.Empty(), timeout=self._config.timeout_s)
+        version, revision = negotiate(stub, timeout=self._config.timeout_s)
         logger.info(
-            "Connected to %s at %s (version_id=%r git_hash=%r)",
+            "Connected to %s at %s (version_id=%r git_hash=%r contract revision %d)",
             EGODRIVER_SERVICE_FULL_NAME,
             self._config.address,
             version.version_id,
             version.git_hash,
+            revision,
         )
 
         request = egodriver_pb2.DriveSessionRequest(
@@ -156,11 +178,17 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             debug_info=egodriver_pb2.DriveSessionRequest.DebugInfo(scene_id=scene_id),
             rollout_spec=egodriver_pb2.DriveSessionRequest.RolloutSpec(
                 vehicle=egodriver_pb2.DriveSessionRequest.RolloutSpec.VehicleDefinition(
-                    available_cameras=self._camera_specs()
+                    available_cameras=cameras_to_revision(
+                        self._camera_specs(), CONTRACT_REVISION, revision
+                    )
                 )
             ),
         )
-        stub.start_session(request, timeout=self._config.timeout_s)
+        stub.start_session(
+            request,
+            timeout=self._config.timeout_s,
+            metadata=contract_metadata(revision),
+        )
         self._session_uuid = session_uuid
         logger.info("Driver session started: uuid=%s scene=%s", session_uuid, scene_id)
 
@@ -332,3 +360,17 @@ def _vec3(values: NDArray[np.float64]) -> common_pb2.Vec3:
     """Return *values* as a protobuf ``Vec3``."""
     array = np.asarray(values, dtype=np.float64).reshape(-1)
     return common_pb2.Vec3(x=array[0], y=array[1], z=array[2])
+
+
+@functools.lru_cache(maxsize=None)
+def _serve_in_process(spec: str) -> int:
+    """Serve the *spec* policy from this process and return its port.
+
+    Once per run: every scenario's session goes to the same policy, which the
+    protocol resets between sessions, so a model is loaded once, not per scenario.
+    """
+    server, port = build_server(load_policy(spec), port=0, host="localhost")
+    server.start()
+    atexit.register(server.stop, None)
+    logger.info("Serving policy %r in this process on port %d", spec, port)
+    return port

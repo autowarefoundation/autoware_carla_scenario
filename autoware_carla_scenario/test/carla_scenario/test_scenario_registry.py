@@ -290,6 +290,80 @@ class TestBuildEgoEntity:
             build_ego_entity(cfg)
 
 
+class TestBuildAutowareLauncher:
+    """``autoware.launcher`` selects who starts Autoware for each scenario."""
+
+    @staticmethod
+    def _cfg(entity: str = "autoware", **launcher: object) -> DictConfig:
+        return OmegaConf.create(
+            {
+                "ego": {"entity": entity},
+                "scenario": {"name": "left_turn"},
+                "autoware": {"address": "localhost:0", "launcher": launcher},
+            }
+        )
+
+    def test_none_by_default(self) -> None:
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        assert build_autoware_launcher(self._cfg(type="none")) is None
+        assert (
+            build_autoware_launcher(OmegaConf.create({"ego": {"entity": "autoware"}}))
+            is None
+        )
+
+    def test_only_an_autoware_ego_has_one(self) -> None:
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg("autopilot", type="command", command=["true"])
+        assert build_autoware_launcher(cfg) is None
+
+    def test_docker_is_shared_by_every_ego_of_the_batch(self, tmp_path) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import (
+            build_autoware_launcher,
+            build_ego_entity,
+        )
+
+        cfg = self._cfg(
+            type="docker",
+            workspace=str(tmp_path),
+            launch=[
+                "autoware_launch",
+                "x.launch.xml",
+                "bridge_address:={bridge_address}",
+            ],
+            ros_domain_ids=[3, 4],
+            ignored_key=1,
+        )
+        launcher = build_autoware_launcher(cfg)
+
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.workspace == tmp_path
+        assert launcher.config.ros_domain_ids == (3, 4)
+        assert build_autoware_launcher(cfg) is launcher
+        entity = build_ego_entity(cfg)
+        assert entity is not None
+        assert entity.launcher is launcher  # type: ignore[attr-defined]
+
+    def test_command(self) -> None:
+        from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(type="command", command=["ros2", "launch", "{bridge_address}"])
+        )
+
+        assert isinstance(launcher, CommandAutowareLauncher)
+        assert tuple(launcher.argv) == ("ros2", "launch", "{bridge_address}")
+
+    def test_unknown_type_raises(self) -> None:
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        with pytest.raises(ValueError, match="Unknown autoware.launcher.type"):
+            build_autoware_launcher(self._cfg(type="kubernetes"))
+
+
 # ---------------------------------------------------------------------------
 # Tests for build_ego_and_spawn helper
 # ---------------------------------------------------------------------------

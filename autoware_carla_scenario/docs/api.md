@@ -27,7 +27,7 @@ and sensor types described below.
 | `EgoConfig` | `scenario_base` | `VehicleEntityConfig` subclass that fixes `role_name` to `EGO_ROLE_NAME` and carries both ends of the run: the spawn and the ego's `goal_pose`. `None` means "not named yet" — a scenario may derive the goal in `setup()`, and one that ends setup with none is refused. |
 | `ScenarioRunner` | `scenario_runner` | Executes a single `BaseScenario` against a CARLA world (sync mode tick loop, recording, cleanup). |
 | `ScenarioQueue` | `scenario_queue` | Context manager that owns a `CarlaServerManager` and runs registered scenarios sequentially with cooldown / retry. |
-| `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`. |
+| `CarlaServerManager` | `server` | Starts, reuses, and stops the CARLA UE5 process. Reads `CARLA_EXECUTABLE`, else launches the CARLA `scenario-setup` installed. |
 | `CarlaScenarioFixture` | `pytest_fixtures` | Helper that registers a scenario into a queue at import time and exposes a session-scoped pytest fixture for its `ScenarioResult`. |
 | `EGO_ROLE_NAME` | `constants` | Reserved CARLA `role_name` used for the ego actor. |
 | `EntityRole` | `entity_role` | Validated `role_name` wrapper for CARLA actors. Factories: `EntityRole.ego()`, `EntityRole.npc(n)`. |
@@ -37,6 +37,45 @@ and sensor types described below.
 renderer driven by the native CARLA recorder + an RGB camera sensor.
 It is used internally by `ScenarioRunner` and can also be instantiated
 directly.
+
+## Coverage (`autoware_carla_scenario.coverage`)
+
+See [Coverage](coverage.md).
+
+| Symbol | Purpose |
+|--------|---------|
+| `BaseScenario.register_cover(name, expression, *, unit, range, every, buckets, values, ignore, event, text, target, cover_by, min_stay)` | Declare a cover item, after `cover()` in OpenSCENARIO DSL. |
+| `BaseScenario.register_cross(name, items, *, text, target, cover_by, min_stay)` | Cross coverage of cover items sampled on the same event. |
+| `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
+| `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
+| `BaseScenario.register_measure(key, read, *, unit, text)`, `.measure(key, world)`, `.measures` | A scenario's measures: what it sets up, under fixed keys (`autoware_carla_scenario.measures`: `VEHICLE_AHEAD_GAP_M`, `VEHICLE_AHEAD_RELATIVE_SPEED_KPH`, `CROSSING_PEDESTRIAN_GAP_M`, `CROSSING_PEDESTRIAN_SPEED_MS`). Replace a built-in one or add one of its own. See [Scenario measures](odd.md#scenario-measures). |
+| `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
+| `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
+| `coverage.cod.export_cod(document, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
+
+## ODD (`autoware_carla_scenario.odd`)
+
+See [ODD](odd.md).
+
+| Symbol | Purpose |
+|--------|---------|
+| `OddAttribute(name, probe, *, unit, range, every, buckets, values, text, target, cover_by, min_stay)` | A measured taxonomy concept. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`, `is_unknown`. |
+| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text, situation, target, cover_by, min_stay)` | A named rule; with `situation=True`, also covered as a situation. `OddDefinition.situations()` lists those. |
+| `OddDefinition(name, attributes, modules, *, roots, text)` | The ODD: judges values with OpenODD's semantics (roots, labels, inactive modules, missing values), and marks buckets outside it. |
+| `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
+| `default_odd()` | The built-in ODD: every attribute, no modules. |
+| `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
+| `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
+| `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
+| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
+| `scenario_measure(key)`, `ScenarioMeasure` | The probe mapping an attribute onto the running scenario's measure *key* (`measure:` in a binding file). See [Scenario measures](odd.md#scenario-measures). |
+| `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |
+| `plan_route_coverage(odd, scenario_or_route, *, lanelet_map, routing_graph, name)` | Check a planned route against the ODD on the Lanelet2 map: the verdict per lanelet (inside, outside, undecided) and the expected metres per bucket. Takes a scenario, a `PlannedRoute(start, goal, via, name)` or lanelet ids. Raises `RouteError` when the route cannot be planned. See [Checking a planned route](odd.md#checking-a-planned-route). |
+| `combine_route_coverage(odd, routes)` | The expected coverage of several routes, and the buckets no route reaches. |
+| `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
+| `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
+| `OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
+| `OddKnob(key, *, values, scale, offset, integer, range)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under `controls` in their config, by measure key. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
 
@@ -56,6 +95,7 @@ All conditions inherit from `BaseCondition` and return a
 | `EntityDistanceCondition`, `TimeToCollisionCondition` | Relative conditions between two entities: separation, and time to collision along the line joining them. |
 | `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
 | `TrafficSignalCondition` | Traffic-light state check. |
+| `RouteProgressCondition` | An entity's (default: the ego's) distance along the scenario's route, from an anchor (`junction:0:entry`, ...), compared with a rule; robust to lane changes. See [Logical Scenarios from Routes](logical_scenarios.md). |
 | `ComparisonRule`, `ScalarComparisonRule`, `compare` | Numeric comparison primitives. `compare(actual, rule, value, tolerance)` is the underlying helper. |
 | `find_actor_by_role_name`, `find_actor_in_list` | Helpers for locating CARLA actors by role. `find_actor_in_list` is reachable via `autoware_carla_scenario.conditions`. |
 
@@ -79,6 +119,24 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
+| `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; `appear_on_start=True` brings a hidden entity in on its first vertex, moving at `speed`, when a run starts. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
+
+## Trajectories (`autoware_carla_scenario.trajectory`)
+
+See [Trajectories and Recorded-Scene Replay](trajectory.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and the condition the entity departs it on (`advance`) -- a time, `TrajectoryTimeCondition(t)` (read back as `vertex.time`), or any other condition ([waypoint conditions](trajectory.md#waypoint-conditions); `Trajectory.is_gated`, `Trajectory.gated({index: condition})`). |
+| `TrajectoryTimeCondition` | A vertex's time: depart when the trajectory's clock reaches it. |
+| `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
+| `RelativeLanePose` | A pose relative to an entity in lane coordinates (`ds`, `offset`, `d_lane`, `yaw`, `entity_ref`; OpenSCENARIO `RelativeLanePosition`), placed when the action starts. |
+| `RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`, `RouteCrosswalkPose`, `RouteRoadsidePose` | Poses placed against the scenario's route (a [logical scenario](logical_scenarios.md)) when the action starts: along the route and across lanes, on the opposite road, on a lanelet entering a route junction from the left / right / opposite, on a junction's crosswalk, at the roadside. |
+| `TrajectoryTiming`, `ReferenceContext` | How vertex times map onto the scenario clock (`τ * scale + offset`, from the scenario or the action start). |
+| `TrajectoryFollowingMode` | `POSITION` (kinematic replay) or `FOLLOW` (a controller tracks it). |
+
+Recorded scenes (T4) are transcribed into documents outside the framework, by
+the separate `scene_to_scenario_transpiler` package (`scenario-import-t4`).
 
 ## Sensors (`autoware_carla_scenario.sensor`)
 
@@ -169,6 +227,25 @@ directly from Python:
 | `Binding` (Protocol), `StopLineOffsetBinding`, `parse_binding` | Per-match parameter derivation (e.g. compute `ego.spawn_s` from a stop-line offset). |
 | `load_lanelet2_map` | Lightweight Lanelet2 loader used outside of CARLA. |
 
+A scenario whose `sweep` holds a `route` search instead of `constraints` is
+expanded over the routes of the map that match it (`expand_route`, one case per
+match); see [Logical Scenarios from Routes](logical_scenarios.md).
+
+## Logical scenarios (`autoware_carla_scenario.route`)
+
+See [Logical Scenarios from Routes](logical_scenarios.md).
+
+| Symbol | Description |
+|--------|-------------|
+| `parse_route_search` -> `RouteSearchSpec` | Read a route search (`LaneSegmentSpec` / `JunctionSegmentSpec` segments, `Range` bounds, ego placement, `max_matches`, `seed`). No map needed. |
+| `RouteMatch`, `RouteSegmentMatch` | A concrete route: lanelet ids, start / end s, each segment's route-s span and lanelets; `anchor_s(anchor)`, `to_config()` / `from_config()` (the `scenario.route.*` keys). |
+| `parse_anchor` | `start`, `end`, `segment:K:start|end`, `junction:K:entry|exit`. |
+| `route.search.find_route_matches` | Every route of a Lanelet2 map matching a search, sorted (or shuffled by `seed`). |
+| `route.frame.RouteFrame`, `ego_placement` | A match on its map: `locate(s)`, `point(s)`, `project(x, y)`; where the ego spawns and its goal is. |
+| `route.positions.resolve_route_pose` | Place a route pose against a frame and the ego's route s. |
+| `set_scenario_route`, `scenario_route`, `scenario_route_frame`, `clear_scenario_route` | The route the running scenario is about. |
+| `route.geometry.MapFeatures` | The per-lanelet questions a search asks (lanes beside, opposite lane, junction members and approaches, crosswalks), cached. |
+
 The plugin is registered with Hydra under
 `hydra/sweeper=lanelet_constraint`; see
 `src/hydra_plugins/autoware_scenario_sweeper/`.
@@ -194,7 +271,8 @@ compiled and exported anywhere.
 
 | Symbol | Description |
 |--------|-------------|
-| `ScenarioDocument` | The Scenario IR: entities, actions, assertions, and a `ui` block that is presentation only. |
+| `ScenarioDocument` | The Scenario IR: entities, actions, assertions, an optional `route` search (a [logical scenario](logical_scenarios.md)), and a `ui` block that is presentation only. |
+| `RouteSearch`, `LaneSegment`, `JunctionSegment`, `LengthRange`, `CountRange` | The route search as the IR states it; `RouteSearch.to_sweep_dict()` is what the route search reads. |
 | `Entity`, `SpawnSpec`, `SValue`, `BindingRef`, `GoalSpec`, `EgoDriver` | Actors, how they spawn (fixed lanelet, or a constraint search with an optionally derived offset), and — for the ego alone — which stack drives it and where it is sent. |
 | `LaneletChoice`, `LaneletSlot`, `ScenarioDocument.lanelet_slots` | Fixed or searched, and one view over every place a document names a lanelet — a spawn, a goal, an action's or a condition's `lanelet` parameter — so the picker, the validator and the Hydra config read one answer. |
 | `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
@@ -214,7 +292,7 @@ compiled and exported anywhere.
 | Symbol | Description |
 |--------|-------------|
 | `DeclarativeScenario` | A `BaseScenario` whose content comes from a `ScenarioDocument`. Registers the same pre/post-tick actions and pass/fail conditions a hand-written scenario would. Imports CARLA. |
-| `DeclarativeScenarioConfig` | Hydra config group: `document_path`, `timeout_seconds`, and `spawn_overrides` (the addressable per-entity spawn keys a sweep drives). |
+| `DeclarativeScenarioConfig` | Hydra config group: `document_path`, `timeout_seconds`, `spawn_overrides` (the addressable per-entity spawn keys a sweep drives), `param_overrides`, and `route` (a logical scenario's route match, as `scenario-expand` writes it). |
 
 ## Scenario editor (`autoware_carla_scenario.editor`)
 
@@ -251,6 +329,8 @@ Defined in `pyproject.toml`:
 | `viewer` | `autoware_carla_scenario.ui:main` |
 | `scenario-editor` | `autoware_carla_scenario.editor:main` |
 | `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
+| `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` |
+| `scenario-odd` | `autoware_carla_scenario.odd.cli:main` |
 
 The `scenario` command also exposes Python-level helpers in
 `autoware_carla_scenario.examples.run` for downstream packages:

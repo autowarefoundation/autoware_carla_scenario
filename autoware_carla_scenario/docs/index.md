@@ -26,11 +26,14 @@ This package provides a framework for creating and running automated scenario te
   and triggering runs
 - Two-pass video recording (CARLA native log + replayed RGB camera +
   ffmpeg H.264)
-- pytest integration via `CarlaScenarioFixture` (auto-skip when
-  `CARLA_EXECUTABLE` is unset)
+- `scenario-setup` downloads CARLA's nightly build, which the runner then
+  launches by itself
+- pytest integration via `CarlaScenarioFixture` (auto-skip when there is no
+  CARLA to launch)
 
 ## Quick Links
 
+- [Quick Start](quickstart.md) - Download CARLA and test a driving policy, in three commands
 - [Installation Guide](installation.md) - Get started with installing the package
 - [Usage Guide](usage.md) - Learn how to run scenarios
 - [Architecture](architecture.md) - Software architecture and design decisions
@@ -42,7 +45,7 @@ This package provides a framework for creating and running automated scenario te
 - **Repository**: [hakuturu583/autoware_carla_scenario](https://github.com/hakuturu583/autoware_carla_scenario)
 - **Release Notes**: [View all releases on GitHub](https://github.com/hakuturu583/autoware_carla_scenario/releases)
 - **License**: Check the repository for license information
-- **Python Version**: 3.10 - 3.12 (`>=3.10,<3.13`, the interpreters CI tests)
+- **Python Version**: 3.10 - 3.14 (`>=3.10,<3.15`, the interpreters CI tests)
 
 ## Getting Help
 

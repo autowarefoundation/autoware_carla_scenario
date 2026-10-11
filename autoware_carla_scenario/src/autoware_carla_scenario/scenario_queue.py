@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional, Union
 
 from tqdm import tqdm
 
@@ -16,9 +15,13 @@ from .conditions import ScenarioResult
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
+from .odd import OddDefinition, resolve_odd
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
+
+if TYPE_CHECKING:
+    from .autoware_stack.launcher import AutowareLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,8 @@ class ScenarioQueue:
         max_tick_rate_hz: Optional[float] = None,
         projector_type: Optional[str] = None,
         traffic_backend: Optional[TrafficBackend] = None,
+        odd: Union[str, OddDefinition, None] = None,
+        autoware_launcher: Optional["AutowareLauncher"] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -107,7 +112,7 @@ class ScenarioQueue:
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default per-scenario timeout.
             output_dir: Directory for MP4 recordings.
-            server_extra_args: Extra CLI arguments for CarlaUE5.sh (only used
+            server_extra_args: Extra CLI arguments for CarlaUnreal.sh (only used
                 when the queue creates its own server).
             cooldown_seconds: Wait time (seconds) between consecutive scenario
                 runs.  Gives the CARLA server time to finish cleanup before the
@@ -125,6 +130,17 @@ class ScenarioQueue:
                 author.  *None* selects CARLA's TrafficManager on *tm_port*.
                 One backend serves every scenario in the queue, the same way
                 one CARLA server does.
+            odd: The ODD every run is measured against: an
+                :class:`OddDefinition`, or what :func:`resolve_odd` reads (a
+                registered name, an OpenODD YAML path, ``module:function``).
+                *None* selects the built-in ``default`` ODD.
+            autoware_launcher: The launcher the queue's Autoware egos start a
+                fresh Autoware with, scenario after scenario.  The queue
+                prepares it when it starts -- building the workspace if it has
+                to, and refusing one that cannot run a scenario -- before the
+                CARLA server is started, and its stacks' logs go to
+                *output_dir*.  The egos are handed the same launcher; *None*
+                when Autoware is not the framework's to start.
         """
         if server is not None:
             self._server = server
@@ -152,6 +168,9 @@ class ScenarioQueue:
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
         self._traffic_backend = traffic_backend
+        # Resolved now, so a misspelt ODD fails before CARLA starts.
+        self._odd = resolve_odd(odd)
+        self._autoware_launcher = autoware_launcher
 
         self._scenarios: List[BaseScenario] = []
         #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
@@ -278,6 +297,11 @@ class ScenarioQueue:
         server was reused and returns immediately.  Only the queue that
         *owns* its server will stop it in :meth:`stop`.
         """
+        if self._autoware_launcher is not None:
+            # First: a workspace that has to be built takes far longer than
+            # CARLA to start, and one that cannot run a scenario at all is
+            # better refused before anything else starts.
+            self._autoware_launcher.prepare(log_dir=self._output_dir)
         self._server.start()
         self._runner = ScenarioRunner(
             self._server,
@@ -288,6 +312,7 @@ class ScenarioQueue:
             output_dir=self._output_dir,
             max_tick_rate_hz=self._max_tick_rate_hz,
             traffic_backend=self._traffic_backend,
+            odd=self._odd,
         )
         if self._overwrite_xodr:
             if self._xodr_path is None or self._map_name is None:
@@ -339,8 +364,10 @@ class ScenarioQueue:
         return written
 
     def stop(self) -> None:
-        """Stop the server if owned by this queue."""
+        """Stop any Autoware stack left running, and the server if owned."""
         self._runner = None
+        if self._autoware_launcher is not None:
+            self._autoware_launcher.close()
         if self._owns_server:
             self._server.stop()
 
@@ -353,8 +380,8 @@ class ScenarioQueue:
     ) -> Callable[[], Generator["ScenarioQueue", None, None]]:
         """Return a session-scoped pytest fixture that manages this queue.
 
-        The generated fixture automatically skips when
-        ``CARLA_EXECUTABLE`` is not set, so callers do not need to
+        The generated fixture automatically skips when there is no CARLA to
+        launch (``CARLA_EXECUTABLE`` unset and nothing installed), so callers do not need to
         add a manual ``pytest.skip`` guard.
 
         Args:
@@ -392,10 +419,10 @@ class ScenarioQueue:
 
         @pytest.fixture(scope="session", name=fixture_name)
         def _queue_fixture() -> Generator["ScenarioQueue", None, None]:
-            if not os.environ.get(CarlaServerManager.ENV_VAR):
+            if CarlaServerManager.executable() is None:
                 pytest.skip(
-                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set. "
-                    "Skipping CARLA integration tests."
+                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set "
+                    "and no CARLA is installed. Skipping CARLA integration tests."
                 )
             try:
                 with queue:

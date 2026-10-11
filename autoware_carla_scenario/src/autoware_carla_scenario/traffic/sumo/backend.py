@@ -161,6 +161,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._offset: tuple[float, float] = (0.0, 0.0)
         self._rng = random.Random(0)
         self._entities: list[Any] = []
+        #: ``id()`` of the entities taken back with release(): published, not driven.
+        self._released: set[int] = set()
         #: SUMO id -> the entity SUMO drives.
         self._driven: dict[str, Any] = {}
         #: SUMO id -> the actor CARLA's side drives, published into SUMO.
@@ -316,7 +318,12 @@ class SumoTrafficBackend(TrafficBackend):
                 continue
             if actor.attributes.get("role_name") == str(EGO_ROLE_NAME):
                 self._ego_actor = actor
-            if actor.id in skip or entity is None or self._tm_drives_scenario:
+            if (
+                actor.id in skip
+                or entity is None
+                or self._tm_drives_scenario
+                or id(entity) in self._released
+            ):
                 tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_EXTERNAL)
                 tc.vehicle.setLaneChangeMode(sumo_id, 0)
                 tc.vehicle.setColor(sumo_id, _PUBLISHED_COLOR)
@@ -398,6 +405,7 @@ class SumoTrafficBackend(TrafficBackend):
                 except RuntimeError:
                     pass
         self._entities = []
+        self._released = set()
         self._driven = {}
         self._external = {}
         self._walkers = {}
@@ -534,6 +542,39 @@ class SumoTrafficBackend(TrafficBackend):
             self._traci.vehicle.setRoute(sumo_id, route)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not turn %s: %s", sumo_id, exc)
+
+    def release(self, entity: Any, world: Any) -> None:
+        """Stop driving *entity* in SUMO and publish it there instead.
+
+        The vehicle stays in SUMO -- SUMO's own traffic still has to see it --
+        but as one CARLA drives, like the ego: its pose is pushed in every tick
+        rather than pulled out.
+        """
+        if self._tm_drives_scenario:
+            self._tm.release(entity, world)
+            return
+        self._released.add(id(entity))
+        sumo_id = self._id_of(entity)
+        if sumo_id is None or not self._running:
+            # Not in SUMO yet: start() publishes it rather than driving it.
+            return
+        self._driven.pop(sumo_id, None)
+        actor = getattr(entity, "actor", None)
+        if actor is None:
+            return
+        try:
+            actor.disable_constant_velocity()
+        except RuntimeError:
+            pass
+        self._external[sumo_id] = actor
+        try:
+            tc = self._traci
+            tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_EXTERNAL)
+            tc.vehicle.setLaneChangeMode(sumo_id, 0)
+            tc.vehicle.setColor(sumo_id, _PUBLISHED_COLOR)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SUMO could not hand %s over: %s", sumo_id, exc)
+        logger.info("SUMO: %s released; it is published from CARLA now", sumo_id)
 
     # ------------------------------------------------------------------
     # Internals: the run's vehicles

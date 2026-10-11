@@ -1,7 +1,7 @@
 """The static check with Codon: correct scenarios compile, wrong ones are refused.
 
 Skipped where no Codon compiler is installed (typesafe-carla's toolchain, a
-dependency on Linux x86_64).
+dependency on Linux x86_64 and aarch64).
 """
 
 from __future__ import annotations
@@ -57,14 +57,24 @@ from autoware_carla_scenario import (
     ComparisonRule,
     EgoConfig,
     ElapsedTimeCondition,
+    FollowTrajectoryAction,
     GroundProjectionConfig,
     LaneChangeDirection,
     Lanelet2Pose,
+    MapPose,
+    ReferenceContext,
+    RelativeLanePose,
+    SamplingEvent,
     ScenarioResult,
     SpeedCondition,
     StickyCondition,
     TickTiming,
     TimeoutCondition,
+    Trajectory,
+    TrajectoryFollowingMode,
+    TrajectoryTimeCondition,
+    TrajectoryTiming,
+    TrajectoryVertex,
     TurnAction,
     TurnDirection,
     snap_to_carla_road,
@@ -224,6 +234,178 @@ def test_a_correct_scenario_compiles(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+_COVER_SETUP = """
+self.register_cover(
+    "ego_speed",
+    lambda world: 3.0,
+    unit="km/h",
+    range=(0.0, 60.0),
+    every=10.0,
+    event=SamplingEvent.TICK,
+)
+self.register_cover(
+    "gap",
+    ego_gap,
+    buckets=[0.0, 5.0, 10.0, 30.0],
+    ignore=lambda v: v < 0.0,
+    event=SamplingEvent.TICK,
+    cover_by="meters",
+    target=50,
+    min_stay=1.0,
+)
+self.register_cover(
+    "turn",
+    lambda world: TurnDirection.LEFT,
+    values=[TurnDirection.LEFT, TurnDirection.RIGHT],
+    event=ElapsedTimeCondition(1.0, label="sample_at_1s"),
+    text="the turn taken",
+    target=2,
+)
+self.register_cover("braking", lambda world: False, values=[False, True])
+self.register_cross(
+    "speed_x_gap", ["ego_speed", "gap"], text="speed and gap", cover_by="seconds", target=2.5
+)
+"""
+
+_COVER_EXTRA = """
+
+
+def ego_gap(world: carla.World) -> float | None:
+    return 4.0
+"""
+
+
+def test_cover_items_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(tmp_path, _COVER_SETUP, _COVER_EXTRA)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_cover_event_that_is_neither_an_event_nor_a_condition_is_refused(
+    tmp_path: Path,
+) -> None:
+    setup = 'self.register_cover("x", ego_gap, values=[1], event="end")\n'
+    scenario, config, path = _write_case(tmp_path, setup, _COVER_EXTRA)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "event must be a SamplingEvent or a condition" in error.message
+    assert error.line == _line_of(path, 'event="end"')
+
+
+_ODD_MODULE = """
+from __future__ import annotations
+
+import typesafe_carla.carla as carla
+
+from autoware_carla_scenario import (
+    OddAttribute,
+    OddDefinition,
+    OddModule,
+    any_of,
+    module_holds,
+    register_odd,
+)
+from autoware_carla_scenario.odd import INTENSITY_LEVELS, lanelet_location, rain, speed_limit_kph
+
+
+def yaw_rate(world: carla.World) -> float | None:
+    return 0.0
+
+
+def build() -> OddDefinition:
+    location = OddAttribute(
+        "scenery.location",
+        lanelet_location,
+        values=["urban", "nonurban"],
+        cover_by="meters",
+        target=200,
+        min_stay=2.0,
+    )
+    speed_limit = OddAttribute(
+        "scenery.speed_limit", speed_limit_kph, unit="km/h", buckets=[0, 30, 60, 100]
+    )
+    weather = OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS)
+    yaw = OddAttribute("dynamic.yaw_rate", yaw_rate, range=(-30.0, 30.0), every=10.0)
+    return OddDefinition(
+        "urban",
+        [location, speed_limit, weather, yaw],
+        [
+            OddModule("roads", include_and=[location.is_in(["urban"]), speed_limit.between(0, 60)]),
+            OddModule("weather", exclude_or=[weather.is_in(["heavy"])], labels=["fair"]),
+            OddModule("steady", include_or=[yaw.at_most(20.0), any_of((yaw.less_than(25.0),))]),
+            OddModule(
+                "root",
+                include_and=[module_holds("roads"), module_holds("fair"), module_holds("steady")],
+                exclude_or=[yaw.is_unknown()],
+                labels=[],
+            ),
+            OddModule("empty", include_and=[], active=False),
+            OddModule(
+                "fast_urban",
+                include_and=[location.is_in(["urban"]), speed_limit.at_least(50)],
+                situation=True,
+                cover_by="meters",
+                target=100,
+                min_stay=2.0,
+            ),
+        ],
+        roots=("root",),
+    )
+
+
+register_odd("urban_case", build)
+"""
+
+
+def _write_odd(tmp_path: Path, source: str) -> Any:
+    global _counter
+    _counter += 1
+    package = f"acs_typecheck_odd_{_counter}"
+    root = tmp_path / package
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "odds.py").write_text(source)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        return importlib.import_module(f"{package}.odds"), root / "odds.py"
+    finally:
+        sys.path.remove(str(tmp_path))
+
+
+def test_an_odd_written_in_python_compiles(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    module, _ = _write_odd(tmp_path, _ODD_MODULE)
+    result = typecheck_odd(module.build)
+    assert result.ok, result.format()
+
+
+def test_a_module_with_two_include_sections_is_refused(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace(
+        'OddModule("steady", include_or=',
+        'OddModule("steady", include_and=[yaw.at_most(1.0)], include_or=',
+    )
+    module, _ = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "one include section" in error.message, error.format()
+
+
+def test_an_odd_condition_of_the_wrong_type_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace(
+        "speed_limit.between(0, 60)", 'speed_limit.between("0", 60)'
+    )
+    module, path = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "expected a float" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, 'between("0"')
+
+
 def test_a_custom_condition_is_checked_through_its_check_method(tmp_path: Path) -> None:
     custom = """
 
@@ -263,6 +445,91 @@ def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
             if npc is not None:
                 npc.as_vehicle().apply_control(carla.VehicleControl(throttle=0.5))
         self.world.set_weather(carla.WeatherParameters.ClearNoon)
+        """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
+    """Vertices in every frame, a timing, both modes and the T4 replay."""
+    setup = """
+        self._setup_ego_spawn()
+        path = Trajectory(
+            "npc_path",
+            [
+                TrajectoryVertex(MapPose(100.0, 200.0, yaw=0.5), TrajectoryTimeCondition(0.0)),
+                TrajectoryVertex(Lanelet2Pose(10, 5.0), TrajectoryTimeCondition(2.0)),
+                TrajectoryVertex(
+                    snap_to_carla_road(Lanelet2Pose(10, 9.0), self.world), TrajectoryTimeCondition(4.0)
+                ),
+                TrajectoryVertex(RelativeLanePose(30.0, d_lane=1), TrajectoryTimeCondition(6.0)),
+                TrajectoryVertex(
+                    RelativeLanePose(ds=-5, offset=0.5, d_lane=-1, yaw=0.1, entity_ref=EGO_ROLE_NAME),
+                    TrajectoryTimeCondition(8.0),
+                ),
+            ],
+        )
+        self.register_pre_tick(
+            FollowTrajectoryAction(
+                "npc1",
+                path,
+                TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
+                TrajectoryFollowingMode.FOLLOW,
+                condition=ElapsedTimeCondition(1.0, label="go"),
+                label="npc1_follow",
+            )
+        )
+        self.register_pre_tick(
+            FollowTrajectoryAction(
+                "npc2", path, hidden_outside_trajectory=True, label="npc2_follow"
+            )
+        )
+        """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
+    """Each vertex departs on a time, any other condition, or nothing."""
+    setup = """
+        self._setup_ego_spawn()
+        path = Trajectory(
+            "gated",
+            [
+                TrajectoryVertex(MapPose(100.0, 200.0), TrajectoryTimeCondition(0.0)),
+                TrajectoryVertex(
+                    MapPose(110.0, 200.0), advance=ElapsedTimeCondition(5.0, label="go")
+                ),
+                TrajectoryVertex(
+                    MapPose(120.0, 200.0),
+                    advance=AndCondition(
+                        [
+                            ElapsedTimeCondition(6.0, label="late"),
+                            SpeedCondition(EGO_ROLE_NAME, 1.0, ComparisonRule.LESS_THAN, label="slow"),
+                        ]
+                    ),
+                ),
+                TrajectoryVertex(MapPose(125.0, 200.0), advance=TrajectoryTimeCondition(8.0)),
+                TrajectoryVertex(MapPose(130.0, 200.0), TrajectoryTimeCondition(9.0)),
+            ],
+        )
+        untimed = Trajectory("untimed", [TrajectoryVertex(MapPose(0.0, 0.0)), TrajectoryVertex(MapPose(9.0, 0.0))])
+        if path.is_gated and path.has_times:
+            untimed = untimed.gated({0: StickyCondition(ElapsedTimeCondition(1.0, label="start"))})
+        first = path.vertices[0].time
+        if first is not None:
+            logger.info("first departs at %f", first)
+        gate = path.vertices[1].gate
+        if gate is not None:
+            logger.info("second departs on %s", gate.label)
+        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated", speed=8.0)
+        self.register_pre_tick(action)
+        self.register_pre_tick(FollowTrajectoryAction("npc2", untimed, label="npc2_gated"))
+        held = action.held_vertex
+        if held is not None:
+            logger.info("held at %d", held)
         """
     scenario, config, _ = _write_case(tmp_path, setup)
     result = typecheck_scenario(scenario, config)
@@ -322,6 +589,27 @@ def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
             "find(3)",
             "'int' does not match expected type 'str'",
         ),
+        (
+            'Trajectory("t", [TrajectoryVertex("here"), TrajectoryVertex(MapPose(1.0, 2.0))])\n',
+            'TrajectoryVertex("here"',
+            "expected a trajectory position",
+        ),
+        (
+            "TrajectoryVertex(MapPose(1.0, 2.0), 3.0)\n",
+            "TrajectoryVertex(MapPose(1.0, 2.0), 3.0)",
+            "'float' does not match expected type 'BaseCondition'",
+        ),
+        (
+            "RelativeLanePose(10.0, entity_ref=3)\n",
+            "RelativeLanePose(10.0",
+            "expected an EntityRole or a str",
+        ),
+        (
+            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
+            "TrajectoryVertex(MapPose(3.0, 4.0))]), TrajectoryFollowingMode.FOLLOW)\n",
+            "FollowTrajectoryAction(",
+            "TrajectoryTiming",
+        ),
     ],
     ids=[
         "missing-label",
@@ -333,6 +621,10 @@ def test_the_carla_api_is_typesafe_carla(tmp_path: Path) -> None:
         "config-field-typo",
         "carla-wrong-argument",
         "carla-int-for-str",
+        "trajectory-str-position",
+        "trajectory-bare-time",
+        "relative-lane-int-entity-ref",
+        "trajectory-mode-for-timing",
     ],
 )
 def test_a_wrong_scenario_is_refused_at_its_line(

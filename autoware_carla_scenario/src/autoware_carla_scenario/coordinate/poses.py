@@ -13,8 +13,8 @@ from typing import ClassVar, Union
 
 import typesafe_carla.carla as carla  # noqa: F401
 
-# frames imports this module only for annotations, so importing it here closes
-# no cycle at run time.
+# frames.py imports this module only for its annotations, so this import is
+# not circular at run time; frames.py imports it last for the static check.
 from .frames import CoordinateFrame
 
 

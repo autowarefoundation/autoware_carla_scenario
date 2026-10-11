@@ -6,10 +6,12 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only, _expect_int_sequence
+from ._tc import _keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
+from .coverage import (SamplingEvent, _expect_sampling_event, _expect_cover_expression,
+                       _expect_optional_range, _expect_optional_edges)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_optional_ground_projection)
 from .entity import (EgoConfig, EgoVehicle, VehicleEntity, PedestrianEntity,
@@ -140,6 +142,38 @@ class BaseScenario:
         _expect_condition(condition)
         raise NotImplementedError()
 
+    def register_measure(self, key: str, read, *_kw, unit: str = "", text: str = "") -> None:
+        _keyword_only(_kw, "BaseScenario.register_measure(): every argument but key and read")
+        _expect_cover_expression(read)
+        raise NotImplementedError()
+
+    def measure(self, key: str, world: carla.World) -> Optional[float]:
+        raise NotImplementedError()
+
+    def register_cover(self, name: str, expression, *_kw, unit: str = "", range = None,
+                       every = None, buckets = None, values = None, ignore = None,
+                       event = SamplingEvent("end"), text: str = "", target = 1.0,
+                       cover_by: str = "hits", min_stay = None) -> None:
+        _keyword_only(_kw, "BaseScenario.register_cover(): every argument but name and expression")
+        _expect_cover_expression(expression)
+        _expect_float(target)
+        _expect_optional_float(min_stay)
+        _expect_optional_range(range)
+        _expect_optional_float(every)
+        _expect_optional_edges(buckets)
+        _expect_sampling_event(event)
+        raise NotImplementedError()
+
+    def register_cross(self, name: str, items, *_kw, text: str = "",
+                       target = 1.0, cover_by: str = "hits",
+                       min_stay = None) -> None:
+        _keyword_only(_kw, "BaseScenario.register_cross(): text, target, cover_by and min_stay")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
+        for item in items:
+            n: str = item
+        raise NotImplementedError()
+
     def follow_with_spectator(self, actor_getter, *_kw, offset_back: float = 8.0,
                               offset_up: float = 5.0, pitch: float = -15.0) -> None:
         _keyword_only(_kw, "BaseScenario.follow_with_spectator(): offset_back, offset_up and pitch")
@@ -150,6 +184,9 @@ class BaseScenario:
                            interval_ticks: int = 20) -> None:
         _keyword_only(_kw, "BaseScenario.log_actor_position(): label and interval_ticks")
         _expect_actor_getter(actor_getter)
+        raise NotImplementedError()
+
+    def initial_speeds_mps(self, ego_actor: Optional[carla.Actor]) -> Dict[int, float]:
         raise NotImplementedError()
 
     def set_initial_speed(self, ego_actor: carla.Actor) -> None:

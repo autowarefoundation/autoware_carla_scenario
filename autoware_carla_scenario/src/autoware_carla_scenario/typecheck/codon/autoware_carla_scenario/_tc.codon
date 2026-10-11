@@ -21,6 +21,12 @@ class str:
         return self
 
 
+def _acs_value(T: type) -> T:
+    """A T, for the library check's calls (typecheck/library_driver.py):
+    read through a null pointer, which is fine, as nothing compiled is run."""
+    return Ptr[T]()[0]
+
+
 def _keyword_only(extra, where: Literal[str]):
     if static.len(extra) > 0:
         compile_error(where + " is keyword-only")
@@ -66,6 +72,33 @@ def _expect_optional_bool(x) -> Optional[bool]:
         return _expect_bool(unwrap(x))
     else:
         return _expect_bool(x)
+
+
+def _expect_str(x) -> str:
+    if isinstance(x, str):
+        return x
+    else:
+        compile_error("expected a str")
+
+
+def _expect_optional_str(x) -> Optional[str]:
+    if isinstance(x, None):
+        return None
+    elif isinstance(x, Optional[NoneType]):
+        return None
+    elif isinstance(x, Optional):
+        if x is None:
+            return None
+        return _expect_str(unwrap(x))
+    else:
+        return _expect_str(x)
+
+
+def _expect_int(x) -> int:
+    if isinstance(x, int):
+        return x
+    else:
+        compile_error("expected an int")
 
 
 def _expect_int_sequence(xs) -> List[int]:

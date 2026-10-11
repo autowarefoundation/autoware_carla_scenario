@@ -8,6 +8,8 @@ from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_optional_ground_projection)
 from .entity_role import EntityRole, _expect_role
 from .traffic import TurnDirection, LaneChangeDirection
+from .trajectory import (Trajectory, TrajectoryFollowingMode, TrajectoryTiming,
+                         _expect_optional_timing)
 
 
 @tuple
@@ -150,6 +152,34 @@ class RoutingAction(BaseAction):
 
     @property
     def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+
+class FollowTrajectoryAction(BaseAction):
+    def __init__(self, entity_name, trajectory: Trajectory, time_reference = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("position"),
+                 initial_distance_offset: float = 0.0, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "follow_trajectory", once: bool = True, until = None,
+                 control_config = None, hidden_outside_trajectory: bool = False,
+                 speed = None, appear_on_start: bool = False):
+        _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config, "
+                           "hidden_outside_trajectory, speed and appear_on_start")
+        _expect_role(entity_name)
+        _expect_optional_timing(time_reference)
+        _expect_optional_float(speed)
+        super().__init__(label, condition, timing, once=once, until=until)
+
+    @property
+    def trajectory(self) -> Trajectory:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def held_vertex(self) -> Optional[int]:
         raise NotImplementedError()
 
 

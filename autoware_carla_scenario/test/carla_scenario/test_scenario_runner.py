@@ -247,6 +247,8 @@ class _FakeEgo:
     """An ego that becomes ready after a given number of ticks."""
 
     attaches_to_existing_actor = True
+    carried_actor_ids: frozenset[int] = frozenset()
+    actor = None
 
     def __init__(self, ready_after: int, gives_up_after: int | None = None) -> None:
         self._ready_after = ready_after
@@ -383,3 +385,27 @@ class TestNothingMovesDuringInit:
         released = vehicle.apply_control.call_args[0][0]
         assert released.hand_brake is False
         assert released.brake == 0.0
+
+
+def test_the_init_hold_spares_an_ego_that_is_moving_itself():
+    from autoware_carla_scenario.utils.vehicles import hold_vehicles_still
+
+    ego, other = MagicMock(id=1), MagicMock(id=2)
+    world = MagicMock()
+    world.get_actors.return_value.filter.return_value = [ego, other]
+    hold_vehicles_still(world, spare={ego.id})
+    ego.apply_control.assert_not_called()
+    other.apply_control.assert_called_once()
+
+
+def test_the_release_is_not_the_default_control():
+    """CARLA's client drops a control equal to the last one sent through the same
+    handle, and a fresh handle's last is the default: a release equal to the
+    default never reaches the vehicle."""
+    from autoware_carla_scenario.utils.vehicles import release_vehicle
+
+    vehicle = MagicMock()
+    release_vehicle(vehicle)
+    released = vehicle.apply_control.call_args[0][0]
+    assert (released.throttle, released.brake, released.hand_brake) == (0.0, 0.0, False)
+    assert released.gear == 1 and released.manual_gear_shift is False

@@ -16,18 +16,19 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 - Hydra `lanelet_constraint` sweeper plugin for parametric map-driven sweeps (resolvable without CARLA).
 - FastAPI + Uvicorn web viewer for browsing results, replaying videos, and triggering runs.
 - Two-pass video recording (CARLA native log → replayed RGB camera → ffmpeg H.264).
-- pytest integration via `CarlaScenarioFixture` (auto-skips when `CARLA_EXECUTABLE` is unset).
+- `scenario-setup` downloads CARLA's nightly build, which the runner then launches by itself.
+- pytest integration via `CarlaScenarioFixture` (auto-skips when there is no CARLA to launch).
 
 ## Installation
 
-Python 3.10 to 3.12 (`>=3.10,<3.13`, the interpreters CI tests), Linux x86_64. Install via the workspace root:
+Python 3.10 to 3.14 (`>=3.10,<3.15`, the interpreters CI tests), Linux x86_64 or aarch64 (CARLA's server itself is x86_64 only; see [installation](docs/installation.md#operating-system)). Install via the workspace root:
 
 ```bash
 # From the repository root
 uv sync --dev
 ```
 
-The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) (`typesafe-carla` on PyPI), a plain dependency — no extra to request — imported as `import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython package prebuilt, so the sync above compiles nothing ([installation](docs/installation.md) has the cases that build it instead). The official `carla` wheels, and CARLA 0.9.16 (UE4), are no longer supported. CARLA's simulator binary itself must be installed separately — see the [CARLA installation guide](https://carla.readthedocs.io/) and the per-package [installation docs](docs/installation.md).
+The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) (`typesafe-carla` on PyPI), a plain dependency — no extra to request — imported as `import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython package prebuilt, so the sync above compiles nothing ([installation](docs/installation.md) has the cases that build it instead). The official `carla` wheels, and CARLA 0.9.16 (UE4), are no longer supported. CARLA's simulator binary itself is downloaded by `uv run scenario-setup` (the nightly build, into `~/.autoware_carla_scenario/bin/carla`); see the [quick start](docs/quickstart.md).
 
 ## Quick usage
 
@@ -36,12 +37,13 @@ The package provides three CLI entry points:
 | Command | Framework | Purpose |
 |---------|-----------|---------|
 | `scenario` | Hydra | Run autonomous-driving scenario tests in CARLA |
+| `scenario-setup` | argparse | Download CARLA (the nightly build) for `scenario` to launch |
 | `detect-no-3d-model` | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | `viewer` | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario results |
 
 ### Run a scenario
 
-Requires a running CARLA server (with `CARLA_EXECUTABLE` exported or a server already listening on the configured host/port).
+Uses a CARLA server already listening on the configured host/port, or launches one: `CARLA_EXECUTABLE`, else the one `scenario-setup` installed.
 
 ```bash
 # Single scenario
