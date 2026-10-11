@@ -19,16 +19,47 @@ class SplitResult:
         self.query = query
         self.fragment = fragment
 
+    # Python's SplitResult is a 5-tuple of str.
+    def __len__(self) -> int:
+        return 5
+
+    def __getitem__(self, index: int) -> str:
+        return (self.scheme, self.netloc, self.path, self.query, self.fragment)[
+            index
+        ]
+
+    def __iter__(self):
+        yield self.scheme
+        yield self.netloc
+        yield self.path
+        yield self.query
+        yield self.fragment
+
+    @property
+    def username(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def password(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def hostname(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def port(self) -> Optional[int]:
+        return Optional[int]()
+
     def geturl(self) -> str:
-        return urlunsplit(
-            (self.scheme, self.netloc, self.path, self.query, self.fragment)
-        )
+        return urlunsplit(self)
 
 
 def urlsplit(url: str, scheme: str = "", allow_fragments: bool = True) -> SplitResult:
     return SplitResult(scheme, "", url, "", "")
 
 
-def urlunsplit(components: Tuple[str, str, str, str, str]) -> str:
+# Any five str, as Python takes them: a tuple, a list or a SplitResult.
+def urlunsplit(components) -> str:
     scheme, netloc, path, query, fragment = components
-    return scheme + "://" + netloc + path
+    return scheme + "://" + netloc + path + query + fragment

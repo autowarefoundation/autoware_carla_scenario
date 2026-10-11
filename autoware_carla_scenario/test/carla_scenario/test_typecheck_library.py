@@ -908,12 +908,19 @@ class Run:
 
 def cache_dir(configured: str) -> Path:
     if configured:
-        return Path(configured).expanduser().resolve()
+        return Path(configured).expanduser().resolve(strict=False)
     return Path.home() / ".cache" / "sumo"
 
 
 def log_file(run: Run) -> str:
     return str(run.output_dir / "sumo" / "fcd.xml")
+
+
+def is_default(run: Run, configured: str) -> bool:
+    # As in Python: a str on the left of `/`, a Path of no parts, and a Path
+    # compared with a str (never equal).
+    here = "outputs" / Path()
+    return run.output_dir == here and run.output_dir != configured
 """
 
 
@@ -931,11 +938,19 @@ def test_the_pathlib_shim_builds_joins_and_prints_paths(
     )
     assert wrong != _PATHLIB
     assert not _check_case(wrong, tmp_path, monkeypatch).ok
+    # Python builds and joins a Path with a str or a Path only.
+    for part in ("Path(configured, 1)", "(Path(configured) / 1)"):
+        wrong = _PATHLIB.replace("Path(configured)", part, 1)
+        assert wrong != _PATHLIB
+        result = _check_case(wrong, tmp_path, monkeypatch)
+        assert not result.ok
+        assert "a str or a Path only" in result.format(), result.format()
 
 
 _URLLIB = """
 from __future__ import annotations
 
+from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -945,6 +960,15 @@ def repository(url: str) -> str:
         return url
     segments = [s for s in parts.path.split("/") if s]
     return urlunsplit((parts.scheme, parts.netloc, "/" + "/".join(segments), "", ""))
+
+
+def host(url: str) -> Optional[str]:
+    # Python's SplitResult: a 5-tuple of str with the netloc's parts.
+    parts = urlsplit(url, scheme="https")
+    scheme, netloc, path, query, fragment = parts
+    if parts.port is None and parts[0] == scheme:
+        return parts.hostname
+    return urlunsplit(parts) + parts.geturl()
 """
 
 
@@ -955,7 +979,7 @@ def test_the_urllib_parse_shim_splits_and_joins_urls(
     assert (model_dir() / "urllib" / "parse.codon").is_file()
     result = _check_case(_URLLIB, tmp_path, monkeypatch)
     assert result.ok, result.format()
-    # SplitResult's parts are typed: a part it lacks is refused.
-    wrong = _URLLIB.replace("parts.netloc:", "parts.hostname:")
+    # SplitResult's parts are typed: a part Python's lacks is refused.
+    wrong = _URLLIB.replace("parts.netloc:", "parts.host:")
     assert wrong != _URLLIB
     assert not _check_case(wrong, tmp_path, monkeypatch).ok

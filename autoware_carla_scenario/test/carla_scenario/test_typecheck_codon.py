@@ -705,6 +705,24 @@ def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
     assert error.path == str(path)
 
 
+def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
+    tmp_path: Path,
+) -> None:
+    # The library check's pathlib shim serves the scenario check too: what it
+    # declares compiles, and any other name of pathlib is refused.
+    scenario, config, _ = _write_case(
+        tmp_path, 'from pathlib import Path\nlogger.info("%s", str(Path("a") / "b"))\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    scenario, config, path = _write_case(
+        tmp_path, 'from pathlib import Path\nlogger.info("%s", Path("a").exists())\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "exists" in error.message
+    assert error.path == str(path)
+
+
 # ---------------------------------------------------------------------------
 # The runner's step
 # ---------------------------------------------------------------------------

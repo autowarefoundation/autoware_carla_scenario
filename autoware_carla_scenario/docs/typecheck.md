@@ -443,9 +443,16 @@ What Codon 0.19 needs that Python does not, beyond
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `pathlib`, `urllib.parse` and
   `__future__` shims of `codon/` are. `pathlib` declares `Path(*parts)`,
-  `/`, `str()`, `expanduser()`, `resolve()` and `Path.home()`, and nothing
-  that touches the file system; `urllib.parse` declares `urlsplit()` and
-  `urlunsplit()`. `collections.abc` is not: import `Sequence` and the other
+  `/`, `str()`, `==`, `hash()`, `expanduser()`, `resolve()` and
+  `Path.home()`, and nothing that touches the file system; like Python's, it
+  builds and joins a `Path` with a `str` or a `Path` only (an `Optional` of
+  one is unwrapped, as Codon unwraps one passed anywhere). `urllib.parse`
+  declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
+  as attributes and as a tuple, `hostname`, `port`, `username`, `password`
+  and `geturl()`). A scenario sees the same shims: it may import `pathlib`
+  and `urllib.parse`, and any other name of them (`Path.exists()`,
+  `urllib.request`) fails its check wherever Codon compiles it.
+  `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
   `typing.Protocol`, whose `@runtime_checkable` is dropped too.
