@@ -526,8 +526,17 @@ class FollowTrajectoryAction(BaseAction):
         if self._gated:
             self._begin_timeline()
         if not self._released:
-            if hasattr(entity, "release_from_traffic"):
-                entity.release_from_traffic(world)
+            if TYPE_CHECKING:
+                # Codon decides hasattr by the static type: a vehicle has the
+                # method, a pedestrian does not.
+                if hasattr(entity, "release_from_traffic"):
+                    entity.release_from_traffic(world)
+            else:
+                # At run time an entity may also have it as None, which
+                # releases nothing (Codon has no getattr default).
+                release = getattr(entity, "release_from_traffic", None)
+                if release is not None:
+                    release(world)
             self._released = True
         if self._following_mode is TrajectoryFollowingMode.FOLLOW and not _is_walker(
             actor
