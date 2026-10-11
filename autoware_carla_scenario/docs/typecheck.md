@@ -228,14 +228,16 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 66 of
-the package's 217 modules (30%; about 9,600 of 66,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 71 of
+the package's 218 modules (33%; about 10,000 of 66,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
-nearly every condition, the action base with the environment and
-traffic-signal actions, the ego, NPC vehicle and pedestrian entities, the
-measures, the ODD units and the CARLA-only helpers. 30 functions and methods
+nearly every condition, the action base with the environment,
+traffic-signal and signal-controller actions, the signal-controller
+registry, the ego, NPC vehicle and pedestrian entities, the Autoware bridge
+interface and its fake, the measures, the ODD units and the CARLA-only
+helpers, the traffic-light lookups included. 30 functions and methods
 of those modules are `UNCALLED`, almost all of them a condition's
-`get_details()`. The 151 `EXCLUDED` modules fall into three groups:
+`get_details()`. The 147 `EXCLUDED` modules fall into three groups:
 
 - **About 110 import what Codon cannot compile**: numpy, lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
@@ -244,7 +246,7 @@ of those modules are `UNCALLED`, almost all of them a condition's
   map cache, the Autoware launcher) and everything that reads Lanelet2.
 - **About 30 build on an excluded module**: the entity actions, through
   `entity.registry`; the example scenarios, through `examples.configs`;
-  the signal controllers, the traffic backends and the authoring compiler.
+  the `signals` package, the traffic backends and the authoring compiler.
 - **About 15 hold values Codon has no type for**: `Any` (`entity.registry`,
   which holds an entity of any kind, `coverage.items`, `odd.model`), a class
   or a callable of any value as a parameter (`scenario_base`'s `ego_type`,
@@ -381,9 +383,17 @@ What Codon 0.19 needs that Python does not, beyond
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base.
   `typing.Any` imports, and every annotation naming it is dropped.
+- **pyxodr's road network is the model's**: `codon/pyxodr/` names the
+  `RoadNetwork` that `coordinate.codon` declares (what the framework reads of
+  it, down to the XML elements), so a module that may not import
+  `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
+  (`utils/traffic_light.py`) and takes the network `MapManager` returns.
+  Nothing else of pyxodr is there.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
+  `AutowareBridge.configure()` takes `waypoints: list[BridgePose] = []`, in
+  the base class and in every override, and its caller passes a list.
 - **No `**` in a dict display** (`{"a": 1, **other}`): Codon's parser fails on
   it, even in a function it never compiles. Build the dict, then
   `update()` it.
@@ -498,7 +508,10 @@ What Codon 0.19 needs that Python does not, beyond
   naming one of typesafe_carla's integer enumerations
   (`carla.TrafficLightState`, `carla.LaneType`, ...) as `int`, so keep the
   CARLA name (the authoring code generator reads it), and compare with
-  `get_state()` rather than look a member up by value.
+  `get_state()` rather than look a member up by value. A member's name is
+  found through the enumeration's `names` (`for name, member in
+  carla.TrafficLightState.names.items()`), which both APIs have, as
+  `utils/traffic_light.py` does.
 - **A sensor callback gets a `carla.SensorData` in the check**, where the
   CPython API hands it the measurement itself (a `carla.CollisionEvent`).
   Listen through a method that converts only when it has to
@@ -509,7 +522,9 @@ What Codon 0.19 needs that Python does not, beyond
   `tuple[int, ...]` parameter or field gives the check nothing to call with.
   Turning it into a list changes what the class does (a frozen dataclass's
   hash, its equality with a tuple), so such a module stays in `EXCLUDED`
-  (`route.model`).
+  (`route.model`). A function that only *returns* one, built with
+  `tuple(iterable)`, compiles: the check drops the `tuple[X, ...]` return
+  annotation (`signals.registry.registered_signal_controllers()`).
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked

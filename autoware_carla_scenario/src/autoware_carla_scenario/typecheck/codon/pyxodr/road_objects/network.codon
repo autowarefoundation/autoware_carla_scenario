@@ -1,0 +1,8 @@
+# pyxodr's RoadNetwork, for the checker (docs/typecheck.md). pyxodr does not
+# compile with Codon: the model declares what the framework reads of a road
+# network in coordinate.codon, beside the MapManager that holds one, and this
+# names that same class, so a checked module that annotates a parameter with
+# pyxodr's RoadNetwork (utils/traffic_light.py, which may not import
+# coordinate) takes the network MapManager returns.
+
+from autoware_carla_scenario.coordinate import RoadNetwork

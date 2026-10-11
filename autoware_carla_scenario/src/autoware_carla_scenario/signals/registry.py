@@ -36,7 +36,9 @@ def register_signal_controller(controller: SignalController) -> None:
 
 def find_signal_controller(name: str) -> Optional[SignalController]:
     """Return the controller called *name*, or ``None``."""
-    return _CONTROLLERS.get(name)
+    # Not ``_CONTROLLERS.get(name)``: Codon's dict.get wants a default of the
+    # value's type (docs/typecheck.md).
+    return _CONTROLLERS[name] if name in _CONTROLLERS else None
 
 
 def registered_signal_controllers() -> "tuple[SignalController, ...]":

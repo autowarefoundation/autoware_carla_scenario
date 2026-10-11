@@ -35,7 +35,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -227,7 +227,7 @@ class AutowareBridge(ABC):
         self,
         initial_pose: BridgePose,
         goal: BridgePose,
-        waypoints: Sequence[BridgePose] = (),
+        waypoints: list[BridgePose] = [],
     ) -> None:
         """Give Autoware the scenario's initial pose, goal and way there.
 

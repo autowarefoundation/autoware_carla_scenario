@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from ..conditions import BaseCondition
+from ..conditions.base import BaseCondition
 from ..signals.registry import find_signal_controller
 from .base import BaseAction, TickTiming
 
@@ -53,6 +53,9 @@ class TrafficSignalControllerAction(BaseAction):
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
     """
+
+    _controller: str
+    _phase: str
 
     def __init__(
         self,
