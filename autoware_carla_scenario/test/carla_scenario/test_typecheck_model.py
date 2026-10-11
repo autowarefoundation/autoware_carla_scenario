@@ -296,6 +296,19 @@ _CDI_FIELDS = {
 }
 
 
+def test_the_carla_driver_interface_model_declares_only_the_compared_names() -> None:
+    # A name the package lacks would pass a scenario's check and fail its run:
+    # whatever the model declares is compared below, dunder methods included.
+    definitions = _definitions("geometry", _CDI_MODEL)
+    assert sorted(definitions) == sorted(_CDI_NAMES)
+    for name in _CDI_NAMES:
+        node = definitions[name][0]
+        if isinstance(node, ast.ClassDef):
+            python = getattr(cdi_geometry, name)
+            for method in _methods(node):
+                assert hasattr(python, method), f"{name}.{method} is in the model only"
+
+
 @pytest.mark.parametrize("name", _CDI_NAMES)
 def test_the_carla_driver_interface_model_is_declared_as_in_the_package(
     name: str,
