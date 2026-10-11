@@ -786,6 +786,64 @@ def _uncalled(module: str) -> list[str]:
     return [name.removeprefix(prefix) for name in UNCALLED if name.startswith(prefix)]
 
 
+def _read_module(path: Path) -> _Module:
+    text = path.read_text(encoding="utf-8")
+    return _Module(path, path.name == "__init__.py", text, ast.parse(text))
+
+
+def _library_dependencies(
+    names: list[str], sources: _Sources, every: dict[str, Path]
+) -> list[str]:
+    """The :data:`.library.CHECKED` modules *names* import, transitively.
+
+    Each is read into *sources*.  An import the importing module makes
+    through the model (:data:`.library.MODELLED_IMPORTS`) or inside a function
+    the check leaves out (:data:`.library.UNCALLED`) is not followed: the
+    module's source is not imported there in the full run either.
+
+    Once one module of a :data:`.library.REPLACED_MODELS` entry is compiled,
+    the others come too (when they are all checked), so that model module is
+    a re-export of the checked definitions, as in the full run, rather than
+    a second set of the same types (the vehicle entity's config, which holds
+    the checked `GroundProjectionConfig` once `entity._spawn` is compiled).
+    """
+    checked = set(CHECKED)
+    found: list[str] = []
+    pending = list(names)
+
+    def add(dep: str) -> None:
+        if dep in checked and dep not in sources.modules:
+            sources.modules[dep] = _read_module(every[dep])
+            found.append(dep)
+            pending.append(dep)
+
+    while pending:
+        while pending:
+            name = pending.pop()
+            module = sources.modules[name]
+            modelled = set(MODELLED_IMPORTS.get(name, ()))
+            skipped = {
+                id(node)
+                for function in uncalled_nodes(module.tree, _uncalled(name))
+                for node in ast.walk(function)
+            }
+            for imported, aliases, _line in _imports(
+                module.tree, name, module.is_package, skip=skipped
+            ):
+                # `from a import b`: b may be a submodule, not a name of a.
+                subs = [f"{imported}.{alias}" for alias in aliases]
+                for dep in sorted({s if s in every else imported for s in subs}):
+                    if dep not in modelled:
+                        add(dep)
+                if not aliases and imported not in modelled:
+                    add(imported)
+        for modules in REPLACED_MODELS.values():
+            if any(m in sources.modules for m in modules):
+                for dep in modules:
+                    add(dep)
+    return sorted(found)
+
+
 def _library_files(
     names: list[str], sources: _Sources, every: dict[str, Path]
 ) -> list[_LibraryFile]:
@@ -954,6 +1012,10 @@ def typecheck_library(
     model, as it does for a scenario.  All of *modules* are compiled
     together, in one Codon build.
 
+    Named *modules* come with the checked modules they import, transitively
+    (:func:`_library_dependencies`), compiled and called the same way, so
+    the run is a slice of the full one; an error in any of them is reported.
+
     Args:
         modules: Dotted module names; :data:`.library.CHECKED` by default.
         toolchain: The Codon to compile with (:func:`find_supported_codon`
@@ -991,11 +1053,14 @@ def typecheck_library(
         )
     sources = _Sources()
     for name in names:
-        path = every[name]
-        text = path.read_text(encoding="utf-8")
-        sources.modules[name] = _Module(
-            path, path.name == "__init__.py", text, ast.parse(text)
+        sources.modules[name] = _read_module(every[name])
+    dependencies = _library_dependencies(names, sources, every)
+    if dependencies:
+        title = (
+            f"{_PACKAGE} library ({len(names)} checked modules, "
+            f"{len(dependencies)} more they import)"
         )
+    names = sorted([*names, *dependencies])
     _library_imports(sources, toolchain, codon_path)
     files = _library_files(names, sources, every)
     driver = render_library_driver(names)

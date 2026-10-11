@@ -1,9 +1,10 @@
 # Model of autoware_carla_scenario.signals (docs/typecheck.md), for
-# conditions.traffic_signal_controller, signals.registry and
-# actions.traffic_signal_controller, which are checked. signals.controller is
-# not (typecheck/library.py): this declares only what checked modules use of
-# it, a controller found by name, the phase it is showing and the jump to
-# another phase.
+# signals.registry, which is checked and imports SignalController from
+# signals.controller. signals.controller is not (typecheck/library.py): this
+# declares only what checked modules use of it, the phase a controller is
+# showing and the jump to another phase. find_signal_controller is the checked
+# signals.registry's, which a library run naming a module that imports it
+# compiles too.
 
 import typesafe_carla.carla as carla
 
@@ -27,7 +28,3 @@ class SignalController:
 
     def change_phase_to(self, phase_name: str, world: carla.World) -> bool:
         raise NotImplementedError()
-
-
-def find_signal_controller(name: str) -> Optional[SignalController]:
-    raise NotImplementedError()
