@@ -316,3 +316,14 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate/frames.py` does for `poses.py`. Set class attributes in the
   class body (`FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2`)
   rather than from a function run after the class.
+- **No variable-length tuples**: Codon's tuples have a fixed length, so a
+  `tuple[int, ...]` parameter or field gives the check nothing to call with.
+  Turning it into a list changes what the class does (a frozen dataclass's
+  hash, its equality with a tuple), so such a module stays in `EXCLUDED`
+  (`route.model`).
+- **A name the model lacks at the boundary**: when a checked module imports a
+  name of a modelled package that the model does not declare
+  (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in
+  the model module. When the package does not export it, add it to
+  `_BOUNDARY` in `test_typecheck_model.py`, so it is compared with the Python
+  class as an exported name is.

@@ -253,3 +253,98 @@ def _expect_optional_timing(timing) -> Optional[TrajectoryTiming]:
 
 def _expect_timing(timing: TrajectoryTiming) -> TrajectoryTiming:
     return timing
+
+
+# What a trajectory resolves to (trajectory.model), for the modules the
+# library check compiles; the package does not export these.
+
+# Any position a vertex may be written in: only named, as a module imports it.
+TrajectoryPosition = Union[CarlaWorldPose, Lanelet2Pose, OpenDrivePose, MapPose,
+                           RelativeLanePose, RouteLanePose, RouteOppositePose,
+                           RouteCrossingPose, RouteCrosswalkPose, RouteRoadsidePose]
+
+
+class TrajectorySample:
+    x: float
+    y: float
+    z: float
+    yaw: float
+    vx: float
+    vy: float
+    yaw_rate: float
+
+    def __init__(self, x: float, y: float, z: float, yaw: float, vx: float = 0.0,
+                 vy: float = 0.0, yaw_rate: float = 0.0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.yaw = yaw
+        self.vx = vx
+        self.vy = vy
+        self.yaw_rate = yaw_rate
+
+    @property
+    def speed(self) -> float:
+        raise NotImplementedError()
+
+
+class ResolvedTrajectory:
+    xs: List[float]
+    ys: List[float]
+    zs: List[float]
+    yaws: List[Optional[float]]
+    times: Optional[List[float]]
+    closed: bool
+
+    def __init__(self, xs: List[float], ys: List[float], zs: List[float],
+                 yaws: List[Optional[float]], times: Optional[List[float]] = None,
+                 closed: bool = False):
+        self.xs = xs
+        self.ys = ys
+        self.zs = zs
+        self.yaws = yaws
+        self.times = times
+        self.closed = closed
+
+    @property
+    def length(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def start_time(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def end_time(self) -> float:
+        raise NotImplementedError()
+
+    def at_vertex(self, index: int) -> TrajectorySample:
+        raise NotImplementedError()
+
+    def vertex_distance(self, index: int) -> float:
+        raise NotImplementedError()
+
+    def start(self) -> TrajectorySample:
+        raise NotImplementedError()
+
+    def end(self) -> TrajectorySample:
+        raise NotImplementedError()
+
+    def at_time(self, time: float) -> TrajectorySample:
+        raise NotImplementedError()
+
+    def at_distance(self, distance: float, speed: float = 0.0) -> TrajectorySample:
+        raise NotImplementedError()
+
+    def distance_at_time(self, time: float) -> float:
+        raise NotImplementedError()
+
+    def time_at_distance(self, distance: float) -> float:
+        raise NotImplementedError()
+
+    def project(self, x: float, y: float, near: Optional[float] = None,
+                window: float = 30.0) -> float:
+        raise NotImplementedError()
+
+    def vertices(self) -> List[TrajectorySample]:
+        raise NotImplementedError()
