@@ -36,7 +36,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["CHECKED", "EXCLUDED", "NOT_YET_CHECKED", "UNCALLED", "package_modules"]
+__all__ = [
+    "CHECKED",
+    "EXCLUDED",
+    "NOT_YET_CHECKED",
+    "REPLACED_MODELS",
+    "UNCALLED",
+    "package_modules",
+]
 
 #: The reason of a module nobody has made compile yet.
 NOT_YET_CHECKED = "not yet checked (#45)"
@@ -60,8 +67,12 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.conditions.timeout",
     "autoware_carla_scenario.conditions.trajectory_time",
     "autoware_carla_scenario.constants",
+    "autoware_carla_scenario.coordinate",
     "autoware_carla_scenario.coordinate.frames",
+    "autoware_carla_scenario.coordinate.lane_distance",
     "autoware_carla_scenario.coordinate.poses",
+    "autoware_carla_scenario.coordinate.snap",
+    "autoware_carla_scenario.coordinate.traffic_light",
     "autoware_carla_scenario.entity_role",
     "autoware_carla_scenario.kinematics",
     "autoware_carla_scenario.kinematics.acceleration",
@@ -73,6 +84,8 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.measures",
     "autoware_carla_scenario.odd.scenario_measure",
     "autoware_carla_scenario.odd.units",
+    "autoware_carla_scenario.traffic.sumo.geometry",
+    "autoware_carla_scenario.traffic.sumo.physics_control",
     "autoware_carla_scenario.trajectory",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.opendrive",
@@ -169,13 +182,9 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.conditions.route_progress": _NOT_YET,
     "autoware_carla_scenario.conditions.traffic_signal": _NOT_YET,
     "autoware_carla_scenario.conditions.traffic_signal_controller": _NOT_YET,
-    "autoware_carla_scenario.coordinate": _NOT_YET,
-    "autoware_carla_scenario.coordinate.lane_distance": _NOT_YET,
     "autoware_carla_scenario.coordinate.map_manager": "imports numpy, lanelet2, pyxodr, pathlib",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
-    "autoware_carla_scenario.coordinate.snap": _NOT_YET,
     "autoware_carla_scenario.coordinate.stop_line": "imports lanelet2",
-    "autoware_carla_scenario.coordinate.traffic_light": "imports utils.traffic_light, which is neither checked nor modelled",
     "autoware_carla_scenario.coordinate.transform": "imports numpy, lanelet2, autoware_lanelet2_extension_python",
     "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which import pathlib, json",
     "autoware_carla_scenario.coverage.cod": "imports pathlib, yaml, csv",
@@ -266,9 +275,9 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.sensor.carla_camera": "imports numpy, queue",
     "autoware_carla_scenario.sensor.carla_lidar": "imports numpy, queue",
     "autoware_carla_scenario.server": "imports pathlib, dotenv, subprocess, signal, atexit",
-    "autoware_carla_scenario.signals": _NOT_YET,
-    "autoware_carla_scenario.signals.controller": _NOT_YET,
-    "autoware_carla_scenario.signals.registry": _NOT_YET,
+    "autoware_carla_scenario.signals": "imports signals.controller, which is neither checked nor modelled",
+    "autoware_carla_scenario.signals.controller": "holds variable-length tuples (`tuple[Phase, ...]`), which Codon cannot express, and build_controllers reads the authoring package's pydantic specs, typed `list[Any]`",
+    "autoware_carla_scenario.signals.registry": "imports signals.controller, which is neither checked nor modelled, and returns a variable-length tuple",
     "autoware_carla_scenario.sweeper": "re-exports sweeper.bindings and sweeper.constraints (lanelet2), sweeper.expand (omegaconf)",
     "autoware_carla_scenario.sweeper.bindings": "imports lanelet2",
     "autoware_carla_scenario.sweeper.constraints": "imports lanelet2",
@@ -277,18 +286,16 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.sweeper.map_loader": "imports lanelet2, pathlib",
     "autoware_carla_scenario.templating": "imports pathlib, jinja2",
     "autoware_carla_scenario.tools.detect_no_3d_model_lanelets": "imports lanelet2, pathlib, omegaconf, tqdm, shutil, argparse",
-    "autoware_carla_scenario.traffic": _NOT_YET,
+    "autoware_carla_scenario.traffic": "imports traffic.base, which is neither checked nor modelled, and its backend factories take `Mapping[str, Any]` options",
     "autoware_carla_scenario.traffic.base": "imports pathlib",
-    "autoware_carla_scenario.traffic.config": _NOT_YET,
-    "autoware_carla_scenario.traffic.driven": _NOT_YET,
-    "autoware_carla_scenario.traffic.registry": _NOT_YET,
-    "autoware_carla_scenario.traffic.sumo": _NOT_YET,
+    "autoware_carla_scenario.traffic.config": "imports utils.config, which is neither checked nor modelled, and holds a backend's options as `dict[str, Any]`",
+    "autoware_carla_scenario.traffic.driven": "imports traffic.base, which is neither checked nor modelled, and holds the map a lane change was read from as `Any`",
+    "autoware_carla_scenario.traffic.registry": "imports traffic.base, which is neither checked nor modelled, and registry (pathlib, omegaconf, importlib); a backend factory is a `Callable`",
+    "autoware_carla_scenario.traffic.sumo": "imports traffic.sumo.config (pathlib), which is neither checked nor modelled",
     "autoware_carla_scenario.traffic.sumo.backend": "imports pathlib, traci, sumolib, libsumo",
     "autoware_carla_scenario.traffic.sumo.config": "imports pathlib",
-    "autoware_carla_scenario.traffic.sumo.geometry": _NOT_YET,
     "autoware_carla_scenario.traffic.sumo.network": "imports pathlib, roadgen, sumo, subprocess, shutil, tempfile, importlib, hashlib",
-    "autoware_carla_scenario.traffic.sumo.physics_control": _NOT_YET,
-    "autoware_carla_scenario.traffic.traffic_manager": _NOT_YET,
+    "autoware_carla_scenario.traffic.traffic_manager": "subclasses traffic.base.TrafficBackend, which is neither checked nor modelled, and drives duck-typed entities and CARLA handles (`Any`), read with getattr defaults",
     "autoware_carla_scenario.trajectory.authoring": "parses document values of `Any` (YAML rows, editor fields) into `dict[str, Any]`, which Codon cannot express",
     "autoware_carla_scenario.trajectory.model": _NOT_YET,
     "autoware_carla_scenario.trajectory.relative_lane": "imports lanelet2, autoware_lanelet2_extension_python",
@@ -304,6 +311,19 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.utils.powertrain": "imports numpy",
     "autoware_carla_scenario.utils.stop_line": "imports lanelet2",
     "autoware_carla_scenario.utils.traffic_light": "reads pyxodr's road network as an XML tree, and calls carla.TrafficLightState, which typesafe_carla's Codon library has as a value, not a type",
+}
+
+#: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library
+#: check compiles from the checked source they model instead: once all of the
+#: modules named are checked, the model module re-exports their definitions,
+#: so every module of the check -- checked or model -- has the same types.
+#: Without it, a checked module handing its own pose to a model function
+#: (``to_opendrive``) would hand the wrong type.
+REPLACED_MODELS: dict[str, tuple[str, ...]] = {
+    "_poses": (
+        "autoware_carla_scenario.coordinate.frames",
+        "autoware_carla_scenario.coordinate.poses",
+    ),
 }
 
 
