@@ -2117,22 +2117,34 @@ unchecked <code>trajectory.resolve</code> (<code>follow_trajectory._resolve_in_w
 the authoring package's pydantic specs, the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
 <code>encode_frame_jpeg()</code> (cv2). The 103 <code>EXCLUDED</code> modules fall in
-three groups:</p>
+three groups. Many fit more than one (74 import what Codon cannot compile,
+47 build on an excluded module and 30 hold values Codon has no type for), so
+each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>About 110 import what Codon cannot compile</strong>: lanelet2, pyxodr,
+<li><strong>74 import what Codon cannot compile</strong>: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (<code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>, or more of <code>pathlib</code>
-  than its shim's <code>Path</code>). This is
+  than its shim's <code>Path</code>), at module level or inside a function the check
+  calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher) and everything that reads Lanelet2.</li>
-<li><strong>About 15 build on an excluded module</strong>: the route frame and route
-  poses (<code>route.frame</code>, <code>route.positions</code>, through lanelet2), the traffic
-  backend registry, the SUMO backend and the authoring compiler.</li>
-<li><strong>About 10 hold values Codon has no type for</strong>: <code>Any</code> (<code>coverage.items</code>,
-  <code>odd.model</code>), a callable of any value as a parameter
-  (<code>trajectory.resolve</code>'s position resolvers), or a class
-  as a value (<code>utils.config</code>, which <code>traffic.config</code> and <code>traffic.sumo.config</code>
-  import only in their uncalled <code>from_mapping()</code>).</li>
+  map cache, the Autoware launcher, the scenario runner and queue) and
+  everything that reads Lanelet2. A reason names <code>pathlib</code> only where the
+  module uses more of it than the shim declares.</li>
+<li><strong>25 build on an excluded module</strong>, and import nothing Codon lacks
+  themselves: they import a module that is neither checked nor modelled, or
+  names that its package's model does not declare. Among them are the
+  packages that re-export one (<code>authoring</code>, <code>maps</code>, <code>odd</code>, <code>sweeper</code>,
+  <code>coverage</code>, <code>autoware_stack</code>, <code>examples</code>, <code>scaffold</code>), the
+  authoring compiler, builders and validator, the
+  map catalogue and config, the route frame, poses and search
+  (<code>route.frame</code>, <code>route.positions</code>, <code>route.search</code>, through lanelet2),
+  <code>odd.model</code> (over <code>coverage.items</code>), <code>trajectory.resolve</code> and
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 11 of the 25
+  also hold values Codon has no type for.</li>
+<li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
+  <code>Any</code> (<code>coverage.items</code>, <code>trajectory.authoring</code>, <code>authoring.registry</code>'s
+  field defaults) or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>
+  and <code>traffic.sumo.config</code> import only in their uncalled <code>from_mapping()</code>).</li>
 </ul>
 <p>The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.</p>
@@ -2763,7 +2775,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 21:46:07 UTC"><span class="timeago" datetime="2026-10-11T21:46:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 21:46:07 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 23:03:07 UTC"><span class="timeago" datetime="2026-10-11T23:03:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 23:03:07 UTC">2026-10-11</span>
   </span>
 
     
