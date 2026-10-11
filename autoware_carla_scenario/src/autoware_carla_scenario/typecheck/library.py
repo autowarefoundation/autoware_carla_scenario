@@ -167,7 +167,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.elapsed_time.ElapsedTimeCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.lane_change_settled.LaneChangeSettledCondition.get_details": _DETAILS,
     "autoware_carla_scenario.entity.registry.find_entity_by_role_name": "returns the entity of any kind registered under a role (`Optional[Any]`), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups",
-    "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); a checked caller compiles it with the entity it passes",
+    "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base calls",
     "autoware_carla_scenario.conditions.not_condition.NotCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.or_condition.OrCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.persistent.PersistentCondition.get_details": _DETAILS,
