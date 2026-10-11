@@ -151,6 +151,19 @@ class TestTheModel:
         assert other.time is None and other.gate is gate
         assert TrajectoryVertex(MapPose(0.0, 0.0)).advance is None
 
+    def test_the_signature_is_position_and_advance(self) -> None:
+        # The run-time wrapper that refuses old calls keeps the signature
+        # introspection sees, and the call by keyword.
+        import inspect
+
+        assert str(inspect.signature(TrajectoryVertex)) == "(position, advance=None)"
+        vertex = TrajectoryVertex(position=MapPose(0.0, 0.0), advance=None)
+        assert vertex.advance is None
+        with pytest.raises(TypeError, match="missing 1 required positional"):
+            TrajectoryVertex()  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="must be a condition"):
+            TrajectoryVertex(MapPose(0.0, 0.0), "go")  # type: ignore[arg-type]
+
     def test_one_condition_per_vertex_and_no_bare_time(self) -> None:
         with pytest.raises(TypeError, match="takes no time any more"):
             TrajectoryVertex(MapPose(0.0, 0.0), 1.0)  # type: ignore[arg-type]

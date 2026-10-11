@@ -250,10 +250,10 @@ into three groups:
   authoring compiler.
 - **About 12 hold values Codon has no type for**: `Any` (`coverage.items`,
   `odd.model`), a class or a callable of any value as a parameter
-  (`scenario_base`'s `ego_type`, callbacks and measure expressions), a
-  union-typed attribute, which crashes Codon 0.19
-  (`RelativeLanePose.entity_ref`), a variable-length tuple (`route.model`,
-  `actions.routing`'s waypoints), or a class as a value (`utils.config`).
+  (`scenario_base`'s `ego_type`, callbacks and measure expressions,
+  `trajectory.resolve`'s position resolvers), a variable-length tuple
+  (`route.model`, `actions.routing`'s waypoints), or a class as a value
+  (`utils.config`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -413,10 +413,43 @@ What Codon 0.19 needs that Python does not, beyond
 - **An attribute holds one type**: one assigned a union (`EntityRole | str`)
   is stored converted where every use converts it anyway
   (`self._entity_name = str(entity_name)`). Codon 0.19 crashes on an
-  attribute declared with a union ("union already sealed"). A public
-  dataclass field is converted in `__post_init__`
-  (`VehicleEntityConfig.role_name: str`, `self.role_name =
-  str(self.role_name)`), which still takes an `EntityRole` at run time.
+  attribute declared with an optional union (`Optional[Union[EntityRole,
+  str]]`: "union already sealed"). A public dataclass field is converted in
+  `__post_init__` (`VehicleEntityConfig.role_name: str`, `self.role_name =
+  str(self.role_name)`), which still takes an `EntityRole` at run time; or
+  by a constructor written out, which keeps the union on the parameter for
+  mypy (`RelativeLanePose(entity_ref: Union[EntityRole, str, None])`, stored
+  as `entity_ref: Optional[str]`).
+- **A union of classes without `None` is an attribute type**: Codon 0.19
+  holds `Union[Lanelet2Pose, MapPose, ...]` (`TrajectoryVertex.position`, any
+  of ten poses), decides `isinstance` on it when the program runs, and the
+  check calls the constructor once per member. Spell the union out in the
+  declaration, not through an alias. A module-level alias whose members are
+  strings (`Union["Lanelet2Pose", MapPose]`, for names imported under
+  `TYPE_CHECKING`) has them unquoted by the check.
+- **Codon does not run `__post_init__`**: its constructor of a class with
+  declared fields only assigns them. The check calls `__post_init__` itself,
+  as a dunder method, so its body is checked. A `field(init=False)` set there
+  is given an empty value of its type (`list[float]()`) by the check, so the
+  constructor leaves it out as Python's does.
+- **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
+  its fields, is checked as `self.name = value`: Codon 0.19 has no
+  `object.__setattr__`.
+- **No `**kwargs` iterated as a dict**: Codon's `**kwargs` is a named tuple,
+  with no `items()`. Pass the names and values as parameters
+  (`_finite(owner, "ds", self.ds)`), one call each.
+- **A run-time-only wrapper of a method**: Codon 0.19 cannot decorate a
+  method, and a decorator `UNCALLED` names (a function of the same module) is
+  dropped by the library check, which compiles the method as written.
+  `TrajectoryVertex.__init__` is typed `(position, advance=None)`;
+  `_refusing_vertex_times` wraps it at run time to refuse the calls written
+  for a vertex with a time, with `inspect` and `functools` imported inside
+  it, where Codon never compiles them.
+- **`isinstance(x, (A, *OTHERS))`** does not compile: Codon 0.19 cannot
+  unpack a tuple of classes into `isinstance`. Spell the classes out
+  (`Trajectory.is_relative`).
+- **`callable(x)`** is checked as `hasattr(x, "__call__")`, which Codon
+  decides when it compiles: Codon 0.19 has no `callable`.
 - **Annotate a local that starts as `None`** (`spawn_points:
   Optional[list[carla.Transform]] = None`): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
@@ -481,10 +514,13 @@ What Codon 0.19 needs that Python does not, beyond
   to `raise X` by the check; `raise X from exc` compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
   rewrites `frozenset(...)` to `set(...)` and `frozenset[X]` /
-  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`. A
-  variable-length tuple (`tuple[X, ...]`, which the check drops from an
-  annotation) has no such stand-in: use a `list` where nothing relies on the
-  immutability.
+  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`.
+- **A variable-length tuple attribute is checked as a list**: a class-level
+  `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
+  list or a generator becomes a list (a tuple passed to `tuple()` stays
+  itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
+  its tuple. A parameter `tuple[X, ...]` is dropped (a caller may pass a
+  tuple), and the library check calls it with a `List[X]`.
 - **No `del` of a parameter** (`del world, goal` to mark it unused): Codon
   reads it as a call on the value. Leave the parameter unused.
 - **An `Optional` attribute is assigned without an annotation**: with one
@@ -536,13 +572,11 @@ What Codon 0.19 needs that Python does not, beyond
   (`if hasattr(data, "as_collision"): data = data.as_collision()`, as
   `conditions/collision.py` does): Codon decides `hasattr` when it compiles,
   and the CPython measurement has no `as_<kind>()`.
-- **No variable-length tuples**: Codon's tuples have a fixed length, so a
-  `tuple[int, ...]` parameter or field gives the check nothing to call with.
-  Turning it into a list changes what the class does (a frozen dataclass's
-  hash, its equality with a tuple), so such a module stays in `EXCLUDED`
-  (`route.model`). A function that only *returns* one, built with
-  `tuple(iterable)`, compiles: the check drops the `tuple[X, ...]` return
-  annotation (`signals.registry.registered_signal_controllers()`).
+- **No variable-length tuples beyond attributes**: Codon's tuples have a
+  fixed length. A class-level `tuple[X, ...]` and `tuple(x)` are checked as
+  lists (above), but a tuple built otherwise (a display grown in a loop,
+  `a + (b,)`) is not, and turning the source's tuple into a list changes what
+  the class does (a frozen dataclass's hash, its equality with a tuple).
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked
