@@ -15,7 +15,7 @@ action that asks or to the entity that is asked.
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar, Collection, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
     LANE_CHANGE_CENTER_TOLERANCE_M,
@@ -23,6 +23,7 @@ from ..constants import (
 )
 from ..kinematics.angle import normalize_angle_deg
 from .base import (
+    DrivenEntity,
     LaneChangeDirection,
     TrafficBackend,
     TrafficContext,
@@ -30,6 +31,9 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +88,20 @@ class TrafficManagerBackend(TrafficBackend):
 
     name: ClassVar[str] = "traffic_manager"
 
+    _config: TrafficManagerBackendConfig
+    _client: Optional["carla.Client"]
+    _random_seed: Optional[int]
+    _closed: bool
+    _background: dict[str, "carla.Actor"]
+    _background_count: int
+    _started: bool
+    _released: set[int]
+
     def __init__(
         self,
         config: Optional[TrafficManagerBackendConfig] = None,
         *,
-        client: Any = None,
+        client: Optional["carla.Client"] = None,
     ) -> None:
         """Create the backend.
 
@@ -100,14 +113,14 @@ class TrafficManagerBackend(TrafficBackend):
         """
         self._config = config or TrafficManagerBackendConfig()
         self._client = client
-        self._random_seed: Optional[int] = None
+        self._random_seed = None
         self._closed = False
         #: Handle -> actor of every background vehicle spawned this run.
-        self._background: dict[str, Any] = {}
+        self._background = {}
         self._background_count = 0
         self._started = False
         #: Actors taken back with :meth:`release`, never handed to autopilot.
-        self._released: set[int] = set()
+        self._released = set()
 
     # ------------------------------------------------------------------
     # Properties
@@ -140,7 +153,9 @@ class TrafficManagerBackend(TrafficBackend):
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(context.random_seed)
 
-    def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
+    def start(
+        self, world: "carla.World", *, skip_actor_ids: Collection[int] = ()
+    ) -> None:
         """Hand every vehicle that is not driven elsewhere to the TrafficManager."""
         self._started = True
         skip = set(skip_actor_ids)
@@ -198,8 +213,8 @@ class TrafficManagerBackend(TrafficBackend):
 
     def spawn_background(
         self,
-        world: Any,
-        transform: Any,
+        world: "carla.World",
+        transform: "carla.Transform",
         *,
         speed_kmh: float,
         blueprint: Optional[str] = None,
@@ -213,7 +228,7 @@ class TrafficManagerBackend(TrafficBackend):
 
         library = world.get_blueprint_library()
         found = library.filter(blueprint or _BACKGROUND_BLUEPRINT)
-        if not found:
+        if len(found) == 0:  # A BlueprintLibrary has no truth value in Codon.
             logger.warning("No vehicle blueprint %r for background traffic", blueprint)
             return None
         self._background_count += 1
@@ -240,12 +255,13 @@ class TrafficManagerBackend(TrafficBackend):
             actor.set_autopilot(True, self.port)
         tm = self._require_tm("spawn_background")
         if tm is not None:
-            tm.set_desired_speed(actor, max(speed_kmh, 1.0))
+            tm.set_desired_speed(_vehicle(actor), max(speed_kmh, 1.0))
         return handle
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(
+        self, world: "carla.World"
+    ) -> dict[str, tuple[float, float]]:
         """Every background vehicle still in the world, at its ``(x, y)``."""
-        del world
         out: dict[str, tuple[float, float]] = {}
         for handle, actor in list(self._background.items()):
             try:
@@ -256,12 +272,11 @@ class TrafficManagerBackend(TrafficBackend):
             out[handle] = (location.x, location.y)
         return out
 
-    def remove_background(self, world: Any, handle: str) -> None:
+    def remove_background(self, world: "carla.World", handle: str) -> None:
         """Destroy the background vehicle *handle*."""
-        del world
-        actor = self._background.pop(handle, None)
-        if actor is None:
+        if handle not in self._background:
             return
+        actor = self._background.pop(handle)
         try:
             actor.destroy()
         except RuntimeError:
@@ -272,7 +287,7 @@ class TrafficManagerBackend(TrafficBackend):
     # ------------------------------------------------------------------
 
     def change_lane(
-        self, entity: Any, world: Any, direction: LaneChangeDirection
+        self, entity: DrivenEntity, world: "carla.World", direction: LaneChangeDirection
     ) -> None:
         """Move *entity* one lane in *direction*.
 
@@ -305,12 +320,12 @@ class TrafficManagerBackend(TrafficBackend):
                 direction.value,
             )
 
-        tm.force_lane_change(actor, direction.to_carla_bool())
+        tm.force_lane_change(_vehicle(actor), direction.to_carla_bool())
         logger.info(
             "%s: forced a %s lane change", _entity_name(entity), direction.value
         )
 
-    def lane_change_finished(self, entity: Any, world: Any) -> bool:
+    def lane_change_finished(self, entity: DrivenEntity, world: "carla.World") -> bool:
         """Whether *entity* has settled onto the lane it was sent to.
 
         Three things have to be true, and a lane id change on its own is not
@@ -322,18 +337,29 @@ class TrafficManagerBackend(TrafficBackend):
         :meth:`TrafficBackend.lane_change_finished` for why that is the honest
         answer rather than a timeout of its own.
         """
-        del world
-        target = getattr(entity, "_lane_change_target", None)
-        carla_map = getattr(entity, "_lane_change_map", None)
-        actor = getattr(entity, "actor", None)
+        # hasattr rather than getattr with a default (docs/typecheck.md): an
+        # entity that is not a DrivenEntity (a test's stand-in) may lack them.
+        if not hasattr(entity, "_lane_change_target") or not hasattr(
+            entity, "_lane_change_map"
+        ):
+            return False
+        target = entity._lane_change_target
+        carla_map = entity._lane_change_map
+        actor = _actor_of(entity)
         if target is None or carla_map is None or actor is None:
             return False
+        # Codon does not narrow an Optional (docs/typecheck.md).
+        aimed: Tuple[int, int] = target
+        lane_map: "carla.Map" = carla_map
 
         # One RPC per tick: the transform carries both the location the map is
         # queried with and the heading the check needs.
         transform = actor.get_transform()
-        waypoint = carla_map.get_waypoint(transform.location, project_to_road=True)
-        if waypoint is None or _lane_key_of(waypoint) != target:
+        found = lane_map.get_waypoint(transform.location, project_to_road=True)
+        if found is None:
+            return False
+        waypoint: "carla.Waypoint" = found
+        if _lane_key_of(waypoint) != aimed:
             return False
 
         # ``get_waypoint`` projects onto the lane centre, so the distance to it
@@ -349,7 +375,9 @@ class TrafficManagerBackend(TrafficBackend):
             <= LANE_CHANGE_HEADING_TOLERANCE_DEG
         )
 
-    def set_desired_speed(self, entity: Any, world: Any, speed_kmh: float) -> None:
+    def set_desired_speed(
+        self, entity: DrivenEntity, world: "carla.World", speed_kmh: float
+    ) -> None:
         """Hold *entity* at *speed_kmh*.
 
         ``set_desired_speed`` is a target, not a jump: the TrafficManager gets
@@ -359,7 +387,6 @@ class TrafficManagerBackend(TrafficBackend):
         of it.  The value given here stays in force until it is changed, which
         is why the action reissues only when it has a rate to walk.
         """
-        del world
         actor = _require_actor(entity, "set_desired_speed")
         if actor is None:
             return
@@ -367,15 +394,15 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        tm.set_desired_speed(actor, speed_kmh)
+        tm.set_desired_speed(_vehicle(actor), speed_kmh)
         logger.debug(
             "%s: desired speed set to %.1f km/h", _entity_name(entity), speed_kmh
         )
 
     def turn_at_junction(
         self,
-        entity: Any,
-        world: Any,
+        entity: DrivenEntity,
+        world: "carla.World",
         direction: TurnDirection,
         *,
         search_distance: float = TURN_SEARCH_DISTANCE_M,
@@ -391,7 +418,6 @@ class TrafficManagerBackend(TrafficBackend):
         a new route, or an Autoware ego a goal beyond the junction -- which is
         why the intent stops at this boundary.
         """
-        del kwargs
         actor = _require_actor(entity, "turn_at_junction")
         if actor is None:
             return
@@ -413,7 +439,7 @@ class TrafficManagerBackend(TrafficBackend):
             )
             return
 
-        tm.set_path(actor, path)
+        tm.set_path(_vehicle(actor), path)
         logger.info(
             "%s: set a %s turn route (%d points)",
             _entity_name(entity),
@@ -421,9 +447,8 @@ class TrafficManagerBackend(TrafficBackend):
             len(path),
         )
 
-    def release(self, entity: Any, world: Any) -> None:
+    def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
-        del world
         actor = _require_actor(entity, "release")
         if actor is None:
             return
@@ -436,7 +461,7 @@ class TrafficManagerBackend(TrafficBackend):
     # Internals
     # ------------------------------------------------------------------
 
-    def _require_tm(self, what: str) -> Any:
+    def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
         if self._client is None:
             logger.warning(
@@ -450,9 +475,35 @@ class TrafficManagerBackend(TrafficBackend):
         return self._client.get_trafficmanager(self.port)
 
 
-def _require_actor(entity: Any, what: str) -> Any:
+def _actor_of(entity: DrivenEntity) -> Optional["carla.Actor"]:
+    """Return *entity*'s actor, or ``None`` when it has none (yet).
+
+    ``hasattr`` rather than ``getattr`` with a default: Codon decides it when it
+    compiles (docs/typecheck.md), and the mixin itself declares no ``actor``.
+    """
+    actor: Optional["carla.Actor"] = None
+    if hasattr(entity, "actor"):
+        actor = entity.actor
+    return actor
+
+
+def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
+    """Return *actor* as the vehicle a TrafficManager call takes.
+
+    At run time that is *actor* itself, which typesafe_carla's Python API takes
+    as it is.  Its Codon library takes a ``carla.Vehicle``, which the library
+    check gets with the checked conversion: Codon reads ``TYPE_CHECKING`` as a
+    compile-time true (docs/typecheck.md), and Python as false.
+    """
+    if TYPE_CHECKING:
+        return actor.as_vehicle()
+    else:
+        return actor
+
+
+def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:
     """Return *entity*'s actor, or ``None`` with a warning."""
-    actor = getattr(entity, "actor", None)
+    actor = _actor_of(entity)
     if actor is None:
         logger.warning(
             "%s: %s asked for before the actor exists", _entity_name(entity), what
@@ -466,8 +517,8 @@ def _require_actor(entity: Any, what: str) -> Any:
 
 
 def _adjacent_lane(
-    carla_map: Any,
-    location: Any,
+    carla_map: "carla.Map",
+    location: "carla.Location",
     direction: LaneChangeDirection,
 ) -> Optional[Tuple[int, int]]:
     """Return the ``(road_id, lane_id)`` beside *location* in *direction*.
@@ -478,15 +529,19 @@ def _adjacent_lane(
     waypoint = carla_map.get_waypoint(location, project_to_road=True)
     if waypoint is None:
         return None
-    neighbour = (
-        waypoint.get_right_lane()
-        if direction is LaneChangeDirection.RIGHT
-        else waypoint.get_left_lane()
-    )
-    return None if neighbour is None else _lane_key_of(neighbour)
+    neighbour: Optional["carla.Waypoint"] = None
+    if direction is LaneChangeDirection.RIGHT:
+        neighbour = waypoint.get_right_lane()
+    else:
+        neighbour = waypoint.get_left_lane()
+    if neighbour is None:
+        return None
+    # Codon does not narrow an Optional (docs/typecheck.md).
+    lane: "carla.Waypoint" = neighbour
+    return _lane_key_of(lane)
 
 
-def _lane_key_of(waypoint: Any) -> Tuple[int, int]:
+def _lane_key_of(waypoint: "carla.Waypoint") -> Tuple[int, int]:
     """Return the ``(road_id, lane_id)`` a waypoint sits on."""
     return (waypoint.road_id, waypoint.lane_id)
 
@@ -502,13 +557,13 @@ def _heading_error_deg(yaw: float, reference_yaw: float) -> float:
 
 
 def compute_turn_route(
-    current_wp: Any,
+    current_wp: "carla.Waypoint",
     direction: TurnDirection,
     *,
     search_distance: float = TURN_SEARCH_DISTANCE_M,
     waypoint_step: float = TURN_WAYPOINT_STEP_M,
     post_junction_distance: float = TURN_POST_JUNCTION_DISTANCE_M,
-) -> List[Any]:
+) -> List["carla.Location"]:
     """Build a waypoint path through the next junction in the desired direction."""
     pre_junction_wp, junction_entries = _walk_to_junction(
         current_wp, search_distance, waypoint_step
@@ -516,7 +571,7 @@ def compute_turn_route(
     if pre_junction_wp is None or not junction_entries:
         return []
 
-    branches: List[List[Any]] = []
+    branches: List[List["carla.Waypoint"]] = []
     for entry_wp in junction_entries:
         branch = _trace_through_junction(
             entry_wp, waypoint_step, post_junction_distance
@@ -535,8 +590,8 @@ def compute_turn_route(
 
 
 def _walk_to_junction(
-    start_wp: Any, search_distance: float, waypoint_step: float
-) -> tuple[Optional[Any], List[Any]]:
+    start_wp: "carla.Waypoint", search_distance: float, waypoint_step: float
+) -> tuple[Optional["carla.Waypoint"], List["carla.Waypoint"]]:
     """Walk forward from *start_wp* until the next OpenDRIVE junction.
 
     If *start_wp* is already inside a junction it is first skipped so that
@@ -567,7 +622,9 @@ def _walk_to_junction(
 
         entries = [w for w in next_wps if w.is_junction]
         if entries:
-            return wp, entries
+            # An Optional, as the other returns' None is (docs/typecheck.md).
+            pre_junction: Optional["carla.Waypoint"] = wp
+            return pre_junction, entries
 
         wp = next_wps[0]
         distance += waypoint_step
@@ -576,14 +633,14 @@ def _walk_to_junction(
 
 
 def _trace_through_junction(
-    entry_wp: Any, waypoint_step: float, post_junction_distance: float
-) -> List[Any]:
+    entry_wp: "carla.Waypoint", waypoint_step: float, post_junction_distance: float
+) -> List["carla.Waypoint"]:
     """Follow waypoints from *entry_wp* through the junction and a bit beyond.
 
     The extra post-junction distance provides a stable exit heading for
     direction comparison.
     """
-    path: List[Any] = [entry_wp]
+    path: List["carla.Waypoint"] = [entry_wp]
     wp = entry_wp
 
     # Walk through junction connecting road
@@ -610,10 +667,10 @@ def _trace_through_junction(
 
 
 def _pick_branch(
-    pre_junction_wp: Any,
-    branches: List[List[Any]],
+    pre_junction_wp: "carla.Waypoint",
+    branches: List[List["carla.Waypoint"]],
     direction: TurnDirection,
-) -> Optional[List[Any]]:
+) -> Optional[List["carla.Waypoint"]]:
     """Select the branch whose exit heading change is closest to the target.
 
     CARLA yaw convention (left-hand, clockwise-positive when viewed from
@@ -626,7 +683,7 @@ def _pick_branch(
     entry_yaw = pre_junction_wp.transform.rotation.yaw
     target = _TARGET_DEG[direction]
 
-    best: Optional[List[Any]] = None
+    best: Optional[List["carla.Waypoint"]] = None
     best_score = float("inf")
 
     for branch in branches:

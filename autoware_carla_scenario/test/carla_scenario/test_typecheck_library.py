@@ -31,6 +31,7 @@ from autoware_carla_scenario.typecheck.cli import main as scenario_check
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
     EXCLUDED,
+    MODELLED_IMPORTS,
     NOT_YET_CHECKED,
     REPLACED_MODELS,
     UNCALLED,
@@ -79,12 +80,11 @@ def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
     modules = package_modules()
     for name, reason in UNCALLED.items():
         assert reason.strip(), f"{name}: no reason"
-        # The longest checked module it starts with: trajectory.model, not the
-        # trajectory package.
-        module = max(
-            (m for m in CHECKED if name.startswith(f"{m}.")), key=len, default=None
-        )
-        assert module is not None, f"{name}: not in a checked module"
+        # The deepest one: traffic.base.X is in traffic.base, not
+        # in traffic, and trajectory.model.X in trajectory.model.
+        owners = [m for m in CHECKED if name.startswith(f"{m}.")]
+        assert owners, f"{name}: not in a checked module"
+        module = max(owners, key=len)
         qualname = name.removeprefix(f"{module}.")
         tree = ast.parse(modules[module].read_text(encoding="utf-8"))
         owner, _, function = qualname.rpartition(".")
@@ -103,6 +103,12 @@ def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name == function
         ], f"{name}: no such function"
+
+
+def test_every_modelled_import_is_between_checked_modules() -> None:
+    for name, imported in MODELLED_IMPORTS.items():
+        assert name in CHECKED, name
+        assert imported and all(m in CHECKED for m in imported), name
 
 
 def test_the_checker_itself_is_not_a_module_to_check() -> None:
@@ -201,6 +207,24 @@ def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
     )
     assert _model_module(f"{_PACKAGE}.utils.config") is None
     assert _model_module(f"{_PACKAGE}.coordinate.transform") == f"{_PACKAGE}.coordinate"
+
+
+def test_a_modelled_import_names_the_model_though_the_module_is_checked() -> None:
+    # measures and scenario_base import each other: measures has scenario_base
+    # through its model, scenario_base has measures from its source.
+    measures, scenario_base = f"{_PACKAGE}.measures", f"{_PACKAGE}.scenario_base"
+    assert scenario_base in MODELLED_IMPORTS[measures]
+    every = package_modules()
+    sources = check._Sources()
+    for name in (measures, scenario_base):
+        text = every[name].read_text(encoding="utf-8")
+        sources.modules[name] = check._Module(every[name], False, text, ast.parse(text))
+    files = {
+        f.module: f.text
+        for f in check._library_files([measures, scenario_base], sources, every)
+    }
+    assert f"from {_PACKAGE}.scenario_base import BaseScenario" in files[measures]
+    assert f"from {workspace_module(measures)} import " in files[scenario_base]
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +394,7 @@ _CALLABLES = """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
 
 def apply(f: Callable[[float, str], Optional[float]]) -> None:
@@ -388,6 +412,10 @@ def anything(f: Callable[[Any], Any]) -> None:
 
 def variadic(f: Callable[..., float]) -> None:
     pass
+
+
+def register(cb: Union[float, Callable[[float], None]]) -> None:
+    pass
 """
 
 
@@ -396,6 +424,9 @@ def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
     calls = checks.source.splitlines()
     assert "    apply(_acs_value(Callable[[float, str], Optional[float]]))" in calls
     assert "    Reader(_acs_value(Callable[[carla.World], float]))" in calls
+    # A union with a callable in it: called once with each member.
+    assert "    register(_acs_value(float))" in calls
+    assert "    register(_acs_value(Callable[[float], None]))" in calls
     lines = _CALLABLES.splitlines()
     assert sorted(lines[line - 1].split("(")[0] for line, _ in checks.problems) == [
         "def anything",
@@ -599,6 +630,37 @@ class Fake(Bridge):
 
 
 @needs_codon
+def test_pyxodrs_road_network_is_the_one_map_manager_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # utils/traffic_light.py annotates with pyxodr's RoadNetwork, since utils
+    # may not import coordinate; the pyxodr shim names the model's class, so
+    # the network MapManager returns goes into it.
+    source = """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
+from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+if TYPE_CHECKING:
+    from pyxodr.road_objects.network import RoadNetwork
+
+
+def first_controller_name(road_network: RoadNetwork) -> Optional[str]:
+    for element in road_network.root.iter("controller"):
+        return element.get("name")
+    return None
+
+
+def ambient_controller_name() -> Optional[str]:
+    return first_controller_name(MapManager.get_instance().road_network)
+"""
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
 def test_a_module_importing_what_codon_cannot_compile_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -660,4 +722,115 @@ def test_abc_and_an_uncalled_method_compile(
     # With it, neither its import nor its mixed dict reaches Codon.
     monkeypatch.setitem(check.UNCALLED, f"{_FAKE}.Shape.summary", "uses json")
     result = _check_case(_ABSTRACT, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# What the traffic backends need (#79)
+# ---------------------------------------------------------------------------
+
+
+_OVERRIDDEN = """
+from __future__ import annotations
+
+from typing import Any
+
+
+class Backend:
+    def start(self, world: int, *, skip: list[int]) -> None:
+        pass
+
+    def turn(self, world: int, **kwargs: Any) -> None:
+        pass
+
+    def tick(self, world: int) -> None:
+        pass
+"""
+
+
+def test_a_method_with_keyword_only_parameters_is_called_through_its_class() -> None:
+    # Codon 0.19 calls a method a subclass may override through a dispatch
+    # thunk, which takes neither a keyword argument nor **kwargs.
+    calls = render_library_checks(ast.parse(_OVERRIDDEN)).source.splitlines()
+    assert (
+        "    Backend.start(_acs_value(Backend), _acs_value(int), "
+        "skip=_acs_value(list[int]))"
+    ) in calls
+    assert "    Backend.turn(_acs_value(Backend), _acs_value(int))" in calls
+    assert "    _acs_value(Backend).tick(_acs_value(int))" in calls
+
+
+def test_an_import_inside_an_uncalled_function_is_left_as_written() -> None:
+    source = """
+        def build(options: dict) -> None:
+            from autoware_carla_scenario.utils.config import load
+        """
+    out, problems = redirect_imports(
+        textwrap.dedent(source),
+        f"{_PACKAGE}.kinematics.velocity",
+        False,
+        _target,
+        _MODULES.__contains__,
+        uncalled=["build"],
+    )
+    assert problems == []
+    assert "from autoware_carla_scenario.utils.config import load" in out
+
+
+_BACKENDS = """
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+import typesafe_carla.carla as carla
+
+logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class Steering(Protocol):
+    def steer(self, world: carla.World) -> None:
+        ...
+
+
+class Backend:
+    def start(self, world: carla.World, *, skip_actor_ids: list[int] = []) -> None:
+        pass
+
+    @classmethod
+    def from_options(cls, options: dict[str, int]) -> Backend:
+        from autoware_carla_scenario.utils.config import checked_options
+
+        checked_options(cls, options)
+        return cls()
+
+
+class Manager(Backend):
+    def start(self, world: carla.World, *, skip_actor_ids: list[int] = []) -> None:
+        try:
+            world.tick()
+        except RuntimeError:
+            logger.warning("tick failed", exc_info=True)
+
+
+def vehicle(actor: carla.Actor) -> carla.Vehicle:
+    if TYPE_CHECKING:
+        return actor.as_vehicle()
+    else:
+        return actor
+"""
+
+
+@needs_codon
+def test_overridden_methods_protocols_and_type_checking_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each override is called by keyword, a framework module with no model is
+    # imported only in an uncalled method, a protocol is a declaration, and
+    # only the TYPE_CHECKING branch of vehicle() is compiled.
+    monkeypatch.setitem(
+        check.UNCALLED, f"{_FAKE}.Backend.from_options", "uses utils.config"
+    )
+    result = _check_case(_BACKENDS, tmp_path, monkeypatch)
     assert result.ok, result.format()

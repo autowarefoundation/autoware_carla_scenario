@@ -184,9 +184,9 @@ def get_stop_line_linestrings_with_following(lanelet_id: int, depth: int = 1):
     raise NotImplementedError()
 
 
-# What lane_distance reads of the map MapManager has loaded: pyxodr's
-# RoadNetwork and Road, and the lxml elements they hold. Neither pyxodr nor
-# lxml compiles with Codon, so only what is read is declared.
+# What lane_distance and utils.traffic_light read of the map MapManager has
+# loaded: pyxodr's RoadNetwork and Road, and the lxml elements they hold.
+# Neither pyxodr nor lxml compiles with Codon, so only what is read is declared.
 
 
 class _XmlAttributes:
@@ -206,6 +206,12 @@ class _XmlElement:
     def findall(self, path: str) -> List[_XmlElement]:
         raise NotImplementedError()
 
+    def iter(self, tag: str) -> List[_XmlElement]:
+        raise NotImplementedError()
+
+    def get(self, key: str) -> Optional[str]:
+        raise NotImplementedError()
+
     def get(self, key: str, default: str) -> str:
         raise NotImplementedError()
 
@@ -219,6 +225,7 @@ class Road:
 
 class RoadNetwork:
     road_ids_to_object: Dict[str, Road]
+    root: _XmlElement
 
 
 class MapManager:

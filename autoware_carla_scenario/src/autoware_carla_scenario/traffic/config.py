@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ..constants import DEFAULT_TM_PORT
-from ..utils.config import checked_options
 
 __all__ = [
     "TrafficConfig",
@@ -43,6 +42,11 @@ class TrafficManagerBackendConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficManagerBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        # Imported here: utils.config reads a dataclass's fields from its class,
+        # which Codon cannot express, and the library check compiles no import
+        # in a function it does not call (typecheck/library.py, UNCALLED).
+        from ..utils.config import checked_options  # noqa: PLC0415
+
         return cls(**checked_options(cls, mapping))
 
 
@@ -63,6 +67,8 @@ class TrafficConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        from ..utils.config import checked_options  # noqa: PLC0415
+
         checked = checked_options(cls, mapping)
         options = checked.get("options") or {}
         return cls(

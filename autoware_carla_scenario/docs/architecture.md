@@ -1120,7 +1120,7 @@ graph LR
 | **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. |
 | **`VIEWER_HOST`** | No | `0.0.0.0` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. |
 | **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. |
-| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to skip the first N jobs. |
+| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed). A glob batch reads the flag directly instead. |
 
 #### Dynamic Map Path Variables
 

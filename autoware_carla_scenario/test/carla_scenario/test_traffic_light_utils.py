@@ -14,6 +14,7 @@ from autoware_carla_scenario.coordinate.traffic_light import (
 from autoware_carla_scenario.utils.traffic_light import (
     get_signal_ids_for_controller,
     lanelet2_traffic_light_id_to_opendrive_controller_id,
+    traffic_light_state_name,
 )
 
 
@@ -240,3 +241,40 @@ class TestSignalIdsForController:
     def test_an_unknown_controller_is_empty(self) -> None:
         network = _FakeRoadNetwork(_CONTROLLERS)
         assert get_signal_ids_for_controller(network, 99) == []
+
+
+# ---------------------------------------------------------------------------
+# traffic_light_state_name
+# ---------------------------------------------------------------------------
+
+
+class TestTrafficLightStateName:
+    def test_every_member_and_its_value_give_the_member_name(self) -> None:
+        import typesafe_carla.carla as carla
+
+        assert carla.TrafficLightState.names
+        for name, member in carla.TrafficLightState.names.items():
+            assert traffic_light_state_name(member) == name
+            assert traffic_light_state_name(int(member)) == name
+            # What looking the member up by value gives.
+            assert traffic_light_state_name(int(member)) == (
+                carla.TrafficLightState(int(member)).name
+            )
+
+    def test_the_usual_states_by_value(self) -> None:
+        assert traffic_light_state_name(0) == "Red"
+        assert traffic_light_state_name(1) == "Yellow"
+        assert traffic_light_state_name(2) == "Green"
+        assert traffic_light_state_name(3) == "Off"
+
+    @pytest.mark.parametrize("state", [-1, 5, 99, 2**40])
+    def test_a_value_no_member_has_is_unknown(self, state: int) -> None:
+        assert traffic_light_state_name(state) == "Unknown"
+
+    @pytest.mark.parametrize("state", [None, "abc", object(), [2]])
+    def test_what_is_not_an_int_is_unknown(self, state: object) -> None:
+        assert traffic_light_state_name(state) == "Unknown"  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(("state", "name"), [("2", "Green"), (1.7, "Yellow")])
+    def test_what_int_converts_is_looked_up(self, state: object, name: str) -> None:
+        assert traffic_light_state_name(state) == name  # type: ignore[arg-type]
