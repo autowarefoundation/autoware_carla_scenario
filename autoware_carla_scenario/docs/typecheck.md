@@ -253,7 +253,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 85 of
-the package's 225 modules (38%; about 13,700 of 68,300 lines) are `CHECKED`:
+the package's 225 modules (38%; about 13,700 of 68,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, set-speed, turn and walk-straight actions,
