@@ -177,6 +177,25 @@ def _collect_condition_statuses(
     return statuses
 
 
+def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
+    """The stem a run's files are named by: *scenario_name*, or
+    ``{scenario_name}-N`` once an earlier run in *output_dir* has taken it.
+
+    A batch can run one scenario class more than once -- two configs of it, or
+    the cases of a sweep -- and each run keeps a result, trajectory, recording
+    and coverage file of its own, all under one stem.
+    """
+    stem = scenario_name
+    counter = 1
+    while any(
+        (output_dir / f"{stem}{suffix}").exists()
+        for suffix in ("_result.json", ".trajectory.jsonl", "_coverage.json")
+    ):
+        stem = f"{scenario_name}-{counter}"
+        counter += 1
+    return stem
+
+
 def _unique_path(path: Path) -> Path:
     """Return *path* if it does not exist, otherwise append ``_1``, ``_2``, … ."""
     if not path.exists():
@@ -709,6 +728,7 @@ class ScenarioRunner:
 
         world = self._world
         scenario_name = type(scenario).__name__
+        file_stem = _run_file_stem(self.output_dir, scenario_name)
 
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an
@@ -747,7 +767,7 @@ class ScenarioRunner:
 
         recording_started = False
         trajectory = TrajectoryRecorder(
-            self.output_dir / f"{scenario_name}.trajectory.jsonl"
+            self.output_dir / f"{file_stem}.trajectory.jsonl"
         )
         tick_count = 0
         result: Optional[ScenarioResult] = None
@@ -866,7 +886,7 @@ class ScenarioRunner:
             _vehicle_entity_module._warmup_done = True
 
             # Start native CARLA recorder
-            output_path = self.output_dir / f"{scenario_name}.log"
+            output_path = self.output_dir / f"{file_stem}.log"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 self._client.start_recorder(str(output_path))
@@ -1115,20 +1135,12 @@ class ScenarioRunner:
                 result.message,
                 result.elapsed_seconds,
             )
-            json_path = self.output_dir / f"{scenario_name}_result.json"
+            json_path = self.output_dir / f"{file_stem}_result.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(result.to_json(indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
-                # A batch can run one scenario class more than once: each
-                # run keeps a file of its own, all matching *_coverage.json.
-                coverage_path = self.output_dir / f"{scenario_name}_coverage.json"
-                counter = 1
-                while coverage_path.exists():
-                    coverage_path = (
-                        self.output_dir / f"{scenario_name}-{counter}_coverage.json"
-                    )
-                    counter += 1
+                coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(
                     "[%s] Coverage written to: %s", scenario_name, coverage_path
@@ -1140,8 +1152,8 @@ class ScenarioRunner:
             and tick_count > 0
             and scenario._spectator_camera_config is not None
         ):
-            log_path = self.output_dir / f"{scenario_name}.log"
-            mp4_path = _unique_path(self.output_dir / f"{scenario_name}.mp4")
+            log_path = self.output_dir / f"{file_stem}.log"
+            mp4_path = _unique_path(self.output_dir / f"{file_stem}.mp4")
             self._render_video_from_recording(
                 log_path=log_path,
                 mp4_path=mp4_path,

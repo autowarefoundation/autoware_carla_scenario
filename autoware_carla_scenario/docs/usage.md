@@ -82,6 +82,29 @@ uv run scenario scenario='*/*'
 - All scenarios in a batch **must share the same map** (CARLA loads one map per session)
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
 - A summary table is printed at the end with per-scenario pass/fail status
+- A scenario with a `sweep:` section runs once, as configured; add `--multirun`
+  to run every case of it (see [Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
+
+#### Running every sweep case in a batch
+
+With `--multirun`, a batch expands each scenario's `sweep:` -- lanelet
+constraints, a route search, the [ODD sampler](odd.md#sampling-scenarios-from-the-odd) --
+into its cases, the same ones `scenario-expand` prints, and runs them all in
+the one queue, against one CARLA session (and, with `autoware.launcher`, a
+fresh Autoware per case):
+
+```bash
+# Every lanelet case of both cut-in scenarios
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt
+
+# 10 cases per scenario drawn from the ODD
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
+  +sweep.odd_sample.count=10 +sweep.odd_sample.strategy=coverage
+```
+
+A scenario with more than one case is listed as `name#k` in the summary, and
+`batch_results.json` gives each case its `overrides`. `hydra/sweeper=...` may
+be given but is not needed: the batch is the sweeper.
 
 ### Selecting a Published HD Map
 
@@ -150,11 +173,13 @@ itself (`scenario.route.*`); see
 
 ### Resume from a Specific Scenario
 
-When running large batches, you can skip already-completed scenarios:
+When running large batches, you can skip already-completed scenarios.
+`--resume-from N` starts at the *N*th scenario (1-indexed, as for a sweep);
+in a `--multirun` batch it counts the expanded cases:
 
 ```bash
-# Resume from the 3rd scenario (0-based index)
-uv run scenario scenario='intersection_passing/*' --resume-from 2
+# Resume from the 3rd scenario
+uv run scenario scenario='intersection_passing/*' --resume-from 3
 ```
 
 ### Overriding Configuration Parameters
@@ -709,11 +734,11 @@ VIEWER_BASE_PATH=outputs uv run viewer
 ### Use Case 6: Resume a Failed Batch
 
 ```bash
-# Original batch run (5 scenarios, failed at index 3)
+# Original batch run (5 scenarios, failed at the 4th)
 uv run scenario scenario='intersection_passing/*'
 
-# Resume from the 4th scenario (0-based index 3)
-uv run scenario scenario='intersection_passing/*' --resume-from 3
+# Resume from the 4th scenario
+uv run scenario scenario='intersection_passing/*' --resume-from 4
 ```
 
 ---

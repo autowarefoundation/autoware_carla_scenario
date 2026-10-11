@@ -556,6 +556,16 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
   '+sweep.odd_sample.coverage_from=[outputs]'
 ```
 
+A glob batch with `--multirun` draws each matched scenario's cases the same
+way and runs them all in one queue ([Batch Execution](usage.md#running-every-sweep-case-in-a-batch));
+each scenario draws its own, so two scenarios on one ODD and seed are given
+the same settings:
+
+```bash
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
+  +sweep.odd_sample.count=20 +sweep.odd_sample.strategy=coverage
+```
+
 or in the scenario's YAML:
 
 ```yaml
