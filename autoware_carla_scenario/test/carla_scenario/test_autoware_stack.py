@@ -48,7 +48,9 @@ def _alive(pid: int) -> bool:
     try:
         with open(f"/proc/{pid}/stat") as stat:
             return stat.read().split()[2] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # The process was reaped between kill(0) and the read: /proc raises
+        # ESRCH mid-read rather than failing the open.
         return False
 
 
