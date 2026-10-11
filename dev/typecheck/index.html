@@ -1964,7 +1964,7 @@ typesafe_carla's Python-API compatibility shortcuts (such as calling a
 Nothing in the model runs; <code>test_typecheck_model.py</code> keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).</p>
-<p>A scenario that imports a module with no model (numpy, or a framework module
+<p>A scenario that imports a module with no model (lanelet2, or a framework module
 outside the public API) is refused with a message naming the module.</p>
 <h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
 <p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
@@ -2052,8 +2052,9 @@ defines anything.</p>
 <p><code>CHECKED</code> lists the modules compiled from their source; <code>EXCLUDED</code> maps every
 other module to the reason it is not. <code>"not yet checked (#45)"</code> marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(<code>"imports numpy, lanelet2"</code>: a package or a standard module Codon cannot
-compile). Every module of the package except <code>typecheck/</code> is in exactly one of
+(<code>"imports lanelet2, pathlib"</code>: a package or a standard module Codon cannot
+compile). numpy is not one: Codon ships its own, and a module's numpy calls
+compile. Every module of the package except <code>typecheck/</code> is in exactly one of
 the two, which the test suite checks, so <strong>a new module needs an entry</strong>.</p>
 <p><code>UNCALLED</code> names the few public functions and methods of a checked module the
 check leaves out (<code>module.Class.method</code>), each with its reason: one whose job
@@ -2078,15 +2079,16 @@ function or method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module but four of the example scenarios now has an entry other than
-<code>"not yet checked (#45)"</code>. 94 of the package's 225 modules (42%; about
-16,900 of 68,700 lines) are <code>CHECKED</code>:
+<code>"not yet checked (#45)"</code>. 98 of the package's 225 modules (44%; about
+17,800 of 68,700 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 nearly every condition, the action base with the environment, traffic-signal,
 signal-controller, lane-change, routing, set-speed, turn and walk-straight
 actions, the logical scenario's route search and matches (<code>route.model</code>) and
 the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities and the entity registry, <code>BaseScenario</code>,
+NPC vehicle and pedestrian entities, the entity registry and the policy
+warm-up with the Chaos powertrain model, <code>BaseScenario</code>,
 the traffic backend interface with the TrafficManager backend, the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
@@ -2102,7 +2104,7 @@ the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <cod
 <code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
 (<code>_refusing_vertex_times</code>), and <code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs. The 131 <code>EXCLUDED</code> modules are the
+the authoring package's pydantic specs. The 127 <code>EXCLUDED</code> modules are the
 six example scenarios, which import the checked <code>examples.configs</code> (the
 scenario check compiles each as a scenario, against the model), and three
 groups. Four of the examples are not checked yet; <code>cut_in</code> and
@@ -2111,7 +2113,7 @@ the model's <code>GroundProjectionConfig</code>, which they import from the top-
 package, meets <code>scenario_config</code>'s checked one, a different type to Codon
 (#99). The three groups:</p>
 <ul>
-<li><strong>About 110 import what Codon cannot compile</strong>: numpy, lanelet2, pyxodr,
+<li><strong>About 110 import what Codon cannot compile</strong>: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (<code>pathlib</code>, <code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>). This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
@@ -2267,6 +2269,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>coordinate</code> annotates with pyxodr's own class under <code>TYPE_CHECKING</code>
   (<code>utils/traffic_light.py</code>) and takes the network <code>MapManager</code> returns.
   Nothing else of pyxodr is there.</li>
+<li><strong>numpy is Codon's own</strong>, so <code>import numpy as np</code> compiles
+  (<code>utils/powertrain.py</code>). Codon compares no <code>np.float32</code> with a Python
+  <code>float</code>: convert the float (<code>x &lt;= np.float32(max_rpm)</code>), which is what
+  numpy 2 does anyway (NEP 50), so nothing changes at run time. Codon's
+  <code>ndarray</code> needs its dtype and dimension count, so a parameter annotated
+  with a bare <code>np.ndarray</code> or numpy.typing's <code>NDArray[...]</code> does not
+  translate.</li>
 <li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.
@@ -2602,7 +2611,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 12:52:32 UTC"><span class="timeago" datetime="2026-10-11T12:52:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 12:52:32 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 13:26:11 UTC"><span class="timeago" datetime="2026-10-11T13:26:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 13:26:11 UTC">2026-10-11</span>
   </span>
 
     
