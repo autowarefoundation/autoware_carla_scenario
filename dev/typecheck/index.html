@@ -2082,13 +2082,16 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 139 of
-the package's 228 modules (61%; about 30,100 of 65,000 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 145 of
+the package's 228 modules (64%; about 33,000 of 65,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
 and the lane arithmetic of a relative lane pose (<code>trajectory.relative_lane</code>),
-all against the lanelet2 model, the condition base and
+the sweeper's lanelet constraints and parameter bindings
+(<code>sweeper.constraints</code>, <code>sweeper.bindings</code>) and the route's map questions,
+frame, poses and search (<code>route.geometry</code>, <code>route.frame</code>, <code>route.positions</code>,
+<code>route.search</code>), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
 walk-straight actions, the logical scenario's route search and matches (<code>route.model</code>) and
@@ -2119,13 +2122,15 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>entity</code>, <code>driver</code> and <code>maps</code>
 packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 71
+below). 73
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
-backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
-match from YAML values of any type (<code>Range.parse()</code>, <code>parse_route_search()</code>,
-<code>RouteMatch.from_config()</code>) and what lays a route on a lanelet2 map handed
-over as <code>Any</code> (<code>set_scenario_route()</code>), the <code>[tool.uv.sources]</code> entry of a
+backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
+match, a constraint or a binding from YAML values of any type
+(<code>Range.parse()</code>, <code>parse_route_search()</code>, <code>RouteMatch.from_config()</code>,
+<code>parse_constraint()</code>, <code>parse_binding()</code>), the length constraint's check of
+its rule, which iterates over the <code>ComparisonRule</code> enum
+(<code>LaneletLengthConstraint.__post_init__()</code>), the <code>[tool.uv.sources]</code> entry of a
 framework pin, a dict of str and bool values (<code>Pin.uv_source()</code>), the six members of
 <code>BaseScenario</code> built on the ego's class (<code>ego_type</code>, a <code>type[EgoVehicle]</code>:
 the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
@@ -2150,39 +2155,40 @@ statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixtur
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 89 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (64 import what Codon cannot compile,
-39 build on an excluded module and 25 hold values Codon has no type for), so
-each is counted once, in the first group that fits it:</p>
+<code>encode_frame_jpeg()</code> (cv2). The 83 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (about 61 import what Codon cannot
+compile, 33 build on an excluded module and 21 hold values Codon has no type
+for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>64 import what Codon cannot compile</strong>: lanelet2 beyond what its model
+<li><strong>61 import what Codon cannot compile</strong>: lanelet2 beyond what its model
   declares (most of these walk its objects typed <code>Any</code>), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
   beyond <code>importlib.metadata</code>, or more of <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
   <code>subprocess</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
   declare), at module level or inside a function the check calls. This is
-  the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware stack's Docker launcher and dev container, the
+  the tooling around a run (the editor, the UI, authoring, the sweeper's
+  expansion, Hydra sweeper and map loader, the map cache, the Autoware
+  stack's Docker launcher and dev container, the
   record of a run's environment), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
-<li><strong>22 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>18 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
   <code>coverage</code>, <code>autoware_stack</code>, <code>examples</code>, <code>scaffold</code>), the
-  authoring compiler, builders and validator, the route frame, poses and search
-  (<code>route.frame</code>, <code>route.positions</code>, <code>route.search</code>, through lanelet2),
-  <code>trajectory.resolve</code> and
+  authoring compiler, builders and validator,
   <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader), and <code>ui.runner</code>
-  (over <code>ui.models</code>); 9 of the 22
+  (over <code>ui.models</code>); 5 of the 18
   also hold values Codon has no type for.</li>
-<li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
+<li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
-  field defaults) or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>
-  and <code>traffic.sumo.config</code> import only in their uncalled <code>from_mapping()</code>).</li>
+  field defaults), a class as a value (<code>utils.config</code>, which <code>traffic.config</code>
+  and <code>traffic.sumo.config</code> import only in their uncalled <code>from_mapping()</code>),
+  or callables through aliases Codon reads as no type, built as closures
+  (<code>trajectory.resolve</code>).</li>
 </ul>
 <p>The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.</p>
@@ -2514,11 +2520,16 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   its parameter names: <code>lanelet2.core</code>'s map, lanelet layer, lanelets, line
   strings, points, attribute maps and regulatory elements (their ids,
   attributes, centrelines, bounds, rule parameters and stop lines),
-  <code>BasicPoint2d</code>; <code>lanelet2.geometry</code>'s <code>to2D()</code>, <code>length()</code>,
-  <code>toArcCoordinates()</code> (an <code>ArcCoordinates</code>), <code>findNearest()</code> (of the
-  lanelet layer) and <code>inside()</code>; <code>lanelet2.routing.RoutingGraph(laneletMap,
-  trafficRules)</code> with <code>following()</code>, <code>previous()</code>, <code>left()</code>, <code>right()</code>,
-  <code>adjacentLeft()</code> and <code>adjacentRight()</code>; <code>lanelet2.traffic_rules.create()</code>
+  <code>BasicPoint2d</code>, and the lanelets whose bound a line string is
+  (<code>LaneletLayer.findUsages()</code>, of a line string only); <code>lanelet2.geometry</code>'s
+  <code>to2D()</code>, <code>length()</code>, <code>length2d()</code> (of a lanelet), <code>toArcCoordinates()</code>
+  (an <code>ArcCoordinates</code>), <code>findNearest()</code> (of the lanelet layer) and
+  <code>inside()</code>; <code>lanelet2.routing.RoutingGraph(laneletMap, trafficRules)</code> with
+  <code>following()</code>, <code>previous()</code>, <code>left()</code>, <code>right()</code>, <code>adjacentLeft()</code>,
+  <code>adjacentRight()</code> and <code>conflicting()</code> (a list of <code>ConstLanelet</code>s, as
+  simple-lanelet2 hands them out: lanelet2's own binding wraps each in a
+  <code>ConstLaneletOrArea</code>, which <code>route.geometry</code> still unwraps at run time);
+  <code>lanelet2.traffic_rules.create()</code>
   with its <code>Locations</code> and <code>Participants</code>; <code>lanelet2.io.Origin</code>; and
   Autoware's <code>MGRSProjector</code>, <code>AutowareTrafficLight</code> and <code>RoadMarking</code>.
   Each module's header says what it leaves out; parts of the API the
@@ -3008,9 +3019,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the lookup around them, not the calls (<code>RoutingAction.execute()</code>).
 - <strong>lanelet2's map at the model boundary</strong>: the model's <code>MapManager</code> hands
   out its <code>lanelet_map</code> and <code>routing_graph</code> as the lanelet2 model's classes
-  (above), which the model's <code>RouteFrame</code> takes, so the checked
-  <code>scenario_route_frame()</code> (<code>route.active</code>) compiles; <code>route.frame</code> itself,
-  which reads them, is not checked.
+  (above), which the checked <code>RouteFrame</code> (<code>route.frame</code>) takes, so the
+  checked <code>scenario_route_frame()</code> (<code>route.active</code>) builds it from them.
 - <strong>A model shared with checked modules is split out</strong>: the model's
   <code>EgoConfig</code> derives from <code>VehicleEntityConfig</code>, and the checked
   <code>EgoVehicle.spawn()</code> hands its spawn location to the checked
@@ -3079,6 +3089,56 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the model module. When the package does not export it, add it to
   <code>_BOUNDARY</code> in <code>test_typecheck_model.py</code>, so it is compared with the Python
   class as an exported name is.
+- <strong>A Protocol that checked code dispatches through becomes a base class</strong>:
+  Codon has no structural typing, and decides <code>isinstance</code> and <code>hasattr</code> by
+  the static type. <code>sweeper.constraints.Constraint</code> was a <code>Protocol</code>; it is
+  an <code>ABC</code> whose <code>evaluate()</code> is abstract (so, as before, it cannot be
+  instantiated itself), and every constraint of the module derives from it.
+  What walks a constraint tree asks each class what to bind
+  (<code>_bind_set_level()</code>, which the composite and set-level constraints
+  override) instead of testing the value with <code>isinstance</code> and <code>hasattr</code>. A
+  constraint of someone else's that does not derive from it still works at
+  run time: the walk takes the duck-typed path for it, in the <code>else</code> branch
+  of <code>isinstance(constraint, Constraint)</code>, which Codon decides as true. What
+  a set-level constraint caches (<code>_cached_ids</code>) is a <code>field(init=False,
+  repr=False, compare=False)</code>: declared, as Codon needs, but neither a
+  constructor parameter nor part of the repr or the comparisons, and unset
+  until the constraint is bound, as before (<code>dataclasses.fields()</code> now lists
+  it, so <code>dataclasses.asdict()</code> of a set-level constraint includes it, and
+  raises <code>AttributeError</code> before the constraint is bound; nothing in the
+  framework calls either on a constraint).
+- <strong>A registry of classes at module level</strong> (<code>sweeper.constraints</code>'
+  <code>_LEAF_REGISTRY</code>, <code>sweeper.bindings</code>' <code>_BINDING_REGISTRY</code>): Codon holds no
+  class as a value, and cannot type <code>dict[str, type]</code>. Declare it
+  <code>dict[str, Any]</code> and assign it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>;
+  only the uncalled parser reads it.
+- <strong>An enum member looked up by name, or an enum iterated over</strong>
+  (<code>ComparisonRule[name]</code>, <code>for r in ComparisonRule</code>): the <code>enum</code> shim models
+  neither. <code>sweeper.constraints._comparison_rule()</code> looks the member up in a
+  list of the members spelled out under <code>if TYPE_CHECKING:</code>, and by name in
+  the <code>else</code> branch; the validator that iterates is <code>UNCALLED</code>.
+- <strong>An exception class raised with no arguments</strong> (<code>raise _Exhausted()</code> in
+  <code>route.search</code>): Codon 0.19 raises no exception class without its own
+  <code>__init__</code>, and its <code>Exception</code> takes a message where Python's takes none.
+  The constructor calls <code>super().__init__("")</code> under <code>if TYPE_CHECKING:</code> and
+  <code>super().__init__()</code> in the <code>else</code> branch.
+- <strong>An Optional chosen by a conditional expression, whose value goes to a
+  union field</strong> (<code>beside = graph.left(l) if left else graph.right(l)</code>, then
+  <code>BindingResult(value=beside.id)</code>, a <code>float | int | list[int]</code>): Codon 0.19
+  generated invalid LLVM IR and crashed without a diagnostic ("Call
+  parameter type does not match function signature", <code>optimize.cpp:1070</code>).
+  Choose with an <code>if</code> statement into a local annotated <code>Optional[...]</code>.
+- <strong>A function that returns a tuple with an <code>Optional</code> member</strong>, <code>None</code> in
+  one return and a value in another (<code>route.frame.ego_placement()</code>):
+  annotate the local in each return's own assignment (<code>no_goal:
+  Optional[tuple[int, float]] = None</code>, <code>goal_at: Optional[tuple[int, float]]
+  = frame.locate(s)</code>): one local annotated <code>Optional</code> where it is assigned
+  <code>None</code>, and assigned the value later, was not enough.
+- <strong>A loop variable assigned a subclass's value is retyped</strong>: in a function
+  that already declared <code>other: ConstLanelet</code>, <code>other = near</code> (a <code>Lanelet</code>)
+  makes <code>other</code> a <code>Lanelet</code>, and a list of <code>(float, ConstLanelet)</code> then
+  refuses it. Give the upcast a name of its own (<code>nearby: ConstLanelet =
+  near</code>, <code>route.geometry</code>).
 - <strong>A value of a type the model holds</strong>: a checked module that hands a checked
   value to a checked module that imports it through the model
   (<code>MODELLED_IMPORTS</code>) hands the wrong type. <code>scenario_runner</code> hands the
@@ -3121,7 +3181,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 17:13:46 UTC"><span class="timeago" datetime="2026-10-12T17:13:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 17:13:46 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 18:37:11 UTC"><span class="timeago" datetime="2026-10-12T18:37:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 18:37:11 UTC">2026-10-12</span>
   </span>
 
     
