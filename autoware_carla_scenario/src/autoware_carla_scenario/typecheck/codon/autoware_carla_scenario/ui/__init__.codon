@@ -1,0 +1,4 @@
+# autoware_carla_scenario.ui is not checked (typecheck/library.py); this
+# package holds models of the modules of it that the checked ui.runner
+# imports (ui.models). A scenario importing the package itself finds none of
+# its names here.

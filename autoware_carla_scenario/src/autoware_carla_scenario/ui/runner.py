@@ -80,12 +80,16 @@ def start_run(
         logger.warning("A scenario run is already in progress")
         return
 
+    # `extra_overrides or []`, in a form Codon can type.
+    extras: list[str] = []
+    if extra_overrides:
+        extras = extra_overrides
     thread = threading.Thread(
         target=_run_worker,
         args=(
             overrides_list,
             base_path,
-            extra_overrides or [],
+            extras,
             group_as_multirun,
         ),
         daemon=True,
@@ -108,7 +112,7 @@ def _run_worker(
     multirun_dir: str | None = None
     if group_as_multirun and total > 0:
         now = datetime.now()  # noqa: DTZ005
-        multirun_dir = f"multirun/{now:%Y-%m-%d}/{now:%H-%M-%S}"
+        multirun_dir = _multirun_dir(now)
         logger.info("Grouping %d jobs under %s", total, multirun_dir)
 
     try:
@@ -123,7 +127,7 @@ def _run_worker(
                 )
             )
 
-            cmd = ["uv", "run", "scenario", *overrides, *extra_overrides]
+            cmd = ["uv", "run", "scenario"] + overrides + extra_overrides
             # Direct each job's output to multirun/{date}/{time}/{index}/
             if multirun_dir:
                 cmd.append(f"hydra.run.dir={multirun_dir}/{i}")
@@ -174,12 +178,27 @@ def _run_worker(
         _set_running(False)
 
 
+def _multirun_dir(now: datetime) -> str:
+    """``multirun/{date}/{time}`` of *now*: ``f"multirun/{now:%Y-%m-%d}/{now:%H-%M-%S}"``.
+
+    Spelled out from the fields, as Codon formats no datetime; the same string
+    for every year from 1000 on (strftime's ``%Y`` pads years before 1000
+    only on some Pythons).
+    """
+    date = f"{now.year:04d}-{now.month:02d}-{now.day:02d}"
+    time = f"{now.hour:02d}-{now.minute:02d}-{now.second:02d}"
+    return f"multirun/{date}/{time}"
+
+
 def _save_raw_output(
     result: subprocess.CompletedProcess[str],
     job_dir: Path,
 ) -> None:
     """Save subprocess stdout/stderr to ``raw_output.log`` in *job_dir*."""
-    parts = [s for s in (result.stdout, result.stderr) if s]
+    parts: list[str] = []
+    for stream in (result.stdout, result.stderr):
+        if stream:
+            parts.append(stream)
     if not parts:
         return
     try:

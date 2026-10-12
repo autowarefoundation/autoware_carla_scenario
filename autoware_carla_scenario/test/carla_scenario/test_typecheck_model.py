@@ -45,6 +45,7 @@ from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.ui import models as ui_models
 from carla_driver_interface import geometry as cdi_geometry
 
 _MODEL = model_dir() / "autoware_carla_scenario"
@@ -330,6 +331,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
             "map_root",
         ),
     ),
+    # A pydantic model: its fields by keyword only, as Python's signature.
+    "ui/models": (ui_models, ("RunProgress", "Status")),
 }
 
 #: Classes the model declares only so a checked package can re-export them:

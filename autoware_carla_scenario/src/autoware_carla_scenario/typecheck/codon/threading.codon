@@ -1,0 +1,129 @@
+# Python's threading, for the checker (docs/typecheck.md). It replaces the
+# threading module Codon ships, which has locks but no threads, and which
+# Codon's own numpy (`from threading import Lock`) and typesafe_carla's Codon
+# library (`threading.Lock()`) import: everything of it is kept, as it is.
+#
+# Everything above Thread is Codon's stdlib/threading.codon, Copyright (C)
+# 2022-2025 Exaloop Inc., under the Apache License 2.0
+# (test_typecheck_library.py checks that the shim keeps all of it).
+#
+# Thread is declared with CPython 3.10's signature, the oldest Python the
+# package supports: Thread(group=None, target=None, name=None, args=(),
+# kwargs=None, *, daemon=None), start(), join(timeout=None) and is_alive().
+# Codon 0.19 has no `*,`: daemon follows `*_kw`. The check compiles the call
+# the thread makes, `target(*args)`, so a target that does not take its
+# arguments fails it, as the thread fails in CPython. args is a tuple (a
+# list, which CPython takes too, is not declared), kwargs is None (a dict of
+# keyword arguments is not declared), and group is None, as CPython asserts.
+# Nothing here runs: no thread is started, and none is waited for.
+
+import internal.static as static
+
+
+@tuple
+class Lock:
+    p: cobj
+
+    def __new__() -> Lock:
+        return Lock(_C.seq_lock_new(),)
+
+    def acquire(self, block: bool = True, timeout: float = -1.0) -> bool:
+        if timeout >= 0.0 and not block:
+            raise ValueError("can't specify a timeout for a non-blocking call")
+        return _C.seq_lock_acquire(self.p, block, timeout)
+
+    def release(self):
+        _C.seq_lock_release(self.p)
+
+    def __enter__(self):
+        self.acquire()
+
+    def __exit__(self):
+        self.release()
+
+@tuple
+class RLock:
+    p: cobj
+
+    def __new__() -> RLock:
+        return RLock(_C.seq_rlock_new(),)
+
+    def acquire(self, block: bool = True, timeout: float = -1.0) -> bool:
+        if timeout >= 0.0 and not block:
+            raise ValueError("can't specify a timeout for a non-blocking call")
+        return _C.seq_rlock_acquire(self.p, block, timeout)
+
+    def release(self):
+        _C.seq_rlock_release(self.p)
+
+    def __enter__(self):
+        self.acquire()
+
+    def __exit__(self):
+        self.release()
+
+def active_count() -> int:
+    from openmp import get_num_threads
+    return get_num_threads()
+
+def get_native_id() -> int:
+    from openmp import get_thread_num
+    return get_thread_num()
+
+def get_ident() -> int:
+    return get_native_id() + 1
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+def _expect_none(value, where: Literal[str]):
+    if isinstance(value, None) or isinstance(value, Optional[NoneType]):
+        pass
+    else:
+        compile_error(where)
+
+
+class Thread:
+    _started: bool
+
+    def __init__(
+        self,
+        group=None,
+        target=None,
+        name: Optional[str] = None,
+        args=(),
+        kwargs=None,
+        *_kw,
+        daemon: Optional[bool] = None,
+    ):
+        _keyword_only(_kw, "Thread(): daemon")
+        _expect_none(group, "Thread(): group must be None")
+        _expect_none(kwargs, "Thread(): keyword arguments for the target are not declared")
+        if not isinstance(args, Tuple):
+            compile_error("Thread(): args is a tuple here")
+        self._started = False
+        if isinstance(target, None) or isinstance(target, Optional[NoneType]):
+            pass
+        elif self._started:
+            # Compiled, never made: the call the thread makes.
+            target(*args)
+
+    def start(self) -> None:
+        self._started = True
+
+    def join(self, timeout=None) -> None:
+        if isinstance(timeout, None) or isinstance(timeout, Optional[NoneType]):
+            pass
+        elif isinstance(timeout, int) or isinstance(timeout, float):
+            pass
+        elif isinstance(timeout, Optional[int]) or isinstance(timeout, Optional[float]):
+            pass
+        else:
+            compile_error("Thread.join(): the timeout is a number of seconds or None")
+
+    def is_alive(self) -> bool:
+        return False

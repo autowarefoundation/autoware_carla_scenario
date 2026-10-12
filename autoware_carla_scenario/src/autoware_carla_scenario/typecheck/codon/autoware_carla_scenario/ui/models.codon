@@ -1,0 +1,27 @@
+# Model of autoware_carla_scenario.ui.models (docs/typecheck.md), which
+# imports pydantic: what the checked ui.runner uses of it, with the
+# signatures of the Python module.
+
+from .._tc import _keyword_only
+
+# Literal["running", "passed", "failed", "done", "idle"] in Python: the check
+# reads a Literal as the type of its values (typecheck/transform.py).
+Status = str
+
+
+# A pydantic model in Python, whose constructor takes its fields by keyword
+# only (`RunProgress(*, current, total, scenario_name, status)`).
+class RunProgress:
+    current: int
+    total: int
+    scenario_name: str
+    status: Status
+
+    def __init__(
+        self, *_kw, current: int, total: int, scenario_name: str, status: Status
+    ):
+        _keyword_only(_kw, "RunProgress(): its fields")
+        self.current = current
+        self.total = total
+        self.scenario_name = scenario_name
+        self.status = status
