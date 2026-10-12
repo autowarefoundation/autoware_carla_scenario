@@ -85,7 +85,7 @@ class MapEntry:
 
 
 def list_maps(
-    source: "str | MapSource",
+    source: str | MapSource,
     *,
     cache: Optional[GitMapCache] = None,
     refresh: bool = False,

@@ -1,0 +1,62 @@
+# Python's hashlib.sha256, the one hash the framework uses, for the checker
+# (docs/typecheck.md). The signatures are CPython's, so the check accepts the
+# calls CPython does and refuses the others; the check reads `bytes` as `str`
+# (Codon 0.19 has no bytes), so the data is a str here. Nothing here runs: a
+# digest is empty.
+
+import internal.static as static
+
+
+def _positional_only(args, where: Literal[str]):
+    # Codon 0.19 has no `/`: a positional-only parameter is a `*args` of one,
+    # so no keyword reaches it.
+    if static.len(args) != 1:
+        compile_error(where + " takes exactly one argument")
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+class _Hash:
+    """The hash object sha256() returns (CPython's _hashlib.HASH)."""
+
+    _name: str
+
+    def __init__(self, name: str):
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def digest_size(self) -> int:
+        return 32
+
+    @property
+    def block_size(self) -> int:
+        return 64
+
+    # update(data, /): positional only in CPython.
+    def update(self, *data) -> None:
+        _positional_only(data, "update()")
+        value: str = data[0]
+
+    def digest(self) -> str:
+        return ""
+
+    def hexdigest(self) -> str:
+        return ""
+
+    def copy(self) -> _Hash:
+        return _Hash(self._name)
+
+
+# CPython 3.10 to 3.14 all take the data by position or as `string=` (`data=`
+# only from 3.13 on), and `usedforsecurity` by keyword only.
+def sha256(string: str = "", *_kw, usedforsecurity: bool = True) -> _Hash:
+    _keyword_only(_kw, "usedforsecurity")
+    return _Hash("sha256")

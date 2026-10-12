@@ -20,6 +20,16 @@ class str:
     def __mod__(self, args) -> str:
         return self
 
+    # str.encode and bytes.decode, with CPython's signatures. The check reads
+    # `bytes` as `str` (Codon 0.19 has none), so both are a str's and return
+    # one: it cannot tell a str from bytes, and so neither refuses
+    # `"text".decode()` nor `data.encode()` on bytes.
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        return self
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        return self
+
 
 def _acs_value(T: type) -> T:
     """A T, for the library check's calls (typecheck/library_driver.py):

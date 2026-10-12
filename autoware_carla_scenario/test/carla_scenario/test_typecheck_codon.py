@@ -755,17 +755,21 @@ def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
     tmp_path: Path,
 ) -> None:
     # The library check's pathlib shim serves the scenario check too: what it
-    # declares compiles, and any other name of pathlib is refused.
+    # declares compiles, the file-system queries included (with CPython's
+    # signatures), and any other name of pathlib is refused.
     scenario, config, _ = _write_case(
-        tmp_path, 'from pathlib import Path\nlogger.info("%s", str(Path("a") / "b"))\n'
+        tmp_path,
+        "from pathlib import Path\n"
+        'logger.info("%s %s", str(Path("a") / "b"), Path("a").exists())\n',
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
     scenario, config, path = _write_case(
-        tmp_path, 'from pathlib import Path\nlogger.info("%s", Path("a").exists())\n'
+        tmp_path,
+        'from pathlib import Path\nlogger.info("%s", Path("a").chmod(0o644))\n',
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "exists" in error.message
+    assert "chmod" in error.message
     assert error.path == str(path)
 
 

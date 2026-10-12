@@ -313,6 +313,18 @@ def test_the_bridge_pose_model_re_exports_the_checked_pose() -> None:
     ]
 
 
+def test_the_map_source_model_re_exports_the_checked_source() -> None:
+    # So the model GitMapCache (maps/cache.codon) takes the MapSource the
+    # checked maps.resolver and maps.catalogue hand it.
+    (source,) = REPLACED_MODELS["_map_source"]
+    problems: list = []
+    out = replaced_models(_trees(source), problems)
+    assert problems == []
+    assert out["_map_source"].splitlines() == [
+        f"from {workspace_module(source)} import MapSource",
+    ]
+
+
 def test_a_model_is_replaced_only_once_all_its_modules_are_checked() -> None:
     frames, _poses = REPLACED_MODELS["_poses"]
     problems: list = []
@@ -1291,3 +1303,109 @@ def test_the_urllib_parse_shim_splits_and_joins_urls(
     wrong = _URLLIB.replace("parts.netloc:", "parts.host:")
     assert wrong != _URLLIB
     assert not _check_case(wrong, tmp_path, monkeypatch).ok
+
+
+# ---------------------------------------------------------------------------
+# The file-system pathlib calls, hashlib, and str.encode / bytes.decode (#116)
+# ---------------------------------------------------------------------------
+
+
+_FILE_SYSTEM = """
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Optional
+
+
+def maps_in(directory: Path) -> list[Path]:
+    return sorted(p for p in directory.glob("*.osm") if p.is_file())
+
+
+def first_xodr(directory: Path) -> Optional[Path]:
+    for candidate in sorted(directory.glob(pattern="*.xodr")):
+        if candidate.exists() and not candidate.is_dir():
+            found: Optional[Path] = candidate
+            return found
+    return None
+
+
+def inside(root: Path, candidate: Path) -> bool:
+    real = candidate.absolute().resolve()
+    return real.parents[0] <= root or real == root or root in real.parents
+
+
+def describe(path: Path) -> str:
+    names = [parent.name for parent in path.parents]
+    suffix = path.suffix
+    return f"{path.name}{suffix} in {path.parent} ({len(path.parents)} {names})"
+
+
+def digest(text: str) -> str:
+    key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+    h = hashlib.sha256(usedforsecurity=False)
+    h.update(text.encode(errors="strict"))
+    h.update(b"-")
+    other = hashlib.sha256(string=b"x").copy()
+    size = other.digest_size + other.block_size
+    return key + h.hexdigest() + other.name + str(size) + h.digest().decode("latin-1")
+"""
+
+
+@needs_codon
+def test_the_file_system_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "hashlib.codon").is_file()
+    result = _check_case(_FILE_SYSTEM, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython 3.10, the oldest
+        # Python the package supports (glob() takes `case_sensitive` from 3.12
+        # on, sha256() `data=` from 3.13 on).
+        ('directory.glob("*.osm")', 'directory.glob("*.osm", case_sensitive=True)'),
+        ("candidate.exists()", "candidate.exists(True)"),
+        ("suffix = path.suffix", "suffix = path.suffix()"),
+        ("real.parents[0] <= root", 'real.parents[0] <= "/"'),
+        ("candidate.absolute()", "candidate.chmod(0o644)"),
+        (".hexdigest()[:10]", ".hexdigest(10)[:10]"),
+        ("hashlib.sha256(usedforsecurity=False)", 'hashlib.sha256(b"", False)'),
+        ('h.update(b"-")', 'h.update(data=b"-")'),
+        ('hashlib.sha256(string=b"x")', 'hashlib.sha256(data=b"x")'),
+        ('text.encode("utf-8")', 'text.encode("utf-8", "strict", 1)'),
+        ('text.encode(errors="strict")', "text.encode(encoding=1)"),
+    ],
+    ids=[
+        "glob-keyword",
+        "exists-argument",
+        "suffix-is-a-property",
+        "path-ordered-with-str",
+        "no-method",
+        "hexdigest-argument",
+        "usedforsecurity-keyword-only",
+        "update-positional-only",
+        "sha256-keyword",
+        "encode-arguments",
+        "encode-encoding-type",
+    ],
+)
+def test_the_file_system_shims_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FILE_SYSTEM.replace(right, wrong, 1)
+    assert source != _FILE_SYSTEM
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()

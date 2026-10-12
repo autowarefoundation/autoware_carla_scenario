@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 122 of
-the package's 225 modules (54%; about 24,200 of 69,100 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 125 of
+the package's 225 modules (56%; about 25,100 of 69,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -268,7 +268,9 @@ NPC vehicle and pedestrian entities, the Autoware ego
 (`entity.autoware_entity`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`,
 the traffic backend interface and its run context with the TrafficManager
-backend and the SUMO backend's options, the map source URIs, the Autoware
+backend and the SUMO backend's options, the map source URIs and what
+resolves them to files on disk (`maps.resolver`, with the repository listing
+of `maps.catalogue` and the `map` config's paths of `maps.config`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
 scenario configs (`scenario_config`, `examples.configs`), the camera
@@ -278,7 +280,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `entity` and `driver`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 62
+below). 63
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -292,14 +294,15 @@ the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), what resolves a followed trajectory with the
 unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 `signals.build_controllers()`, which reads
-the authoring package's pydantic specs, the driver configs'
+the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
+which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 103 `EXCLUDED` modules fall in
-three groups. Many fit more than one (74 import what Codon cannot compile,
-47 build on an excluded module and 30 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 100 `EXCLUDED` modules fall in
+three groups. Many fit more than one (73 import what Codon cannot compile,
+44 build on an excluded module and 29 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **74 import what Codon cannot compile**: lanelet2, pyxodr,
+- **73 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
   than its shim's `Path`), at module level or inside a function the check
@@ -308,16 +311,15 @@ each is counted once, in the first group that fits it:
   map cache, the Autoware launcher, the scenario runner and queue) and
   everything that reads Lanelet2. A reason names `pathlib` only where the
   module uses more of it than the shim declares.
-- **25 build on an excluded module**, and import nothing Codon lacks
+- **23 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `maps`, `odd`, `sweeper`,
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator, the
-  map catalogue and config, the route frame, poses and search
+  authoring compiler, builders and validator, the route frame, poses and search
   (`route.frame`, `route.positions`, `route.search`, through lanelet2),
   `odd.model` (over `coverage.items`), `trajectory.resolve` and
-  `traffic.registry` (the `registry`, in its plugin loader); 11 of the 25
+  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 23
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
@@ -374,7 +376,7 @@ stands in for it in the check's workspace:
   `coordinate.codon`), or, for a module of a package that is itself checked,
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
-  `autoware_stack/launcher.codon`). A module with no
+  `autoware_stack/launcher.codon`, `maps/cache.codon`). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
@@ -475,17 +477,36 @@ What Codon 0.19 needs that Python does not, beyond
   attribute per key.
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
   ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`,
-  `urllib.parse` and `__future__` shims of `codon/` are. `pathlib` declares `Path(*parts)`,
+  `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
+  `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
+  arguments CPython takes, so the check accepts what CPython accepts and
+  refuses the rest; where Python versions differ, it takes what Python 3.10,
+  the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
   `/`, `str()`, `==`, `hash()`, `expanduser()`, `resolve()` and
-  `Path.home()`, and nothing that touches the file system; like Python's, it
-  builds and joins a `Path` with a `str` or a `Path` only (an `Optional` of
-  one is unwrapped, as Codon unwraps one passed anywhere). `urllib.parse`
+  `Path.home()`; like Python's, it builds and joins a `Path` with a `str` or
+  a `Path` only (an `Optional` of one is unwrapped, as Codon unwraps one
+  passed anywhere). It declares the file-system queries too: `exists()`,
+  `is_file()`, `is_dir()`, `glob(pattern)` and `absolute()`, with Python
+  3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
+  `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
+  `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
+  sliced) and the ordering of two `Path`s, so `sorted()` takes them. Nothing
+  touches the file system: a query is `False` and a glob yields nothing.
+  Nothing writes either: `mkdir()`, `write_text()`, `open()`, `chmod()` and
+  the rest are not declared. `hashlib` declares `sha256(string=b"", *,
+  usedforsecurity=True)` and its hash object (`update(data, /)`, `digest()`,
+  `hexdigest()`, `copy()`, `name`, `digest_size`, `block_size`); no other
+  hash. `str.encode()` and `bytes.decode()` take `(encoding="utf-8",
+  errors="strict")`; since the check reads `bytes` as `str` (below), both
+  are a `str`'s, and the check cannot tell a `str` from `bytes`: it takes
+  `"text".decode()`, which CPython refuses. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
-  and `geturl()`). A scenario sees the same shims: it may import `pathlib`
-  and `urllib.parse`, and any other name of them (`Path.exists()`,
-  `urllib.request`) fails its check wherever Codon compiles it.
+  and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
+  `hashlib` and `urllib.parse` and call what they declare, file-system
+  queries included (`Path(...).exists()`), and any other name of them
+  (`Path.chmod()`, `hashlib.md5()`, `urllib.request`) fails its check
+  wherever Codon compiles it.
   `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
@@ -709,7 +730,12 @@ What Codon 0.19 needs that Python does not, beyond
 - **Codon does not narrow an `Optional`** after `if x is None: return`. Where
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (`od: OpenDrivePose = x`),
-  which Codon unwraps.
+  which Codon unwraps. Likewise, a function returning
+  `tuple[Optional[Path], bool]` returns a `Path` it found through an
+  `Optional[Path]` local (`shipped: Optional[Path] = candidate`, as
+  `maps.resolver._find_xodr()` does): Codon types a tuple by its members,
+  and a bare annotation without a value (`found: Optional[Path]`) does not
+  change the type of what is assigned to it later.
 - **Codon does not narrow a union either**, with `is` or `isinstance`, and an
   attribute holding a union (`Union[Sequence[int], TrafficLightTarget,
   None]`) reaches every use as the union. Store it split by kind
@@ -899,7 +925,11 @@ What Codon 0.19 needs that Python does not, beyond
   in a model module of their own (`_vehicle_entity.codon`), which
   `REPLACED_MODELS` replaces with `entity._spawn` and
   `entity.vehicle_entity`: the model's `EgoConfig` then holds the checked
-  `SpawnLocation`. Likewise `GroundProjectionConfig` (`_ground_projection.codon`,
+  `SpawnLocation`. The model of `maps.cache` (`maps/cache.codon`,
+  subprocess and json) takes and returns a `MapSource` from a model module
+  of its own (`_map_source.codon`), which `REPLACED_MODELS` replaces with the
+  checked `maps.source`, so the checked `maps.resolver` hands the model's
+  `GitMapCache` its own `MapSource`. Likewise `GroundProjectionConfig` (`_ground_projection.codon`,
   replaced with `coordinate.snap`): the example scenarios import it from the
   top-level package, which is the model, and hand it both to the model's
   `BaseScenario` and to the checked `VehicleEntityConfig` (#99). The
