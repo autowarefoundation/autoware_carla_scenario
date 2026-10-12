@@ -2135,3 +2135,120 @@ def test_the_shlex_sys_signal_and_file_shims_refuse_what_cpython_refuses(
     located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
     assert located, result.format()
     assert located[0].line == line, result.format()
+
+
+# ---------------------------------------------------------------------------
+# What autoware_stack.docker reads: the ids, a link, a file's text and bytes,
+# a recursive glob, the path queries and a Popen's output by line (#128)
+# ---------------------------------------------------------------------------
+
+
+_DOCKER = """
+from __future__ import annotations
+
+import hashlib
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def label() -> str:
+    uid = os.getuid()
+    gid = os.getgid()
+    return f"uid-{uid}:{gid}"
+
+
+def followed(path: Path, mount: str) -> Path:
+    target = Path(os.readlink(path))
+    if not target.is_absolute():
+        target = path.parent / target
+    elif target.is_relative_to(mount):
+        target = path / target.relative_to(mount)
+    return target
+
+
+def digest(source: Path) -> str:
+    sha = hashlib.sha256()
+    for path in sorted(source.rglob("package.xml")):
+        sha.update(path.read_bytes())
+    return sha.hexdigest()
+
+
+def supported(path: Path) -> bool:
+    return 'name="x"' in path.read_text()
+
+
+def streamed(argv: list[str]) -> int:
+    process: subprocess.Popen[str] = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        sys.stdout.write(line)
+    return process.wait()
+"""
+
+
+@needs_codon
+def test_the_os_pathlib_and_popen_shims_take_what_docker_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_DOCKER, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.14 when it is called: a TypeError or an AttributeError; but
+        # is-relative-to-parts, which 3.10 takes and 3.14 refuses, and
+        # read-text-newline, which 3.13 takes and 3.10 refuses.
+        ("os.getuid()", "os.getuid(0)"),
+        ("os.getgid()", "os.getgid(0)"),
+        ("os.readlink(path)", "os.readlink(path, None)"),
+        ("target.is_absolute()", "target.is_absolute(True)"),
+        ("target.is_relative_to(mount)", "target.is_relative_to(len(mount))"),
+        ("target.is_relative_to(mount)", 'target.is_relative_to(mount, "x")'),
+        ("target.is_relative_to(mount)", "target.is_relative_to(other=mount)"),
+        ('source.rglob("package.xml")', "source.rglob()"),
+        ("path.read_bytes()", 'path.read_bytes("rb")'),
+        ("path.read_text()", 'path.read_text(encodig="utf-8")'),
+        ("path.read_text()", 'path.read_text(newline="")'),
+        ("sys.stdout.write(line)", "sys.stdout.write(line.decode())"),
+    ],
+    ids=[
+        "getuid-arguments",
+        "getgid-arguments",
+        "readlink-dir-fd-keyword",
+        "is-absolute-arguments",
+        "is-relative-to-path",
+        "is-relative-to-parts",
+        "is-relative-to-keyword",
+        "rglob-pattern",
+        "read-bytes-arguments",
+        "read-text-keyword",
+        "read-text-newline",
+        "popen-line-is-str",
+    ],
+)
+def test_the_os_pathlib_and_popen_shims_refuse_what_cpython_refuses(
+    right: str,
+    wrong: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _DOCKER.replace(right, wrong, 1)
+    assert source != _DOCKER
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()

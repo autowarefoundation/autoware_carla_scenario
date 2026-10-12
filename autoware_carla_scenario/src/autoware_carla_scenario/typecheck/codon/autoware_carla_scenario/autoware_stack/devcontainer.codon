@@ -1,0 +1,31 @@
+# Model of autoware_carla_scenario.autoware_stack.devcontainer
+# (docs/typecheck.md), which imports yaml and json and reads documents of
+# values of any type: what the checked autoware_stack.docker and the checked
+# autoware_stack package use of it, with the signatures of the Python module.
+# Nothing here reads a file: read_devcontainer() is never run.
+
+from pathlib import Path
+
+from .._tc import _keyword_only
+
+DEFAULT_WORKSPACE_MOUNT = "/home/aw/autoware"
+
+
+class DevContainerError(Static[ValueError]):
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+@tuple
+class DevContainer:
+    image: str
+    workspace_mount: str = DEFAULT_WORKSPACE_MOUNT
+    environment: Dict[str, str] = Dict[str, str]()
+
+
+def read_devcontainer(workspace: Path, variant: str, *_kw,
+                      env: Optional[Dict[str, str]] = None) -> DevContainer:
+    _keyword_only(_kw, "read_devcontainer(): env")
+    raise NotImplementedError()

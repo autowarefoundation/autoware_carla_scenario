@@ -177,6 +177,15 @@ def getpgid(pid: int) -> int:
     return 0
 
 
+# getuid() and getgid(): this process's real user and group ids.
+def getuid() -> int:
+    return 0
+
+
+def getgid() -> int:
+    return 0
+
+
 # kill(pid, signal, /) and killpg(pgid, signal, /): the signal is an int or
 # a signal.Signals (an IntEnum, so an int, in CPython).
 def kill(*args) -> None:
@@ -200,3 +209,12 @@ def system(command: str) -> int:
 def mkdir(path, mode: int = 511, *_kw, dir_fd: Optional[int] = None) -> None:
     _keyword_only(_kw, "mkdir(): dir_fd")
     fspath(path)
+
+
+# readlink(path, *, dir_fd=None): where the symbolic link *path* points, a
+# str for a str or an os.PathLike (a bytes path, which gives bytes in
+# CPython, is not declared); "" here, as nothing is read.
+def readlink(path, *_kw, dir_fd: Optional[int] = None) -> str:
+    _keyword_only(_kw, "readlink(): dir_fd")
+    fspath(path)
+    return ""

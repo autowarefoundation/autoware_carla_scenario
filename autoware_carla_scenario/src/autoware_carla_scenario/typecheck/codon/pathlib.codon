@@ -4,15 +4,17 @@
 # CPython's, a Path is built from and joined with a str or a Path only, and
 # compares unequal to anything that is not a Path.
 #
-# The file-system queries (exists(), is_file(), is_dir(), glob(), absolute())
-# take what CPython 3.10's take, the oldest Python the package supports: the
-# keyword-only `follow_symlinks` (3.12/3.13) and glob's `case_sensitive` and
-# `recurse_symlinks` (3.12/3.13) are refused, as CPython 3.10 refuses them.
-# They touch no file: a query is False, and a glob yields nothing. Of what
-# writes, mkdir(), write_text(), open(), unlink() and symlink_to() are
-# declared (CPython 3.10's signatures); they create, open, remove and write
-# nothing. open() returns a typing.IO of str, which IO[bytes] is too (the
-# check reads bytes as str), whatever the mode.
+# The file-system queries (exists(), is_file(), is_dir(), glob(), rglob(),
+# absolute()) take what CPython 3.10's take, the oldest Python the package
+# supports: the keyword-only `follow_symlinks` (3.12/3.13) and the globs'
+# `case_sensitive` and `recurse_symlinks` (3.12/3.13) are refused, as CPython
+# 3.10 refuses them. They touch no file: a query is False, and a glob yields
+# nothing. The two reads, read_text() and read_bytes() (a str: the check reads
+# bytes as str), read nothing and return "". Of what writes, mkdir(),
+# write_text(), open(), unlink() and symlink_to() are declared (CPython
+# 3.10's signatures); they create, open, remove and write nothing. open()
+# returns a typing.IO of str, which IO[bytes] is too (the check reads bytes
+# as str), whatever the mode.
 
 from typing import IO
 
@@ -131,6 +133,16 @@ class Path:
         Path(_acs_other)
         return self
 
+    # is_relative_to(other), by position, as relative_to() (CPython 3.10's
+    # `*other`, joined, is deprecated in 3.12 and refused in 3.14).
+    def is_relative_to(self, _acs_other) -> bool:
+        other = Path(_acs_other)._path
+        return self._path == other or self._path.startswith(other + "/")
+
+    # is_absolute(): whether the path starts at the root, as on POSIX.
+    def is_absolute(self) -> bool:
+        return self._path.startswith("/")
+
     # The name and its parts, as PurePath computes them.
     @property
     def name(self) -> str:
@@ -203,6 +215,21 @@ class Path:
         # A generator of Paths, as CPython's glob() returns, of no path.
         if False:
             yield self
+
+    # rglob(pattern): glob() in this directory and every one below it.
+    def rglob(self, pattern: str) -> Generator[Path]:
+        if False:
+            yield self
+
+    # The two reads, with CPython 3.10's signatures (3.13's `newline` is
+    # refused): read_text(encoding=None, errors=None), a str, and
+    # read_bytes(), bytes, which is a str here (the check reads bytes as
+    # str). Nothing is read: both are empty.
+    def read_text(self, encoding: Optional[str] = None, errors: Optional[str] = None) -> str:
+        return ""
+
+    def read_bytes(self) -> str:
+        return ""
 
     # The two writes the framework makes (maps.opendrive), with CPython
     # 3.10's signatures (mode=0o777: Codon has no octal literal); nothing is
