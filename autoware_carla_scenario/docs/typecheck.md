@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 148 of
-the package's 228 modules (65%; about 34,000 of 65,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 151 of
+the package's 228 modules (66%; about 35,000 of 65,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -283,7 +283,9 @@ NPC vehicle and pedestrian entities, the Autoware ego
 (`entity.autoware_entity`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
 runner's run loop and the queue that runs scenarios one after another
-(`scenario_runner`, `scenario_queue`),
+(`scenario_runner`, `scenario_queue`), the UI's runner, which runs them in
+a subprocess on a thread (`ui.runner`, over a model of the pydantic
+`ui.models`),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
@@ -292,17 +294,19 @@ OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the CARLA server manager (`server`) and the camera
 recorder that writes a run's video (`camera_recorder`), the Autoware
-launcher that runs a stack as a process group (`autoware_stack.launcher`)
-and the `scenario_bridge` node's command and Python root beside it
-(`autoware_stack.bridge_node`), the Autoware
+launcher that runs a stack as a process group (`autoware_stack.launcher`),
+the `scenario_bridge` node's command and Python root beside it
+(`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
+container with Docker (`autoware_stack.docker`, over a model of
+`autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
-`driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
-packages themselves, whose `__init__` re-exports what is not checked
+`driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
+`driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
 below). 72
 functions and methods of those modules are `UNCALLED`: most of them a
@@ -335,12 +339,12 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 80 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 59 import what Codon cannot
-compile, 31 build on an excluded module and 20 hold values Codon has no type
+`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 58 import what Codon cannot
+compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **59 import what Codon cannot compile**: lanelet2 beyond what its model
+- **58 import what Codon cannot compile**: lanelet2 beyond what its model
   declares (most of these walk its objects typed `Any`), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
@@ -349,19 +353,18 @@ for), so each is counted once, in the first group that fits it:
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
   expansion, Hydra sweeper and map loader, the map cache, the Autoware
-  stack's Docker launcher and dev container, the
+  stack's dev container, the
   record of a run's environment), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **18 build on an excluded module**, and import nothing Codon lacks
+- **16 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `coverage`, `autoware_stack`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator,
-  `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
-  (over `ui.models`); 5 of the 18
+  `coverage`, `examples`, `scaffold`), the
+  authoring compiler, builders and validator and
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 16
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -429,7 +432,7 @@ stands in for it in the check's workspace:
   `coordinate.codon`), or, for a module of a package that is itself checked,
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
-  `maps/cache.codon`), or, for a module of
+  `maps/cache.codon`, `autoware_stack/devcontainer.codon`), or, for a module of
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
@@ -548,8 +551,8 @@ What Codon 0.19 needs that Python does not, beyond
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
   `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
-  `importlib.metadata`, `urllib.parse` and `__future__` shims of `codon/`
-  are. Each takes the
+  `threading`, `importlib.metadata`, `urllib.parse` and `__future__` shims
+  of `codon/` are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
@@ -557,16 +560,25 @@ What Codon 0.19 needs that Python does not, beyond
   `Path.home()` and `Path.cwd()`; like Python's, it builds and joins a `Path` with a `str` or
   an `os.PathLike` only (a `Path`, or what `shutil.copy2()` returns for one;
   an `Optional` of one is unwrapped, as Codon unwraps one passed anywhere). It declares the file-system queries too: `exists()`,
-  `is_file()`, `is_dir()`, `glob(pattern)` and `absolute()`, with Python
+  `is_file()`, `is_dir()`, `glob(pattern)`, `rglob(pattern)` and
+  `absolute()`, with Python
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
   sliced), `stem`, `with_name(name)` (of a `str`), `as_posix()`, `relative_to(other)` (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
-  does too; 3.12's `walk_up` is refused) and the ordering of two `Path`s, so
+  does too; 3.12's `walk_up` is refused), `is_relative_to(other)` (one path,
+  by position, likewise), `is_absolute()` and the ordering of two `Path`s, so
   `sorted()` takes them. Nothing
   touches the file system: a query is `False` and a glob yields nothing.
   `is_symlink()` takes no argument, as in every supported Python. Of what
+  reads, `read_text(encoding=None, errors=None)` (3.13's `newline` is
+  refused) and `read_bytes()` are declared (`autoware_stack.docker` reads a
+  launch file and hashes the `package.xml` files, `coordinate.map_manager`
+  an OpenDRIVE file); both return `""`, and
+  `read_bytes()` returns a `str`, since the check reads `bytes` as `str`
+  (so it takes `path.read_bytes() + "text"`, which CPython refuses, and
+  refuses `path.read_bytes().decode()`, which CPython takes). Of what
   writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
   `write_text(data, encoding=None, errors=None, newline=None)` are declared
   (`maps.opendrive` caches what it fetches), and so are `unlink(missing_ok=False)`,
@@ -577,7 +589,7 @@ What Codon 0.19 needs that Python does not, beyond
   and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
   `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
   `write()` (of a `str`, read as bytes too), iteration over the lines and
-  `with`. `chmod()`, `read_text()` and the rest are not. `os` replaces Codon's own (whose
+  `with`. `chmod()`, `write_bytes()` and the rest are not. `os` replaces Codon's own (whose
   `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
   which Codon's runtime and typesafe_carla's library call: `environ` is a
   mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
@@ -586,6 +598,8 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's returns), `getenv(key, default=None)` (a `str` default gives a
   `str`, `None` an `Optional[str]`; a default of another type, which CPython
   takes, is refused), `fspath()`, `getpid()`, `getppid()`, `getpgid(pid)`,
+  `getuid()`, `getgid()`, `readlink(path, *, dir_fd=None)` (of a `str` or an
+  `os.PathLike`, a `str`; a bytes path is not declared),
   `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
   `signal.Signals`), `system(command)`,
   `mkdir()` (Codon's had one), the separators (`sep`, `pathsep`, `linesep`,
@@ -619,7 +633,9 @@ What Codon 0.19 needs that Python does not, beyond
   process's output is a `str` with or without `text=True`, and
   `CompletedProcess[bytes]` and `Popen[bytes]` are `[str]`; it is `None`
   when it was not captured, as in CPython, so `stdout` and `stderr` are an
-  `Optional`. A stream's `write()` takes what a binary stream takes in
+  `Optional`. A stream iterates over its lines, each a `str`
+  (`for line in process.stdout:`, after `assert process.stdout is not
+  None`). A stream's `write()` takes what a binary stream takes in
   CPython, bytes (a `str`) or a buffer such as an array's `data` (a `Ptr` in
   Codon's numpy; `camera_recorder` writes `bgr.data`), and since the check
   cannot tell a text stream from a binary one, it takes either for a text
@@ -1106,6 +1122,15 @@ What Codon 0.19 needs that Python does not, beyond
   `None` in it is not translated.
 - **No star-unpacking into a tuple display** (`(*a, *b)`): Codon wants a
   tuple after `*`. Concatenate the lists (`a + b`).
+- **No `*` of a list in a call** (`f("rm", *ids)` with `ids` a list):
+  Codon 0.19 unpacks only a tuple into arguments ("argument after * must be
+  a tuple"). Give the function a twin that takes the list
+  (`DockerAutowareLauncher._run_docker(["rm", "--force"] + ids, ...)`, which
+  `_docker(*args)` calls with `list(args)`).
+- **An empty dict display for a `Mapping` parameter** (`extra_env={}`) is a
+  dict of no element type: the check drops the abstract `Mapping[str, str]`
+  from a parameter, so nothing gives it one. A private function that is
+  handed dicts takes a `dict[str, str]` (`DockerAutowareLauncher._run_argv()`).
 - **A default does not name a class attribute** (`random_seed: int =
   DEFAULT_RANDOM_SEED` in a method of the class defining it): Python
   evaluates it once, when the class is created, and Codon cannot name it
@@ -1201,6 +1226,20 @@ What Codon 0.19 needs that Python does not, beyond
   the `Empty` and `Full` exceptions). Declare the queue's item type at class
   level (`_frame_queue: queue.Queue[carla.Image]`); `queue.Queue()` in
   `__init__` takes it from there.
+- **`threading.Thread`** is the `threading` shim's, with CPython 3.10's
+  signature (`Thread(group=None, target=None, name=None, args=(),
+  kwargs=None, *, daemon=None)`, `start()`, `join(timeout=None)`,
+  `is_alive()`); the check compiles the call the thread makes,
+  `target(*args)`, so a target that does not take its arguments fails it.
+  `args` is a tuple, `kwargs` None and `group` None. The shim replaces the
+  `threading` module Codon ships, which Codon's numpy and typesafe_carla's
+  Codon library import for `Lock`, so it keeps all of that module
+  (`Lock`, `RLock`, `active_count()`, `get_native_id()`, `get_ident()`), as
+  Codon has it; a test compares the two.
+- **A datetime is formatted from its fields**: Codon's `datetime` has no
+  `__format__`, so `f"{now:%Y-%m-%d}"` is
+  `f"{now.year:04d}-{now.month:02d}-{now.day:02d}"`, the same string for
+  every year from 1000 on (`ui.runner._multirun_dir()`).
 - **A dataclass derived from a dataclass** is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
   base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`). Of two
@@ -1414,4 +1453,5 @@ What Codon 0.19 needs that Python does not, beyond
   every attribute it declares: give it an `__init__` that does nothing
   (`MapManager`; Python calls it after `__new__`).
 - **`Path.read_text()`** is in the pathlib shim (CPython 3.10's
-  `encoding` and `errors`); it reads an empty text.
+  `encoding` and `errors`; 3.13's `newline` is refused); it reads an empty
+  text.

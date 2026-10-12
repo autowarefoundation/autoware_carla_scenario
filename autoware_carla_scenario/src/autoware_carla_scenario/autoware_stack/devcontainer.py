@@ -31,6 +31,9 @@ DEFAULT_WORKSPACE_MOUNT: str = "/home/aw/autoware"
 class DevContainerError(ValueError):
     """The workspace's dev container configuration could not be read."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class DevContainer:

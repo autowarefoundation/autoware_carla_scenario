@@ -31,6 +31,7 @@ import autoware_carla_scenario as acs
 from autoware_carla_scenario import carla_install, trajectory_recorder
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
+from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
 from autoware_carla_scenario.autoware_stack import launcher as stack_launcher
 from autoware_carla_scenario.coordinate import map_manager as coordinate_map_manager
 from autoware_carla_scenario.coordinate import projection as coordinate_projection
@@ -48,6 +49,7 @@ from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.ui import models as ui_models
 from carla_driver_interface import geometry as cdi_geometry
 
 _MODEL = model_dir() / "autoware_carla_scenario"
@@ -325,6 +327,17 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         stack_launcher,
         ("AutowareEpisode", "AutowareLauncher"),
     ),
+    # What the checked autoware_stack.docker and the package take of the
+    # unchecked devcontainer (yaml, json).
+    "autoware_stack/devcontainer": (
+        stack_devcontainer,
+        (
+            "DEFAULT_WORKSPACE_MOUNT",
+            "DevContainer",
+            "DevContainerError",
+            "read_devcontainer",
+        ),
+    ),
     "driver/egodriver_client": (egodriver_client, ("EgoDriverGrpcClient",)),
     # MapSource is shared with the checked maps.source (REPLACED_MODELS).
     "_map_source": (maps_source, ("MapSource",)),
@@ -339,6 +352,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
             "map_root",
         ),
     ),
+    # A pydantic model: its fields by keyword only, as Python's signature.
+    "ui/models": (ui_models, ("RunProgress", "Status")),
 }
 
 #: Classes the model declares only so a checked package can re-export them:
@@ -369,6 +384,23 @@ _MODULE_MODEL_NAMES = [
 def test_a_module_model_is_declared_as_in_python(module: str, name: str) -> None:
     python_module, _names = _MODULE_MODELS[module]
     _assert_declared_as_in_python(name, module, getattr(python_module, name))
+
+
+def test_the_devcontainer_model_holds_python_s_values() -> None:
+    # A constant is compared by its value, and the frozen dataclass is a
+    # @tuple (an assignment to a field fails the check as it fails the run).
+    definitions = _definitions("autoware_stack/devcontainer")
+    constant = definitions["DEFAULT_WORKSPACE_MOUNT"][0]
+    assert isinstance(constant, ast.Assign)
+    assert (
+        ast.literal_eval(constant.value) == stack_devcontainer.DEFAULT_WORKSPACE_MOUNT
+    )
+    node = definitions["DevContainer"][0]
+    assert isinstance(node, ast.ClassDef)
+    assert [ast.unparse(d) for d in node.decorator_list] == ["tuple"]
+    params = stack_devcontainer.DevContainer.__dataclass_params__  # type: ignore[attr-defined]
+    assert params.frozen
+    assert issubclass(stack_devcontainer.DevContainerError, ValueError)
 
 
 def test_the_launcher_model_is_the_protocol_s_methods() -> None:
