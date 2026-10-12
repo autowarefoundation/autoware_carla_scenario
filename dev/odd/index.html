@@ -1339,6 +1339,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#versions-of-an-odd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versions of an ODD
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#concepts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1746,6 +1757,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#versions-of-an-odd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versions of an ODD
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#concepts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2025,6 +2047,33 @@ are measured, judged and reported the same way:</p>
 </code></pre></div>
 <p>OpenODD also maps its model to OpenSCENARIO DSL (chapter 9, model to DSL only)
 and to tables (chapter 8). Neither is read here.</p>
+<p>The reading, judging, versioning, sampling and coverage are
+<a href="https://github.com/hakuturu583/openodd_py">openodd</a> (<code>openodd-py</code>, a Rust
+core with a Python API), which knows nothing of CARLA. This framework is its
+<strong>backend</strong>: <code>autoware_carla_scenario.odd.backend.CarlaBackend</code>, a subclass
+of <code>openodd.Backend</code>, gives the built-in probes a binding file names,
+<code>measure:</code> keys read from the running scenario, the knobs that set the
+weather and the sun, and where the ego is (for coverage). Importing <code>autoware_carla_scenario.odd</code>
+makes it openodd's default backend, so <code>openodd.load_odd_binding()</code> and
+<code>autoware_carla_scenario.odd.load_odd_binding()</code> read the same.</p>
+<h3 id="versions-of-an-odd">Versions of an ODD<a class="headerlink" href="#versions-of-an-odd" title="Permanent link">&para;</a></h3>
+<p>OpenODD 1.0 defines no version of an ODD; openodd builds one on what it does
+define (<a href="https://github.com/hakuturu583/openodd_py/blob/main/docs/versioning.md">its versioning profile</a>):</p>
+<ul>
+<li>the <strong>revision</strong> is the SHA-256 of the files the ODD was read from -- the
+  binding file, the OpenODD files it names and every file they <code>IMPORT</code> -- by
+  name and content. The same files are the same revision on any machine and
+  from any repository or commit; any change to any of them is a new one;</li>
+<li>the <strong>version</strong> is what the root modules (those under <code>ODD:</code>) declare in
+  their <code>METADATA</code> (<code>version: 2.1.0</code>);</li>
+<li>the <strong>structure</strong> is the digest of the ODD as built (modules, buckets, the
+  buckets outside it), for an ODD written in Python, which has no files.</li>
+</ul>
+<p>All three are written to every coverage file (the ODD's <code>revision</code>,
+<code>version</code>, <code>structure</code>), so coverage can be told apart by the ODD it was
+measured against. <code>OddDefinition.archive()</code> packs the files into a
+deterministic <code>.tar.gz</code> that <code>openodd.load_odd_archive()</code> reads back exactly;
+a run writes it beside its coverage file (<code>{ScenarioName}_odd.tar.gz</code>).</p>
 <h2 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link">&para;</a></h2>
 <p>The model and its semantics follow OpenODD 1.0 (chapters 6 and 7).</p>
 <table>
@@ -2449,8 +2498,8 @@ revision:</p>
   credentials it is configured with. Prompts are turned off, and the <code>ext::</code>
   transport is refused.</li>
 <li>Repositories and checkouts are cached in
-  <code>$AUTOWARE_CARLA_SCENARIO_ODD_CACHE</code> (default
-  <code>~/.cache/autoware_carla_scenario/openodd</code>). A full commit id checked out
+  <code>$AUTOWARE_CARLA_SCENARIO_ODD_CACHE</code> when it is set, else openodd's
+  <code>$OPENODD_CACHE</code> (default <code>~/.cache/openodd</code>). A full commit id checked out
   once is read from the cache without the network; a tag or a branch is
   fetched on every load, to learn which commit it names now. Pin a commit for
   runs that must be reproducible.</li>
@@ -2677,7 +2726,7 @@ monitored but not covered.</p>
 <tbody>
 <tr>
 <td><code>default</code></td>
-<td>The built-in one (<a href="../coverage/#odd-coverage">Coverage</a>): every attribute, no modules</td>
+<td>The built-in one (<a href="../coverage/#odd-coverage">Coverage</a>): every attribute, no modules. It is openodd's bundled <code>default</code> ODD (<a href="https://github.com/hakuturu583/openodd_py/tree/main/python/openodd/odds/default">its files</a>), measured by this framework's probes, so it has a revision like any ODD read from files</td>
 </tr>
 <tr>
 <td>a name</td>
@@ -2732,10 +2781,10 @@ repeat their values. Here <code>cut_in/right</code>'s 3 cases aim at what
 <a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">3</span><span class="w"> </span>+sweep.odd_sample.strategy<span class="o">=</span>coverage
 </code></pre></div>
 <p>The same seed, ODD, knobs, coverage and scenarios, in the same order, give
-the same cases. Two ODDs are one when their definitions -- name, buckets
-and modules, as a coverage file records them -- are the same, however the
-command line names them (a registered name, a YAML path); a scenario on
-another ODD starts afresh.</p>
+the same cases, on any machine (openodd's sampler draws from ChaCha8 seeded
+with the seed's SHA-256). Two ODDs are one when they are built alike (their
+<code>structure</code>), however the command line names them (a registered name, a YAML
+path); a scenario on another ODD starts afresh.</p>
 <p>or in the scenario's YAML:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">sweep</span><span class="p">:</span>
 <a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">odd_sample</span><span class="p">:</span>
@@ -3138,7 +3187,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:57:07 UTC"><span class="timeago" datetime="2026-10-11T07:57:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:57:07 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 04:55:39 UTC"><span class="timeago" datetime="2026-10-12T04:55:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 04:55:39 UTC">2026-10-12</span>
   </span>
 
     

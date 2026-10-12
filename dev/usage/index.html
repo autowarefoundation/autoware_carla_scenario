@@ -3606,6 +3606,18 @@ in each bucket, and the buckets no route reaches
 <td>ODD and scenario coverage hits of the run (merge with <code>scenario-coverage</code>, see <a href="../coverage/">Coverage</a>)</td>
 </tr>
 <tr>
+<td><code>{ScenarioName}_odd.tar.gz</code></td>
+<td>The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see <a href="../odd/#versions-of-an-odd">Versions of an ODD</a>)</td>
+</tr>
+<tr>
+<td><code>{ScenarioName}_requirements.lock</code></td>
+<td>What the run ran with: every installed distribution pinned, in the requirements format (<code>pip install -r</code>), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes</td>
+</tr>
+<tr>
+<td><code>{ScenarioName}_environment.json</code></td>
+<td>The same, structured; <code>_result.json</code> carries its summary (<code>environment</code>: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it)</td>
+</tr>
+<tr>
 <td><code>{ScenarioName}.mp4</code></td>
 <td>Rendered video from recording (optional, if spectator is configured)</td>
 </tr>
@@ -4107,7 +4119,7 @@ the <code>carla_driver</code> entity:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:57:07 UTC"><span class="timeago" datetime="2026-10-11T07:57:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:57:07 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 04:55:39 UTC"><span class="timeago" datetime="2026-10-12T04:55:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 04:55:39 UTC">2026-10-12</span>
   </span>
 
     
