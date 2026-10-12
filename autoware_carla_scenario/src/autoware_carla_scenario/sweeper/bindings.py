@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 import lanelet2.core
 import lanelet2.geometry
 
 from ..utils.stop_line import _collect_stop_lines_from_reg_elems
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet, ConstLineString3d, LaneletMap
+    from lanelet2.routing import RoutingGraph
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +54,10 @@ class Binding(Protocol):
         ...
 
     def resolve(
-        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+        self,
+        lanelet_id: int,
+        lanelet_map: LaneletMap,
+        routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Compute the parameter value for the given lanelet."""
         ...
@@ -69,7 +76,7 @@ class StopLineOffsetBinding:
     offset: float = 15.0
 
     @staticmethod
-    def _project_stop_line(ls: Any, lanelet: Any) -> float:
+    def _project_stop_line(ls: ConstLineString3d, lanelet: ConstLanelet) -> float:
         """Project stop line centroid onto lanelet centerline, return arc-length."""
         points = list(ls)
         if not points:
@@ -84,9 +91,9 @@ class StopLineOffsetBinding:
     def _walk_back_to_predecessor(
         self,
         shortfall: float,
-        lanelet: Any,
-        lanelet_map: Any,
-        routing_graph: Any,
+        lanelet: ConstLanelet,
+        lanelet_map: LaneletMap,
+        routing_graph: RoutingGraph,
         original_lanelet_id: int,
     ) -> BindingResult:
         """Walk backwards through predecessor lanelets to satisfy the offset.
@@ -107,7 +114,7 @@ class StopLineOffsetBinding:
             A :class:`BindingResult` with the spawn position on a
             predecessor lanelet and the predecessor's ID as override.
         """
-        current = lanelet
+        current: ConstLanelet = lanelet
         remaining = shortfall
 
         while remaining > 0:
@@ -157,7 +164,10 @@ class StopLineOffsetBinding:
         )
 
     def resolve(
-        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+        self,
+        lanelet_id: int,
+        lanelet_map: LaneletMap,
+        routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Return the arc-length position *offset* metres before the stop line.
 
@@ -175,7 +185,8 @@ class StopLineOffsetBinding:
         lanelet end exceeds the offset (further stop lines would only clamp
         the result to ``spawn_lanelet_length``).
         """
-        lanelet = lanelet_map.laneletLayer[lanelet_id]
+        # A Lanelet, then the routing graph's ConstLanelets.
+        lanelet: ConstLanelet = lanelet_map.laneletLayer[lanelet_id]
         spawn_lanelet_length = lanelet2.geometry.length2d(lanelet)
 
         if routing_graph is None:
@@ -185,12 +196,12 @@ class StopLineOffsetBinding:
 
         # BFS over the lanelet chain: spawn -> following -> following -> ...
         # Each entry is (lanelet_object, arc_length_from_spawn_lanelet_start).
-        candidates: list[tuple[Any, float]] = [(lanelet, 0.0)]
+        candidates: list[tuple[ConstLanelet, float]] = [(lanelet, 0.0)]
         visited: set[int] = {lanelet_id}
         seen_ids: set[int] = set()
 
         while candidates:
-            next_candidates: list[tuple[Any, float]] = []
+            next_candidates: list[tuple[ConstLanelet, float]] = []
             for current, accumulated in candidates:
                 stop_lines = _collect_stop_lines_from_reg_elems(
                     current.regulatoryElements, seen_ids
@@ -296,7 +307,10 @@ class RouteThroughBinding:
             raise ValueError(f"route_through depth must be >= 1, got {self.depth}")
 
     def resolve(
-        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+        self,
+        lanelet_id: int,
+        lanelet_map: LaneletMap,
+        routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Return the picked lanelet and the ``depth`` lanelets after it."""
         from .constraints import create_routing_graph
@@ -304,7 +318,8 @@ class RouteThroughBinding:
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
         route = [lanelet_id]
-        current = lanelet_map.laneletLayer[lanelet_id]
+        # A Lanelet, then the routing graph's ConstLanelets.
+        current: ConstLanelet = lanelet_map.laneletLayer[lanelet_id]
         for _ in range(self.depth):
             following = sorted(routing_graph.following(current), key=lambda ll: ll.id)
             if not following:
@@ -345,7 +360,10 @@ class AdjacentBinding:
             )
 
     def resolve(
-        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+        self,
+        lanelet_id: int,
+        lanelet_map: LaneletMap,
+        routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Return the ID of the lanelet beside the pick."""
         from .constraints import create_routing_graph
@@ -353,17 +371,20 @@ class AdjacentBinding:
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
         lanelet = lanelet_map.laneletLayer[lanelet_id]
-        beside = (
-            routing_graph.left(lanelet)
-            if self.side == "left"
-            else routing_graph.right(lanelet)
-        )
+        beside: Optional[ConstLanelet] = None
+        if self.side == "left":
+            beside = routing_graph.left(lanelet)
+        else:
+            beside = routing_graph.right(lanelet)
         if beside is None:
             raise ValueError(
                 f"[{self.target_key}] lanelet {lanelet_id} has no lane to change "
                 f"into on its {self.side}."
             )
-        return BindingResult(value=beside.id)
+        # Through an annotated local: Codon 0.19 hands the id of an Optional
+        # lanelet to the union field unconverted (invalid LLVM IR).
+        found: ConstLanelet = beside
+        return BindingResult(value=found.id)
 
 
 @dataclass
@@ -382,10 +403,12 @@ class MatchedBinding:
     target_key: str
 
     def resolve(
-        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+        self,
+        lanelet_id: int,
+        lanelet_map: LaneletMap,
+        routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Return the pick itself."""
-        del lanelet_map, routing_graph
         return BindingResult(value=lanelet_id)
 
 
@@ -407,7 +430,10 @@ class StopLineApproachBinding:
     offset: float = 15.0
 
     def resolve(
-        self, lanelet_id: int, lanelet_map: Any, routing_graph: Any | None = None
+        self,
+        lanelet_id: int,
+        lanelet_map: LaneletMap,
+        routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Return the lanelet the offset lands on."""
         landed = StopLineOffsetBinding(self.target_key, self.offset).resolve(
@@ -416,13 +442,20 @@ class StopLineApproachBinding:
         return BindingResult(value=landed.lanelet_id_override or lanelet_id)
 
 
-_BINDING_REGISTRY: dict[str, type] = {
-    "stop_line_offset": StopLineOffsetBinding,
-    "route_through": RouteThroughBinding,
-    "adjacent": AdjacentBinding,
-    "matched": MatchedBinding,
-    "stop_line_approach": StopLineApproachBinding,
-}
+#: The bindings keyed by their ``type`` string.
+#: Declared here, assigned only at run time: Codon holds no class as a value,
+#: and the function that reads it (parse_binding) is not compiled (UNCALLED).
+_BINDING_REGISTRY: dict[str, Any]
+if TYPE_CHECKING:
+    pass
+else:
+    _BINDING_REGISTRY = {
+        "stop_line_offset": StopLineOffsetBinding,
+        "route_through": RouteThroughBinding,
+        "adjacent": AdjacentBinding,
+        "matched": MatchedBinding,
+        "stop_line_approach": StopLineApproachBinding,
+    }
 
 
 def parse_binding(target_key: str, cfg: dict[str, Any]) -> Binding:

@@ -8,6 +8,7 @@ turns the pick into the lanelets the case drives.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -19,8 +20,9 @@ from autoware_carla_scenario.sweeper.constraints import (
 from autoware_carla_scenario.sweeper.expand import _override_value
 
 
-def _lanelet(lanelet_id: int, **attributes: str) -> SimpleNamespace:
-    """A stand-in for a lanelet2 lanelet: an ID and a tag map."""
+def _lanelet(lanelet_id: int, **attributes: str) -> Any:
+    """A stand-in for a lanelet2 lanelet: an ID and a tag map (typed ``Any``,
+    as it goes where a lanelet2 lanelet is taken)."""
     return SimpleNamespace(id=lanelet_id, attributes=dict(attributes))
 
 
@@ -35,7 +37,7 @@ class _Graph:
         return [self._layer[i] for i in self._edges.get(lanelet.id, [])]
 
 
-def _map(edges: dict[int, list[int]]) -> SimpleNamespace:
+def _map(edges: dict[int, list[int]]) -> Any:
     ids = set(edges) | {i for following in edges.values() for i in following}
     layer = {i: _lanelet(i) for i in ids}
     return SimpleNamespace(laneletLayer=layer, _edges=edges)
@@ -65,7 +67,7 @@ class TestTurnDirectionConstraint:
 class TestRouteThroughBinding:
     def test_it_returns_the_pick_and_what_follows_it(self) -> None:
         lanelet_map = _map({10: [20], 20: [30]})
-        graph = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
 
         result = RouteThroughBinding(
             target_key="scenario.expected_route_lanelet_ids"
@@ -77,7 +79,7 @@ class TestRouteThroughBinding:
 
     def test_depth_walks_further_down_the_graph(self) -> None:
         lanelet_map = _map({10: [20], 20: [30], 30: [40]})
-        graph = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
 
         result = RouteThroughBinding(target_key="k", depth=3).resolve(
             10, lanelet_map, graph
@@ -87,7 +89,7 @@ class TestRouteThroughBinding:
 
     def test_a_fork_resolves_the_same_way_every_time(self) -> None:
         lanelet_map = _map({10: [31, 22], 22: [], 31: []})
-        graph = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
 
         result = RouteThroughBinding(target_key="k").resolve(10, lanelet_map, graph)
 
@@ -97,7 +99,7 @@ class TestRouteThroughBinding:
 
     def test_a_dead_end_raises_so_the_case_is_dropped(self) -> None:
         lanelet_map = _map({10: []})
-        graph = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
 
         with pytest.raises(ValueError, match="no following"):
             RouteThroughBinding(target_key="k").resolve(10, lanelet_map, graph)
@@ -108,7 +110,7 @@ class TestRouteThroughBinding:
 
     def test_last_only_gives_the_end_of_the_route_as_an_id(self) -> None:
         lanelet_map = _map({10: [20], 20: [30]})
-        graph = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
 
         result = RouteThroughBinding(
             target_key="ego.goal_lanelet_id", depth=2, last_only=True

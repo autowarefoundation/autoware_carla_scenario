@@ -102,11 +102,13 @@ def test_an_equals_id_written_as_a_string_still_names_the_lanelet() -> None:
 
     node = ConstraintNode(type="equals", params={"value": "222"})
     constraint = parse_constraint(node.to_sweep_dict())
-    assert constraint.evaluate(SimpleNamespace(id=222))
-    assert not constraint.evaluate(SimpleNamespace(id=223))
-    assert parse_constraint({"type": "equals", "value": "any"}).evaluate(
-        SimpleNamespace(id=1)
-    )
+    # Stand-ins for lanelet2's lanelets, so typed `Any`.
+    lanelet: Any = SimpleNamespace(id=222)
+    other: Any = SimpleNamespace(id=223)
+    first: Any = SimpleNamespace(id=1)
+    assert constraint.evaluate(lanelet)
+    assert not constraint.evaluate(other)
+    assert parse_constraint({"type": "equals", "value": "any"}).evaluate(first)
 
 
 def test_a_pedestrian_defaults_to_a_walker_every_carla_has() -> None:
@@ -136,7 +138,9 @@ class TestSweeperBindings:
         from autoware_carla_scenario.sweeper.bindings import parse_binding
 
         binding = parse_binding("x", {"type": "matched"})
-        assert binding.resolve(183, lanelet_map=None).value == 183
+        # A matched binding reads no map: none is handed over.
+        no_map: Any = None
+        assert binding.resolve(183, lanelet_map=no_map).value == 183
 
 
 class TestLaneOf:

@@ -263,6 +263,11 @@ def test_the_map_and_its_lanelets(lanelet_map: Any) -> None:
     assert layer.exists(lanelet.id) is True
     with pytest.raises(RuntimeError):
         layer[-1]
+    for bound in (lanelet.leftBound, lanelet.rightBound):
+        usages = layer.findUsages(bound)
+        assert isinstance(usages, list)
+        assert all(isinstance(u, core.Lanelet) for u in usages)
+        assert lanelet.id in {u.id for u in usages}
     assert isinstance(lanelet.attributes, core.AttributeMap)
     assert isinstance("subtype" in lanelet.attributes, bool)
     assert isinstance(lanelet.attributes["subtype"], str)
@@ -405,12 +410,14 @@ def test_the_geometry_functions(lanelet_map: Any) -> None:
         assert isinstance(distance, float)
         assert isinstance(nearest, core.Lanelet)
     assert isinstance(geometry.inside(lanelet, point), bool)
+    assert isinstance(geometry.length2d(lanelet), float)
 
 
 def test_the_routing_graph(lanelet_map: Any, graph: Any) -> None:
     core = lanelet2.core
     lanelets = list(lanelet_map.laneletLayer)
     neighbours = 0
+    conflicts = 0
     for lanelet in lanelets:
         for walk in (graph.following, graph.previous):
             for result in (
@@ -438,7 +445,14 @@ def test_the_routing_graph(lanelet_map: Any, graph: Any) -> None:
                 lanelet2.geometry.inside(following[0], core.BasicPoint2d(0.0, 0.0)),
                 bool,
             )
+            assert isinstance(lanelet2.geometry.length2d(following[0]), float)
+        for result in (graph.conflicting(lanelet), graph.conflicting(lanelet, 0)):
+            # simple-lanelet2 hands out the lanelets, not ConstLaneletOrAreas.
+            assert isinstance(result, list)
+            assert all(type(r) is core.ConstLanelet for r in result)
+            conflicts += len(result)
     assert neighbours > 0
+    assert conflicts > 0
 
 
 def test_the_projector_and_origin() -> None:
