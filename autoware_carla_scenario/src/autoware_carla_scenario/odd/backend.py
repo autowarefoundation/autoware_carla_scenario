@@ -20,7 +20,7 @@ backend, so ``openodd.load_odd_binding`` and this package's own read the same.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, Optional
 
 from openodd import Backend, OddKnob, set_default_backend
@@ -37,13 +37,13 @@ __all__ = [
     "sync_cache_env",
 ]
 
-#: Built-in probe name -> (probe, the unit it returns).
-BUILT_IN_PROBES: dict[str, tuple[Callable[[Any], Any], str]] = {
-    "ego_speed_kph": (probes.ego_speed_kph, "km/h"),
-    "speed_limit_kph": (probes.speed_limit_kph, "km/h"),
-    "lanelet_speed_limit_kph": (probes.lanelet_speed_limit_kph, "km/h"),
+#: Built-in probe name -> the unit it returns.
+_PROBE_UNITS: dict[str, str] = {
+    "ego_speed_kph": "km/h",
+    "speed_limit_kph": "km/h",
+    "lanelet_speed_limit_kph": "km/h",
     **{
-        name: (getattr(probes, name), "")
+        name: ""
         for name in (
             "in_junction",
             "lane_count",
@@ -57,6 +57,27 @@ BUILT_IN_PROBES: dict[str, tuple[Callable[[Any], Any], str]] = {
         )
     },
 }
+
+
+class _BuiltInProbes(Mapping[str, tuple[Callable[[Any], Any], str]]):
+    """Built-in probe name -> (probe, unit), the probe looked up in
+    :mod:`.probes` when asked for, so a probe replaced there (a test's
+    monkeypatch, a plugin) is the one an ODD read afterwards uses."""
+
+    def __getitem__(self, name: str) -> tuple[Callable[[Any], Any], str]:
+        if name not in _PROBE_UNITS:
+            raise KeyError(name)
+        return getattr(probes, name), _PROBE_UNITS[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_PROBE_UNITS)
+
+    def __len__(self) -> int:
+        return len(_PROBE_UNITS)
+
+
+#: Built-in probe name -> (probe, the unit it returns).
+BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes()
 
 #: Knobs for the built-in probes a run can set, through the ``environment``
 #: config (:class:`~autoware_carla_scenario.EnvironmentAction`).  The ranges

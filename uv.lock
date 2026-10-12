@@ -171,10 +171,10 @@ dependencies = [
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "omegaconf" },
     { name = "opencv-python-headless" },
-    { name = "openodd-py", version = "0.1.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl" }, marker = "sys_platform == 'darwin'" },
-    { name = "openodd-py", version = "0.1.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "openodd-py", version = "0.1.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "openodd-py", version = "0.1.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0.tar.gz" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "openodd-py", version = "0.2.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl" }, marker = "sys_platform == 'darwin'" },
+    { name = "openodd-py", version = "0.2.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "openodd-py", version = "0.2.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "openodd-py", version = "0.2.0", source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0.tar.gz" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
     { name = "packaging" },
     { name = "protobuf", version = "4.25.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "protobuf", version = "7.36.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
@@ -216,10 +216,10 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },
-    { name = "openodd-py", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0.tar.gz" },
-    { name = "openodd-py", marker = "sys_platform == 'darwin'", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl" },
-    { name = "openodd-py", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl" },
-    { name = "openodd-py", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" },
+    { name = "openodd-py", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0.tar.gz" },
+    { name = "openodd-py", marker = "sys_platform == 'darwin'", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl" },
+    { name = "openodd-py", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl" },
+    { name = "openodd-py", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -2795,8 +2795,8 @@ wheels = [
 
 [[package]]
 name = "openodd-py"
-version = "0.1.0"
-source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl" }
+version = "0.2.0"
+source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl" }
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
     "python_full_version == '3.12.*' and sys_platform == 'darwin'",
@@ -2804,13 +2804,13 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform == 'darwin'",
 ]
 wheels = [
-    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:342027d31c9de48c273b9fbff2afdaf0f5ab8c27d771eacfd3e1ca62de5a8745" },
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:c42f1f631de276d71ee458f76eb312d00b6c43e21b0b782cce3f6145167ee037" },
 ]
 
 [[package]]
 name = "openodd-py"
-version = "0.1.0"
-source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl" }
+version = "0.2.0"
+source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl" }
 resolution-markers = [
     "python_full_version >= '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
@@ -2818,13 +2818,13 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
 wheels = [
-    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a2768581b5d2b2ffb793946a73732e0364ec8a048377e219108a7567d021792b" },
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bb6ab0f380ac48c5de99e092e6897296e8124c66c300cf3c0f58c0ad97874c8b" },
 ]
 
 [[package]]
 name = "openodd-py"
-version = "0.1.0"
-source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" }
+version = "0.2.0"
+source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" }
 resolution-markers = [
     "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
@@ -2832,13 +2832,13 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 wheels = [
-    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2bc6f2d9e3a9235255ecee320727580d96bdf30087b8e9b53a247f24214eff45" },
+    { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:97434641ef2914d2ce1e05bddfcfb872932852d3a41d6849c01d102562c403e6" },
 ]
 
 [[package]]
 name = "openodd-py"
-version = "0.1.0"
-source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.1.0/openodd_py-0.1.0.tar.gz" }
+version = "0.2.0"
+source = { url = "https://github.com/hakuturu583/openodd_py/releases/download/v0.2.0/openodd_py-0.2.0.tar.gz" }
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
     "(python_full_version >= '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
@@ -2847,7 +2847,7 @@ resolution-markers = [
     "(python_full_version == '3.11.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.11.*' and sys_platform != 'darwin' and sys_platform != 'linux')",
     "(python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux')",
 ]
-sdist = { hash = "sha256:d67bb7293bdf59ee0b29e6fca7693839988236213334a03d0aff48c67a15bcc3" }
+sdist = { hash = "sha256:1d313861ab86686264f59042aa24f235cba1f43e77f0aefb9784c71c6421e97d" }
 
 [[package]]
 name = "opentelemetry-api"

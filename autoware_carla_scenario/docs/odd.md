@@ -543,7 +543,7 @@ The `odd` config key, or `ScenarioQueue(odd=...)` /
 
 | Value | ODD |
 |---|---|
-| `default` | The built-in one ([Coverage](coverage.md#odd-coverage)): every attribute, no modules |
+| `default` | The built-in one ([Coverage](coverage.md#odd-coverage)): every attribute, no modules. It is openodd's bundled `default` ODD ([its files](https://github.com/hakuturu583/openodd_py/tree/main/python/openodd/odds/default)), measured by this framework's probes, so it has a revision like any ODD read from files |
 | a name | One registered with `register_odd(name, builder)` in code, or by a package through the `autoware_carla_scenario.odds` entry point group |
 | `path/to/urban.yaml` | A binding file (or an OpenODD file on its own, measuring nothing) |
 | `package.module:function` | A builder to import and call |
