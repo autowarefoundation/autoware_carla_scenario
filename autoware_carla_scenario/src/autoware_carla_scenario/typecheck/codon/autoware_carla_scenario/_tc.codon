@@ -47,6 +47,23 @@ def _acs_value(T: type) -> T:
     return Ptr[T]()[0]
 
 
+class _acs_Returning:
+    """What the library check (typecheck/library_driver.py) calls a function
+    with for a parameter of a Callable one of whose arguments is a union, a
+    type Codon 0.19 crashes on: a callable taking N arguments of any type and
+    returning an R. A call with another number of arguments, or with a
+    keyword, does not compile, as the Callable would refuse it. Nothing
+    compiled is run."""
+
+    R: type
+    N: Literal[int]
+
+    def __call__(self, *args) -> R:
+        if static.len(args) != N:
+            compile_error("called with a number of arguments its Callable does not take")
+        return _acs_value(R)
+
+
 def _keyword_only(extra, where: Literal[str]):
     if static.len(extra) > 0:
         compile_error(where + " is keyword-only")

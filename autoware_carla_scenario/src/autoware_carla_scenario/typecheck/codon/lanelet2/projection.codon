@@ -1,0 +1,34 @@
+# Model of lanelet2.projection, for the checker (docs/typecheck.md): the
+# projectors a map is read through, and the point each projects.
+#
+# In C++ every projector derives from lanelet::Projector, which lanelet2.io's
+# load() takes; Python's binding exposes Projector but registers none of the
+# projectors as derived from it (each one's __mro__ is itself and object),
+# though load() takes any of them. The model derives each from Projector, as
+# C++ does, so a variable holding any projector (coordinate.projection's
+# resolve_projector() hands out one of four) is a Projector, and load() takes
+# it. Their origin() and reverse() are not declared.
+
+from lanelet2.core import BasicPoint3d, GPSPoint
+from lanelet2.io import Origin
+
+
+class Projector:
+    def forward(self, _point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()
+
+
+class UtmProjector(Projector):
+    def __init__(self, origin: Origin):
+        pass
+
+    def forward(self, point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()
+
+
+class LocalCartesianProjector(Projector):
+    def __init__(self, origin: Origin):
+        pass
+
+    def forward(self, point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()

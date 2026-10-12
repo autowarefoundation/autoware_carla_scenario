@@ -7,7 +7,8 @@ these tests read the model as Python syntax and check that
 
 * every class, member and function it declares exists in the installed
   package, and every base class it names is a base in Python too (or the
-  Const twin of a mutable class, which the model derives from it);
+  Const twin of a mutable class, which the model derives from it, or
+  lanelet2's ``Projector`` of a projector, as C++ derives it);
 * the parameter names and defaults agree with the stubs the package ships
   (``lanelet2/*.pyi``), where those name them;
 * each declared call, made on the fixture map with the model's arity,
@@ -29,11 +30,15 @@ import pytest
 # autoware_lanelet2_extension_python must be imported before lanelet2: its
 # regulatory elements are registered by the import, and the fixture map has them.
 import autoware_lanelet2_extension_python.regulatory_elements as autoware_res
-from autoware_lanelet2_extension_python.projection import MGRSProjector
+from autoware_lanelet2_extension_python.projection import (
+    MGRSProjector,
+    TransverseMercatorProjector,
+)
 import lanelet2
 import lanelet2.core
 import lanelet2.geometry
 import lanelet2.io
+import lanelet2.projection
 import lanelet2.routing
 import lanelet2.traffic_rules
 
@@ -49,6 +54,16 @@ _TWINS = {
     "LineString2d": "ConstLineString2d",
     "LineString3d": "ConstLineString3d",
     "Point3d": "ConstPoint3d",
+}
+
+#: Projectors the model derives from lanelet2's Projector, as C++ does
+#: (lanelet2.io.load() takes any of them), though Python registers none as
+#: derived from it.
+_PROJECTORS = {
+    "LocalCartesianProjector",
+    "MGRSProjector",
+    "TransverseMercatorProjector",
+    "UtmProjector",
 }
 
 
@@ -138,6 +153,7 @@ def test_the_model_covers_both_packages() -> None:
         "lanelet2.core",
         "lanelet2.geometry",
         "lanelet2.io",
+        "lanelet2.projection",
         "lanelet2.routing",
         "lanelet2.traffic_rules",
         "autoware_lanelet2_extension_python.projection",
@@ -155,7 +171,11 @@ def test_a_modelled_class_and_its_members_exist(module: str, cls: ast.ClassDef) 
     mro = [c.__name__ for c in runtime.__mro__]
     for base in cls.bases:
         assert isinstance(base, ast.Name)
-        assert base.id in mro or _TWINS.get(cls.name) == base.id, (
+        assert (
+            base.id in mro
+            or _TWINS.get(cls.name) == base.id
+            or (cls.name in _PROJECTORS and base.id == "Projector")
+        ), (
             f"{module}.{cls.name} derives from {base.id} in the model, "
             f"not in Python ({mro})"
         )
@@ -459,3 +479,36 @@ def test_the_projector_and_origin() -> None:
     assert isinstance(lanelet2.io.Origin(35.0, 139.0), lanelet2.io.Origin)
     origin = lanelet2.io.Origin(lat=35.0, lon=139.0, alt=0.0)
     assert isinstance(MGRSProjector(origin), MGRSProjector)
+
+
+_PROJECTOR_CLASSES = [
+    MGRSProjector,
+    TransverseMercatorProjector,
+    lanelet2.projection.UtmProjector,
+    lanelet2.projection.LocalCartesianProjector,
+]
+
+
+def test_the_model_declares_each_projector() -> None:
+    declared = {cls.name for _module, cls in _classes() if cls.name in _PROJECTORS}
+    assert declared == {p.__name__ for p in _PROJECTOR_CLASSES}
+    assert "Projector" in {cls.name for _module, cls in _classes()}
+
+
+@pytest.mark.parametrize("projector", _PROJECTOR_CLASSES, ids=lambda p: p.__name__)
+def test_a_projector_projects_a_gps_point_and_loads_the_map(projector: Any) -> None:
+    # What coordinate.map_manager and sweeper.map_loader do with one.
+    core = lanelet2.core
+    built = projector(origin=lanelet2.io.Origin(35.68, 139.69))
+    point = core.GPSPoint(35.68, 139.69, 1.0)
+    assert (point.lat, point.lon, point.alt) == (35.68, 139.69, 1.0)
+    assert isinstance(core.GPSPoint(35.68, 139.69), core.GPSPoint)
+    projected = built.forward(point)
+    assert isinstance(projected, core.BasicPoint3d)
+    assert all(isinstance(v, float) for v in (projected.x, projected.y, projected.z))
+    for loaded in (
+        lanelet2.io.load(str(_OSM_PATH), built),
+        lanelet2.io.load(filename=str(_OSM_PATH), projector=built),
+    ):
+        assert isinstance(loaded, core.LaneletMap)
+        assert len(loaded.laneletLayer) > 0

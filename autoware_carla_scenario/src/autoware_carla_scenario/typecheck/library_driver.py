@@ -24,7 +24,9 @@ module, to be fixed there with a type Codon can check.  ``object`` is
 accepted for the other operand of ``__eq__`` and ``__ne__``, which Python
 requires; it is given a value of the class itself.  A ``Callable[[A], R]``
 with types Codon can express is given a value of Codon's ``Callable`` type
-(:func:`callable_annotation`).
+(:func:`callable_annotation`); one with a union among its argument types,
+which Codon 0.19 crashes on, a callable of as many arguments, of any type,
+returning an ``R`` (:func:`union_callable_annotation`).
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ __all__ = [
     "LibraryChecks",
     "callable_annotation",
     "render_library_checks",
+    "union_callable_annotation",
     "render_library_driver",
     "uncalled_nodes",
     "workspace_module",
@@ -98,6 +101,59 @@ def callable_annotation(node: ast.AST) -> str | None:
     if ret is None or any(a is None for a in args):
         return None
     return f"Callable[[{', '.join(a for a in args if a is not None)}], {ret}]"
+
+
+def _members_or_self(node: ast.AST) -> list[ast.AST]:
+    """The members of a union or an ``Optional`` (``None`` included), or *node*."""
+    if isinstance(node, ast.Subscript) and _dotted(node.value) in (
+        "Optional",
+        "typing.Optional",
+    ):
+        return [*_members_or_self(node.slice), ast.Constant(None)]
+    members = _union_members(node)
+    if members is None:
+        return [node]
+    return [inner for member in members for inner in _members_or_self(member)]
+
+
+def union_callable_annotation(node: ast.AST) -> str | None:
+    """``_acs_Returning[R, 2]`` for a ``Callable[[A, B], R]`` with a union among
+    ``A, B``, or an ``Optional`` of one; ``None`` for any other annotation.
+
+    Codon 0.19 crashes on a ``Callable`` type with a union argument ("union
+    already sealed").  The check calls with ``_acs_Returning[R, N]`` (the
+    model's ``_tc.codon``) instead: a callable that takes ``N`` arguments of
+    any type and returns an ``R``.  So the body is compiled with the number of
+    arguments it passes checked, their types unchecked, and with the ``R`` it
+    gets back checked.  Every member of each union, and ``R``,
+    must be a type Codon can express.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    rest = [m for m in _members_or_self(node) if not _is_none(m)]
+    if len(rest) != 1:
+        return None
+    node = rest[0]
+    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _CALLABLE):
+        return None
+    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
+        return None
+    params, result = node.slice.elts
+    if not isinstance(params, ast.List):
+        return None
+    union = False
+    for param in params.elts:
+        members = [m for m in _members_or_self(param) if not _is_none(m)]
+        union = union or len(members) > 1
+        if any(codon_annotation(m, class_level=True) is None for m in members):
+            return None
+    ret = codon_annotation(result, class_level=True)
+    if not union or ret is None:
+        return None
+    return f"_acs_Returning[{ret}, {len(params.elts)}]"
 
 
 def workspace_module(module: str) -> str:
@@ -149,7 +205,7 @@ class _Renderer:
         self.lines = [
             "",
             "",
-            "from autoware_carla_scenario._tc import _acs_value",
+            "from autoware_carla_scenario._tc import _acs_Returning, _acs_value",
             "",
             "",
             f"def {LIBRARY_CHECK}():",
@@ -169,13 +225,27 @@ class _Renderer:
                 (arg.lineno, f"{where}: parameter `{arg.arg}` has no annotation")
             )
             return None
-        text = codon_annotation(annotation) or callable_annotation(annotation)
+        text = (
+            codon_annotation(annotation)
+            or callable_annotation(annotation)
+            or union_callable_annotation(annotation)
+        )
         if text is not None:
             return [text]
         members = _union_members(annotation)
+        if (
+            members is None
+            and isinstance(annotation, ast.Subscript)
+            and _dotted(annotation.value) in ("Optional", "typing.Optional")
+        ):
+            # Optional[Callable[...]], which codon_annotation drops: called
+            # with the callable, as `Callable[...] | None` is.
+            members = [annotation.slice]
         if members is not None:
             texts = [
-                codon_annotation(m, class_level=True) or callable_annotation(m)
+                codon_annotation(m, class_level=True)
+                or callable_annotation(m)
+                or union_callable_annotation(m)
                 for m in members
                 if not _is_none(m)
             ]

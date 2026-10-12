@@ -32,13 +32,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional
+from typing import TYPE_CHECKING, ClassVar, Optional
 
 import lanelet2.core
 import lanelet2.io
 from pyxodr.road_objects.network import RoadNetwork
 
 if TYPE_CHECKING:
+    import lanelet2.routing
     import typesafe_carla.carla as carla
 
 # ``_parse_geo_reference`` moved to `projection`, beside `map_origin`, which is
@@ -51,7 +52,7 @@ __all__ = ["MapManager", "_parse_geo_reference"]
 logger = logging.getLogger(__name__)
 
 
-def _road_z(carla_map: Any, location: Any) -> float:
+def _road_z(carla_map: carla.Map, location: carla.Location) -> float:
     """The height of the road under *location*, or its own where there is none.
 
     The waypoint CARLA projects *location* onto lies on the road surface its
@@ -83,12 +84,13 @@ class MapManager:
     """
 
     _instance: ClassVar[Optional["MapManager"]] = None
-    _lanelet_map: Optional[Any]
+    _lanelet_map: Optional[lanelet2.core.LaneletMap]
+    _routing_graph: Optional[lanelet2.routing.RoutingGraph]
     _road_network: Optional[RoadNetwork]
     _geo_origin: Optional[tuple[float, float, float]]
     _mgrs_offset: Optional[tuple[float, float]]
     _z_offset: Optional[float]
-    _carla_map: Optional[Any]
+    _carla_map: Optional[carla.Map]
 
     def __new__(cls) -> "MapManager":
         if cls._instance is None:
@@ -101,6 +103,13 @@ class MapManager:
             cls._instance._z_offset = None
             cls._instance._carla_map = None
         return cls._instance
+
+    def __init__(self) -> None:
+        """Nothing: ``__new__`` sets up the one instance, once.
+
+        Declared for the static check (docs/typecheck.md), whose constructor
+        of a class without one would take every attribute declared above.
+        """
 
     @classmethod
     def get_instance(cls) -> "MapManager":
@@ -211,7 +220,7 @@ class MapManager:
     # ------------------------------------------------------------------
 
     @property
-    def lanelet_map(self):  # type: ignore[return]
+    def lanelet_map(self) -> lanelet2.core.LaneletMap:
         """The loaded lanelet2.LaneletMap instance."""
         if self._lanelet_map is None:
             raise RuntimeError(
@@ -220,7 +229,7 @@ class MapManager:
         return self._lanelet_map
 
     @property
-    def routing_graph(self):  # type: ignore[return]
+    def routing_graph(self) -> lanelet2.routing.RoutingGraph:
         """A Lanelet2 routing graph of the loaded map, built on first use.
 
         What a condition addressed by lanelet walks to reach the lanelets
@@ -244,7 +253,7 @@ class MapManager:
             raise RuntimeError(
                 "MapManager is not initialized. Call initialize() first."
             )
-        if not self._road_network.road_ids_to_object:
+        if len(self._road_network.road_ids_to_object) == 0:
             self._road_network.get_roads()
         return self._road_network
 
@@ -271,7 +280,7 @@ class MapManager:
         return self._mgrs_offset
 
     @property
-    def carla_map(self) -> Optional[Any]:
+    def carla_map(self) -> Optional[carla.Map]:
         """The ``carla.Map`` instance, or ``None`` if unavailable.
 
         Used by :func:`~.transform._carla_to_opendrive_via_waypoint` to look
@@ -303,7 +312,7 @@ class MapManager:
         self,
         xodr_content: str,
         map_name: str,
-        carla_world: Any = None,
+        carla_world: Optional[carla.World] = None,
     ) -> None:
         """Build and store a ``carla.Map`` for waypoint lookups.
 
@@ -327,7 +336,7 @@ class MapManager:
             )
             self._carla_map = None
 
-    def _compute_z_offset(self, carla_world: Any = None) -> float:
+    def _compute_z_offset(self, carla_world: Optional[carla.World] = None) -> float:
         """Compute ``lanelet2_z − carla_z``.
 
         When *carla_world* is provided, every CARLA spawn point is projected
@@ -347,7 +356,7 @@ class MapManager:
 
     # -- spawn-point based (preferred) ------------------------------------
 
-    def _z_offset_from_spawn_points(self, carla_world: Any) -> Optional[float]:
+    def _z_offset_from_spawn_points(self, carla_world: carla.World) -> Optional[float]:
         """Average ``lanelet2_z − carla_z`` over all CARLA spawn points.
 
         A spawn point is where a vehicle is dropped from, not the road under
@@ -433,7 +442,7 @@ class MapManager:
         xodr_y = ref_pt.y - self._mgrs_offset[1]
 
         assert self._road_network is not None
-        if not self._road_network.road_ids_to_object:
+        if len(self._road_network.road_ids_to_object) == 0:
             self._road_network.get_roads()
 
         best_z = 0.0

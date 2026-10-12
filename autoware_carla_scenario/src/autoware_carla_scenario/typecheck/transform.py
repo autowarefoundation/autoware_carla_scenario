@@ -46,6 +46,12 @@ which :func:`transform_source_lines` maps back onto the handler):
 * A ``@classmethod`` becomes a ``@staticmethod`` without its ``cls``
   parameter; ``cls`` in its body names the class (Codon has no
   classmethods; a subclass calling it gets the base class's).
+* ``super().__new__(cls)`` in a method of class ``C`` becomes
+  ``C.__new__()``: Codon 0.19's ``object.__new__`` takes no class, and the
+  class's own ``__new__()`` allocates an instance of it.
+* A module-level ``Callable[...]`` alias becomes ``None``: Codon 0.19 reads
+  the right-hand side as an expression and refuses it.  An annotation spells
+  the callable out.
 * ``raise X from None`` becomes ``raise X``: Codon 0.19 cannot type the
   ``None`` cause.
 * A class-level ``tuple[X, ...]`` becomes ``List[X]``, and ``tuple(x)``
@@ -124,6 +130,7 @@ PRELUDE = (
 )
 
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}
+_CALLABLE_NAMES = {"Callable", "typing.Callable", "collections.abc.Callable"}
 _LITERAL_NAMES = {"Literal", "typing.Literal"}
 _UNION_NAMES = {"Union", "typing.Union"}
 _TUPLE_NAMES = {"tuple", "Tuple"}
@@ -591,6 +598,8 @@ class _Rewriter(ast.NodeVisitor):
         self._exceptions = exceptions
         #: The class whose body is being visited (``None`` in a function).
         self._class_name: str | None = None
+        #: The class whose method (or a function inside one) is being visited.
+        self._method_class: str | None = None
         #: Top-level classes of the module defined below the statement
         #: being visited.
         self._later_classes: set[str] = set()
@@ -719,7 +728,13 @@ class _Rewriter(ast.NodeVisitor):
             if arrow >= 0:
                 before = head[:arrow].rstrip(" ")
                 start = self.edits.offset(node.lineno, 0) + len(before.encode())
-                self.edits.replace(start, ann_end, "")
+                breaks = self.edits.text(start, ann_end).count("\n")
+                if breaks and before.endswith(")"):
+                    # An annotation over several lines: its line breaks go
+                    # inside the parameters' brackets, so no line moves.
+                    self.edits.replace(start - 1, ann_end, "\n" * breaks + ")")
+                else:
+                    self.edits.replace(start, ann_end, "")
 
     # -- visitors ----------------------------------------------------------
 
@@ -756,12 +771,16 @@ class _Rewriter(ast.NodeVisitor):
                 self.visit(default)
         class_depth, self._class_depth = self._class_depth, 0
         class_name, self._class_name = self._class_name, None
+        method_class = self._method_class
+        if class_name is not None:
+            self._method_class = class_name
         self._function_depth += 1
         for stmt in node.body:
             self.visit(stmt)
         self._function_depth -= 1
         self._class_depth = class_depth
         self._class_name = class_name
+        self._method_class = method_class
 
     def _rewrite_classmethod(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef, class_name: str
@@ -937,6 +956,23 @@ class _Rewriter(ast.NodeVisitor):
         ):
             start, end = self.edits.node_span(node.func)
             self.edits.replace(start, end, _RENAMED_BUILTINS[node.func.id])
+        elif (
+            self._method_class is not None
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "__new__"
+            and isinstance(node.func.value, ast.Call)
+            and _dotted(node.func.value.func) == "super"
+            and not node.func.value.args
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            # `super().__new__(cls)`, in a singleton's `__new__`: Codon 0.19's
+            # `object.__new__` takes no class.  The class's own `__new__()`
+            # allocates the same instance.
+            self.edits.replace(
+                *self.edits.node_span(node), f"{self._method_class}.__new__()"
+            )
+            return
         self.generic_visit(node)
 
     def visit_Expr(self, node: ast.Expr) -> None:
@@ -969,6 +1005,20 @@ class _Rewriter(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:
         value = node.value
+        if (
+            self._class_depth == 0
+            and self._function_depth == 0
+            and isinstance(value, ast.Subscript)
+            and _dotted(value.value) in _CALLABLE_NAMES
+        ):
+            # A Callable alias, `GroundHeight = Callable[[float, float], R]`,
+            # which Codon 0.19 reads as an expression and refuses ("expected
+            # type expression"): None, on as many lines.  An annotation must
+            # spell the callable out, which the check then reads.
+            start, end = self.edits.node_span(value)
+            newlines = "\n" * self.edits.text(start, end).count("\n")
+            self.edits.replace(start, end, f"(None{newlines})" if newlines else "None")
+            return
         if (
             self._class_depth == 0
             and self._function_depth == 0

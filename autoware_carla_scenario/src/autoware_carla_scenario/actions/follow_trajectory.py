@@ -441,14 +441,7 @@ class FollowTrajectoryAction(BaseAction):
         world puts the start off to a later tick.
         """
         try:
-            if TYPE_CHECKING:
-                # trajectory.resolve is neither checked nor modelled, so Codon
-                # cannot compile _resolve_in_world (UNCALLED).  The check
-                # compiles the reference lookup that resolver calls back.
-                self._reference_pose(None)
-                return None
-            else:
-                return _resolve_in_world(self._trajectory, world, self._reference_pose)
+            return _resolve_in_world(self._trajectory, world, self._reference_pose)
         except _ReferenceMissing as missing:
             # Once a run: the action waits for it every tick, indefinitely.
             if not self._warned_missing:
@@ -1257,7 +1250,7 @@ def _resolve_in_world(
     """*trajectory* in CARLA world coordinates, on the road of *world*'s map.
 
     Imports :mod:`~autoware_carla_scenario.trajectory.resolve` (lanelet2)
-    here, which the library check cannot compile: it is ``UNCALLED``.
+    here, as it always has: only a run that follows a trajectory loads it.
     """
     from ..trajectory.resolve import resolve_trajectory, road_height  # noqa: PLC0415
 

@@ -224,7 +224,8 @@ class Path:
     # The two reads, with CPython 3.10's signatures (3.13's `newline` is
     # refused): read_text(encoding=None, errors=None), a str, and
     # read_bytes(), bytes, which is a str here (the check reads bytes as
-    # str). Nothing is read: both are empty.
+    # str). Nothing is read: both are empty. (coordinate.map_manager reads
+    # an OpenDRIVE file with read_text().)
     def read_text(self, encoding: Optional[str] = None, errors: Optional[str] = None) -> str:
         return ""
 

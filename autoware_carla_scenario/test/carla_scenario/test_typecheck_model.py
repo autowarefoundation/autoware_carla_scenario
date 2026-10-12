@@ -24,6 +24,8 @@ import dotenv
 import ffmpeg
 import ffmpeg.nodes
 import pytest
+from pyxodr.road_objects.network import RoadNetwork as PyxodrRoadNetwork
+from pyxodr.road_objects.road import Road as PyxodrRoad
 
 import autoware_carla_scenario as acs
 from autoware_carla_scenario import carla_install, trajectory_recorder
@@ -32,6 +34,7 @@ from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_s
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
 from autoware_carla_scenario.autoware_stack import launcher as stack_launcher
 from autoware_carla_scenario.coordinate import map_manager as coordinate_map_manager
+from autoware_carla_scenario.coordinate import projection as coordinate_projection
 from autoware_carla_scenario.coordinate import transform as coordinate_transform
 from autoware_carla_scenario.coverage import collector as coverage_collector
 from autoware_carla_scenario.coverage import items as coverage_items
@@ -197,6 +200,12 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
     "MapManager": ("coordinate", coordinate_map_manager.MapManager),
+    # coordinate.projection (yaml) is not checked: what the checked
+    # map_manager and sweeper.map_loader import of it.
+    **{
+        name: ("coordinate", getattr(coordinate_projection, name))
+        for name in ("_parse_geo_reference", "map_origin", "resolve_projector")
+    },
     "TrafficContext": ("traffic", traffic_context.TrafficContext),
     **{
         name: ("traffic", getattr(traffic_registry, name))
@@ -557,3 +566,39 @@ def test_every_model_file_parses_as_python() -> None:
     # The tests above read the model with ast; keep it valid Python syntax.
     for path in sorted(model_dir().rglob("*.codon")):
         _parse(path)
+
+
+# ---------------------------------------------------------------------------
+# pyxodr's RoadNetwork, as coordinate.codon declares how it is loaded
+# ---------------------------------------------------------------------------
+
+_XODR_PATH = Path(__file__).resolve().parents[3] / "data" / "nishishinjuku_carla.xodr"
+
+
+def _road_network_model() -> ast.ClassDef:
+    node = _definitions("coordinate")["RoadNetwork"][0]
+    assert isinstance(node, ast.ClassDef)
+    return node
+
+
+@pytest.mark.parametrize("method", ["__init__", "get_roads"])
+def test_the_road_network_model_takes_pyxodr_s_parameters(method: str) -> None:
+    # pyxodr's own signature, but for the trailing parameters with a default
+    # the framework leaves at pyxodr's (the lane types to ignore).
+    model = _model_params(_methods(_road_network_model())[method], drop_first=True)
+    python = _python_params(getattr(PyxodrRoadNetwork, method), drop_first=True)
+    assert model == python[: len(model)], method
+    assert all(has_default for _kind, _name, has_default in python[len(model) :])
+
+
+def test_the_road_network_model_loads_the_fixture_map() -> None:
+    # What MapManager.initialize() and road_network do with it.
+    network = PyxodrRoadNetwork(str(_XODR_PATH))
+    roads = network.get_roads()
+    assert isinstance(roads, list) and roads
+    assert all(isinstance(road, PyxodrRoad) for road in roads)
+    assert isinstance(network.road_ids_to_object, dict)
+    assert network.road_ids_to_object
+    for road_id, road in network.road_ids_to_object.items():
+        assert isinstance(road_id, str)
+        assert isinstance(road, PyxodrRoad)
