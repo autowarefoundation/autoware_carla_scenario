@@ -1,0 +1,244 @@
+# Model of lanelet2.core, for the checker (docs/typecheck.md).
+#
+# lanelet2 hands out every primitive as the Python class of what it is; the
+# model declares those classes with the members the checked modules read.
+# Everything here is read-only: nothing builds or edits a map.
+#
+# Const and mutable twins. lanelet2 has a Const class and a mutable one for
+# each primitive (ConstLanelet / Lanelet, ConstLineString3d / LineString3d,
+# ConstPoint3d / Point3d). They are unrelated Python classes, but every
+# function that takes the Const one takes the mutable one too (the binding
+# converts it), and the mutable one has every member of the Const one. The
+# model therefore derives the mutable class from its Const twin, so a Lanelet
+# goes where a ConstLanelet is taken (RoutingGraph.following()), and a
+# routing graph's ConstLanelets and a layer's Lanelets meet in one variable
+# annotated with the Const class. What the model does not say: Codon decides
+# isinstance() by the static type (isinstance(Lanelet, ConstLanelet) is
+# false in Python, and in the check too), and a member a mutable class
+# narrows (Lanelet.leftBound is a LineString3d, LineString3d yields
+# Point3ds) is declared with the Const twin's type, which the check reads as
+# less than Python hands out, never more.
+#
+# Regulatory elements. A lanelet's regulatoryElements hold each element as its
+# own class (TrafficLight, RightOfWay, TrafficSign, and Autoware's classes in
+# autoware_lanelet2_extension_python.regulatory_elements), all derived from
+# RegulatoryElement, as in Python. The list is typed by the base, which has no
+# stopLine: Codon decides hasattr() by the static type, so code that asks
+# hasattr(element, "stopLine") of an element of the list compiles only the
+# base's branch, and is checked for each class by a function the check calls
+# with each (utils/stop_line.py).
+#
+# Rule parameters (RegulatoryElement.parameters[role]). lanelet2 holds a
+# variant per parameter: a point, line string, polygon, lanelet or area. Codon
+# has no type for a value of one of five classes, so a role is declared by
+# what it holds: "ref_line", "cancel_line" and "light_bulbs" line strings,
+# "right_of_way" and "yield" lanelets. "refers" holds a different class per
+# element (line strings or polygons for a traffic light or sign, polygons for
+# Autoware's detection areas (the fixture map's), lanelets for its
+# crosswalks, a line string for a road marking), so it is declared
+# as _RuleParameter: what every one of the five classes has, its id and
+# attributes. Any other role is a compile error. As in Python, a line string
+# of a role is a ConstLineString3d.
+
+
+class AttributeMap:
+    # The map's values are strings in Python, whatever the tag.
+    def __contains__(self, key: str) -> bool:
+        raise NotImplementedError()
+
+    def __getitem__(self, key: str) -> str:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+
+class BasicPoint2d:
+    x: float
+    y: float
+
+    # Python also builds one at the origin from nothing; the check takes x and
+    # y, which is what the framework passes.
+    def __init__(self, x: float, y: float):
+        self.x = x
+        self.y = y
+
+
+class ConstPoint3d:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+    @property
+    def x(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def y(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def z(self) -> float:
+        raise NotImplementedError()
+
+
+class Point3d(ConstPoint3d):
+    pass
+
+
+class ConstLineString2d:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+
+class LineString2d(ConstLineString2d):
+    pass
+
+
+class ConstLineString3d:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def __getitem__(self, key: int) -> ConstPoint3d:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[ConstPoint3d]:
+        raise NotImplementedError()
+
+
+class LineString3d(ConstLineString3d):
+    pass
+
+
+# A rule parameter of a role that holds any of lanelet2's primitives (see the
+# top): only what all of them have. Not a Python class.
+class _RuleParameter:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+
+class ConstRuleParameterMap:
+    def __contains__(self, role: str) -> bool:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    # The parameters of one role, by what the role holds (see the top).
+    def __getitem__(self, key: Literal[str]):
+        if key == "ref_line" or key == "cancel_line" or key == "light_bulbs":
+            return List[ConstLineString3d]()
+        elif key == "right_of_way" or key == "yield":
+            return List[ConstLanelet]()
+        elif key == "refers":
+            return List[_RuleParameter]()
+        else:
+            compile_error("lanelet2 model: the rule parameters of role '" + key + "' are not declared")
+
+
+class RegulatoryElement:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+    @property
+    def parameters(self) -> ConstRuleParameterMap:
+        raise NotImplementedError()
+
+
+# stopLine: the stop line, or None. Python hands out a LineString3d, declared
+# as its Const twin, as the rule parameters are (see the top).
+class TrafficLight(RegulatoryElement):
+    @property
+    def stopLine(self) -> Optional[ConstLineString3d]:
+        raise NotImplementedError()
+
+
+class RightOfWay(RegulatoryElement):
+    @property
+    def stopLine(self) -> Optional[ConstLineString3d]:
+        raise NotImplementedError()
+
+
+class TrafficSign(RegulatoryElement):
+    pass
+
+
+class ConstLanelet:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+    @property
+    def centerline(self) -> ConstLineString3d:
+        raise NotImplementedError()
+
+    @property
+    def leftBound(self) -> ConstLineString3d:
+        raise NotImplementedError()
+
+    @property
+    def rightBound(self) -> ConstLineString3d:
+        raise NotImplementedError()
+
+    @property
+    def regulatoryElements(self) -> List[RegulatoryElement]:
+        raise NotImplementedError()
+
+
+class Lanelet(ConstLanelet):
+    pass
+
+
+class LaneletLayer:
+    # Raises RuntimeError for an id the map does not have.
+    def __getitem__(self, key: int) -> Lanelet:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[Lanelet]:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def exists(self, id: int) -> bool:
+        raise NotImplementedError()
+
+
+class LaneletMap:
+    @property
+    def laneletLayer(self) -> LaneletLayer:
+        raise NotImplementedError()
