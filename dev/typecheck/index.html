@@ -1964,8 +1964,12 @@ typesafe_carla's Python-API compatibility shortcuts (such as calling a
 Nothing in the model runs; <code>test_typecheck_model.py</code> keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).</p>
-<p>A scenario that imports a module with no model (lanelet2, or a framework module
-outside the public API) is refused with a message naming the module.</p>
+<p>A scenario that imports a module with no model (lanelet2's <code>matching</code>, say,
+or a framework module outside the public API) is refused with a message
+naming the module. Third-party packages the framework reads are modelled as
+far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
+ffmpeg-python; see <em>Making a module compile</em>), and a scenario may use what
+those models declare.</p>
 <h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
 <p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
@@ -2078,9 +2082,13 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 131 of
-the package's 228 modules (57%; about 26,100 of 64,700 lines) are <code>CHECKED</code>:
-the kinematics, the coordinate frames and poses, the condition base and
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 135 of
+the package's 228 modules (59%; about 27,700 of 64,800 lines) are <code>CHECKED</code>:
+the kinematics, the coordinate frames and poses, the conversions between
+Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
+lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
+and the lane arithmetic of a relative lane pose (<code>trajectory.relative_lane</code>),
+all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
 walk-straight actions, the logical scenario's route search and matches (<code>route.model</code>) and
@@ -2106,7 +2114,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>entity</code>, <code>driver</code> and <code>maps</code>
 packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 64
+below). 65
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
@@ -2120,16 +2128,20 @@ the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <cod
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
 (<code>_refusing_vertex_times</code>), what resolves a followed trajectory with the
 unchecked <code>trajectory.resolve</code> (<code>follow_trajectory._resolve_in_world()</code>),
+the road-marking pattern of the stop lines, which returns a <code>refers</code>
+parameter (any of lanelet2's primitives) as a line string
+(<code>utils.stop_line._road_marking_stop_lines()</code>),
 <code>signals.build_controllers()</code>, which reads
 the authoring package's pydantic specs, <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 97 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-44 build on an excluded module and 29 hold values Codon has no type for), so
+<code>encode_frame_jpeg()</code> (cv2). The 93 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (68 import what Codon cannot compile,
+43 build on an excluded module and 27 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>72 import what Codon cannot compile</strong>: lanelet2, pyxodr,
+<li><strong>68 import what Codon cannot compile</strong>: lanelet2 beyond what its model
+  declares (most of these walk its objects typed <code>Any</code>), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
   beyond <code>importlib.metadata</code>, or more of <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
@@ -2138,7 +2150,7 @@ each is counted once, in the first group that fits it:</p>
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher, the scenario runner and queue, the
   record of a run's environment), the ODD and coverage modules that wrap
-  openodd, and everything that reads Lanelet2. A reason names <code>pathlib</code>
+  openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
 <li><strong>22 build on an excluded module</strong>, and import nothing Codon lacks
@@ -2223,7 +2235,7 @@ with an example scenario in it failed in Codon 0.19's code generation
 (<code>LLVM: error: value doesn't match function result type '{ ptr, ptr }'</code>, in
 <code>opt_ref_new</code> of the model's <code>BaseScenario</code>).</p>
 <p>A model module that stands in for unchecked code (<code>coordinate.codon</code> for
-<code>transform.py</code> and <code>map_manager.py</code>) declares only what the checked modules
+<code>map_manager.py</code>) declares only what the checked modules
 and scenarios use of it: <code>MapManager</code> there is <code>get_instance()</code> and the
 <code>road_network</code> it reads, not the class's whole API.</p>
 <p>A checked module is compiled under a name of its own
@@ -2441,11 +2453,84 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   first branch of <code>if TYPE_CHECKING: ... else: ...</code>. The <code>logging</code> shim's
   methods take <code>exc_info</code> as a <code>bool</code>.</li>
 <li><strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
-  <code>RoadNetwork</code> that <code>coordinate.codon</code> declares (what the framework reads of
-  it, down to the XML elements), so a module that may not import
-  <code>coordinate</code> annotates with pyxodr's own class under <code>TYPE_CHECKING</code>
-  (<code>utils/traffic_light.py</code>) and takes the network <code>MapManager</code> returns.
+  <code>RoadNetwork</code>, <code>Road</code>, <code>LaneSection</code> and <code>Lane</code> that <code>coordinate.codon</code>
+  declares (what the framework reads of them, down to the XML elements), so
+  a checked module annotates with pyxodr's own classes under <code>TYPE_CHECKING</code>
+  (<code>utils/traffic_light.py</code>, which may not import <code>coordinate</code>;
+  <code>coordinate/transform.py</code>) and takes the network <code>MapManager</code> returns.
   Nothing else of pyxodr is there.</li>
+<li><strong>lanelet2 is modelled</strong>: <code>codon/lanelet2/</code> and
+  <code>codon/autoware_lanelet2_extension_python/</code> declare the classes and
+  functions of simple-lanelet2's Python API the checked modules use, with
+  its parameter names: <code>lanelet2.core</code>'s map, lanelet layer, lanelets, line
+  strings, points, attribute maps and regulatory elements (their ids,
+  attributes, centrelines, bounds, rule parameters and stop lines),
+  <code>BasicPoint2d</code>; <code>lanelet2.geometry</code>'s <code>to2D()</code>, <code>length()</code>,
+  <code>toArcCoordinates()</code> (an <code>ArcCoordinates</code>), <code>findNearest()</code> (of the
+  lanelet layer) and <code>inside()</code>; <code>lanelet2.routing.RoutingGraph(laneletMap,
+  trafficRules)</code> with <code>following()</code>, <code>previous()</code>, <code>left()</code>, <code>right()</code>,
+  <code>adjacentLeft()</code> and <code>adjacentRight()</code>; <code>lanelet2.traffic_rules.create()</code>
+  with its <code>Locations</code> and <code>Participants</code>; <code>lanelet2.io.Origin</code>; and
+  Autoware's <code>MGRSProjector</code>, <code>AutowareTrafficLight</code> and <code>RoadMarking</code>.
+  Each module's header says what it leaves out; parts of the API the
+  framework does not use yet (loading a map, routes, matching, editing)
+  are not declared, and the check refuses them. The model's <code>MapManager</code>
+  hands out its <code>lanelet_map</code> and <code>routing_graph</code> as these classes. Python's
+  lanelet2 has no signatures to introspect (it is a compiled extension), so
+  <code>test_typecheck_lanelet2_model.py</code> checks that every declared name exists in
+  the installed package, that its parameters are the ones the package's
+  stubs (<code>lanelet2/*.pyi</code>) name, and that each declared call, made on the
+  fixture map, returns what the model says. What the model has to say about
+  lanelet2 that Python does not:</li>
+<li><strong>A mutable class derives from its Const twin</strong> (<code>Lanelet</code> from
+    <code>ConstLanelet</code>, <code>LineString3d</code> from <code>ConstLineString3d</code>, <code>Point3d</code> from
+    <code>ConstPoint3d</code>): in Python they are unrelated classes, but every function
+    that takes the Const one takes the mutable one, which has all its
+    members. So a layer's <code>Lanelet</code> goes where the routing graph takes a
+    <code>ConstLanelet</code>, and a variable that holds either is annotated with the
+    Const class (<code>lanelet: ConstLanelet = lanelet_map.laneletLayer[...]</code>, as
+    <code>trajectory/relative_lane.py</code> walks from a lanelet to the ones that
+    follow it). lanelet2's stubs, which mypy reads, keep the two unrelated,
+    so a function that takes either spells the union out
+    (<code>Union[ConstLanelet, Lanelet]</code>), which the check drops, as it drops any
+    union parameter. A member the mutable class narrows (<code>Lanelet.leftBound</code>
+    and <code>TrafficLight.stopLine</code> are <code>LineString3d</code>s) is declared with the
+    Const type, so the check reads less than Python hands out, never more.
+    (Codon 0.19 does not convert an <code>Optional</code> of a subclass to its base in
+    one step, <code>Optional[LineString3d]</code> into a <code>list[ConstLineString3d]</code>:
+    that would take an annotated local of the subclass first.)</li>
+<li><strong>An overloaded function dispatches on its argument</strong>: Codon 0.19 cannot
+    overload a module-level function, so <code>to2D()</code> and <code>length()</code> are generic
+    and declare the overloads the framework calls (of a line string); any
+    other argument is a compile error. Codon decides <code>isinstance</code> by the
+    static type, and <code>isinstance(Lanelet, ConstLanelet)</code> is false there as
+    in Python, so each overload names both twins.</li>
+<li><strong>A regulatory element is its own class</strong>: lanelet2 hands each one out as
+    the class of what it is (<code>TrafficLight</code>, <code>RightOfWay</code>, <code>TrafficSign</code>, or
+    Autoware's), all derived from <code>RegulatoryElement</code>, as the model declares
+    them, and a lanelet's <code>regulatoryElements</code> is a list of the base. Codon
+    decides <code>hasattr(element, "stopLine")</code> by that static type, so the
+    stop-line branch of code that duck-types the element would never be
+    compiled. <code>utils/stop_line.py</code> therefore reads one element in a public
+    function whose parameter is annotated with the union of the classes it
+    reads (<code>Union[TrafficLight, AutowareTrafficLight, RightOfWay,
+    TrafficSign, RoadMarking, RegulatoryElement]</code>), which the library check
+    calls once per member, so each branch is compiled for each class that
+    takes it. At run time it still asks the element, as before.</li>
+<li><strong>A rule parameter is declared by its role</strong>: lanelet2 holds a point, a
+    line string, a polygon, a lanelet or an area in a regulatory element's
+    <code>parameters[role]</code>, and Codon has no type for "one of five classes".
+    <code>ref_line</code>, <code>cancel_line</code> and <code>light_bulbs</code> hold line strings
+    (<code>ConstLineString3d</code>), <code>right_of_way</code> and <code>yield</code> lanelets
+    (<code>ConstLanelet</code>); any other role is a compile error. <code>refers</code> holds a
+    different class per element (line strings or polygons for a traffic
+    light, polygons for Autoware's detection areas, lanelets for its
+    crosswalks), so the model declares it as a class of its own with only
+    what all five have, <code>id</code> and <code>attributes</code>. The stop line a road marking
+    refers to is therefore not checked: <code>utils/stop_line.py</code> reads it in a
+    function called in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> (<code>UNCALLED</code>).
+    <code>test_typecheck_lanelet2_model.py</code> reads the roles off the model and
+    checks each against what the fixture map's elements hold.</li>
 <li><strong>carla_driver_interface's geometry is modelled</strong>:
   <code>codon/carla_driver_interface/geometry.codon</code> declares the <code>Pose</code> and
   <code>Trajectory</code> the driver modules use (and <code>waypoints_to_proto</code>, which
@@ -2863,9 +2948,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   branch of <code>if TYPE_CHECKING:</code>. Codon decides <code>hasattr</code> by the static type,
   which lacks the method, so it compiles none of the calls: the check covers
   the lookup around them, not the calls (<code>RoutingAction.execute()</code>).
-- <strong>A lanelet2 object at the model boundary is opaque</strong>: the model's
-  <code>MapManager</code> hands out its <code>lanelet_map</code> and <code>routing_graph</code> as classes
-  with nothing in them, which the model's <code>RouteFrame</code> takes, so the checked
+- <strong>lanelet2's map at the model boundary</strong>: the model's <code>MapManager</code> hands
+  out its <code>lanelet_map</code> and <code>routing_graph</code> as the lanelet2 model's classes
+  (above), which the model's <code>RouteFrame</code> takes, so the checked
   <code>scenario_route_frame()</code> (<code>route.active</code>) compiles; <code>route.frame</code> itself,
   which reads them, is not checked.
 - <strong>A model shared with checked modules is split out</strong>: the model's
@@ -2910,12 +2995,15 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>start()</code> returns. Python cannot instantiate a Protocol, so the model's
   constructor is a <code>compile_error</code>.
 - <strong>A model function returning a checked class</strong>: <code>to_map_frame</code>
-  (<code>coordinate.codon</code>, for <code>coordinate.transform</code>, which imports lanelet2)
-  returns autoware_bridge's <code>BridgePose</code>, which <code>_bridge_pose.codon</code> models
+  (<code>coordinate.codon</code>, which the scenario check and the checked modules that
+  import the <code>coordinate</code> package compile against) returns
+  autoware_bridge's <code>BridgePose</code>, which <code>_bridge_pose.codon</code> models
   (<code>BridgePose</code>, its <code>Vector3</code> and <code>Quaternion</code>, as <code>@tuple</code>s, since they are
   frozen, and <code>moved_forward()</code>); <code>REPLACED_MODELS</code> replaces it with the
   checked <code>autoware_bridge.base</code>, so <code>AutowareEgoEntity</code> hands the pose
-  <code>to_map_frame</code> returns to the checked <code>AutowareBridge.configure()</code>.
+  <code>to_map_frame</code> returns to the checked <code>AutowareBridge.configure()</code>
+  (it imports <code>coordinate.transform</code> itself, which is checked, so the library
+  check compiles the real <code>to_map_frame</code> there).
 - <strong>No <code>math.dist</code></strong> in Codon's <code>math</code>: <code>math.hypot</code> of the differences,
   which is the computation CPython's <code>math.dist</code> makes (<code>AutowareEgoEntity</code>).
 - <strong>A method that takes <code>**kwargs</code>, called on a value whose class a checked
@@ -2953,7 +3041,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 10:42:25 UTC"><span class="timeago" datetime="2026-10-12T10:42:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 10:42:25 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 13:55:56 UTC"><span class="timeago" datetime="2026-10-12T13:55:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 13:55:56 UTC">2026-10-12</span>
   </span>
 
     
