@@ -275,8 +275,8 @@ OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (`scenario_config`, `examples.configs`), the camera
+unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
+lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
@@ -307,17 +307,17 @@ three groups. Many fit more than one (74 import what Codon cannot compile,
 each is counted once, in the first group that fits it:
 
 - **74 import what Codon cannot compile**: lanelet2, pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or a standard module Codon
-  lacks (`json`, `inspect`, `tempfile`, `importlib` beyond
-  `importlib.metadata`, or more of `pathlib`, `shutil` or `subprocess` than
-  their shims declare), at module level or inside a function the check
-  calls. This is
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
+  a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
+  beyond `importlib.metadata`, or more of `pathlib`, `shutil`,
+  `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
+  declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue, the record of a
-  run's environment), the ODD and coverage modules that wrap openodd, and
-  everything that reads Lanelet2. A reason names `pathlib` only where the
-  module uses more of it than the shim declares, and `shutil` and
-  `subprocess` likewise.
+  map cache, the Autoware launcher, the scenario runner and queue, the
+  record of a run's environment), the ODD and coverage modules that wrap
+  openodd, and everything that reads Lanelet2. A reason names `pathlib`
+  only where the module uses more of it than the shim declares, and the
+  other shimmed modules likewise.
 - **22 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
