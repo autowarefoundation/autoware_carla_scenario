@@ -16,7 +16,7 @@ from autoware_carla_scenario.odd import (
     load_odd_binding,
     load_openodd,
 )
-from autoware_carla_scenario.odd.sources import CACHE_ENV, GitSourceError, fetch
+from openodd.sources import CACHE_ENV, GitSourceError, fetch
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 

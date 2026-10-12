@@ -607,7 +607,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "all_of": (".odd", "all_of"),
     "any_of": (".odd", "any_of"),
     "default_odd": (".odd", "default_odd"),
-    "load_openodd": (".odd.openodd", "load_openodd"),
+    "load_openodd": (".odd.loader", "load_openodd"),
     "module_holds": (".odd", "module_holds"),
     "register_odd": (".odd", "register_odd"),
     "resolve_odd": (".odd", "resolve_odd"),

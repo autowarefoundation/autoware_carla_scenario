@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 125 of
-the package's 225 modules (56%; about 25,100 of 69,100 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 124 of
+the package's 223 modules (56%; about 24,900 of 66,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -297,13 +297,14 @@ unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 100 `EXCLUDED` modules fall in
-three groups. Many fit more than one (73 import what Codon cannot compile,
-43 build on an excluded module and 29 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 99 `EXCLUDED` modules fall in
+three groups. Many fit more than one (74 import what Codon cannot compile,
+41 build on an excluded module and 29 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **73 import what Codon cannot compile**: lanelet2, pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
+- **74 import what Codon cannot compile**: lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (openodd_py, a Rust
+  extension module), or a standard module Codon
   lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
   than its shim's `Path`), at module level or inside a function the check
   calls. This is
@@ -311,15 +312,15 @@ each is counted once, in the first group that fits it:
   map cache, the Autoware launcher, the scenario runner and queue) and
   everything that reads Lanelet2. A reason names `pathlib` only where the
   module uses more of it than the shim declares.
-- **23 build on an excluded module**, and import nothing Codon lacks
+- **21 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
-  packages that re-export one (`authoring`, `maps`, `odd`, `sweeper`,
+  packages that re-export one (`authoring`, `maps`, `sweeper`,
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
   authoring compiler, builders and validator, the route frame, poses and search
   (`route.frame`, `route.positions`, `route.search`, through lanelet2),
-  `odd.model` (over `coverage.items`), `trajectory.resolve` and
-  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 23
+  `trajectory.resolve` and
+  `traffic.registry` (the `registry`, in its plugin loader); 9 of the 21
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s

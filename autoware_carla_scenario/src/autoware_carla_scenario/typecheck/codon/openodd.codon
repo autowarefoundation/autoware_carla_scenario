@@ -1,0 +1,9 @@
+# openodd_py (`openodd`, a Rust extension module), for the checker
+# (docs/typecheck.md): what the checked modules use of it. The signatures are
+# openodd_py's, so the check accepts the calls it does and refuses the others.
+# Nothing here runs: a unit normalizes to itself.
+
+
+def normalize_unit(unit: str) -> str:
+    """A unit in its canonical spelling (openodd.normalize_unit)."""
+    return unit

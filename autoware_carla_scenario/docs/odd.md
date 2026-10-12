@@ -25,6 +25,25 @@ are measured, judged and reported the same way:
 OpenODD also maps its model to OpenSCENARIO DSL (chapter 9, model to DSL only)
 and to tables (chapter 8). Neither is read here.
 
+## openodd_py and the CARLA backend
+
+The ODD model, the OpenODD reader, the bundled `default` ODD and the sampler
+are [openodd_py](https://github.com/hakuturu583/openodd_py)'s (`import
+openodd`, on a Rust core). It leaves what *measures* an ODD to the
+application's `openodd.Backend`; this framework's is
+`autoware_carla_scenario.odd.CarlaBackend`, a subclass of it:
+
+| Backend part | What the framework gives it |
+|---|---|
+| `probes` | The [built-in probes](#built-in-probes) by the names a binding file uses (`probe: speed_limit_kph`), with their units. `probe: package.module:function` imports any other. |
+| `readers` | `measure: <key>` reads the running scenario's measure ([Scenario measures](#scenario-measures)). |
+| `knobs` | How a run *sets* an attribute, for the sampler: the weather and the sun through the `environment` config, and a measured attribute through the scenario's `controls`. |
+
+`autoware_carla_scenario.odd` re-exports openodd_py's model (`OddAttribute`,
+`OddModule`, `OddDefinition`, ...), reads every ODD with `CARLA_BACKEND`, and
+makes it openodd_py's default backend on import, so `openodd.load_odd_binding`
+called directly measures with it too.
+
 ## Concepts
 
 The model and its semantics follow OpenODD 1.0 (chapters 6 and 7).
@@ -363,16 +382,15 @@ probes:
 - `git fetch` does the fetching, so `url` is anything it takes, with the
   credentials it is configured with. Prompts are turned off, and the `ext::`
   transport is refused.
-- Repositories and checkouts are cached in
-  `$AUTOWARE_CARLA_SCENARIO_ODD_CACHE` (default
-  `~/.cache/autoware_carla_scenario/openodd`). A full commit id checked out
+- Repositories and checkouts are cached by openodd_py in `$OPENODD_CACHE`
+  (default `~/.cache/openodd`). A full commit id checked out
   once is read from the cache without the network; a tag or a branch is
   fetched on every load, to learn which commit it names now. Pin a commit for
   runs that must be reproducible.
 - Fetching needs `git`, which the scenario image does not have. A run there
   can still read a source pinned to a full commit id, from a cache filled
   beforehand (`scenario-odd show urban.yaml` with the same cache directory)
-  and mounted at `$AUTOWARE_CARLA_SCENARIO_ODD_CACHE`.
+  and mounted at `$OPENODD_CACHE`.
 - The commit each source was read at is written to the coverage file (the
   ODD's `sources`), and `scenario-coverage` lists it, warning when the merged
   runs read different commits of a source.
@@ -698,6 +716,13 @@ ones are not, nor are those an earlier case of the batch was aimed at. A
 situation the knobs alone decide -- every attribute it tests has a knob, and it refers to no other module -- holds in its case. One that also tests what no knob sets -- a speed, a road -- gets a case
 under which it *can* hold; whether it does is up to the drive. A situation
 the ODD and the knobs leave no case for is given up on, with a warning.
+
+The drawing is [openodd_py](https://github.com/hakuturu583/openodd_py)'s
+(`openodd.OddSampler`, on its Rust core): the framework decides which knob
+sets which attribute and hands it the ODD and the knobs. Its random stream is
+ChaCha8 seeded with the SHA-256 of the seed, so the same seed gives the same
+cases on any platform -- though not the cases the framework's own sampler drew
+from that seed before it moved to openodd_py.
 
 `coverage_from` paths are relative to the directory the sweep is started
 from. Coverage is read when the sweep is expanded: to resume a sweep

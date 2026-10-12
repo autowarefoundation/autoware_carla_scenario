@@ -28,7 +28,7 @@ lanelet, without a world: ``probe.on_lanelet(lanelet, lanelet_map,
 routing_graph)``.  That is what checks a scenario's planned route against an
 ODD before it runs (:mod:`~autoware_carla_scenario.odd.route`).  It returns
 the value, ``None`` where the run would read none, or
-:data:`~autoware_carla_scenario.odd.model.UNDECIDED` where only the run knows
+:data:`openodd.UNDECIDED` where only the run knows
 it.  The others (speed, weather, traffic) have no ``on_lanelet``.
 """
 
@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from ..conditions.base import find_actor_in_list
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
-from .model import UNDECIDED
+from openodd import UNDECIDED
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla

@@ -27,14 +27,15 @@ from autoware_carla_scenario.odd import (
     RouteError,
     combine_route_coverage,
     default_odd,
+    load_openodd,
     plan_route,
     plan_route_coverage,
     probes,
     register_odd,
 )
 from autoware_carla_scenario.odd import registry as odd_registry
+from autoware_carla_scenario.odd import route as route_module
 from autoware_carla_scenario.odd.cli import main as odd_main
-from autoware_carla_scenario.odd.openodd import _missing
 from autoware_carla_scenario.odd.route import MISSING_BUCKET, UNDECIDED_BUCKET
 from autoware_carla_scenario.scenario_runner import ScenarioRunner
 from autoware_carla_scenario.sweeper.constraints import create_routing_graph
@@ -206,7 +207,9 @@ class TestOnLanelet:
             assert not hasattr(probe, "on_lanelet"), probe
 
     def test_a_concept_nothing_measures_is_missing_on_a_route_too(self) -> None:
-        assert _missing.on_lanelet(_fake_lanelet(), None, None) is None  # type: ignore[attr-defined]
+        odd = load_openodd("TAXONOMY:\n  wind: float velocity\n", name="w")
+        values = route_module._lanelet_values(odd, _fake_lanelet(), None, None)
+        assert values == {"wind": None}
 
 
 # ---------------------------------------------------------------------------

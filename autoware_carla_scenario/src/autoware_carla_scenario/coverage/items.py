@@ -49,6 +49,7 @@ __all__ = [
     "CoverItem",
     "CrossItem",
     "SamplingEvent",
+    "as_cover_item",
     "value_label",
 ]
 
@@ -277,6 +278,32 @@ class CoverItem:
             "cover_by": self.cover_by,
             "min_stay": self.min_stay,
         }
+
+
+def as_cover_item(item: Any) -> CoverItem:
+    """An ODD's cover item (openodd_py's) as this package's, sampled alike.
+
+    An ODD's attributes and situations are openodd_py's cover items; as this
+    package's they share its :class:`SamplingEvent` with a scenario's own
+    items, so they can be collected and crossed with them.  This package's
+    own item is returned as it is.
+    """
+    if isinstance(item, CoverItem):
+        return item
+    event = item.event
+    return CoverItem(
+        name=item.name,
+        expression=item.expression,
+        unit=item.unit,
+        buckets=list(item.edges) if item.numeric else None,
+        values=None if item.numeric else list(item.values),
+        event=SamplingEvent(event.value) if hasattr(event, "value") else event,
+        text=item.text,
+        target=item.target,
+        group=CoverGroup(item.group.value),
+        cover_by=item.cover_by,
+        min_stay=item.min_stay,
+    )
 
 
 @dataclass

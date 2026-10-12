@@ -1,5 +1,11 @@
 """Operational Design Domains: what the runs are measured against.
 
+The ODD model, its OpenODD reader and its sampler are openodd_py's
+(``openodd``); this package is the framework's side of it: the backend that
+measures and sets an ODD in a CARLA run (:class:`CarlaBackend`, made
+openodd_py's default backend on import), its probes, the ODDs a run can be
+given by name (:func:`resolve_odd`), and the route check.
+
 An ODD is written in Python (:class:`OddDefinition`, checked with Codon like a
 scenario: ``scenario-odd check``) or in ASAM OpenODD 1.0 YAML with a binding
 file naming its probes (:func:`load_odd_binding`, :func:`load_openodd`),
@@ -10,20 +16,29 @@ the ego's planned route against it on the Lanelet2 map alone.  See
 ``docs/odd.md``.
 """
 
-from . import probes
-from .openodd import OpenOddError, load_odd_binding, load_odd_file, load_openodd
-from .sources import GitSource, GitSourceError
-from .model import (
+import openodd
+from openodd import (
+    UNDECIDED,
     OddAttribute,
     OddCondition,
     OddDefinition,
     OddModule,
     OddVerdict,
-    UNDECIDED,
     all_of,
     any_of,
     module_holds,
     read_probe,
+)
+
+from . import probes
+from .backend import CARLA_BACKEND, CarlaBackend
+from .loader import (
+    GitSource,
+    GitSourceError,
+    OpenOddError,
+    load_odd_binding,
+    load_odd_file,
+    load_openodd,
 )
 from .probes import (
     ILLUMINATION_LEVELS,
@@ -73,7 +88,11 @@ from .registry import (
     resolve_odd,
 )
 
+openodd.set_default_backend(CARLA_BACKEND)
+
 __all__ = [
+    "CARLA_BACKEND",
+    "CarlaBackend",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",

@@ -71,7 +71,7 @@ def _place(name: str, names: set[str]) -> tuple[list[str], str]:
 
 
 def _unit_type(unit: str) -> Optional[str]:
-    from ..odd.units import Units  # noqa: PLC0415 - odd imports coverage
+    from openodd import Units  # noqa: PLC0415
 
     return Units().unit_type(unit) if unit else None
 

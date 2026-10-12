@@ -33,7 +33,7 @@ from autoware_carla_scenario.odd import (
 )
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd.cli import main as odd_main
-from autoware_carla_scenario.odd.openodd import (
+from autoware_carla_scenario.odd.loader import (
     OpenOddError,
     load_odd_binding,
     load_openodd,
@@ -44,7 +44,7 @@ from autoware_carla_scenario.odd.probes import (
     traffic_density_level,
 )
 from autoware_carla_scenario.odd.registry import odd_builder
-from autoware_carla_scenario.odd.units import UnitError, convert
+from openodd import UnitError, convert
 from autoware_carla_scenario.typecheck import model_dir
 
 
@@ -363,11 +363,13 @@ class TestReportWithOdd:
 
     def test_a_cross_cell_with_an_outside_bucket_is_not_a_target(self) -> None:
         from autoware_carla_scenario.coverage import CrossItem
+        from autoware_carla_scenario.coverage.items import as_cover_item
 
         odd = _speed_odd()
-        speed_item = odd.cover_items()[0]
-        other = _attr("o", values=[1, 2]).item
-        assert other is not None
+        speed_item = as_cover_item(odd.cover_items()[0])
+        other_item = _attr("o", values=[1, 2]).item
+        assert other_item is not None
+        other = as_cover_item(other_item)
         collector = CoverageCollector(
             [other], [CrossItem("c", [speed_item, other])], odd=odd
         )

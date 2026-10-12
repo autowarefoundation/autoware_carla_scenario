@@ -20,6 +20,7 @@ entered.  ``scenario-coverage`` merges any number of them into a report.
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 from datetime import datetime, timezone
 import json
@@ -37,6 +38,7 @@ from .items import (
     CrossItem,
     Event,
     SamplingEvent,
+    as_cover_item,
     duplicates,
     value_label,
 )
@@ -44,7 +46,7 @@ from .items import (
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from ..odd.model import OddDefinition, OddVerdict
+    from openodd import OddDefinition, OddVerdict
 
 __all__ = ["COVERAGE_SCHEMA", "CoverageCollector", "CROSS_SEPARATOR"]
 
@@ -365,11 +367,17 @@ class CoverageCollector:
                 m.item.name: m.name for m in situations if m.item is not None
             }
             items = [
-                *odd.cover_items(),
-                *(m.item for m in situations if m.item is not None),
+                *(as_cover_item(i) for i in odd.cover_items()),
+                *(as_cover_item(m.item) for m in situations if m.item is not None),
                 *items,
             ]
-        names = [i.name for i in items] + [c.name for c in crosses or ()]
+        # An item of an ODD (openodd_py's) given among the scenario's, or crossed.
+        items = [as_cover_item(i) for i in items]
+        crosses = [
+            dataclasses.replace(c, items=[as_cover_item(i) for i in c.items])
+            for c in crosses or ()
+        ]
+        names = [i.name for i in items] + [c.name for c in crosses]
         if duplicates(names):
             raise ValueError(
                 f"coverage: names used more than once: {duplicates(names)}"
