@@ -140,7 +140,9 @@ class TimeoutExpired(Static[SubprocessError]):
         return self.output
 
 
-class CompletedProcess[T]:
+class CompletedProcess:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
     args: List[str]
     returncode: int
     stdout: Optional[T]
@@ -189,7 +191,9 @@ def run(
     return CompletedProcess[str](args, 0)
 
 
-class _Stream[T]:
+class _Stream:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
     """A standard stream of a Popen: what it reads is a T."""
 
     # A binary stream takes any bytes-like object in CPython: bytes (a str
@@ -218,7 +222,9 @@ class _Stream[T]:
         pass
 
 
-class Popen[T]:
+class Popen:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
     args: List[str]
     pid: int
     returncode: Optional[int]
