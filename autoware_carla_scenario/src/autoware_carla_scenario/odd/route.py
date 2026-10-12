@@ -38,7 +38,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable, Optional, Sequence, Union
 
 from ..coverage.items import value_label
-from .model import _OPEN, OddAttribute, OddDefinition, _derived, read_probe
+from .model import UNDECIDED as _OPEN
+from .model import OddAttribute, OddDefinition
 from .registry import resolve_odd
 
 if TYPE_CHECKING:
@@ -346,9 +347,9 @@ def _map_attributes(odd: OddDefinition) -> list[str]:
     """
     decided = {a.name for a in odd.attributes if callable(_on_lanelet(a))}
     for attribute in odd.attributes:
-        sources = getattr(attribute.probe, "sources", None)
-        if _derived(attribute.probe) and sources:
-            if all(getattr(s, "name", None) in decided for s in sources):
+        sources = attribute.derived_from
+        if attribute.derived and sources:
+            if all(s in decided for s in sources):
                 decided.add(attribute.name)
     return [a.name for a in odd.attributes if a.name in decided]
 
@@ -368,7 +369,7 @@ def _lanelet_values(
     values: dict[str, Any] = {}
     derived: list[OddAttribute] = []
     for attribute in odd.attributes:
-        if _derived(attribute.probe):
+        if attribute.derived:
             derived.append(attribute)
             continue
         read = _on_lanelet(attribute)
@@ -377,12 +378,12 @@ def _lanelet_values(
             if callable(read)
             else _OPEN
         )
+    if not derived:
+        return values
+    worked_out = odd.complete(values)
     for attribute in derived:
-        sources = getattr(attribute.probe, "sources", None)
-        names = (
-            [s.name for s in sources if hasattr(s, "name")] if sources else list(values)
-        )
-        value = read_probe(attribute.probe.from_values, values)  # type: ignore[attr-defined]
+        names = attribute.derived_from or list(values)
+        value = worked_out.get(attribute.name)
         if value is None and any(values.get(n, _OPEN) is _OPEN for n in names):
             value = _OPEN  # missing because a source is open: open too
         values[attribute.name] = value

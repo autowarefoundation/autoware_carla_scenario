@@ -337,6 +337,30 @@ class TestCollectorWithOdd:
         (item,) = _drive([10])["items"]
         assert item["outside_odd"] == ["[60, 90]"]
         assert item["group"] == "odd"
+        assert item["attribute"] == "speed" and item["amount"] == "hits"
+
+    def test_each_tick_is_counted_in_its_cell(self) -> None:
+        doc = _drive([10, 70, 80, 20, None, 75, 200])
+        cells = doc["odd"]["cells"]
+        assert cells["attributes"] == ["speed"]  # hidden has no buckets
+        # Most ticks first, ties by label; the world has no ego, so no metres.
+        assert cells["rows"] == [
+            [["[60, 90]"], 3, 1.5, 0.0],
+            [["[0, 30)"], 2, 1.0, 0.0],
+            [["<above>"], 1, 0.5, 0.0],
+            [["<missing>"], 1, 0.5, 0.0],
+        ]
+        by_cell = {r[0][0]: r[1] for r in cells["rows"]}
+        (item,) = doc["items"]
+        assert all(by_cell.get(b, 0) == n for b, n in item["hits"].items())
+        assert doc["odd"]["samples"]["rows"]  # the samples stay
+
+    def test_a_coverage_file_says_what_wrote_it(self) -> None:
+        import openodd
+
+        doc = _drive([10])
+        assert doc["generator"]["openodd"] == openodd.__version__
+        assert doc["generator"]["framework"].startswith("autoware-carla-scenario==")
 
 
 class TestReportWithOdd:
@@ -1386,3 +1410,12 @@ class TestSituations:
     def test_a_situation_is_not_a_bound_in_the_module_table(self) -> None:
         doc = self._run(self._odd(), [(2, 30.0)])
         assert set(doc["odd"]["module_ticks"]) == {"roads"}
+
+
+def test_the_unit_spellings_codon_checks_are_openodds() -> None:
+    import openodd
+
+    from autoware_carla_scenario.odd import unit_names
+
+    for alias in [*unit_names._ALIASES, "KPH", " m/s ", "km/h", "furlong", ""]:
+        assert unit_names.normalize_unit(alias) == openodd.normalize_unit(alias), alias

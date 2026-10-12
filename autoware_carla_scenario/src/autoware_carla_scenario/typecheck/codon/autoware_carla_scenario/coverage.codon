@@ -63,7 +63,7 @@ class CoverItem:
     def __init__(self, name: str, expression, unit: str = "", range = None, every = None,
                  buckets = None, values = None, ignore = None, event = SamplingEvent("end"),
                  text: str = "", target = 1.0, group = None, cover_by: str = "hits",
-                 min_stay = None):
+                 min_stay = None, attribute = None):
         self.name = name
 
 
