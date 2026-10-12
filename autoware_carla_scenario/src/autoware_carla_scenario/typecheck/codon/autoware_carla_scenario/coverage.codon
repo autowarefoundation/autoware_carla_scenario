@@ -4,10 +4,13 @@
 # themselves are declared through BaseScenario.register_cover().  CoverItem and
 # CrossItem are declared for the library check (scenario_base, which holds
 # them), with only the name scenario_base reads; a scenario never builds one.
+# CoverageCollector (below) is what the checked scenario_runner uses of it.
+
+from pathlib import Path
 
 import typesafe_carla.carla as carla
 
-from ._tc import _expect_float, _expect_optional_float
+from ._tc import _expect_float, _expect_optional_float, _keyword_only
 from .conditions import BaseCondition, _expect_condition
 
 
@@ -74,3 +77,30 @@ class CrossItem:
     target: float = 1.0
     cover_by: str = "hits"
     min_stay: Optional[float] = None
+
+
+# What the checked scenario_runner uses of coverage.collector (openodd's
+# collector, a Rust extension): the collector, the sampling it is told of, and
+# the file it writes. The ODD is any value in Python (`odd: Any`); backend and
+# generator are openodd's types, which are not declared, so passing one fails
+# the check.
+class CoverageCollector:
+    def __init__(self, items: List[CoverItem], crosses: Optional[List[CrossItem]] = None,
+                 odd = None, *_kw, backend = None, generator = None):
+        _keyword_only(_kw, "CoverageCollector(): backend and generator")
+        if not (isinstance(backend, None) or isinstance(backend, Optional[NoneType])):
+            compile_error("CoverageCollector(): openodd's Backend is not declared")
+        if not (isinstance(generator, None) or isinstance(generator, Optional[NoneType])):
+            compile_error("CoverageCollector(): the generator is not declared")
+
+    def start(self, context: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+    def tick(self, context: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+    def end(self, context: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+    def write(self, path: Path, scenario: str) -> None:
+        raise NotImplementedError()

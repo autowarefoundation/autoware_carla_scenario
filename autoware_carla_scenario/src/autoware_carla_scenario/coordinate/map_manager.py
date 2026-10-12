@@ -32,11 +32,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 import lanelet2.core
 import lanelet2.io
 from pyxodr.road_objects.network import RoadNetwork
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 # ``_parse_geo_reference`` moved to `projection`, beside `map_origin`, which is
 # the only thing that consults it now.  Re-exported because it is the
@@ -119,7 +122,7 @@ class MapManager:
         self,
         xodr_path: Path,
         lanelet2_path: Path,
-        carla_world: Any = None,
+        carla_world: Optional[carla.World] = None,
         projector_type: Optional[str] = None,
     ) -> None:
         """Load both map files.
