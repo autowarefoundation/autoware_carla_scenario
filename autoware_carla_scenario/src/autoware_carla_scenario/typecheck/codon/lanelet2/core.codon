@@ -237,6 +237,12 @@ class LaneletLayer:
     def exists(self, id: int) -> bool:
         raise NotImplementedError()
 
+    # findUsages(value): the lanelets one of whose bounds is the line
+    # string. Python also takes a point or a regulatory element;
+    # only a line string is declared.
+    def findUsages(self, value: ConstLineString3d) -> List[Lanelet]:
+        raise NotImplementedError()
+
 
 class LaneletMap:
     @property

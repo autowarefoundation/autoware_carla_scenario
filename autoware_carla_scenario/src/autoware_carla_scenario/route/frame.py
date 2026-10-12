@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import bisect
 import math
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..trajectory.relative_lane import (
     _centreline,
@@ -25,6 +25,10 @@ from ..trajectory.relative_lane import (
 )
 from .geometry import MapFeatures
 from .model import RouteMatch
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet, Lanelet, LaneletMap
+    from lanelet2.routing import RoutingGraph
 
 __all__ = ["RouteFrame"]
 
@@ -43,22 +47,36 @@ class RouteFrame:
         ValueError: If the match names a lanelet the map does not have.
     """
 
-    def __init__(self, match: RouteMatch, lanelet_map: Any, routing_graph: Any) -> None:
+    match: RouteMatch
+    map: LaneletMap
+    graph: RoutingGraph
+    features: MapFeatures
+    lanelets: list[ConstLanelet]
+    _offsets: list[float]
+    _xs: list[float]
+    _ys: list[float]
+    _arc: list[float]
+
+    def __init__(
+        self, match: RouteMatch, lanelet_map: LaneletMap, routing_graph: RoutingGraph
+    ) -> None:
         self.match = match
         self.map = lanelet_map
         self.graph = routing_graph
         self.features = MapFeatures(lanelet_map, routing_graph)
-        self.lanelets: list[Any] = []
+        self.lanelets = []
         for lanelet_id in match.lanelet_ids:
             try:
-                self.lanelets.append(lanelet_map.laneletLayer[int(lanelet_id)])
+                # A Lanelet, held as the routing graph's ConstLanelets are.
+                lanelet: ConstLanelet = lanelet_map.laneletLayer[int(lanelet_id)]
+                self.lanelets.append(lanelet)
             except Exception as exc:  # noqa: BLE001 -- lanelet2 raises its own
                 raise ValueError(
                     f"the route names lanelet {lanelet_id}, which this map does "
                     "not have"
                 ) from exc
         # Route s of each lanelet's start (its own s = 0).
-        self._offsets: list[float] = []
+        self._offsets = []
         travelled = -match.start_s
         for lanelet in self.lanelets:
             self._offsets.append(travelled)
@@ -123,7 +141,7 @@ class RouteFrame:
         x, y = _point_at(points, along)
         return x, y, _heading_at(points, along)
 
-    def lanelet_at(self, s: float) -> Any:
+    def lanelet_at(self, s: float) -> Lanelet:
         """The lanelet route s *s* is on."""
         return self.map.laneletLayer[self.locate(s)[0]]
 
@@ -191,7 +209,9 @@ class RouteFrame:
             travelled += span
         return points[-1][2]
 
-    def junction_way(self, index: int) -> tuple[list[Any], Any, Any]:
+    def junction_way(
+        self, index: int
+    ) -> tuple[list[ConstLanelet], Optional[ConstLanelet], Optional[ConstLanelet]]:
         """Junction *index*'s lanelets, and the lanelets it is entered from and left onto.
 
         The entry (exit) is the route's own lanelet before (after) it, or the
@@ -206,16 +226,18 @@ class RouteFrame:
         last = first + len(segment.lanelet_ids) - 1
         way = self.lanelets[first : last + 1]
         features = self.features
-        entry = (
-            self.lanelets[first - 1]
-            if first > 0
-            else features.straightest_previous(way[0])
-        )
-        exit_ = (
-            self.lanelets[last + 1]
-            if last + 1 < len(self.lanelets)
-            else features.straightest_following(way[-1])
-        )
+        # if statements, not conditional expressions: Codon types none whose
+        # branches are a lanelet and an Optional of one.
+        entry: Optional[ConstLanelet] = None
+        if first > 0:
+            entry = self.lanelets[first - 1]
+        else:
+            entry = features.straightest_previous(way[0])
+        exit_: Optional[ConstLanelet] = None
+        if last + 1 < len(self.lanelets):
+            exit_ = self.lanelets[last + 1]
+        else:
+            exit_ = features.straightest_following(way[-1])
         return way, entry, exit_
 
 
@@ -236,12 +258,16 @@ def ego_placement(
             f"({frame.length:.1f} m)"
         )
     spawn = frame.locate(spawn_s)
+    # Both returns hand back an Optional local: Codon types a tuple by its
+    # members, and a bare None is no Optional[tuple[int, float]].
     if not goal:
-        return spawn, None
+        no_goal: Optional[tuple[int, float]] = None
+        return spawn, no_goal
     goal_s = max(0.0, frame.length - goal_margin)
     if goal_s <= spawn_s:
         raise ValueError(
             f"the goal ({goal_s:.1f} m along the route) is not ahead of the "
             f"spawn ({spawn_s:g} m)"
         )
-    return spawn, frame.locate(goal_s)
+    goal_at: Optional[tuple[int, float]] = frame.locate(goal_s)
+    return spawn, goal_at
