@@ -14,6 +14,14 @@ Both follow `cover()` in
 [ASAM OpenSCENARIO DSL](https://publications.pages.asam.net/standards/ASAM_OpenSCENARIO/ASAM_OpenSCENARIO_DSL/latest/language-reference/coverage_main.html)
 and keep its vocabulary.
 
+Coverage is [openodd_py](https://github.com/hakuturu583/openodd_py)'s: the
+cover items, the collector, the coverage file, the merge, the report and the
+COD export. The framework registers a scenario's items, runs openodd's
+`CoverageCollector` on every tick with `CARLA_BACKEND` (which says where the
+ego is, for the metres a tick stands for and the COD's positions), and
+installs openodd's `openodd-coverage` as `scenario-coverage`. Files written
+before the move (`autoware_carla_scenario.coverage/1`) still merge.
+
 ## How it works
 
 1. A **cover item** names a value and divides its possible values into
@@ -309,7 +317,7 @@ coverage file only.
 
 ```json
 {
-  "schema": "autoware_carla_scenario.coverage/1",
+  "schema": "openodd.coverage/1",
   "scenario": "CutInScenario",
   "items": [
     {

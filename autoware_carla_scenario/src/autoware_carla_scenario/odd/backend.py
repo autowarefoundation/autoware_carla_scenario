@@ -12,7 +12,9 @@ framework's:
 * **knobs** -- how a run sets an attribute, for the sampler: the weather and
   the sun through the ``environment`` config (:data:`DEFAULT_KNOBS`), and an
   attribute read by a scenario measure through the scenario's ``controls``
-  for that measure.
+  for that measure;
+* **where the ego is** -- in the world (the metres a tick stands for in
+  coverage) and on Earth (the spatial extent of an exported COD).
 
 :data:`CARLA_BACKEND` is the one the framework reads its ODDs with, and
 openodd_py's default backend once :mod:`autoware_carla_scenario.odd` is
@@ -104,6 +106,14 @@ class CarlaBackend(openodd.Backend):
         if spec in PROBES and self.probes.get(spec) == PROBES[spec]:
             return getattr(probes, spec), PROBES[spec][1]
         return super().probe(spec)
+
+    def position(self, context: Any) -> Optional[tuple[float, float, float]]:
+        """The ego's location in the CARLA world, in metres."""
+        return probes.ego_position(context)
+
+    def geolocation(self, context: Any) -> Optional[tuple[float, float]]:
+        """The ego's latitude and longitude, from the map's geoReference."""
+        return probes.ego_geolocation(context)
 
     def knob(
         self, attribute: Any, controls: Mapping[str, openodd.OddKnob]

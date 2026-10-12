@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.coverage.report import CoverageReport, OddExposure
+from openodd import COVERAGE_SCHEMA, CoverageReport, merge_coverage
 from autoware_carla_scenario.odd import (
     GitSource,
     OpenOddError,
@@ -319,18 +319,27 @@ class TestReportedSources:
             ],
         }
 
+    def _report(self, *commits: str) -> CoverageReport:
+        return merge_coverage(
+            [
+                {
+                    "schema": COVERAGE_SCHEMA,
+                    "scenario": f"s{n}",
+                    "items": [],
+                    "odd": self._raw(commit),
+                }
+                for n, commit in enumerate(commits, start=1)
+            ]
+        )
+
     def test_the_report_names_the_commits_read(self) -> None:
-        exposure = OddExposure("calm")
-        exposure.add("s1", self._raw("a" * 40))
-        exposure.add("s2", self._raw("a" * 40))
-        lines = "\n".join(CoverageReport._odd_markdown(exposure))
+        report = self._report("a" * 40, "a" * 40)
+        lines = report.to_markdown()
         assert "- Source: u odd.yml at main (aaaaaaaaaaaa)" in lines
         assert "different commits" not in lines
-        assert exposure.to_dict()["sources"] == self._raw("a" * 40)["sources"]
+        sources = report.to_dict()["odds"]["calm"]["sources"]
+        assert sources == self._raw("a" * 40)["sources"]
 
     def test_runs_on_different_commits_are_flagged(self) -> None:
-        exposure = OddExposure("calm")
-        exposure.add("s1", self._raw("a" * 40))
-        exposure.add("s2", self._raw("b" * 40))
-        lines = "\n".join(CoverageReport._odd_markdown(exposure))
+        lines = self._report("a" * 40, "b" * 40).to_markdown()
         assert "the runs read different commits of a source" in lines

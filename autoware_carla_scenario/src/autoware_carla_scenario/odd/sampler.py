@@ -66,7 +66,7 @@ class OddSampler(openodd.OddSampler):
         strategy: ``"uniform"`` draws every admitted bucket alike;
             ``"coverage"`` draws the least covered first.
         coverage: The coverage of earlier runs, as merged by
-            :func:`~autoware_carla_scenario.coverage.report.load_and_merge`.
+            :func:`openodd.load_and_merge`.
             Only read by the ``coverage`` strategy.
         max_tries: Combinations drawn per case before giving up on it.
         drawn: The cases drawn from this ODD by earlier samplers of the
@@ -131,7 +131,7 @@ def sampler_from_config(
     Raises:
         ValueError: On an unknown field.
     """
-    from ..coverage.report import load_and_merge  # noqa: PLC0415
+    from openodd import load_and_merge  # noqa: PLC0415
     from .registry import resolve_odd  # noqa: PLC0415
 
     unknown = set(raw) - {"count", "seed", "strategy", "odd", "coverage_from", "knobs"}

@@ -49,9 +49,9 @@ See [Coverage](coverage.md).
 | `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
 | `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
 | `BaseScenario.register_measure(key, read, *, unit, text)`, `.measure(key, world)`, `.measures` | A scenario's measures: what it sets up, under fixed keys (`autoware_carla_scenario.measures`: `VEHICLE_AHEAD_GAP_M`, `VEHICLE_AHEAD_RELATIVE_SPEED_KPH`, `CROSSING_PEDESTRIAN_GAP_M`, `CROSSING_PEDESTRIAN_SPEED_MS`). Replace a built-in one or add one of its own. See [Scenario measures](odd.md#scenario-measures). |
-| `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
+| `CoverageCollector` | openodd_py's: samples items on their events during a run; written as `{Scenario}_coverage.json`. The runner gives it `CARLA_BACKEND`, which says where the ego is. |
 | `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
-| `coverage.cod.export_cod(document, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
+| `coverage.export_cod(document, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
 
 ## ODD (`autoware_carla_scenario.odd`)
 
@@ -329,7 +329,7 @@ Defined in `pyproject.toml`:
 | `viewer` | `autoware_carla_scenario.ui:main` |
 | `scenario-editor` | `autoware_carla_scenario.editor:main` |
 | `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
-| `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` |
+| `scenario-coverage` | `autoware_carla_scenario.coverage:main` (openodd_py's `openodd-coverage`) |
 | `scenario-odd` | `autoware_carla_scenario.odd.cli:main` |
 
 The `scenario` command also exposes Python-level helpers in

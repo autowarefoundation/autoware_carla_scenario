@@ -75,10 +75,10 @@ dependencies = [
     # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
     # so the range has to reach past it; the ceiling is the newest major tested.
     "protobuf>=4.25.0,<8",
-    # The ODD model, its OpenODD reader, the bundled default ODD and the
-    # sampler; odd/backend.py derives its Backend. An abi3 wheel: one build
-    # for every Python 3.10+.
-    "openodd-py>=0.2.2,<0.3",
+    # Everything OpenODD -- the ODD model and reader, the bundled default ODD,
+    # the sampler and coverage; odd/backend.py derives its Backend. An abi3
+    # wheel: one build for every Python 3.10+.
+    "openodd-py>=0.3,<0.4",
 ]
 
 [project.urls]
@@ -129,7 +129,7 @@ scenario-expand = "autoware_carla_scenario.examples.expand:main"
 # Compile scenarios with Codon (the static check the runner makes before a run).
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
 # Merge the coverage files of scenario runs into an ODD/scenario coverage report.
-scenario-coverage = "autoware_carla_scenario.coverage.report:main"
+scenario-coverage = "autoware_carla_scenario.coverage:main"
 # Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets.
 scenario-odd = "autoware_carla_scenario.odd.cli:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"

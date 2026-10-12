@@ -22,9 +22,11 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
-from .coverage.collector import CoverageCollector
+from openodd import CoverageCollector
+
 from .measures import set_measured_scenario
 from .odd import OddDefinition, reset_probes, resolve_odd
+from .odd.backend import CARLA_BACKEND
 from .coordinate.transform import to_opendrive
 from .entity import vehicle_entity as _vehicle_entity_module
 from .scenario_base import BaseScenario
@@ -925,7 +927,10 @@ class ScenarioRunner:
             # scenario's, its own replacements included.
             set_measured_scenario(scenario)
             coverage = CoverageCollector(
-                scenario._cover_items, scenario._cross_items, odd=self.odd
+                scenario._cover_items,
+                scenario._cross_items,
+                odd=self.odd,
+                backend=CARLA_BACKEND,
             )
             coverage.start(world, clock.simulated)
 

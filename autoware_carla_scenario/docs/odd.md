@@ -734,7 +734,7 @@ From Python:
 ```python
 from pathlib import Path
 
-from autoware_carla_scenario.coverage.report import load_and_merge
+from autoware_carla_scenario.coverage import load_and_merge
 from autoware_carla_scenario.odd import OddKnob, OddSampler, resolve_odd
 
 sampler = OddSampler(

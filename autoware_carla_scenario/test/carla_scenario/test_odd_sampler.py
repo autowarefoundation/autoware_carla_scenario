@@ -12,8 +12,8 @@ from typing import Any
 import pytest
 from omegaconf import OmegaConf
 
-from autoware_carla_scenario.coverage.collector import COVERAGE_SCHEMA
-from autoware_carla_scenario.coverage.report import load_and_merge
+from autoware_carla_scenario.coverage import COVERAGE_SCHEMA
+from autoware_carla_scenario.coverage import load_and_merge
 from autoware_carla_scenario.odd import (
     INTENSITY_LEVELS,
     OddAttribute,

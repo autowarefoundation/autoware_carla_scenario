@@ -363,13 +363,11 @@ class TestReportWithOdd:
 
     def test_a_cross_cell_with_an_outside_bucket_is_not_a_target(self) -> None:
         from autoware_carla_scenario.coverage import CrossItem
-        from autoware_carla_scenario.coverage.items import as_cover_item
 
         odd = _speed_odd()
-        speed_item = as_cover_item(odd.cover_items()[0])
-        other_item = _attr("o", values=[1, 2]).item
-        assert other_item is not None
-        other = as_cover_item(other_item)
+        speed_item = odd.cover_items()[0]
+        other = _attr("o", values=[1, 2]).item
+        assert other is not None
         collector = CoverageCollector(
             [other], [CrossItem("c", [speed_item, other])], odd=odd
         )

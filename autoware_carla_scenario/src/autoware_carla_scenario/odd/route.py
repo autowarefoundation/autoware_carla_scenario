@@ -37,7 +37,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable, Optional, Sequence, Union
 
-from ..coverage.items import value_label
+from openodd import value_label
 from openodd import UNDECIDED as _OPEN
 from openodd import OddAttribute, OddDefinition
 

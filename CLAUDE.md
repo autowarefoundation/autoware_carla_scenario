@@ -237,13 +237,15 @@ If pre-commit hooks fail:
   prebuilt package); `TYPESAFE_CARLA_PYCARLA_BUILD=0` turns a missing build
   into an `ImportError`, as the Docker image does.
   The official `carla` package is not a dependency and must not be imported.
-- **openodd-py** (>=0.2.2,<0.3) - The ODD model, the OpenODD reader, the
-  bundled default ODD and the sampler (`import openodd`, an abi3 wheel on a
-  Rust core). The framework only supplies the backend: `odd/backend.py`'s
-  `CarlaBackend` derives `openodd.Backend` (the CARLA/Lanelet2 probes, the
-  `measure:` reader, the knobs the sampler sets), and `odd/` re-exports the
-  model and reads every ODD with it. ODD semantics belong in openodd_py, not
-  here.
+- **openodd-py** (>=0.3,<0.4) - Everything OpenODD: the ODD model, the
+  OpenODD reader, the bundled default ODD, the sampler, and coverage (cover
+  items, the collector, the coverage file, the merged report, the COD export)
+  -- `import openodd`, an abi3 wheel on a Rust core. The framework only
+  supplies the backend: `odd/backend.py`'s `CarlaBackend` derives
+  `openodd.Backend` (the CARLA/Lanelet2 probes, the `measure:` reader, the
+  knobs the sampler sets, where the ego is), and `odd/` and `coverage/`
+  re-export openodd. OpenODD and coverage semantics belong in openodd_py,
+  not here.
 - Python 3.10 through 3.14. `autoware_carla_scenario` declares
   `requires-python = ">=3.10,<3.15"` -- the comment on that line is the
   canonical explanation. CI runs the suite on 3.10, 3.11, 3.12, 3.13 and 3.14

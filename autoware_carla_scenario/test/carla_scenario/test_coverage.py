@@ -21,7 +21,7 @@ from autoware_carla_scenario.coverage import (
     merge_coverage,
 )
 from autoware_carla_scenario.coverage.items import ABOVE_RANGE, BELOW_RANGE
-from autoware_carla_scenario.coverage.report import load_and_merge, main
+from autoware_carla_scenario.coverage import load_and_merge, main
 
 
 class _Side(enum.Enum):
