@@ -2082,8 +2082,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 146 of
-the package's 228 modules (64%; about 33,200 of 65,300 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 148 of
+the package's 228 modules (65%; about 34,000 of 65,400 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2112,17 +2112,19 @@ OpenDRIVE taken from CARLA by <code>maps.opendrive</code>), what an exported sce
 package pins the framework to and how it runs <code>uv</code> (<code>authoring.framework_pin</code>,
 <code>authoring.uv_tool</code>), the CARLA server manager (<code>server</code>) and the camera
 recorder that writes a run's video (<code>camera_recorder</code>), the Autoware
-launcher that runs a stack as a process group (<code>autoware_stack.launcher</code>)
-and the <code>scenario_bridge</code> node's command and Python root beside it
-(<code>autoware_stack.bridge_node</code>), the Autoware
+launcher that runs a stack as a process group (<code>autoware_stack.launcher</code>),
+the <code>scenario_bridge</code> node's command and Python root beside it
+(<code>autoware_stack.bridge_node</code>) and the one that runs a workspace in its dev
+container with Docker (<code>autoware_stack.docker</code>, over a model of
+<code>autoware_stack.devcontainer</code>, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 unit names (<code>odd.unit_names</code>), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), the camera
 and LiDAR sensors (<code>sensor</code>), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (<code>driver.base</code>, <code>driver.control</code>, <code>driver.observation</code>, over
-<code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>entity</code>, <code>driver</code> and <code>maps</code>
-packages themselves, whose <code>__init__</code> re-exports what is not checked
+<code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
+<code>driver</code> and <code>maps</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
 below). 73
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
@@ -2157,12 +2159,12 @@ statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixtur
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 82 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (about 61 import what Codon cannot
-compile, 32 build on an excluded module and 21 hold values Codon has no type
+<code>encode_frame_jpeg()</code> (cv2). The 80 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (about 60 import what Codon cannot
+compile, 30 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>61 import what Codon cannot compile</strong>: lanelet2 beyond what its model
+<li><strong>60 import what Codon cannot compile</strong>: lanelet2 beyond what its model
   declares (most of these walk its objects typed <code>Any</code>), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
@@ -2171,18 +2173,18 @@ for), so each is counted once, in the first group that fits it:</p>
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
   expansion, Hydra sweeper and map loader, the map cache, the Autoware
-  stack's Docker launcher and dev container, the
+  stack's dev container, the
   record of a run's environment), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
-<li><strong>17 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>16 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
-  <code>coverage</code>, <code>autoware_stack</code>, <code>examples</code>, <code>scaffold</code>), the
+  <code>coverage</code>, <code>examples</code>, <code>scaffold</code>), the
   authoring compiler, builders and validator and
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 17
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 16
   also hold values Codon has no type for.</li>
 <li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
@@ -2236,7 +2238,7 @@ stands in for it in the check's workspace:</p>
   <code>coordinate.codon</code>), or, for a module of a package that is itself checked,
   a model of that module alone (<code>utils/traffic_light.codon</code>,
   <code>autoware_bridge/grpc_server.codon</code>, <code>driver/egodriver_client.codon</code>,
-  <code>maps/cache.codon</code>), or, for a module of
+  <code>maps/cache.codon</code>, <code>autoware_stack/devcontainer.codon</code>), or, for a module of
   the top-level package, a model of that module (<code>carla_install.codon</code>, for
   <code>server</code>, declares <code>installed_executable()</code>; <code>trajectory_recorder.codon</code>,
   for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
@@ -2351,16 +2353,24 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>Path.home()</code> and <code>Path.cwd()</code>; like Python's, it builds and joins a <code>Path</code> with a <code>str</code> or
   an <code>os.PathLike</code> only (a <code>Path</code>, or what <code>shutil.copy2()</code> returns for one;
   an <code>Optional</code> of one is unwrapped, as Codon unwraps one passed anywhere). It declares the file-system queries too: <code>exists()</code>,
-  <code>is_file()</code>, <code>is_dir()</code>, <code>glob(pattern)</code> and <code>absolute()</code>, with Python
+  <code>is_file()</code>, <code>is_dir()</code>, <code>glob(pattern)</code>, <code>rglob(pattern)</code> and
+  <code>absolute()</code>, with Python
   3.10's signatures (3.12 and 3.13 added the keyword-only <code>follow_symlinks</code>,
   <code>case_sensitive</code> and <code>recurse_symlinks</code>, which are refused), and <code>name</code>,
   <code>suffix</code>, <code>parent</code>, <code>parents</code> (indexed, iterated, <code>len()</code> and <code>in</code>; not
   sliced), <code>stem</code>, <code>with_name(name)</code> (of a <code>str</code>), <code>as_posix()</code>, <code>relative_to(other)</code> (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
-  does too; 3.12's <code>walk_up</code> is refused) and the ordering of two <code>Path</code>s, so
+  does too; 3.12's <code>walk_up</code> is refused), <code>is_relative_to(other)</code> (one path,
+  by position, likewise), <code>is_absolute()</code> and the ordering of two <code>Path</code>s, so
   <code>sorted()</code> takes them. Nothing
   touches the file system: a query is <code>False</code> and a glob yields nothing.
   <code>is_symlink()</code> takes no argument, as in every supported Python. Of what
+  reads, <code>read_text(encoding=None, errors=None)</code> (3.13's <code>newline</code> is
+  refused) and <code>read_bytes()</code> are declared (<code>autoware_stack.docker</code> reads a
+  launch file and hashes the <code>package.xml</code> files); both return <code>""</code>, and
+  <code>read_bytes()</code> returns a <code>str</code>, since the check reads <code>bytes</code> as <code>str</code>
+  (so it takes <code>path.read_bytes() + "text"</code>, which CPython refuses, and
+  refuses <code>path.read_bytes().decode()</code>, which CPython takes). Of what
   writes, <code>mkdir(mode=0o777, parents=False, exist_ok=False)</code> and
   <code>write_text(data, encoding=None, errors=None, newline=None)</code> are declared
   (<code>maps.opendrive</code> caches what it fetches), and so are <code>unlink(missing_ok=False)</code>,
@@ -2371,7 +2381,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   and <code>IO[str]</code> are one type). <code>typing.IO</code> declares <code>name</code>, <code>mode</code>,
   <code>closed</code>, <code>close()</code>, <code>fileno()</code>, <code>flush()</code>, <code>read()</code>, <code>readline()</code>,
   <code>write()</code> (of a <code>str</code>, read as bytes too), iteration over the lines and
-  <code>with</code>. <code>chmod()</code>, <code>read_text()</code> and the rest are not. <code>os</code> replaces Codon's own (whose
+  <code>with</code>. <code>chmod()</code>, <code>write_bytes()</code> and the rest are not. <code>os</code> replaces Codon's own (whose
   <code>environ</code> has no <code>get()</code> and iterates over pairs), keeping its <code>getenv()</code>,
   which Codon's runtime and typesafe_carla's library call: <code>environ</code> is a
   mapping of <code>str</code> to <code>str</code> (<code>[key]</code>, assignment, <code>del</code>, <code>in</code>, iteration
@@ -2380,6 +2390,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   CPython's returns), <code>getenv(key, default=None)</code> (a <code>str</code> default gives a
   <code>str</code>, <code>None</code> an <code>Optional[str]</code>; a default of another type, which CPython
   takes, is refused), <code>fspath()</code>, <code>getpid()</code>, <code>getppid()</code>, <code>getpgid(pid)</code>,
+  <code>getuid()</code>, <code>getgid()</code>, <code>readlink(path, *, dir_fd=None)</code> (of a <code>str</code> or an
+  <code>os.PathLike</code>, a <code>str</code>; a bytes path is not declared),
   <code>kill(pid, signal, /)</code>, <code>killpg(pgid, signal, /)</code> (of an <code>int</code> or a
   <code>signal.Signals</code>), <code>system(command)</code>,
   <code>mkdir()</code> (Codon's had one), the separators (<code>sep</code>, <code>pathsep</code>, <code>linesep</code>,
@@ -2413,7 +2425,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   process's output is a <code>str</code> with or without <code>text=True</code>, and
   <code>CompletedProcess[bytes]</code> and <code>Popen[bytes]</code> are <code>[str]</code>; it is <code>None</code>
   when it was not captured, as in CPython, so <code>stdout</code> and <code>stderr</code> are an
-  <code>Optional</code>. A stream's <code>write()</code> takes what a binary stream takes in
+  <code>Optional</code>. A stream iterates over its lines, each a <code>str</code>
+  (<code>for line in process.stdout:</code>, after <code>assert process.stdout is not
+  None</code>). A stream's <code>write()</code> takes what a binary stream takes in
   CPython, bytes (a <code>str</code>) or a buffer such as an array's <code>data</code> (a <code>Ptr</code> in
   Codon's numpy; <code>camera_recorder</code> writes <code>bgr.data</code>), and since the check
   cannot tell a text stream from a binary one, it takes either for a text
@@ -2883,6 +2897,15 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>None</code> in it is not translated.
 - <strong>No star-unpacking into a tuple display</strong> (<code>(*a, *b)</code>): Codon wants a
   tuple after <code>*</code>. Concatenate the lists (<code>a + b</code>).
+- <strong>No <code>*</code> of a list in a call</strong> (<code>f("rm", *ids)</code> with <code>ids</code> a list):
+  Codon 0.19 unpacks only a tuple into arguments ("argument after * must be
+  a tuple"). Give the function a twin that takes the list
+  (<code>DockerAutowareLauncher._run_docker(["rm", "--force"] + ids, ...)</code>, which
+  <code>_docker(*args)</code> calls with <code>list(args)</code>).
+- <strong>An empty dict display for a <code>Mapping</code> parameter</strong> (<code>extra_env={}</code>) is a
+  dict of no element type: the check drops the abstract <code>Mapping[str, str]</code>
+  from a parameter, so nothing gives it one. A private function that is
+  handed dicts takes a <code>dict[str, str]</code> (<code>DockerAutowareLauncher._run_argv()</code>).
 - <strong>A default does not name a class attribute</strong> (<code>random_seed: int =
   DEFAULT_RANDOM_SEED</code> in a method of the class defining it): Python
   evaluates it once, when the class is created, and Codon cannot name it
@@ -3196,7 +3219,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 20:53:23 UTC"><span class="timeago" datetime="2026-10-12T20:53:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 20:53:23 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 22:10:47 UTC"><span class="timeago" datetime="2026-10-12T22:10:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 22:10:47 UTC">2026-10-12</span>
   </span>
 
     
