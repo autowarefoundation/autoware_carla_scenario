@@ -1,0 +1,9 @@
+# Model of autoware_carla_scenario.carla_install (docs/typecheck.md), which
+# imports tqdm, json, urllib.request and tarfile: what the checked server
+# uses of it, with the signature of the Python module.
+
+from pathlib import Path
+
+
+def installed_executable() -> Optional[Path]:
+    raise NotImplementedError()
