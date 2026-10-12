@@ -9,8 +9,12 @@
 # keyword-only `follow_symlinks` (3.12/3.13) and glob's `case_sensitive` and
 # `recurse_symlinks` (3.12/3.13) are refused, as CPython 3.10 refuses them.
 # They touch no file: a query is False, and a glob yields nothing. Of what
-# writes, mkdir() and write_text() are declared (CPython 3.10's signatures);
-# they create and write nothing.
+# writes, mkdir(), write_text(), open(), unlink() and symlink_to() are
+# declared (CPython 3.10's signatures); they create, open, remove and write
+# nothing. open() returns a typing.IO of str, which IO[bytes] is too (the
+# check reads bytes as str), whatever the mode.
+
+from typing import IO
 
 
 def _part(part) -> str:
@@ -142,6 +146,18 @@ class Path:
         return name[i:] if 0 < i < len(name) - 1 else ""
 
     @property
+    def stem(self) -> str:
+        name = self.name
+        i = name.rfind(".")
+        return name[:i] if 0 < i < len(name) - 1 else name
+
+    # with_name(name): the path with its last part replaced (CPython raises
+    # ValueError for a path with no name, or a name that is not one).
+    def with_name(self, name: str) -> Path:
+        i = self._path.rfind("/")
+        return Path(self._path[:i + 1] + name if i >= 0 else name)
+
+    @property
     def parent(self) -> Path:
         i = self._path.rfind("/")
         if i < 0:
@@ -202,3 +218,30 @@ class Path:
         newline: Optional[str] = None,
     ) -> int:
         return len(data)
+
+    # open(mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+    # a file object, an IO[bytes] for a binary mode, an IO[str] otherwise
+    # (one type here). CPython refuses a bad mode, or an encoding with a
+    # binary one, with a ValueError when it is called.
+    def open(
+        self,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: Optional[str] = None,
+        errors: Optional[str] = None,
+        newline: Optional[str] = None,
+    ) -> IO[str]:
+        return IO[str](self._path, mode)
+
+    # is_symlink(), with no arguments in every supported Python.
+    def is_symlink(self) -> bool:
+        return False
+
+    # unlink(missing_ok=False).
+    def unlink(self, missing_ok: bool = False) -> None:
+        pass
+
+    # symlink_to(target, target_is_directory=False): the target is a str or
+    # an os.PathLike.
+    def symlink_to(self, target, target_is_directory: bool = False) -> None:
+        _part(target)

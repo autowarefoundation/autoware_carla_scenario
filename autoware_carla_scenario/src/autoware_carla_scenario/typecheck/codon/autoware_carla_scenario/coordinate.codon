@@ -6,6 +6,7 @@
 
 import internal.static as static
 import numpy
+from pathlib import Path
 
 import typesafe_carla.carla as carla
 import lanelet2.core
@@ -290,6 +291,17 @@ class RoadNetwork:
 class MapManager:
     @staticmethod
     def get_instance() -> MapManager:
+        raise NotImplementedError()
+
+    # A classmethod in Python, as get_instance(): the queue resets the
+    # singleton before it loads a run's maps.
+    @staticmethod
+    def reset() -> None:
+        raise NotImplementedError()
+
+    def initialize(self, xodr_path: Path, lanelet2_path: Path,
+                   carla_world: Optional[carla.World] = None,
+                   projector_type: Optional[str] = None) -> None:
         raise NotImplementedError()
 
     @property

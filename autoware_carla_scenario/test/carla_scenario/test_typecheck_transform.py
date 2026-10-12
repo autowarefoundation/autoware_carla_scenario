@@ -265,6 +265,9 @@ def test_a_frozenset_is_checked_as_a_set() -> None:
 
         def more(xs: frozenset[str]) -> None:
             ys = frozenset({"a"})
+
+        def empty(keep: frozenset[str] = frozenset[str]()) -> None:
+            pass
         """
     )
     lines = out.splitlines()
@@ -272,6 +275,8 @@ def test_a_frozenset_is_checked_as_a_set() -> None:
     assert lines[2] == "    return set()"
     assert lines[4] == "def more(xs: Set[str]) -> None:"
     assert lines[5] == '    ys = set({"a"})'
+    # An empty one typed by its element, which a bare set() is not.
+    assert lines[7] == "def empty(keep: Set[str] = Set[str]()) -> None:"
     assert _annotation("typing.FrozenSet[int]") == "Set[int]"
     assert _annotation("frozenset") is None
 
@@ -336,6 +341,14 @@ def test_a_variable_length_tuple_of_a_union_attribute_is_a_list_of_the_union() -
     assert _annotation("tuple[A | B, ...]") is None
     assert _annotation("tuple[A | B | None, ...]", class_level=True) is None
     assert _annotation("tuple[A | Any, ...]", class_level=True) is None
+
+
+def test_a_file_object_is_the_typing_shims_io() -> None:
+    # typing.IO[AnyStr], what Path.open() returns: the typing shim's IO[T],
+    # with bytes read as str.
+    assert _annotation("Optional[IO[bytes]]") == "Optional[IO[str]]"
+    assert _annotation("typing.IO[str]", class_level=True) == "typing.IO[str]"
+    assert _annotation("IO") == "IO"
 
 
 @pytest.mark.parametrize(

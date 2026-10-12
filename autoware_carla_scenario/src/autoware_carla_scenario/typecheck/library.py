@@ -73,6 +73,8 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.autoware_bridge.fake",
     "autoware_carla_scenario.autoware_bridge.ros_bridge",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api",
+    "autoware_carla_scenario.autoware_stack.bridge_node",
+    "autoware_carla_scenario.autoware_stack.launcher",
     "autoware_carla_scenario.camera_recorder",
     "autoware_carla_scenario.conditions",
     "autoware_carla_scenario.conditions.action_state",
@@ -167,6 +169,8 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.measures",
     "autoware_carla_scenario.scenario_base",
     "autoware_carla_scenario.scenario_config",
+    "autoware_carla_scenario.scenario_queue",
+    "autoware_carla_scenario.scenario_runner",
     "autoware_carla_scenario.server",
     "autoware_carla_scenario.sensor",
     "autoware_carla_scenario.sensor.base",
@@ -217,6 +221,14 @@ _FROM_MAPPING = (
     "inside it, so it is not compiled"
 )
 
+#: The reason of what takes the bridge node's ROS parameters.
+_ROS_PARAMETERS = (
+    "takes the scenario_bridge node's ROS parameters as `Mapping[str, Any]` "
+    "(bool, int, float or str values), which Codon cannot express: Codon 0.19 "
+    "fails on a Union in a parameter annotation (`union already sealed`), so "
+    "the checker drops it and the check has nothing to call with"
+)
+
 #: The reason of a function that reads a YAML document's values.
 _YAML = (
     "reads a YAML mapping of values of any type (`Any`: numbers, strings, "
@@ -232,6 +244,8 @@ _YAML = (
 UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.actions.follow_trajectory._resolve_in_world": "resolves the trajectory with trajectory.resolve, imported inside it, which is neither checked nor modelled (its callables of a union parameter); FollowTrajectoryAction._resolve calls it in the `else` branch of `if TYPE_CHECKING:` and the check compiles the reference lookup it is handed (_reference_pose) instead",
     "autoware_carla_scenario.authoring.framework_pin.Pin.uv_source": 'builds the `[tool.uv.sources]` entry, a dict[str, Any] of str and bool values (`{"path": ..., "editable": True}`), which Codon cannot express',
+    "autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args": _ROS_PARAMETERS,
+    "autoware_carla_scenario.autoware_stack.bridge_node.bridge_command": f"{_ROS_PARAMETERS}; CommandAutowareLauncher.start() calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.conditions.action_state.ActionStateCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.and_condition.AndCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.base.BaseCondition.__init_subclass__": "wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for",
@@ -292,6 +306,10 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.scenario_base.BaseScenario.require_goal": "asks ego_requires_goal, which reads the ego's class (`ego_type`)",
     "autoware_carla_scenario.scenario_base.BaseScenario.register_route_to_goal": "asks require_goal, which reads the ego's class (`ego_type`)",
     "autoware_carla_scenario.scenario_base.BaseScenario.register_cover": "builds a CoverItem of values of any type (`expression: Callable[[carla.World], Any]`, `values: Iterable[Any]`, `ignore: Callable[[Any], bool]`, `event: SamplingEvent | BaseCondition`), which Codon cannot express; coverage.items is not checked",
+    "autoware_carla_scenario.scenario_queue.ScenarioQueue.as_fixture": "builds a pytest fixture (pytest, imported inside it), a generator function returned as a `Callable[[], Generator[ScenarioQueue, None, None]]`",
+    "autoware_carla_scenario.scenario_runner.ScenarioRunner._warn_if_route_leaves_odd": "plans the ego's route with odd.route's plan_route_coverage() (lanelet2, imported inside it), which is neither checked nor modelled; run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
+    "autoware_carla_scenario.scenario_runner._collect_condition_statuses": "builds ConditionStatus values, which hold a condition's details (`dict[str, Any]`), which Codon cannot express; _condition_statuses calls it in the `else` branch of `if TYPE_CHECKING:`",
+    "autoware_carla_scenario.scenario_runner._write_result": "writes the result with json, and the environment with environment.write() (platform, json), imported inside it, which Codon does not have; run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.signals.controller.build_controllers": "reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed `list[Any]` so the runtime does not import authoring, with getattr defaults for fields older documents lack",
     "autoware_carla_scenario.sweeper.bindings.parse_binding": _YAML,
     "autoware_carla_scenario.sweeper.constraints.LaneletLengthConstraint.__post_init__": "checks the rule against the names of the ComparisonRule members, iterating over the enum, which the enum shim does not model (Codon 0.19 iterates over no class)",
@@ -301,7 +319,7 @@ UNCALLED: dict[str, str] = {
 
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
-    "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, four of which are neither checked nor modelled: pytest_fixtures and scenario_queue (pytest), registry (omegaconf) and scenario_runner (openodd, a Rust extension, through coverage.collector, and json)",
+    "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)",
     "autoware_carla_scenario.actions.background_traffic": "holds lanelet constraints as `ConstraintSpec = Union[Mapping[str, Any], Any]` (a Hydra node or a parsed constraint), which Codon cannot express; yaml is imported inside constraints_from_text",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (tempfile)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
@@ -322,13 +340,11 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_bridge.ros_bridge.__main__": "runs the scenario_bridge node (rclpy)",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.client": "imports grpc",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.node": "imports rclpy, autoware_adapi_v1_msgs, geometry_msgs, grpc",
-    "autoware_carla_scenario.autoware_stack": "re-exports autoware_stack.devcontainer (yaml, json) and autoware_stack.docker (shlex), which are neither checked nor modelled",
-    "autoware_carla_scenario.autoware_stack.bridge_node": "imports pathlib, shlex; takes the bridge's ROS parameters as `Mapping[str, Any]`, which Codon cannot express",
+    "autoware_carla_scenario.autoware_stack": "re-exports autoware_stack.devcontainer (yaml, json) and autoware_stack.docker (more of pathlib, os and subprocess than their shims declare), which are neither checked nor modelled",
     "autoware_carla_scenario.autoware_stack.devcontainer": "imports pathlib, yaml, json",
-    "autoware_carla_scenario.autoware_stack.docker": "imports shlex, more of pathlib than its shim declares (`read_text()`, `read_bytes()`, `open()`, `is_symlink()`), of os (`getuid()`, `getgid()`, `readlink()`) and of subprocess (iterating a `Popen`'s output), bridge_node's names and launcher's `DEFAULT_BRIDGE_PARAMETERS`, `AutowareStackError`, `ProcessGroup`, `episode_log_path()` and `fill_placeholders()`, which the autoware_stack models do not declare, and devcontainer (yaml, json), which is neither checked nor modelled; holds the bridge's ROS parameters as `Mapping[str, object]` (`bridge_parameters`), which Codon cannot express",
-    "autoware_carla_scenario.autoware_stack.launcher": "imports more of pathlib than its shim declares (`open()`), signal's `Signals` (its stop signal's type), which the signal shim does not declare, more of subprocess than its shim declares (a file object as a `Popen` stream) and of sys than Codon's declares (`sys.platform`, `sys.executable`), and bridge_node's bridge_command() and host_python_root() (shlex), which the autoware_stack model does not declare; holds the bridge's ROS parameters as `Mapping[str, Any]` (`DEFAULT_BRIDGE_PARAMETERS`, `bridge_parameters`), which Codon cannot express",
+    "autoware_carla_scenario.autoware_stack.docker": "imports more of pathlib than its shim declares (`read_text()`, `read_bytes()`), of os (`getuid()`, `getgid()`, `readlink()`) and of subprocess (iterating a `Popen`'s output), and devcontainer (yaml, json), which is neither checked nor modelled; holds the bridge's ROS parameters as `Mapping[str, object]` (`bridge_parameters`), which Codon cannot express, and hands them to bridge_node's bridge_command(), which the check leaves uncalled for that reason",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, json, argparse, urllib.request, http, email, tarfile, platform, and more of shutil than its shim declares (`disk_usage()`)",
-    "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2, pathlib, and pyxodr, whose model declares only the road network the framework reads, not how it is loaded; initialize() takes the CARLA world as `Any`",
+    "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2's map loading (`lanelet2.io.load()`), which the lanelet2 model does not declare, pathlib, and pyxodr, whose model declares only the road network the framework reads, not how it is loaded",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
     "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which re-export openodd's (a Rust extension)",
     "autoware_carla_scenario.coverage.cod": "re-exports openodd's COD export (a Rust extension)",
@@ -363,12 +379,10 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.sampler": "wraps openodd's sampler (a Rust extension) and reads `Mapping[str, Any]` config nodes (`sampler_from_config()`), which Codon cannot express",
     "autoware_carla_scenario.odd.sources": "re-exports openodd's git sources (a Rust extension)",
     "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
-    "autoware_carla_scenario.pytest_fixtures": "imports pytest and scenario_queue (tqdm, pytest), which is not checked, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
+    "autoware_carla_scenario.pytest_fixtures": "imports pytest, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
     "autoware_carla_scenario.registry": "imports omegaconf (`DictConfig`, under `TYPE_CHECKING`) and more of importlib.metadata than its shim declares (`entry_points()`); holds scenario classes (`type[BaseScenario]`) and their config classes as values, which Codon cannot hold",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",
     "autoware_carla_scenario.scaffold.generator": "imports pathlib, argparse, keyword, and templating (jinja2), which is not checked",
-    "autoware_carla_scenario.scenario_queue": "imports tqdm, pytest, MapManager's reset() and initialize(), which the coordinate model does not declare, odd's resolve_odd(), which the odd model does not declare, and scenario_runner (openodd, a Rust extension, through coverage.collector, and json), which is neither checked nor modelled",
-    "autoware_carla_scenario.scenario_runner": "imports json, more of pathlib than its shim declares (`stem`, `with_name()`), coverage.collector (openodd, a Rust extension) and trajectory_recorder (json), which are neither checked nor modelled, odd's resolve_odd() and reset_probes() and, inside a method, odd.route's plan_route_coverage(), which the odd model does not declare, and environment (platform, json) inside it",
     "autoware_carla_scenario.sweeper": "re-exports, besides the checked sweeper.bindings and sweeper.constraints, sweeper.expand (omegaconf), sweeper.lanelet_constraint_sweeper (hydra) and sweeper.map_loader (lanelet2.io, which the lanelet2 model does not declare)",
     "autoware_carla_scenario.sweeper.expand": "imports omegaconf",
     "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper": "imports pathlib, omegaconf, hydra, tqdm, json, signal",

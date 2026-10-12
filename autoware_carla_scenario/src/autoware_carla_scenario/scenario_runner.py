@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -13,11 +12,15 @@ from typing import TYPE_CHECKING, Collection, Optional
 import typesafe_carla.carla as carla
 
 if TYPE_CHECKING:
-    from .entity.ego import EgoVehicle
     from .scenario_base import SpectatorCameraConfig
 
 from .camera_recorder import CameraRecorder
-from .entity.registry import clear_entities, register_entity
+from .entity.ego import EgoVehicle
+from .entity.registry import (
+    clear_entities,
+    register_entity,
+    register_vehicle_entity,
+)
 from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
@@ -27,10 +30,11 @@ from .coverage.collector import CoverageCollector
 from .measures import set_measured_scenario
 from .odd import OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
-from .entity import vehicle_entity as _vehicle_entity_module
+from .entity.vehicle_entity import _set_warmup_done
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
+from .traffic.driven import BackendDriven
 from .world_reset import reload_current_map
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
@@ -178,6 +182,50 @@ def _collect_condition_statuses(
     return statuses
 
 
+def _condition_statuses(
+    scenario: "BaseScenario",
+    world: "carla.World",
+    elapsed: float,
+    scenario_name: str,
+) -> list[ConditionStatus]:
+    """The condition statuses a result records (:func:`_collect_condition_statuses`).
+
+    A status holds its condition's details (``get_details()``, a
+    ``dict[str, Any]`` of mixed value types), which Codon cannot express, so
+    the check (docs/typecheck.md) does not compile how they are collected.
+    """
+    if TYPE_CHECKING:
+        statuses: list[ConditionStatus] = []
+        return statuses
+    else:
+        return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
+
+
+def _write_result(
+    json_path: Path,
+    output_dir: Path,
+    file_stem: str,
+    scenario: "BaseScenario",
+    result: ScenarioResult,
+) -> None:
+    """Write *result* to *json_path*, with the environment the run had.
+
+    What it ran with: the lock and the environment beside the result, and
+    their summary (with the environment's id) in it.  With ``json`` and
+    :mod:`.environment` (platform, json), which Codon does not have: the check
+    (docs/typecheck.md) does not compile it.
+    """
+    import json  # noqa: PLC0415
+
+    from .environment import write as write_environment  # noqa: PLC0415
+
+    environment = write_environment(output_dir, file_stem, scenario)
+    data = json.loads(result.to_json())
+    if environment is not None:
+        data["environment"] = environment
+    json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
     """The stem a run's files are named by: *scenario_name*, or
     ``{scenario_name}-N`` once an earlier run in *output_dir* has taken it.
@@ -219,7 +267,7 @@ def _unique_path(path: Path) -> Path:
 def _destroy_all_dynamic_actors(
     world: "carla.World",
     scenario_name: str,
-    keep_role_names: "frozenset[str]" = frozenset(),
+    keep_role_names: "frozenset[str]" = frozenset[str](),
 ) -> None:
     """Destroy the vehicles, walkers and sensors in the world for a clean state.
 
@@ -249,7 +297,10 @@ def _destroy_all_dynamic_actors(
     ]:
         if actor.id in kept_ids:
             continue
-        parent = getattr(actor, "parent", None)
+        try:
+            parent = actor.parent
+        except AttributeError:
+            parent = None
         if parent is not None and parent.id in kept_ids:
             continue
         try:
@@ -318,6 +369,17 @@ class ScenarioRunner:
             assert result.passed
     """
 
+    odd: OddDefinition
+    timeout_seconds: float
+    output_dir: Path
+    _tm_port: int
+    _min_tick_interval: float
+    _next_tick_at: float
+    _traffic_backend: TrafficBackend
+    _xodr_path: Optional[Path]
+    _client: carla.Client
+    _world: Optional[carla.World]
+
     def __init__(
         self,
         server: CarlaServerManager,
@@ -368,18 +430,19 @@ class ScenarioRunner:
         # `is not None` rather than truthiness: a backend is a third party's
         # object and may define __bool__ or __len__ (no vehicles yet, say), and
         # one that was explicitly passed must drive the run whatever it reports.
-        self._traffic_backend = (
-            traffic_backend
-            if traffic_backend is not None
-            else TrafficManagerBackend(TrafficManagerBackendConfig(port=tm_port))
-        )
-        self._xodr_path: Optional[Path] = None
+        if traffic_backend is not None:
+            self._traffic_backend = traffic_backend
+        else:
+            self._traffic_backend = TrafficManagerBackend(
+                TrafficManagerBackendConfig(port=tm_port)
+            )
+        self._xodr_path = None
 
         self._client = carla.Client(host, port)
         # Loading a town on CARLA 0.10 (UE5) takes ~25 s, so a 10 s client
         # timeout fails the load with a bare 'std::exception'.
         self._client.set_timeout(60.0)
-        self._world: Optional["carla.World"] = None
+        self._world = None
 
     @property
     def traffic_backend(self) -> TrafficBackend:
@@ -400,7 +463,9 @@ class ScenarioRunner:
         Entities are not given a port at all: the runner injects the backend
         into them, and the backend knows its own port.
         """
-        return int(getattr(self._traffic_backend, "port", self._tm_port))
+        if hasattr(self._traffic_backend, "port"):
+            return int(self._traffic_backend.port)
+        return self._tm_port
 
     @property
     def xodr_path(self) -> Optional[Path]:
@@ -732,7 +797,8 @@ class ScenarioRunner:
         if self._world is None:
             self._world = self._client.get_world()
 
-        world = self._world
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        world: "carla.World" = self._world
         scenario_name = type(scenario).__name__
         file_stem = _run_file_stem(self.output_dir, scenario_name)
 
@@ -745,8 +811,24 @@ class ScenarioRunner:
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
         # before that actor would be destroyed.
-        ego = scenario.create_ego()
-        register_entity(EGO_ROLE_NAME, ego)
+        if TYPE_CHECKING:
+            # create_ego() instantiates the ego's class (`ego_type`), which
+            # Codon cannot hold as a value: the check takes the entity a
+            # scenario was given, or a plain EgoVehicle.
+            ego = EgoVehicle()
+            if scenario.ego_entity is not None:
+                ego = scenario.ego_entity
+        else:
+            ego = scenario.create_ego()
+        # Handed on as the vehicle it is (a typed local: the static check
+        # upcasts there); anything else (a test double) goes through
+        # register_entity, which keeps it as it always has.  Codon resolves
+        # isinstance() by the static type, so it compiles the typed branch.
+        if isinstance(ego, EgoVehicle):
+            driven: BackendDriven = ego
+            register_vehicle_entity(EGO_ROLE_NAME, driven)
+        else:
+            register_entity(EGO_ROLE_NAME, ego)
         backend = self._traffic_backend
         ego.set_traffic_backend(backend)
 
@@ -759,7 +841,7 @@ class ScenarioRunner:
             keep_role_names=(
                 frozenset({str(EGO_ROLE_NAME)})
                 if ego.attaches_to_existing_actor
-                else frozenset()
+                else frozenset[str]()
             ),
         )
 
@@ -800,7 +882,12 @@ class ScenarioRunner:
                     output_dir=self.output_dir,
                 )
             )
-            logger.info("[%s] Traffic: %s", scenario_name, backend.describe())
+            if TYPE_CHECKING:
+                # describe() is a dict of mixed value types, which Codon
+                # cannot express (UNCALLED in typecheck/library.py).
+                pass
+            else:
+                logger.info("[%s] Traffic: %s", scenario_name, backend.describe())
 
             logger.info("[%s] === Setup start ===", scenario_name)
             scenario.set_client(self._client, tm_port=self._backend_tm_port)
@@ -824,10 +911,26 @@ class ScenarioRunner:
             # did not, so an ego that cannot start without one is checked once
             # setup returns -- and here rather than inside `_setup_ego_spawn`,
             # which a scenario that snaps its own spawn never calls.
-            scenario.require_goal()
-            self._warn_if_route_leaves_odd(scenario_name, scenario)
+            if TYPE_CHECKING:
+                # require_goal() reads the ego's class (`ego_type`), which
+                # Codon cannot hold as a value, and the route is planned with
+                # odd.route (lanelet2): the check compiles neither.
+                pass
+            else:
+                scenario.require_goal()
+                self._warn_if_route_leaves_odd(scenario_name, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
-            ego_actor = ego.spawn(world, scenario.ego_config)
+            if TYPE_CHECKING:
+                # EgoVehicle.spawn() takes the model's EgoConfig (entity.ego
+                # imports scenario_base through the model: MODELLED_IMPORTS in
+                # typecheck/library.py), which the checked BaseScenario's is
+                # not, so the check takes the actor the entity holds once
+                # spawned.
+                spawned = ego.actor
+                assert spawned is not None
+                ego_actor = spawned
+            else:
+                ego_actor = ego.spawn(world, scenario.ego_config)
             logger.info(
                 "[%s] Ego spawned: id=%d blueprint=%s",
                 scenario_name,
@@ -883,13 +986,20 @@ class ScenarioRunner:
             if not ego.use_autopilot and ego_actor is not None:
                 skip_ids.add(ego_actor.id)
 
-            backend.start(world, skip_actor_ids=skip_ids)
+            if TYPE_CHECKING:
+                # Codon 0.19 calls an overridden method through a dispatch
+                # thunk, which takes no keyword argument (docs/typecheck.md):
+                # the check calls TrafficBackend's own, and checks each
+                # backend's start() on its own, through its class.
+                TrafficBackend.start(backend, world, skip_actor_ids=skip_ids)
+            else:
+                backend.start(world, skip_actor_ids=skip_ids)
 
             # Initial speeds last of all, so they are the speeds the scenario
             # starts at rather than ones a long wait has bled off.
             scenario.set_initial_speed(ego_actor)
 
-            _vehicle_entity_module._warmup_done = True
+            _set_warmup_done(True)
 
             # Start native CARLA recorder
             output_path = self.output_dir / f"{file_stem}.log"
@@ -929,7 +1039,13 @@ class ScenarioRunner:
             reset_probes()
             # An ODD that maps its taxonomy onto scenario measures reads this
             # scenario's, its own replacements included.
-            set_measured_scenario(scenario)
+            if TYPE_CHECKING:
+                # measures holds the model's BaseScenario (it imports
+                # scenario_base through the model: MODELLED_IMPORTS in
+                # typecheck/library.py), which the checked one is not.
+                pass
+            else:
+                set_measured_scenario(scenario)
             coverage = CoverageCollector(
                 scenario._cover_items, scenario._cross_items, odd=self.odd
             )
@@ -1004,7 +1120,7 @@ class ScenarioRunner:
                             passed=True,
                             message=check.message,
                             elapsed_seconds=check.elapsed_seconds,
-                            condition_statuses=_collect_condition_statuses(
+                            condition_statuses=_condition_statuses(
                                 scenario, world, elapsed, scenario_name
                             ),
                         )
@@ -1037,7 +1153,7 @@ class ScenarioRunner:
                             passed=False,
                             message=check.message,
                             elapsed_seconds=check.elapsed_seconds,
-                            condition_statuses=_collect_condition_statuses(
+                            condition_statuses=_condition_statuses(
                                 scenario, world, elapsed, scenario_name
                             ),
                         )
@@ -1063,7 +1179,7 @@ class ScenarioRunner:
                         message="Ego entity requested session termination"
                         + ("" if reason is None else f": {reason}"),
                         elapsed_seconds=elapsed,
-                        condition_statuses=_collect_condition_statuses(
+                        condition_statuses=_condition_statuses(
                             scenario, world, elapsed, scenario_name
                         ),
                     )
@@ -1084,7 +1200,7 @@ class ScenarioRunner:
         finally:
             set_measured_scenario(None)
             logger.info("[%s] === Cleanup start ===", scenario_name)
-            _vehicle_entity_module._warmup_done = False
+            _set_warmup_done(False)
 
             # Let the ego entity tear down its own resources (driver session,
             # sensors) while the world is still alive.
@@ -1143,15 +1259,11 @@ class ScenarioRunner:
             )
             json_path = self.output_dir / f"{file_stem}_result.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
-            # What it ran with: the lock and the environment beside the result,
-            # and their summary (with the environment's id) in it.
-            from .environment import write as write_environment  # noqa: PLC0415
-
-            environment = write_environment(self.output_dir, file_stem, scenario)
-            data = json.loads(result.to_json())
-            if environment is not None:
-                data["environment"] = environment
-            json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            if TYPE_CHECKING:
+                # json and environment (platform, json): Codon has neither.
+                pass
+            else:
+                _write_result(json_path, self.output_dir, file_stem, scenario, result)
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"

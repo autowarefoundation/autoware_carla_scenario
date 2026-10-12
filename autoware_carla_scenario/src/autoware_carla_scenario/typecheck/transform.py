@@ -27,7 +27,8 @@ which :func:`transform_source_lines` maps back onto the handler):
   (``carla.TrafficLightState``) becomes ``int``: typesafe_carla's Codon
   library has each as a value whose members are ``int``, not as a type.
 * ``frozenset``, which Codon 0.19 lacks, is checked as a ``set``: a call
-  ``frozenset(...)`` becomes ``set(...)`` and an annotation
+  ``frozenset(...)`` becomes ``set(...)``, ``frozenset[X](...)`` becomes
+  ``Set[X](...)``, and an annotation
   ``frozenset[X]`` / ``FrozenSet[X]`` becomes ``Set[X]``.
 * A bare ``*`` in a signature (keyword-only parameters) becomes ``*_acs_kw``.
 * A list display of two or more elements that are not all literals, e.g.
@@ -148,6 +149,9 @@ _CONCRETE_GENERICS = {
     # and writes is a T (`bytes`, checked as `str`, or `str`).
     "subprocess.Popen",
     "subprocess.CompletedProcess",
+    # The `typing` shim's IO[T] (codon/typing.codon), a file object.
+    "IO",
+    "typing.IO",
 }
 #: Abstract collections: kept in class-level declarations (the typing shim
 #: maps them onto List / Dict), dropped from parameters, which a caller may
@@ -917,6 +921,14 @@ class _Rewriter(ast.NodeVisitor):
             # Codon 0.19 has no frozenset: build a set, which types the same.
             start, end = self.edits.node_span(node.func)
             self.edits.replace(start, end, "set")
+        elif (
+            isinstance(node.func, ast.Subscript)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "frozenset"
+        ):
+            # `frozenset[str]()`, an empty one typed by its element: a Set.
+            start, end = self.edits.node_span(node.func.value)
+            self.edits.replace(start, end, "Set")
         elif (
             isinstance(node.func, ast.Name)
             and node.func.id in _RENAMED_BUILTINS

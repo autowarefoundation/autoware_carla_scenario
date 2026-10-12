@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -921,17 +921,46 @@ def _library_files(
             redirected, dropped_decorators=[n for n in uncalled if "." not in n]
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
+        # Python sets a module's `__file__`, which Codon 0.19 does not: a
+        # checked module importing it from another (`from ..autoware_bridge
+        # import __file__`, in bridge_node) finds it here, after the checks so
+        # no line of the module moves.
+        file_global = f"\n__file__: str = {str(module.path)!r}\n"
         files.append(
             _LibraryFile(
                 name,
                 rel,
-                body + checks.source,
+                body + checks.source + file_global,
                 body.count("\n"),
                 checks.labels,
                 origin,
             )
         )
     return files
+
+
+def _type_checking_else_nodes(tree: ast.Module) -> Iterator[ast.AST]:
+    """Every node of the ``else`` branch of each ``if TYPE_CHECKING:``.
+
+    Codon reads ``TYPE_CHECKING`` as a compile-time true (the ``typing``
+    shim), so it compiles only the first branch.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and _dotted_name(node.test) in (
+            "TYPE_CHECKING",
+            "typing.TYPE_CHECKING",
+        ):
+            for stmt in node.orelse:
+                yield from ast.walk(stmt)
+
+
+def _dotted_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return None if base is None else f"{base}.{node.attr}"
+    return None
 
 
 def _library_imports(sources: _Sources, tc: Toolchain, codon_path: Path) -> None:
@@ -944,6 +973,9 @@ def _library_imports(sources: _Sources, tc: Toolchain, codon_path: Path) -> None
             for function in uncalled_nodes(module.tree, _uncalled(name))
             for node in ast.walk(function)
         }
+        # Nor one in the `else` branch of `if TYPE_CHECKING:`, a compile-time
+        # true there (the typing shim).
+        skipped |= {id(node) for node in _type_checking_else_nodes(module.tree)}
         for imported, _names, lineno in _imports(
             module.tree, name, module.is_package, skip=skipped
         ):

@@ -26,16 +26,20 @@ import ffmpeg.nodes
 import pytest
 
 import autoware_carla_scenario as acs
-from autoware_carla_scenario import carla_install
+from autoware_carla_scenario import carla_install, trajectory_recorder
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import launcher as stack_launcher
+from autoware_carla_scenario.coordinate import map_manager as coordinate_map_manager
 from autoware_carla_scenario.coordinate import transform as coordinate_transform
+from autoware_carla_scenario.coverage import collector as coverage_collector
 from autoware_carla_scenario.coverage import items as coverage_items
 from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
+from autoware_carla_scenario.odd import probes as odd_probes
+from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
@@ -189,6 +193,8 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CarlaDriverEntity": ("entity", carla_driver_entity.CarlaDriverEntity),
     "CoverItem": ("coverage", coverage_items.CoverItem),
     "CrossItem": ("coverage", coverage_items.CrossItem),
+    "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
+    "MapManager": ("coordinate", coordinate_map_manager.MapManager),
     "TrafficContext": ("traffic", traffic_context.TrafficContext),
     **{
         name: ("traffic", getattr(traffic_registry, name))
@@ -206,6 +212,8 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
     "to_map_frame": ("coordinate", coordinate_transform.to_map_frame),
+    "reset_probes": ("odd", odd_probes.reset_probes),
+    "resolve_odd": ("odd", odd_registry.resolve_odd),
 }
 
 
@@ -302,6 +310,7 @@ def _assert_declared_as_in_python(
 _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
     "carla_install": (carla_install, ("installed_executable",)),
+    "trajectory_recorder": (trajectory_recorder, ("TrajectoryRecorder",)),
     "autoware_bridge/grpc_server": (bridge_grpc_server, ("GrpcAutowareBridgeServer",)),
     "autoware_stack/launcher": (
         stack_launcher,
@@ -355,13 +364,14 @@ def test_a_module_model_is_declared_as_in_python(module: str, name: str) -> None
 
 def test_the_launcher_model_is_the_protocol_s_methods() -> None:
     # Python cannot instantiate a Protocol, so the model's constructor is a
-    # compile error (below); what AutowareEgoEntity calls is declared as Python's.
+    # compile error (below); what AutowareEgoEntity and ScenarioQueue call is
+    # declared as Python's.
     python = stack_launcher.AutowareLauncher
     assert getattr(python, "_is_protocol", False)
     node = _definitions("autoware_stack/launcher")["AutowareLauncher"][0]
     assert isinstance(node, ast.ClassDef)
     methods = {n: m for n, m in _methods(node).items() if n != "__init__"}
-    assert sorted(methods) == ["poll", "start", "stop"]
+    assert sorted(methods) == ["close", "poll", "prepare", "start", "stop"]
     for method_name, method in methods.items():
         assert _model_params(method, drop_first=True) == _python_params(
             getattr(python, method_name), drop_first=True
@@ -374,7 +384,14 @@ def test_a_class_only_re_exported_cannot_be_built_in_a_scenario(name: str) -> No
     assert isinstance(node, ast.ClassDef)
     assert not node.bases, f"{name}: a base would bring methods to compare"
     methods = _methods(node)
-    assert set(methods) <= {"__init__", "poll", "start", "stop"}, name
+    assert set(methods) <= {
+        "__init__",
+        "close",
+        "poll",
+        "prepare",
+        "start",
+        "stop",
+    }, name
     body = methods["__init__"].body
     assert len(body) == 1 and isinstance(body[0], ast.Expr), name
     call = body[0].value

@@ -20,6 +20,13 @@ from ._spawn import SpawnLocation, spawn_vehicle_actor
 _warmup_done: bool = False
 
 
+def _set_warmup_done(done: bool) -> None:
+    """Set :data:`_warmup_done`, for the runner: Codon has no module objects
+    to assign it through (docs/typecheck.md)."""
+    global _warmup_done
+    _warmup_done = done
+
+
 @dataclass
 class VehicleEntityConfig:
     """Configuration for spawning a vehicle entity (ego or NPC).

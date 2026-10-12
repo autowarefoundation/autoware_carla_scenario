@@ -34,10 +34,19 @@ import shutil
 import signal
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, Optional, Protocol, runtime_checkable
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    Any,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Union,
+    runtime_checkable,
+)
 
 from .bridge_node import bridge_command, host_python_root
 
@@ -58,11 +67,20 @@ __all__ = [
 class AutowareStackError(RuntimeError):
     """The Autoware stack could not be prepared or started."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 #: The ``scenario_bridge`` node's ROS parameters besides its address: CARLA
 #: drives the clock in a scenario, so the poses and routes it stamps carry
 #: simulation time like everything else it talks to.
-DEFAULT_BRIDGE_PARAMETERS: Mapping[str, Any] = {"use_sim_time": True}
+if TYPE_CHECKING:
+    # Codon cannot hold a dict of values of any type: the check holds an
+    # empty one of the declared type (bridge_command(), which reads it, is
+    # not compiled; typecheck/library.py).
+    DEFAULT_BRIDGE_PARAMETERS: Mapping[str, Any] = dict[str, Any]()
+else:
+    DEFAULT_BRIDGE_PARAMETERS = {"use_sim_time": True}
 
 
 @dataclass(frozen=True)
@@ -177,6 +195,27 @@ def _signal_group(pgid: int, sig: signal.Signals) -> None:
         pass
 
 
+def _start_session(
+    argv: Sequence[str],
+    env: Optional[Mapping[str, str]],
+    stdout: Union[IO[bytes], int],
+) -> subprocess.Popen[bytes]:
+    """*argv* started in a session of its own, its output to *stdout*.
+
+    A function of its own, called with the log file or ``DEVNULL``: Codon 0.19
+    types a conditional expression by its first branch, so one cannot choose
+    between the two.
+    """
+    return subprocess.Popen(  # noqa: S603 - argv comes from the user's own config
+        _dying_with_parent(argv),
+        env=None if env is None else dict(env),
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+
 class ProcessGroup:
     """A child process started in a session of its own, stopped as a group.
 
@@ -196,6 +235,12 @@ class ProcessGroup:
         stop_timeout_s: How long :meth:`stop` waits after each signal.
     """
 
+    _stop_signal: signal.Signals
+    _stop_timeout_s: float
+    _log: Optional[IO[bytes]]
+    _process: subprocess.Popen[bytes]
+    _pgid: int
+
     def __init__(
         self,
         argv: Sequence[str],
@@ -207,7 +252,7 @@ class ProcessGroup:
     ) -> None:
         self._stop_signal = stop_signal
         self._stop_timeout_s = stop_timeout_s
-        self._log: Optional[IO[bytes]] = None
+        self._log = None
         # Checked here: the wrapper would only fail once it is running.
         path = None if env is None else env.get("PATH")
         if not argv or shutil.which(argv[0], path=path) is None:
@@ -218,14 +263,10 @@ class ProcessGroup:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._log = log_path.open("ab")
         try:
-            self._process = subprocess.Popen(  # noqa: S603 - argv comes from the user's own config
-                _dying_with_parent(argv),
-                env=None if env is None else dict(env),
-                stdin=subprocess.DEVNULL,
-                stdout=self._log if self._log is not None else subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
+            if self._log is not None:
+                self._process = _start_session(argv, env, self._log)
+            else:
+                self._process = _start_session(argv, env, subprocess.DEVNULL)
         except OSError as exc:
             self._close_log()
             raise AutowareStackError(f"Could not run {argv[0]!r}: {exc}") from exc
@@ -251,9 +292,9 @@ class ProcessGroup:
                 child started (a container it removes).
         """
         signals = (
-            (self._stop_signal, signal.SIGTERM, signal.SIGKILL)
+            [self._stop_signal, signal.SIGTERM, signal.SIGKILL]
             if escalate
-            else (self._stop_signal,)
+            else [self._stop_signal]
         )
         for sig in signals:
             if self._process.poll() is not None:
@@ -338,18 +379,22 @@ class CommandAutowareLauncher:
             )
         episode = AutowareEpisode(self._episodes, name, bridge_address)
         self._episodes += 1
-        bridge = bridge_command(
-            str(host_python_root()), episode.bridge_address, self.bridge_parameters
-        )
+        root = str(host_python_root())
+        if TYPE_CHECKING:
+            # bridge_command() takes the ROS parameters as `Mapping[str, Any]`,
+            # which Codon cannot express (typecheck/library.py: UNCALLED).
+            bridge = root
+        else:
+            bridge = bridge_command(
+                root, episode.bridge_address, self.bridge_parameters
+            )
         argv = [
             fill_placeholders(arg, episode, {"scenario_bridge": bridge})
             for arg in self.argv
         ]
-        env = {
-            **os.environ,
-            **self.env,
-            "AUTOWARE_BRIDGE_ADDRESS": episode.bridge_address,
-        }
+        env = os.environ.copy()
+        env.update(self.env)
+        env["AUTOWARE_BRIDGE_ADDRESS"] = episode.bridge_address
         logger.info("Starting the Autoware stack for %s: %s", episode.name, argv)
         self._process = ProcessGroup(
             argv,
@@ -391,11 +436,13 @@ def fill_placeholders(
     Only those: every other brace is the command's own -- a shell's
     ``${VAR}``, a Python one-liner's dict -- and stays as written.
     """
-    for key, value in (
+    replacements = [
         ("bridge_address", episode.bridge_address),
         ("index", str(episode.index)),
         ("name", episode.name),
-        *(extra or {}).items(),
-    ):
+    ]
+    if extra is not None:
+        replacements.extend(extra.items())
+    for key, value in replacements:
         text = text.replace("{" + key + "}", value)
     return text
