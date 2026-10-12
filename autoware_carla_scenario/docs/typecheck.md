@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 129 of
-the package's 225 modules (57%; about 25,700 of 69,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 131 of
+the package's 225 modules (58%; about 26,200 of 69,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -273,7 +273,8 @@ resolves them to files on disk (`maps.resolver`, with the repository listing
 of `maps.catalogue`, the `map` config's paths of `maps.config` and the
 OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
-`authoring.uv_tool`), the Autoware
+`authoring.uv_tool`), the CARLA server manager (`server`) and the camera
+recorder that writes a run's video (`camera_recorder`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
 scenario configs (`scenario_config`, `examples.configs`), the camera
@@ -301,12 +302,12 @@ unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 96 `EXCLUDED` modules fall in
-three groups. Many fit more than one (70 import what Codon cannot compile,
-42 build on an excluded module and 28 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 94 `EXCLUDED` modules fall in
+three groups. Many fit more than one (68 import what Codon cannot compile,
+41 build on an excluded module and 28 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **70 import what Codon cannot compile**: lanelet2, pyxodr,
+- **68 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`json`, `inspect`, `tempfile`, `importlib` beyond
   `importlib.metadata`, or more of `pathlib`, `shutil` or `subprocess` than
@@ -386,7 +387,9 @@ stands in for it in the check's workspace:
   `coordinate.codon`), or, for a module of a package that is itself checked,
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
-  `autoware_stack/launcher.codon`, `maps/cache.codon`). A module with no
+  `autoware_stack/launcher.codon`, `maps/cache.codon`), or, for a module of
+  the top-level package, a model of that module (`carla_install.codon`, for
+  `server`, declares `installed_executable()`). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
@@ -489,8 +492,8 @@ What Codon 0.19 needs that Python does not, beyond
 - Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `subprocess`, `importlib.metadata`, `urllib.parse` and
-  `__future__` shims of `codon/` are. Each takes the
+  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `importlib.metadata`,
+  `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
@@ -549,14 +552,36 @@ What Codon 0.19 needs that Python does not, beyond
   process's output is a `str` with or without `text=True`, and
   `CompletedProcess[bytes]` and `Popen[bytes]` are `[str]`; it is `None`
   when it was not captured, as in CPython, so `stdout` and `stderr` are an
-  `Optional`. `importlib.metadata` declares `version(distribution_name)`
-  and `PackageNotFoundError`, a `ModuleNotFoundError` built from the
+  `Optional`. A stream's `write()` takes what a binary stream takes in
+  CPython, bytes (a `str`) or a buffer such as an array's `data` (a `Ptr` in
+  Codon's numpy; `camera_recorder` writes `bgr.data`), and since the check
+  cannot tell a text stream from a binary one, it takes either for a text
+  one too, where CPython refuses a buffer. `importlib.metadata` declares
+  `version(distribution_name)` and `PackageNotFoundError`, a `ModuleNotFoundError` built from the
   distribution's name; `from importlib import metadata` and `import
   importlib.metadata` compile, and nothing else of `importlib` does (the
   package imports its `metadata`, as Codon 0.19 finds a submodule no other
   way, so the check also takes `importlib.metadata` after a bare `import
   importlib`, which CPython takes only once something has imported the
-  submodule). `copy2()` and `move()` return a `str` for a `str`
+  submodule). `signal` declares Linux's signal numbers (`SIGHUP`, `SIGINT`,
+  `SIGQUIT`, `SIGKILL`, `SIGUSR1`, `SIGUSR2`, `SIGALRM`, `SIGTERM`,
+  `SIGCHLD`) as `int`s, which CPython's `Signals` members are, so
+  `os.killpg(pgid, signal.SIGTERM)` compiles; `SIG_DFL` and `SIG_IGN`, which
+  are no `int`s here, since CPython takes no other `int` as a handler; and
+  `signal(signalnum, handler)`, whose handler is one of those two or a
+  function the check calls as CPython calls a handler, with the signal's
+  number and the current frame (`None` in the check, which has no frame
+  type: annotate that parameter `Any`), so a function that cannot take them
+  is refused where CPython fails only when the signal arrives. What it
+  returns, the previous handler, is a value nothing is declared of (a
+  `Handlers` member, a function or `None` in CPython, which takes no `None`
+  as a handler), so it cannot be handed back to `signal()`; `getsignal()`,
+  `Signals`, `alarm()` and the rest of the module are not declared. `atexit`
+  declares `register(func, *args, **kwargs)`, which takes the function by
+  position only and returns it, and which calls it with the arguments it is
+  given, so a function that cannot take them is refused where CPython
+  reports it only at exit, and `unregister(func)`, of one value by position.
+  `copy2()` and `move()` return a `str` for a `str`
   destination, as CPython does; for a `Path` one CPython returns the `Path`,
   or a `str` when it names a directory, so the check returns a path that
   `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
@@ -569,8 +594,9 @@ What Codon 0.19 needs that Python does not, beyond
   takes no message or one value by position, as CPython does; a keyword
   (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
   their attributes (`errno`, `filename`) are refused. Nothing in these
-  shims runs: no environment is read, no file is copied and no process is
-  signalled. `hashlib` declares `sha256(string=b"", *,
+  shims runs: no environment is read, no file is copied, no process is
+  signalled, no signal handler is installed and no exit function is
+  registered. `hashlib` declares `sha256(string=b"", *,
   usedforsecurity=True)` and its hash object (`update(data, /)`, `digest()`,
   `hexdigest()`, `copy()`, `name`, `digest_size`, `block_size`); no other
   hash. `str.encode()` takes `(encoding="utf-8", errors="strict")`. Since
@@ -583,17 +609,19 @@ What Codon 0.19 needs that Python does not, beyond
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
-  `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata` and
-  `urllib.parse` and call what they declare, file-system queries and the two
-  writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
+  `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
+  `urllib.parse`, `signal` and `atexit` and call what they declare,
+  file-system queries and the two writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
   and set the environment (`os.environ.get()`), copy, move and remove files
   with `shutil`, start and wait for a process with `subprocess.run()` or
-  `subprocess.Popen`, signal one with `os.kill()`, read an installed
+  `subprocess.Popen`, signal one with `os.kill()`, install a signal handler
+  with `signal.signal()`, register a function to run at exit with
+  `atexit.register()`, read an installed
   distribution's version with `importlib.metadata.version()`, and catch the
   exceptions above. Any other name of them (`Path.chmod()`, `hashlib.md5()`,
   `shutil.copytree()`, `subprocess.check_output()`, `os.listdir()`,
-  `importlib.import_module()`, `urllib.request`) fails its check wherever
-  Codon compiles it. The model's top-level package declares `__file__` (a
+  `importlib.import_module()`, `urllib.request`, `signal.getsignal()`) fails
+  its check wherever Codon compiles it. The model's top-level package declares `__file__` (a
   `str`, as CPython sets it on a regular package), which
   `authoring.framework_pin` imports (`from .. import __file__`).
   `collections.abc` is not: import `Sequence` and the other
@@ -628,9 +656,30 @@ What Codon 0.19 needs that Python does not, beyond
   now; a name the model lacks fails its check (`Pose.to_proto()` has no
   attribute), and so does any other module of the package (`no module named
   'carla_driver_interface.protocol'`).
+- **python-dotenv and ffmpeg-python are modelled** as far as `server` and
+  `camera_recorder` use them, with the installed packages' signatures, which
+  `test_typecheck_model.py` compares: `codon/dotenv/` declares
+  `load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
+  interpolate=True, encoding="utf-8")`, of a path that is `None`, a `str` or
+  an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
+  taken); `codon/ffmpeg/` declares the fluent pipeline the camera recorder
+  builds: `ffmpeg.input(filename, **kwargs)` returns a `FilterableStream`
+  (`ffmpeg.nodes`), whose `output(*streams_and_filename, **kwargs)` takes
+  the file name last, as a `str` (ffmpeg-python raises a `ValueError` for a
+  `Path`), and returns an `OutputStream`, which alone has
+  `overwrite_output()` and `run_async(cmd="ffmpeg", pipe_stdin=False,
+  pipe_stdout=False, pipe_stderr=False, quiet=False,
+  overwrite_output=False)`, a `subprocess.Popen[bytes]`. An ffmpeg option is
+  any keyword of any value, as ffmpeg-python hands it to ffmpeg as text.
+  Nothing else of either package is declared (`dotenv_values()`, the
+  filters, `run()`, the module-level `ffmpeg.output()`), and a scenario may
+  use what is, as it may the shims.
 - **No `bytes`**: Codon 0.19 has none, and reads a `b"..."` literal as a
   `str`, so the check reads an annotation naming `bytes` as `str`
-  (`DriveOutcome.debug_info: bytes = b""`).
+  (`DriveOutcome.debug_info: bytes = b""`). What a process writes is a `str`
+  in the check, which has no `decode()`: decode it in the `else` branch of
+  `if TYPE_CHECKING:` and take the `str` in the first
+  (`CameraRecorder.stop()`, ffmpeg's error output).
 - **`dataclasses.fields()` is not in the shim**: a function that reads a
   dataclass's fields from its class takes a free-form mapping anyway, so it
   is `UNCALLED` and imports `fields` inside it (`ControlConfig.from_mapping`).

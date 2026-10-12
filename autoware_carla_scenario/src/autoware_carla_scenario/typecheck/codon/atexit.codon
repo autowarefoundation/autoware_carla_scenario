@@ -1,0 +1,26 @@
+# Python's atexit, for the checker (docs/typecheck.md): register() and
+# unregister(), with CPython 3.10's signatures.
+#
+# register(func, *args, **kwargs) -> func takes the function by position
+# only (`register(func=f)` is a TypeError), and calls it at exit with the
+# arguments it was given: the check calls it with them, so a function that
+# cannot take them is refused (CPython would only report it at exit).
+# unregister(func) takes one value by position, any value. _run_exitfuncs()
+# and _clear() are not declared. Nothing here runs: nothing is registered.
+
+import internal.static as static
+
+
+def register(*args, **kwargs):
+    if static.len(args) == 0:
+        compile_error("register() takes the function by position")
+    func = args[0]
+    if not hasattr(func, "__call__"):
+        compile_error("register(): the first argument must be callable")
+    func(*args[1:], **kwargs)
+    return func
+
+
+def unregister(*args) -> None:
+    if static.len(args) != 1:
+        compile_error("unregister() takes exactly one argument, by position")

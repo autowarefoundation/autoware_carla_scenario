@@ -1,0 +1,52 @@
+# The part of Python's signal the checked framework names, for the checker
+# (docs/typecheck.md): the signal numbers, SIG_DFL and SIG_IGN, and
+# signal(signalnum, handler), with CPython 3.10's signature.
+#
+# A signal number is an int, as CPython's Signals (an IntEnum) is one, so
+# os.kill() and os.killpg() take it; the Signals class itself is not
+# declared. The numbers are Linux's, the only system the package runs on.
+# SIG_DFL and SIG_IGN are CPython's Handlers, which are not ints here:
+# CPython's signal() takes them, or anything equal to them, but no other int
+# (`signal(SIGTERM, 5)` is a TypeError), so the check takes a handler that is
+# one of them or a function it can call as CPython calls a handler, with the
+# signal's number and the current frame (None here: no frame type is
+# declared). What signal() returns, the previous handler, is a Handlers, a
+# function or None in CPython: nothing of it is declared, and it is no
+# handler (CPython refuses None as one). getsignal(), the other functions and
+# the other constants are not declared either. Nothing here runs: no handler
+# is installed.
+
+SIGHUP = 1
+SIGINT = 2
+SIGQUIT = 3
+SIGKILL = 9
+SIGUSR1 = 10
+SIGUSR2 = 12
+SIGALRM = 14
+SIGTERM = 15
+SIGCHLD = 17
+
+
+@tuple
+class Handlers:
+    _value: int
+
+
+SIG_DFL = Handlers(0)
+SIG_IGN = Handlers(1)
+
+
+class _PreviousHandler:
+    """What signal() returns: CPython's previous handler, of no one type."""
+
+    pass
+
+
+def signal(signalnum: int, handler) -> _PreviousHandler:
+    if isinstance(handler, Handlers):
+        pass
+    elif hasattr(handler, "__call__"):
+        handler(signalnum, None)
+    else:
+        compile_error("signal(): the handler is SIG_DFL, SIG_IGN or a function")
+    return _PreviousHandler()

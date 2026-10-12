@@ -11,6 +11,7 @@ import logging
 import queue
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union
 
 import typesafe_carla.carla as carla
 import ffmpeg
@@ -57,6 +58,12 @@ class CameraRecorder:
         fps: Recording frame rate.
     """
 
+    _output_path: Path
+    _frame_count: int
+    _frame_queue: queue.Queue[carla.Image]
+    _sensor: Optional[carla.Actor]
+    _process: Optional[subprocess.Popen[bytes]]
+
     def __init__(
         self,
         world: "carla.World",
@@ -74,7 +81,7 @@ class CameraRecorder:
         self._output_path = output_path
         self._frame_count = 0
         # maxsize=2 bounds memory if write_frame() falls behind.
-        self._frame_queue: queue.Queue["carla.Image"] = queue.Queue(maxsize=2)
+        self._frame_queue = queue.Queue(maxsize=2)
 
         # Set up the RGB camera blueprint
         bp_lib = world.get_blueprint_library()
@@ -89,13 +96,11 @@ class CameraRecorder:
             carla.Location(x=-offset_back, y=0.0, z=offset_up),
             carla.Rotation(pitch=pitch),
         )
-        self._sensor: "carla.Actor | None" = world.spawn_actor(
-            camera_bp, transform, attach_to=actor
-        )
+        self._sensor = world.spawn_actor(camera_bp, transform, attach_to=actor)
 
         # Start ffmpeg process via ffmpeg-python for H.264 streaming encoding.
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        self._process: subprocess.Popen[bytes] | None = (
+        self._process = (
             ffmpeg.input(
                 "pipe:",
                 format="rawvideo",
@@ -115,7 +120,7 @@ class CameraRecorder:
         )
 
         # Enqueue frames instead of processing them in the callback thread.
-        self._sensor.listen(self._frame_queue.put)
+        self._sensor.listen(self._on_sensor_data)
         logger.info(
             "CameraRecorder started: %dx%d @ %.0f fps -> %s",
             image_width,
@@ -123,6 +128,21 @@ class CameraRecorder:
             fps,
             output_path,
         )
+
+    def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
+        """The sensor's listener: queues the frame for :meth:`write_frame`.
+
+        It runs on a CARLA thread, and blocks while the queue is full.  CARLA's
+        Python API, and typesafe_carla's CPython package, call it with the
+        ``carla.Image`` itself.  typesafe_carla's Codon library calls it with
+        the ``carla.SensorData``, which ``as_image()`` turns into the image; the
+        static check sees that branch, and Python, whose ``Image`` has no
+        ``as_image``, never takes it.
+        """
+        if hasattr(data, "as_image"):
+            self._frame_queue.put(data.as_image())
+        else:
+            self._frame_queue.put(data)
 
     def write_frame(self) -> bool:
         """Pull one frame from the sensor queue and write it to ffmpeg.
@@ -139,7 +159,12 @@ class CameraRecorder:
             logger.debug("CameraRecorder: frame queue timeout")
             return False
 
-        array = np.frombuffer(image.raw_data, dtype=np.uint8)
+        if TYPE_CHECKING:
+            # typesafe_carla's Codon raw_data is a view, and Codon's frombuffer
+            # takes the bytes (a str).
+            array = np.frombuffer(image.raw_data.tobytes(), dtype=np.uint8)
+        else:
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
         array = array.reshape((image.height, image.width, 4))  # BGRA
         bgr = np.ascontiguousarray(array[:, :, :3])
 
@@ -172,10 +197,15 @@ class CameraRecorder:
                 stderr = b""
                 if self._process.stderr is not None:
                     stderr = self._process.stderr.read()
+                if TYPE_CHECKING:
+                    # The static check reads bytes as str, which has no decode().
+                    detail = stderr
+                else:
+                    detail = stderr.decode(errors="replace")
                 logger.warning(
                     "ffmpeg exited with code %d: %s",
                     self._process.returncode,
-                    stderr.decode(errors="replace")[-500:],
+                    detail[-500:],
                 )
             self._process = None
 

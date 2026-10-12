@@ -1,0 +1,28 @@
+# Model of python-dotenv (docs/typecheck.md): load_dotenv(), with the
+# installed package's signature, which test_typecheck_model.py compares.
+#
+# load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
+# interpolate=True, encoding="utf-8") -> bool. The path is None, a str or an
+# os.PathLike; a stream (an IO[str], which Codon has no type for) is not
+# declared, so only None is taken for it. The rest of the package
+# (dotenv_values(), find_dotenv(), set_key(), ...) is not declared. Nothing
+# here runs: no file is read and the environment is not changed.
+
+from os import fspath
+
+
+def load_dotenv(
+    dotenv_path=None,
+    stream=None,
+    verbose: bool = False,
+    override: bool = False,
+    interpolate: bool = True,
+    encoding: Optional[str] = "utf-8",
+) -> bool:
+    if isinstance(dotenv_path, None) or isinstance(dotenv_path, Optional[NoneType]):
+        pass
+    else:
+        fspath(dotenv_path)
+    if not (isinstance(stream, None) or isinstance(stream, Optional[NoneType])):
+        compile_error("load_dotenv(): a stream is not declared, only a path")
+    return False

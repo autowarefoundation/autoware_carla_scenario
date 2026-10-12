@@ -1723,3 +1723,150 @@ def test_a_typed_star_args_is_called_with_one_value() -> None:
     assert "    anything()" in calls
     assert "    _acs_value(Context).__exit__()" in calls
     assert not checks.problems
+
+
+# ---------------------------------------------------------------------------
+# The signal and atexit shims, a Popen's pipes, and the dotenv, ffmpeg and
+# carla_install models (#119)
+# ---------------------------------------------------------------------------
+
+
+_PROCESS_SIGNALS = """
+from __future__ import annotations
+
+import atexit
+import os
+import signal
+import subprocess
+from pathlib import Path
+from typing import Any, Optional
+
+import ffmpeg
+import numpy as np
+from dotenv import load_dotenv
+
+from .carla_install import installed_executable
+
+
+class Recorder:
+    _process: Optional[subprocess.Popen[bytes]]
+
+    def __init__(self) -> None:
+        self._process = None
+
+    def start(self, size: str) -> None:
+        load_dotenv(override=False)
+        load_dotenv(Path(".env"), None, True)
+        self._process = (
+            ffmpeg.input("pipe:", format="rawvideo", s=size, r=20.0)
+            .output("out.mp4", vcodec="libx264", crf=23)
+            .overwrite_output()
+            .run_async(pipe_stdin=True, pipe_stderr=True)
+        )
+        atexit.register(self.stop)
+        atexit.register(self.finish, 3, reason="exit")
+        signal.signal(signal.SIGTERM, self._on_signal)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    def _on_signal(self, signum: int, frame: Any) -> None:
+        self.stop()
+
+    def finish(self, code: int, reason: str = "") -> None:
+        self.stop()
+
+    def write(self) -> int:
+        bgr = np.zeros((2, 2, 3), dtype=np.uint8)
+        if self._process is None or self._process.stdin is None:
+            return 0
+        return self._process.stdin.write(bgr.data) + self._process.stdin.write(b"raw")
+
+    def stop(self) -> None:
+        if self._process is not None:
+            if self._process.stdin is not None:
+                self._process.stdin.close()
+            self._process.wait()
+            if self._process.stderr is not None:
+                logged: str = self._process.stderr.read()
+            os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+            atexit.unregister(self.stop)
+            self._process = None
+
+
+def launcher() -> Optional[Path]:
+    return installed_executable()
+"""
+
+
+@needs_codon
+def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for shim in ("signal.codon", "atexit.codon", "dotenv", "ffmpeg"):
+        assert (model_dir() / shim).exists(), shim
+    result = _check_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "at"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # with the installed python-dotenv and ffmpeg-python: a TypeError, an
+        # AttributeError or ffmpeg-python's ValueError when it is called, but
+        # handler-arity and register-arguments, which CPython takes and fails
+        # on later, with a TypeError when the signal arrives and one it
+        # reports at exit. Codon reports a method a stream of the chain lacks,
+        # and an error inside one, at the chain's first line (`at`).
+        ("signal.SIG_IGN)", "5)", "signal.SIGINT, 5)"),
+        ("signal.SIGKILL)", "signal.SIGKILLED)", None),
+        ("signal.SIGTERM, self._on_signal)", "signal.SIGTERM, self.stop)", None),
+        ("atexit.register(self.stop)", "atexit.register(func=self.stop)", None),
+        ('3, reason="exit")', '3, why="exit")', None),
+        ("atexit.unregister(self.stop)", "atexit.unregister(func=self.stop)", None),
+        ("load_dotenv(override=False)", "load_dotenv(overwrite=False)", None),
+        (
+            '            .output("out.mp4", vcodec="libx264", crf=23)\n',
+            "",
+            "ffmpeg.input(",
+        ),
+        ('.output("out.mp4",', '.output(Path("out.mp4"),', "ffmpeg.input("),
+        ("run_async(pipe_stdin=True,", "run_async(pipe_input=True,", None),
+        ("stdin.write(bgr.data)", "stdin.write(bgr.size)", None),
+        ("installed_executable()", "installed_executable(True)", None),
+    ],
+    ids=[
+        "signal-int-handler",
+        "signal-unknown-number",
+        "handler-arity",
+        "register-keyword",
+        "register-arguments",
+        "unregister-keyword",
+        "dotenv-keyword",
+        "input-has-no-overwrite-output",
+        "output-file-name-str",
+        "run-async-keyword",
+        "write-bytes-like",
+        "installed-executable-arguments",
+    ],
+)
+def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_refuses(
+    right: str,
+    wrong: str,
+    at: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _PROCESS_SIGNALS.replace(right, wrong, 1)
+    assert source != _PROCESS_SIGNALS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    needle = at if at is not None else wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if needle in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()

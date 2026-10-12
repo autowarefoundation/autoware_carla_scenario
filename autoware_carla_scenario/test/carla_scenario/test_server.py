@@ -42,6 +42,16 @@ def test_start_raises_without_env_var(
         manager.start()
 
 
+def test_extra_args_are_kept_as_given_or_empty() -> None:
+    """A list of extra arguments is kept as it is; None or [] is a new []."""
+    given = ["-quality-level=Low"]
+    assert CarlaServerManager(extra_args=given).extra_args is given
+    assert CarlaServerManager().extra_args == []
+    empty: list[str] = []
+    kept = CarlaServerManager(extra_args=empty).extra_args
+    assert kept == [] and kept is not empty
+
+
 def test_is_alive_false_before_start() -> None:
     """is_alive() returns False when no process has been started."""
     manager = CarlaServerManager()

@@ -20,9 +20,13 @@ import typing
 from pathlib import Path
 from typing import Any
 
+import dotenv
+import ffmpeg
+import ffmpeg.nodes
 import pytest
 
 import autoware_carla_scenario as acs
+from autoware_carla_scenario import carla_install
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import launcher as stack_launcher
@@ -297,6 +301,7 @@ def _assert_declared_as_in_python(
 #: with the Python object below.
 _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
+    "carla_install": (carla_install, ("installed_executable",)),
     "autoware_bridge/grpc_server": (bridge_grpc_server, ("GrpcAutowareBridgeServer",)),
     "autoware_stack/launcher": (
         stack_launcher,
@@ -432,6 +437,71 @@ def test_the_carla_driver_interface_fields_have_the_packages_types(name: str) ->
             python.__annotations__[field_name] == expected_python
         ), f"{name}.{field_name} changed type in carla_driver_interface"
         assert annotation == expected_model, f"{name}.{field_name}"
+
+
+#: The models of the third-party python-dotenv and ffmpeg-python: what the
+#: checked server and camera recorder use of them, compared with the installed
+#: packages.
+_DOTENV_MODEL = model_dir() / "dotenv"
+_FFMPEG_MODEL = model_dir() / "ffmpeg"
+
+#: The ffmpeg-python stream classes the model declares, and their methods.
+_FFMPEG_STREAMS = {
+    "FilterableStream": ("output",),
+    "OutputStream": ("overwrite_output", "run_async"),
+}
+
+
+def _public(definitions: dict[str, list[ast.stmt]]) -> list[str]:
+    return sorted(name for name in definitions if not name.startswith("_"))
+
+
+def test_the_dotenv_model_is_load_dotenv_as_in_the_package() -> None:
+    assert _public(_definitions("__init__", _DOTENV_MODEL)) == ["load_dotenv"]
+    _assert_declared_as_in_python(
+        "load_dotenv", "__init__", dotenv.load_dotenv, root=_DOTENV_MODEL
+    )
+
+
+def test_the_ffmpeg_model_declares_only_the_compared_names() -> None:
+    # A name the package lacks would pass a scenario's check and fail its run.
+    assert _public(_definitions("__init__", _FFMPEG_MODEL)) == ["input"]
+    nodes = _definitions("nodes", _FFMPEG_MODEL)
+    assert _public(nodes) == sorted(_FFMPEG_STREAMS)
+    for name, methods in _FFMPEG_STREAMS.items():
+        node = nodes[name][0]
+        assert isinstance(node, ast.ClassDef)
+        assert sorted(_methods(node)) == sorted(methods), name
+
+
+def test_the_ffmpeg_model_is_declared_as_in_the_package() -> None:
+    _assert_declared_as_in_python("input", "__init__", ffmpeg.input, root=_FFMPEG_MODEL)
+    nodes = _definitions("nodes", _FFMPEG_MODEL)
+    for name, methods in _FFMPEG_STREAMS.items():
+        node = nodes[name][0]
+        assert isinstance(node, ast.ClassDef)
+        python = getattr(ffmpeg.nodes, name)
+        for method_name, method in _methods(node).items():
+            function = getattr(python, method_name)
+            # ffmpeg-python binds a module function to the stream classes: the
+            # stream is its first parameter, or the first of its *args
+            # (output(*streams_and_filename, **kwargs)).
+            first = next(iter(inspect.signature(function).parameters.values()))
+            bound = first.kind is not inspect.Parameter.VAR_POSITIONAL
+            assert _model_params(method, drop_first=True) == _python_params(
+                function, drop_first=bound
+            ), f"{name}.{method_name}(): the model's parameters differ"
+
+
+def test_the_ffmpeg_model_returns_the_packages_streams() -> None:
+    # What each call returns, as the model's annotations say (nothing runs).
+    source = ffmpeg.input("pipe:")
+    assert type(source) is ffmpeg.nodes.FilterableStream
+    output = source.output("out.mp4")
+    assert type(output) is ffmpeg.nodes.OutputStream
+    assert type(output.overwrite_output()) is ffmpeg.nodes.OutputStream
+    assert not hasattr(source, "overwrite_output")
+    assert not hasattr(source, "run_async")
 
 
 def test_every_model_file_parses_as_python() -> None:

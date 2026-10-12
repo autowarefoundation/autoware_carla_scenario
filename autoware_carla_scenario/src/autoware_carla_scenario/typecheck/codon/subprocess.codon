@@ -190,9 +190,19 @@ def run(
 
 
 class _Stream[T]:
-    """A standard stream of a Popen: what it reads or writes is a T."""
+    """A standard stream of a Popen: what it reads is a T."""
 
-    def write(self, data: T) -> int:
+    # A binary stream takes any bytes-like object in CPython: bytes (a str
+    # here) or a buffer, such as an array's (`array.data`, a memoryview in
+    # numpy and a Ptr in Codon's). The check cannot tell a text stream from a
+    # binary one (both are a T of str), so it takes either for both.
+    def write(self, data) -> int:
+        if isinstance(data, T):
+            pass
+        elif isinstance(data, Ptr):
+            pass
+        else:
+            compile_error("write() takes bytes or a buffer, such as an array's data")
         return 0
 
     def read(self, size: int = -1) -> T:
