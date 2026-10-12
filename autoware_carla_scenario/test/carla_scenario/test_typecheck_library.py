@@ -1306,7 +1306,7 @@ def test_the_urllib_parse_shim_splits_and_joins_urls(
 
 
 # ---------------------------------------------------------------------------
-# The file-system pathlib calls, hashlib, and str.encode / bytes.decode (#116)
+# The file-system pathlib calls, hashlib, and str.encode (#116)
 # ---------------------------------------------------------------------------
 
 
@@ -1348,7 +1348,7 @@ def digest(text: str) -> str:
     h.update(b"-")
     other = hashlib.sha256(string=b"x").copy()
     size = other.digest_size + other.block_size
-    return key + h.hexdigest() + other.name + str(size) + h.digest().decode("latin-1")
+    return key + h.hexdigest() + other.name + str(size + len(h.digest()))
 """
 
 
@@ -1367,7 +1367,8 @@ def test_the_file_system_shims_take_what_cpython_takes(
     [
         # Each is a TypeError or an AttributeError in CPython 3.10, the oldest
         # Python the package supports (glob() takes `case_sensitive` from 3.12
-        # on, sha256() `data=` from 3.13 on).
+        # on, sha256() `data=` from 3.13 on), except chmod(): it writes, and
+        # the shim declares nothing that writes.
         ('directory.glob("*.osm")', 'directory.glob("*.osm", case_sensitive=True)'),
         ("candidate.exists()", "candidate.exists(True)"),
         ("suffix = path.suffix", "suffix = path.suffix()"),
@@ -1379,6 +1380,7 @@ def test_the_file_system_shims_take_what_cpython_takes(
         ('hashlib.sha256(string=b"x")', 'hashlib.sha256(data=b"x")'),
         ('text.encode("utf-8")', 'text.encode("utf-8", "strict", 1)'),
         ('text.encode(errors="strict")', "text.encode(encoding=1)"),
+        ('text.encode("utf-8")', 'text.decode("utf-8")'),
     ],
     ids=[
         "glob-keyword",
@@ -1392,6 +1394,7 @@ def test_the_file_system_shims_take_what_cpython_takes(
         "sha256-keyword",
         "encode-arguments",
         "encode-encoding-type",
+        "str-has-no-decode",
     ],
 )
 def test_the_file_system_shims_refuse_what_cpython_refuses(

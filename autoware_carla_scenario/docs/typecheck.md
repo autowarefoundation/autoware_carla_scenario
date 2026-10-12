@@ -299,7 +299,7 @@ which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
 `encode_frame_jpeg()` (cv2). The 100 `EXCLUDED` modules fall in
 three groups. Many fit more than one (73 import what Codon cannot compile,
-44 build on an excluded module and 29 hold values Codon has no type for), so
+43 build on an excluded module and 29 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
 - **73 import what Codon cannot compile**: lanelet2, pyxodr,
@@ -496,10 +496,12 @@ What Codon 0.19 needs that Python does not, beyond
   the rest are not declared. `hashlib` declares `sha256(string=b"", *,
   usedforsecurity=True)` and its hash object (`update(data, /)`, `digest()`,
   `hexdigest()`, `copy()`, `name`, `digest_size`, `block_size`); no other
-  hash. `str.encode()` and `bytes.decode()` take `(encoding="utf-8",
-  errors="strict")`; since the check reads `bytes` as `str` (below), both
-  are a `str`'s, and the check cannot tell a `str` from `bytes`: it takes
-  `"text".decode()`, which CPython refuses. `urllib.parse`
+  hash. `str.encode()` takes `(encoding="utf-8", errors="strict")`. Since
+  the check reads `bytes` as `str` (below), it cannot tell the two apart:
+  it takes `hashlib.sha256("text")`, which CPython refuses (a `str` must be
+  encoded first). `bytes.decode()` is not declared, since it would be a
+  `str`'s too and pass `"text".decode()`; the check refuses
+  `data.decode()`, which CPython takes. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
