@@ -4,25 +4,25 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Union
-
-from tqdm import tqdm
+from typing import TYPE_CHECKING, Callable, Generator, List, Optional, Union
 
 from .scenario_runner import ScenarioRunner
 from .conditions import ScenarioResult
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
-from .odd import OddDefinition, resolve_odd
+from .odd import OddCase, OddDefinition, resolve_odd
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
 
 if TYPE_CHECKING:
     from .autoware_stack.launcher import AutowareLauncher
-    from .odd.sampler import OddCase
+else:
+    # tqdm has no Codon model: the check (docs/typecheck.md), which reads
+    # TYPE_CHECKING as true, waits without the progress bar.
+    from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,34 @@ class ScenarioQueue:
             queue.add(MyScenario(ego_config))
             results = queue.run_all()
     """
+
+    _server: CarlaServerManager
+    _owns_server: bool
+    _xodr_path: Optional[Path]
+    _overwrite_xodr: bool
+    _opendrive_path: Optional[Path]
+    _lanelet2_path: Optional[Path]
+    _map_name: Optional[str]
+    _host: str
+    _port: int
+    _tm_port: int
+    _timeout_seconds: float
+    _output_dir: Path
+    _cooldown_seconds: float
+    _cooldown_max_retries: int
+    _max_tick_rate_hz: Optional[float]
+    _projector_type: Optional[str]
+    _traffic_backend: Optional[TrafficBackend]
+    _odd: OddDefinition
+    _autoware_launcher: Optional["AutowareLauncher"]
+    _scenarios: List[BaseScenario]
+    #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
+    _timeouts: dict[int, float]
+    #: id(scenario) -> the ODD case it runs, to record.
+    _cases: dict[int, OddCase]
+    _results: List[ScenarioResult]
+    _scenario_results: dict[int, ScenarioResult]
+    _runner: Optional[ScenarioRunner]
 
     def __init__(
         self,
@@ -173,14 +201,12 @@ class ScenarioQueue:
         self._odd = resolve_odd(odd)
         self._autoware_launcher = autoware_launcher
 
-        self._scenarios: List[BaseScenario] = []
-        #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
-        self._timeouts: dict[int, float] = {}
-        #: id(scenario) -> the ODD case it runs, to record.
-        self._cases: dict[int, OddCase] = {}
-        self._results: List[ScenarioResult] = []
-        self._scenario_results: dict[int, ScenarioResult] = {}
-        self._runner: Optional[ScenarioRunner] = None
+        self._scenarios = []
+        self._timeouts = {}
+        self._cases = {}
+        self._results = []
+        self._scenario_results = {}
+        self._runner = None
 
     # ------------------------------------------------------------------
     # Scenario registration
@@ -343,7 +369,10 @@ class ScenarioQueue:
         # Initialise MapManager when both map files are available.
         # Pass the CARLA world so that spawn-point-based z_offset averaging
         # is used instead of single-point sampling.
-        xodr_path = self._xodr_path or self._capture_opendrive()
+        # A Path is always true, so this is `self._xodr_path or ...`.
+        xodr_path = self._xodr_path
+        if xodr_path is None:
+            xodr_path = self._capture_opendrive()
         # The runner passes it on to the traffic backend, which is how a backend
         # with a road-network format of its own derives one from the map in play.
         self._runner.xodr_path = xodr_path
@@ -370,7 +399,9 @@ class ScenarioQueue:
             return None
         if destination.is_file():
             return destination
-        world = self._runner._world
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        runner: ScenarioRunner = self._runner
+        world = runner._world
         if world is None:
             return None
         written = capture_opendrive(world, destination)
@@ -471,7 +502,11 @@ def _wait_with_progress(seconds: float, *, desc: str = "Waiting") -> None:
     """Sleep for *seconds* with a tqdm progress bar (0.1 s resolution)."""
     steps = max(1, int(seconds * 10))
     interval = seconds / steps
-    for _ in tqdm(
-        range(steps), desc=desc, bar_format="{desc}: {bar}| {elapsed}<{remaining}"
-    ):
-        time.sleep(interval)
+    if TYPE_CHECKING:
+        for _ in range(steps):
+            time.sleep(interval)
+    else:
+        for _ in tqdm(
+            range(steps), desc=desc, bar_format="{desc}: {bar}| {elapsed}<{remaining}"
+        ):
+            time.sleep(interval)

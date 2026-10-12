@@ -51,3 +51,8 @@ from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, RouteCross
                          RouteCrosswalkPose, RouteLanePose, RouteOppositePose,
                          RouteRoadsidePose, Trajectory, TrajectoryFollowingMode,
                          TrajectoryTiming, TrajectoryVertex)
+
+# The package's __init__.py, as CPython sets it on a regular package
+# (authoring.framework_pin finds the source checkout from it). The path is
+# not known here; nothing runs.
+__file__: str = ""

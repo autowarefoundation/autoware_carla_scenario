@@ -1,0 +1,16 @@
+# Model of autoware_lanelet2_extension_python.regulatory_elements, for the
+# checker (docs/typecheck.md): the Autoware regulatory elements the framework
+# reads, derived from lanelet2's as in Python (lanelet2/core.codon). Of the
+# others (DetectionArea, Crosswalk, NoStoppingArea, ...) none is declared:
+# DetectionArea's stopLine, for one, is a method where a TrafficLight's is a
+# line string.
+
+from lanelet2.core import RegulatoryElement, TrafficLight
+
+
+class AutowareTrafficLight(TrafficLight):
+    pass
+
+
+class RoadMarking(RegulatoryElement):
+    pass

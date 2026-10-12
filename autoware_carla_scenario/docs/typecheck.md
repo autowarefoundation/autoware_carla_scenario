@@ -122,8 +122,12 @@ Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).
 
-A scenario that imports a module with no model (lanelet2, or a framework module
-outside the public API) is refused with a message naming the module.
+A scenario that imports a module with no model (lanelet2's `matching`, say,
+or a framework module outside the public API) is refused with a message
+naming the module. Third-party packages the framework reads are modelled as
+far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
+ffmpeg-python; see *Making a module compile*), and a scenario may use what
+those models declare.
 
 ## Writing a scenario that type-checks
 
@@ -256,9 +260,16 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 127 of
-the package's 225 modules (56%; about 25,400 of 69,200 lines) are `CHECKED`:
-the kinematics, the coordinate frames and poses, the condition base and
+Every module now has an entry other than `"not yet checked (#45)"`. 145 of
+the package's 228 modules (64%; about 33,000 of 65,300 lines) are `CHECKED`:
+the kinematics, the coordinate frames and poses, the conversions between
+Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
+lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
+and the lane arithmetic of a relative lane pose (`trajectory.relative_lane`),
+the sweeper's lanelet constraints and parameter bindings
+(`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
+frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
+`route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
 walk-straight actions, the logical scenario's route search and matches (`route.model`) and
@@ -266,66 +277,96 @@ the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
 (`entity.autoware_entity`), the entity registry and the policy
-warm-up with the Chaos powertrain model, `BaseScenario`,
+warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
+runner's run loop and the queue that runs scenarios one after another
+(`scenario_runner`, `scenario_queue`),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
 of `maps.catalogue`, the `map` config's paths of `maps.config` and the
-OpenDRIVE taken from CARLA by `maps.opendrive`), the Autoware
+OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
+package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
+`authoring.uv_tool`), the CARLA server manager (`server`) and the camera
+recorder that writes a run's video (`camera_recorder`), the Autoware
+launcher that runs a stack as a process group (`autoware_stack.launcher`)
+and the `scenario_bridge` node's command and Python root beside it
+(`autoware_stack.bridge_node`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (`scenario_config`, `examples.configs`), the camera
+unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
+lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
 `driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 63
+below). 73
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
-backend's options node (`Mapping[str, Any]`), what reads a route search or a
-match from YAML values of any type (`Range.parse()`, `parse_route_search()`,
-`RouteMatch.from_config()`) and what lays a route on a lanelet2 map handed
-over as `Any` (`set_scenario_route()`), the six members of
+backend's options node (`Mapping[str, Any]`), what reads a route search, a
+match, a constraint or a binding from YAML values of any type
+(`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
+`parse_constraint()`, `parse_binding()`), the length constraint's check of
+its rule, which iterates over the `ComparisonRule` enum
+(`LaneletLengthConstraint.__post_init__()`), the `[tool.uv.sources]` entry of a
+framework pin, a dict of str and bool values (`Pin.uv_source()`), the six members of
 `BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), what resolves a followed trajectory with the
 unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
+the road-marking pattern of the stop lines, which returns a `refers`
+parameter (any of lanelet2's primitives) as a line string
+(`utils.stop_line._road_marking_stop_lines()`),
 `signals.build_controllers()`, which reads
-the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
+the authoring package's pydantic specs, what builds the `scenario_bridge`
+node's command from its ROS parameters (`bridge_ros_args()`,
+`bridge_command()`: a `Mapping[str, Any]` of bool, int, float and str
+values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
+already sealed`, so the checker drops one and the check has nothing to call
+with), what the runner does with `json`,
+lanelet2 or a condition's details (writing the result and its environment,
+`_write_result()`; checking the planned route against the ODD,
+`ScenarioRunner._warn_if_route_leaves_odd()`; collecting the condition
+statuses, `_collect_condition_statuses()`), the queue's pytest fixture
+(`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 98 `EXCLUDED` modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-42 build on an excluded module and 28 hold values Codon has no type for), so
-each is counted once, in the first group that fits it:
+`encode_frame_jpeg()` (cv2). The 83 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 61 import what Codon cannot
+compile, 33 build on an excluded module and 21 hold values Codon has no type
+for), so each is counted once, in the first group that fits it:
 
-- **72 import what Codon cannot compile**: lanelet2, pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
-  lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
-  or `shutil` than their shims declare), at module level or inside a function the check
-  calls. This is
-  the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue) and
-  everything that reads Lanelet2. A reason names `pathlib` only where the
-  module uses more of it than the shim declares, and `shutil` likewise.
-- **22 build on an excluded module**, and import nothing Codon lacks
+- **61 import what Codon cannot compile**: lanelet2 beyond what its model
+  declares (most of these walk its objects typed `Any`), pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
+  a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
+  beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
+  `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
+  declare), at module level or inside a function the check calls. This is
+  the tooling around a run (the editor, the UI, authoring, the sweeper's
+  expansion, Hydra sweeper and map loader, the map cache, the Autoware
+  stack's Docker launcher and dev container, the
+  record of a run's environment), the ODD and coverage modules that wrap
+  openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
+  only where the module uses more of it than the shim declares, and the
+  other shimmed modules likewise.
+- **18 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator, the route frame, poses and search
-  (`route.frame`, `route.positions`, `route.search`, through lanelet2),
-  `odd.model` (over `coverage.items`), `trajectory.resolve` and
-  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 22
+  authoring compiler, builders and validator,
+  `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
+  (over `ui.models`); 5 of the 18
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
-  `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
-  field defaults) or a class as a value (`utils.config`, which `traffic.config`
-  and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
+  `Any` (`trajectory.authoring`, `authoring.registry`'s
+  field defaults), a class as a value (`utils.config`, which `traffic.config`
+  and `traffic.sumo.config` import only in their uncalled `from_mapping()`),
+  or callables through aliases Codon reads as no type, built as closures
+  (`trajectory.resolve`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -359,6 +400,10 @@ types Codon can express (`Callable[[carla.World], Optional[float]]`, a
 dataclass field too) is called with a value of Codon's `Callable` type, which
 a function of that signature converts to.
 
+A `*args: T` is given one `T` (`run_uv(cwd, *args: str, ...)` is called
+with one `str`), so the body is compiled for it; one with no annotation, or
+of `object` or `Any` (`__exit__(self, *args: object)`), is given nothing.
+
 A method with keyword-only parameters or `**kwargs` is called through its
 class (`TrafficBackend.start(_acs_value(TrafficBackend), ...,
 skip_actor_ids=...)`): Codon 0.19 calls a method a subclass may override
@@ -377,9 +422,20 @@ stands in for it in the check's workspace:
   `coordinate.codon`), or, for a module of a package that is itself checked,
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
-  `autoware_stack/launcher.codon`, `maps/cache.codon`). A module with no
+  `maps/cache.codon`), or, for a module of
+  the top-level package, a model of that module (`carla_install.codon`, for
+  `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
+  for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
+  closes, whose JSON lines hold values of mixed types). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
+
+Each checked module gets the `__file__` Python sets on it (its source's path,
+a `str`), which Codon 0.19 does not, appended after the calls of the check
+so no line moves: `autoware_stack.bridge_node` finds the installed
+`autoware_bridge` package with `from ..autoware_bridge import __file__`.
+Codon has no module object, so `from .. import autoware_bridge` and
+`autoware_bridge.__file__` do not compile.
 
 Two checked modules that import each other can each need the other's types
 the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
@@ -397,7 +453,7 @@ with an example scenario in it failed in Codon 0.19's code generation
 `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code (`coordinate.codon` for
-`transform.py` and `map_manager.py`) declares only what the checked modules
+`map_manager.py`) declares only what the checked modules
 and scenarios use of it: `MapManager` there is `get_instance()` and the
 `road_network` it reads, not the class's whole API.
 
@@ -477,27 +533,40 @@ What Codon 0.19 needs that Python does not, beyond
 - **A dict of values of different types** (`{"at": None, "around": None}`
   read back as a tuple and a list) becomes a small class with one declared
   attribute per key.
-- Standard modules Codon does not have (`json`, `inspect`, `importlib`,
+- Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
+  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
+  `importlib.metadata`, `urllib.parse` and `__future__` shims of `codon/`
+  are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
   `/`, `str()`, `==`, `hash()`, `expanduser()`, `resolve()` and
-  `Path.home()`; like Python's, it builds and joins a `Path` with a `str` or
+  `Path.home()` and `Path.cwd()`; like Python's, it builds and joins a `Path` with a `str` or
   an `os.PathLike` only (a `Path`, or what `shutil.copy2()` returns for one;
   an `Optional` of one is unwrapped, as Codon unwraps one passed anywhere). It declares the file-system queries too: `exists()`,
   `is_file()`, `is_dir()`, `glob(pattern)` and `absolute()`, with Python
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
-  sliced) and the ordering of two `Path`s, so `sorted()` takes them. Nothing
+  sliced), `stem`, `with_name(name)` (of a `str`), `as_posix()`, `relative_to(other)` (one path, by position:
+  Python 3.10 also joins more parts, but 3.14 refuses them, so the check
+  does too; 3.12's `walk_up` is refused) and the ordering of two `Path`s, so
+  `sorted()` takes them. Nothing
   touches the file system: a query is `False` and a glob yields nothing.
-  Of what writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
+  `is_symlink()` takes no argument, as in every supported Python. Of what
+  writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
   `write_text(data, encoding=None, errors=None, newline=None)` are declared
-  (`maps.opendrive` caches what it fetches); `open()`, `chmod()`,
-  `read_text()` and the rest are not. `os` replaces Codon's own (whose
+  (`maps.opendrive` caches what it fetches), and so are `unlink(missing_ok=False)`,
+  `symlink_to(target, target_is_directory=False)` (a target that is a `str` or
+  an `os.PathLike`) and `open(mode="r", buffering=-1, encoding=None,
+  errors=None, newline=None)`, which returns a file object, `typing.IO[str]`
+  whatever the mode, since the check reads `bytes` as `str` (so `IO[bytes]`
+  and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
+  `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
+  `write()` (of a `str`, read as bytes too), iteration over the lines and
+  `with`. `chmod()`, `read_text()` and the rest are not. `os` replaces Codon's own (whose
   `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
   which Codon's runtime and typesafe_carla's library call: `environ` is a
   mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
@@ -506,7 +575,8 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's returns), `getenv(key, default=None)` (a `str` default gives a
   `str`, `None` an `Optional[str]`; a default of another type, which CPython
   takes, is refused), `fspath()`, `getpid()`, `getppid()`, `getpgid(pid)`,
-  `kill(pid, signal, /)`, `killpg(pgid, signal, /)`, `system(command)`,
+  `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
+  `signal.Signals`), `system(command)`,
   `mkdir()` (Codon's had one), the separators (`sep`, `pathsep`, `linesep`,
   `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
   `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
@@ -515,7 +585,71 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
   ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
   command; the callables CPython also takes (`onerror`, `copy_function`)
-  are not declared. `copy2()` and `move()` return a `str` for a `str`
+  are not declared. `subprocess` declares `run(args, *, input=None,
+  capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
+  *, ...)` with the keywords of CPython's `Popen` the framework passes
+  (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
+  `start_new_session`), a standard stream being `None`, one of the constants,
+  a file descriptor or a file object (`typing.IO`, what `Path.open()`
+  returns), `CompletedProcess(args, returncode, stdout=None,
+  stderr=None)` and its `check_returncode()`, `Popen`'s `poll()`, `wait()`,
+  `communicate()`, `send_signal()` (of an `int` or a `signal.Signals`), `terminate()`, `kill()`, `pid`,
+  `returncode` and standard streams, `PIPE`, `STDOUT`, `DEVNULL`, and
+  `SubprocessError`, `CalledProcessError(returncode, cmd, output=None,
+  stderr=None)` and `TimeoutExpired(cmd, timeout, output=None,
+  stderr=None)`. The command is a list of `str`, a working directory a
+  `str` or an `os.PathLike`, a stream `None`, one of the constants, a file
+  descriptor or a file object, an environment a `dict` of `str`, a timeout
+  a number of seconds or `None`. What CPython also takes is refused: a `str`
+  command, `shell=True` and the other keywords, `os.environ` itself as the environment (pass `os.environ.copy()`, which
+  is the `dict` CPython's returns, as `authoring.uv_tool` does), and
+  arguments after the command by position (`run(args, -1)`, which run()
+  hands to `Popen` as `bufsize`). Since the check reads `bytes` as `str`, a
+  process's output is a `str` with or without `text=True`, and
+  `CompletedProcess[bytes]` and `Popen[bytes]` are `[str]`; it is `None`
+  when it was not captured, as in CPython, so `stdout` and `stderr` are an
+  `Optional`. A stream's `write()` takes what a binary stream takes in
+  CPython, bytes (a `str`) or a buffer such as an array's `data` (a `Ptr` in
+  Codon's numpy; `camera_recorder` writes `bgr.data`), and since the check
+  cannot tell a text stream from a binary one, it takes either for a text
+  one too, where CPython refuses a buffer. `importlib.metadata` declares
+  `version(distribution_name)` and `PackageNotFoundError`, a `ModuleNotFoundError` built from the
+  distribution's name; `from importlib import metadata` and `import
+  importlib.metadata` compile, and nothing else of `importlib` does (the
+  package imports its `metadata`, as Codon 0.19 finds a submodule no other
+  way, so the check also takes `importlib.metadata` after a bare `import
+  importlib`, which CPython takes only once something has imported the
+  submodule). `signal` declares Linux's signal numbers (`SIGHUP`, `SIGINT`,
+  `SIGQUIT`, `SIGKILL`, `SIGUSR1`, `SIGUSR2`, `SIGALRM`, `SIGTERM`,
+  `SIGCHLD`) as members of `Signals`, CPython's `IntEnum` of them, here a
+  class of its own: `name` (`"SIGTERM"`), `value` and `int()` (the number),
+  `==`, `!=` and `hash()` with a `Signals` or an `int`, `str()` and `repr()`
+  as Python 3.10 writes them, and `Signals(number)`, which looks a member up.
+  What takes a signal number (`os.kill()`, `os.killpg()`, `signal()`,
+  `Popen.send_signal()`) takes an `int` or a `Signals`, so
+  `os.killpg(pgid, signal.SIGTERM)` compiles; the rest of an `int`'s
+  operations (arithmetic, ordering) are not declared for a `Signals`, which
+  CPython takes: take `int(sig)` first. `SIG_DFL` and `SIG_IGN`, which
+  are no `int`s here, since CPython takes no other `int` as a handler; and
+  `signal(signalnum, handler)`, whose handler is one of those two or a
+  function the check calls as CPython calls a handler, with the signal's
+  number (an `int`) and the current frame (`None` in the check, which has no frame
+  type: annotate that parameter `Any`), so a function that cannot take them
+  is refused where CPython fails only when the signal arrives. What it
+  returns, the previous handler, is a value nothing is declared of (a
+  `Handlers` member, a function or `None` in CPython, which takes no `None`
+  as a handler), so it cannot be handed back to `signal()`; `getsignal()`,
+  `alarm()` and the rest of the module are not declared. `shlex` declares
+  `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
+  `quote()` of a false value that is no `str` (`None`, which CPython quotes
+  as `''`) is refused. `sys` replaces Codon's, keeping all of it (`argv`,
+  the standard streams, `exit()`, `maxsize`), and adds `platform`
+  (`"linux"`) and `executable` (a `str`). `atexit`
+  declares `register(func, *args, **kwargs)`, which takes the function by
+  position only and returns it, and which calls it with the arguments it is
+  given, so a function that cannot take them is refused where CPython
+  reports it only at exit, and `unregister(func)`, of one value by position.
+  `copy2()` and `move()` return a `str` for a `str`
   destination, as CPython does; for a `Path` one CPython returns the `Path`,
   or a `str` when it names a directory, so the check returns a path that
   `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
@@ -528,8 +662,9 @@ What Codon 0.19 needs that Python does not, beyond
   takes no message or one value by position, as CPython does; a keyword
   (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
   their attributes (`errno`, `filename`) are refused. Nothing in these
-  shims runs: no environment is read, no file is copied and no process is
-  signalled. `hashlib` declares `sha256(string=b"", *,
+  shims runs: no environment is read, no file is copied, no process is
+  signalled, no signal handler is installed and no exit function is
+  registered. `hashlib` declares `sha256(string=b"", *,
   usedforsecurity=True)` and its hash object (`update(data, /)`, `digest()`,
   `hexdigest()`, `copy()`, `name`, `digest_size`, `block_size`); no other
   hash. `str.encode()` takes `(encoding="utf-8", errors="strict")`. Since
@@ -537,32 +672,121 @@ What Codon 0.19 needs that Python does not, beyond
   it takes `hashlib.sha256("text")`, which CPython refuses (a `str` must be
   encoded first). `bytes.decode()` is not declared, since it would be a
   `str`'s too and pass `"text".decode()`; the check refuses
-  `data.decode()`, which CPython takes. `urllib.parse`
+  `data.decode()`, which CPython takes. `str.removeprefix(prefix, /)` and
+  `str.removesuffix(suffix, /)` (Python 3.9) are declared too. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
-  `hashlib`, `os`, `shutil` and `urllib.parse` and call what they declare,
-  file-system queries and the two writes included (`Path(...).exists()`,
-  `Path(...).write_text(...)`), read and set the environment
-  (`os.environ.get()`), copy, move and remove files with `shutil`, signal a
-  process with `os.kill()`, and catch the exceptions above. Any other name of
-  them (`Path.chmod()`, `hashlib.md5()`, `shutil.copytree()`,
-  `os.listdir()`, `urllib.request`) fails its check wherever Codon compiles
-  it.
+  `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
+  `urllib.parse`, `signal`, `atexit`, `shlex` and `sys` and call what they
+  declare,
+  file-system queries and the two writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
+  and set the environment (`os.environ.get()`), copy, move and remove files
+  with `shutil`, start and wait for a process with `subprocess.run()` or
+  `subprocess.Popen`, signal one with `os.kill()`, install a signal handler
+  with `signal.signal()`, register a function to run at exit with
+  `atexit.register()`, read an installed
+  distribution's version with `importlib.metadata.version()`, and catch the
+  exceptions above. Any other name of them (`Path.chmod()`, `hashlib.md5()`,
+  `shutil.copytree()`, `subprocess.check_output()`, `os.listdir()`,
+  `importlib.import_module()`, `urllib.request`, `signal.getsignal()`) fails
+  its check wherever Codon compiles it. The model's top-level package declares `__file__` (a
+  `str`, as CPython sets it on a regular package), which
+  `authoring.framework_pin` imports (`from .. import __file__`).
   `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
   `typing.Protocol`, whose `@runtime_checkable` is dropped too.
   `typing.Any` imports, and every annotation naming it is dropped.
   `typing.TYPE_CHECKING` is a compile-time true, so Codon compiles only the
-  first branch of `if TYPE_CHECKING: ... else: ...`. The `logging` shim's
+  first branch of `if TYPE_CHECKING: ... else: ...`, and the check reports
+  no import in the `else` branch: `scenario_queue` imports tqdm there, at
+  module level, and waits without the progress bar in the first branch. The `logging` shim's
   methods take `exc_info` as a `bool`.
 - **pyxodr's road network is the model's**: `codon/pyxodr/` names the
-  `RoadNetwork` that `coordinate.codon` declares (what the framework reads of
-  it, down to the XML elements), so a module that may not import
-  `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
-  (`utils/traffic_light.py`) and takes the network `MapManager` returns.
+  `RoadNetwork`, `Road`, `LaneSection` and `Lane` that `coordinate.codon`
+  declares (what the framework reads of them, down to the XML elements), so
+  a checked module annotates with pyxodr's own classes under `TYPE_CHECKING`
+  (`utils/traffic_light.py`, which may not import `coordinate`;
+  `coordinate/transform.py`) and takes the network `MapManager` returns.
   Nothing else of pyxodr is there.
+- **lanelet2 is modelled**: `codon/lanelet2/` and
+  `codon/autoware_lanelet2_extension_python/` declare the classes and
+  functions of simple-lanelet2's Python API the checked modules use, with
+  its parameter names: `lanelet2.core`'s map, lanelet layer, lanelets, line
+  strings, points, attribute maps and regulatory elements (their ids,
+  attributes, centrelines, bounds, rule parameters and stop lines),
+  `BasicPoint2d`, and the lanelets whose bound a line string is
+  (`LaneletLayer.findUsages()`, of a line string only); `lanelet2.geometry`'s
+  `to2D()`, `length()`, `length2d()` (of a lanelet), `toArcCoordinates()`
+  (an `ArcCoordinates`), `findNearest()` (of the lanelet layer) and
+  `inside()`; `lanelet2.routing.RoutingGraph(laneletMap, trafficRules)` with
+  `following()`, `previous()`, `left()`, `right()`, `adjacentLeft()`,
+  `adjacentRight()` and `conflicting()` (a list of `ConstLanelet`s, as
+  simple-lanelet2 hands them out: lanelet2's own binding wraps each in a
+  `ConstLaneletOrArea`, which `route.geometry` still unwraps at run time);
+  `lanelet2.traffic_rules.create()`
+  with its `Locations` and `Participants`; `lanelet2.io.Origin`; and
+  Autoware's `MGRSProjector`, `AutowareTrafficLight` and `RoadMarking`.
+  Each module's header says what it leaves out; parts of the API the
+  framework does not use yet (loading a map, routes, matching, editing)
+  are not declared, and the check refuses them. The model's `MapManager`
+  hands out its `lanelet_map` and `routing_graph` as these classes. Python's
+  lanelet2 has no signatures to introspect (it is a compiled extension), so
+  `test_typecheck_lanelet2_model.py` checks that every declared name exists in
+  the installed package, that its parameters are the ones the package's
+  stubs (`lanelet2/*.pyi`) name, and that each declared call, made on the
+  fixture map, returns what the model says. What the model has to say about
+  lanelet2 that Python does not:
+  - **A mutable class derives from its Const twin** (`Lanelet` from
+    `ConstLanelet`, `LineString3d` from `ConstLineString3d`, `Point3d` from
+    `ConstPoint3d`): in Python they are unrelated classes, but every function
+    that takes the Const one takes the mutable one, which has all its
+    members. So a layer's `Lanelet` goes where the routing graph takes a
+    `ConstLanelet`, and a variable that holds either is annotated with the
+    Const class (`lanelet: ConstLanelet = lanelet_map.laneletLayer[...]`, as
+    `trajectory/relative_lane.py` walks from a lanelet to the ones that
+    follow it). lanelet2's stubs, which mypy reads, keep the two unrelated,
+    so a function that takes either spells the union out
+    (`Union[ConstLanelet, Lanelet]`), which the check drops, as it drops any
+    union parameter. A member the mutable class narrows (`Lanelet.leftBound`
+    and `TrafficLight.stopLine` are `LineString3d`s) is declared with the
+    Const type, so the check reads less than Python hands out, never more.
+    (Codon 0.19 does not convert an `Optional` of a subclass to its base in
+    one step, `Optional[LineString3d]` into a `list[ConstLineString3d]`:
+    that would take an annotated local of the subclass first.)
+  - **An overloaded function dispatches on its argument**: Codon 0.19 cannot
+    overload a module-level function, so `to2D()` and `length()` are generic
+    and declare the overloads the framework calls (of a line string); any
+    other argument is a compile error. Codon decides `isinstance` by the
+    static type, and `isinstance(Lanelet, ConstLanelet)` is false there as
+    in Python, so each overload names both twins.
+  - **A regulatory element is its own class**: lanelet2 hands each one out as
+    the class of what it is (`TrafficLight`, `RightOfWay`, `TrafficSign`, or
+    Autoware's), all derived from `RegulatoryElement`, as the model declares
+    them, and a lanelet's `regulatoryElements` is a list of the base. Codon
+    decides `hasattr(element, "stopLine")` by that static type, so the
+    stop-line branch of code that duck-types the element would never be
+    compiled. `utils/stop_line.py` therefore reads one element in a public
+    function whose parameter is annotated with the union of the classes it
+    reads (`Union[TrafficLight, AutowareTrafficLight, RightOfWay,
+    TrafficSign, RoadMarking, RegulatoryElement]`), which the library check
+    calls once per member, so each branch is compiled for each class that
+    takes it. At run time it still asks the element, as before.
+  - **A rule parameter is declared by its role**: lanelet2 holds a point, a
+    line string, a polygon, a lanelet or an area in a regulatory element's
+    `parameters[role]`, and Codon has no type for "one of five classes".
+    `ref_line`, `cancel_line` and `light_bulbs` hold line strings
+    (`ConstLineString3d`), `right_of_way` and `yield` lanelets
+    (`ConstLanelet`); any other role is a compile error. `refers` holds a
+    different class per element (line strings or polygons for a traffic
+    light, polygons for Autoware's detection areas, lanelets for its
+    crosswalks), so the model declares it as a class of its own with only
+    what all five have, `id` and `attributes`. The stop line a road marking
+    refers to is therefore not checked: `utils/stop_line.py` reads it in a
+    function called in the `else` branch of `if TYPE_CHECKING:` (`UNCALLED`).
+    `test_typecheck_lanelet2_model.py` reads the roles off the model and
+    checks each against what the fixture map's elements hold.
 - **carla_driver_interface's geometry is modelled**:
   `codon/carla_driver_interface/geometry.codon` declares the `Pose` and
   `Trajectory` the driver modules use (and `waypoints_to_proto`, which
@@ -581,9 +805,30 @@ What Codon 0.19 needs that Python does not, beyond
   now; a name the model lacks fails its check (`Pose.to_proto()` has no
   attribute), and so does any other module of the package (`no module named
   'carla_driver_interface.protocol'`).
+- **python-dotenv and ffmpeg-python are modelled** as far as `server` and
+  `camera_recorder` use them, with the installed packages' signatures, which
+  `test_typecheck_model.py` compares: `codon/dotenv/` declares
+  `load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
+  interpolate=True, encoding="utf-8")`, of a path that is `None`, a `str` or
+  an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
+  taken); `codon/ffmpeg/` declares the fluent pipeline the camera recorder
+  builds: `ffmpeg.input(filename, **kwargs)` returns a `FilterableStream`
+  (`ffmpeg.nodes`), whose `output(*streams_and_filename, **kwargs)` takes
+  the file name last, as a `str` (ffmpeg-python raises a `ValueError` for a
+  `Path`), and returns an `OutputStream`, which alone has
+  `overwrite_output()` and `run_async(cmd="ffmpeg", pipe_stdin=False,
+  pipe_stdout=False, pipe_stderr=False, quiet=False,
+  overwrite_output=False)`, a `subprocess.Popen[bytes]`. An ffmpeg option is
+  any keyword of any value, as ffmpeg-python hands it to ffmpeg as text.
+  Nothing else of either package is declared (`dotenv_values()`, the
+  filters, `run()`, the module-level `ffmpeg.output()`), and a scenario may
+  use what is, as it may the shims.
 - **No `bytes`**: Codon 0.19 has none, and reads a `b"..."` literal as a
   `str`, so the check reads an annotation naming `bytes` as `str`
-  (`DriveOutcome.debug_info: bytes = b""`).
+  (`DriveOutcome.debug_info: bytes = b""`). What a process writes is a `str`
+  in the check, which has no `decode()`: decode it in the `else` branch of
+  `if TYPE_CHECKING:` and take the `str` in the first
+  (`CameraRecorder.stop()`, ffmpeg's error output).
 - **`dataclasses.fields()` is not in the shim**: a function that reads a
   dataclass's fields from its class takes a free-form mapping anyway, so it
   is `UNCALLED` and imports `fields` inside it (`ControlConfig.from_mapping`).
@@ -787,6 +1032,12 @@ What Codon 0.19 needs that Python does not, beyond
 - **A default of a subclass for an `Optional` of its base** goes through an
   `if` statement, not a conditional expression: `x if x is not None else
   Sub()` is refused (`Optional[Base]` is not `Optional[Sub]`).
+- **A conditional expression of two types** (`log if log is not None else
+  subprocess.DEVNULL`, a file or an `int`) is typed by its first branch.
+  Neither can an `if` statement assign the two to one name: call a function
+  once with each (`autoware_stack.launcher._start_session()`, whose
+  `Union[IO[bytes], int]` parameter the checker drops, so Codon compiles it
+  for each).
 - **A dict has no truth value** in Codon: `if not d:` is `if len(d) == 0:`.
 - **No `setattr(obj, name, value)` with a name known only at run time**:
   spell the assignments out (`actions/environment.py`).
@@ -795,17 +1046,30 @@ What Codon 0.19 needs that Python does not, beyond
   (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
   message and passes it on: `def __init__(self, message: str) -> None:
   super().__init__(message)` (`maps/source.py`).
-- **One `except` clause per exception type**: Codon 0.19 does not take a
-  tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
-  to `raise X` by the check; `raise X from exc` compiles as it is.
+- **`except (A, B):` is split by the check**: Codon 0.19 takes one class
+  per `except` clause ("expected type expression"), so the check rewrites a
+  tuple written out into one clause per class, in the tuple's order, each
+  with the same body (and the same `as` name), where the tuple's clause was:
+  Python tries a tuple's classes in order, so the same exceptions reach the
+  same body and the others the clauses after it. The copies are lines the
+  source does not have; an error in one is reported at the line it copies,
+  and the lines after them where they are. A tuple that is not written out
+  (`except errors:`, `except (*errors,):`) is left as it is, and Codon
+  refuses it. `raise X from None` is rewritten to `raise X` by the check;
+  `raise X from exc` compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
-  rewrites `frozenset(...)` to `set(...)` and `frozenset[X]` /
-  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`.
+  rewrites `frozenset(...)` to `set(...)`, `frozenset[X](...)` to
+  `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source
+  keeps its `frozenset`. An empty one is `frozenset[str]()`: a bare
+  `frozenset()` is a set of no element type in Codon
+  (`scenario_runner._destroy_all_dynamic_actors()`).
 - **A variable-length tuple attribute is checked as a list**: a class-level
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays
   itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
-  its tuple. A parameter `tuple[X, ...]` is dropped (a caller may pass a
+  its tuple. A dataclass field's `field(default=())` is an empty `List[X]`
+  (`Pin.warnings`); a tuple display (`("a",)`) stays a fixed-length Codon
+  tuple, which is no `List[X]`: pass `tuple([...])` of a list instead. A parameter `tuple[X, ...]` is dropped (a caller may pass a
   tuple), and the library check calls it with a `List[X]`.
   `Phase.states` and `SignalController.phases` (`signals.controller`) are
   checked this way. What only a tuple does is not checked: its hash (a
@@ -953,11 +1217,10 @@ What Codon 0.19 needs that Python does not, beyond
   branch of `if TYPE_CHECKING:`. Codon decides `hasattr` by the static type,
   which lacks the method, so it compiles none of the calls: the check covers
   the lookup around them, not the calls (`RoutingAction.execute()`).
-- **A lanelet2 object at the model boundary is opaque**: the model's
-  `MapManager` hands out its `lanelet_map` and `routing_graph` as classes
-  with nothing in them, which the model's `RouteFrame` takes, so the checked
-  `scenario_route_frame()` (`route.active`) compiles; `route.frame` itself,
-  which reads them, is not checked.
+- **lanelet2's map at the model boundary**: the model's `MapManager` hands
+  out its `lanelet_map` and `routing_graph` as the lanelet2 model's classes
+  (above), which the checked `RouteFrame` (`route.frame`) takes, so the
+  checked `scenario_route_frame()` (`route.active`) builds it from them.
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked
@@ -993,19 +1256,24 @@ What Codon 0.19 needs that Python does not, beyond
   doesn't match function result type`). `test_typecheck_model.py` compares
   each with the Python class, and checks that its constructor is the
   `compile_error`.
-- **A Protocol a checked module takes** is modelled with what it calls:
-  `autoware_stack/launcher.codon` declares the `AutowareLauncher` that
+- **A Protocol a scenario may take** is modelled with what is called of it:
+  the library check compiles `autoware_stack.launcher` from its source, and
+  for the scenario check `autoware_stack/launcher.codon` declares the `AutowareLauncher` that
   `AutowareEgoEntity` starts, polls and stops (`start(*, name,
-  bridge_address)`, `poll()`, `stop()`) and the `AutowareEpisode` that
+  bridge_address)`, `poll()`, `stop()`), with the `prepare()` and `close()`
+  that `ScenarioQueue` calls (below), and the `AutowareEpisode` that
   `start()` returns. Python cannot instantiate a Protocol, so the model's
   constructor is a `compile_error`.
 - **A model function returning a checked class**: `to_map_frame`
-  (`coordinate.codon`, for `coordinate.transform`, which imports lanelet2)
-  returns autoware_bridge's `BridgePose`, which `_bridge_pose.codon` models
+  (`coordinate.codon`, which the scenario check and the checked modules that
+  import the `coordinate` package compile against) returns
+  autoware_bridge's `BridgePose`, which `_bridge_pose.codon` models
   (`BridgePose`, its `Vector3` and `Quaternion`, as `@tuple`s, since they are
   frozen, and `moved_forward()`); `REPLACED_MODELS` replaces it with the
   checked `autoware_bridge.base`, so `AutowareEgoEntity` hands the pose
-  `to_map_frame` returns to the checked `AutowareBridge.configure()`.
+  `to_map_frame` returns to the checked `AutowareBridge.configure()`
+  (it imports `coordinate.transform` itself, which is checked, so the library
+  check compiles the real `to_map_frame` there).
 - **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
   which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`).
 - **A method that takes `**kwargs`, called on a value whose class a checked
@@ -1021,3 +1289,73 @@ What Codon 0.19 needs that Python does not, beyond
   the model module. When the package does not export it, add it to
   `_BOUNDARY` in `test_typecheck_model.py`, so it is compared with the Python
   class as an exported name is.
+- **A Protocol that checked code dispatches through becomes a base class**:
+  Codon has no structural typing, and decides `isinstance` and `hasattr` by
+  the static type. `sweeper.constraints.Constraint` was a `Protocol`; it is
+  an `ABC` whose `evaluate()` is abstract (so, as before, it cannot be
+  instantiated itself), and every constraint of the module derives from it.
+  What walks a constraint tree asks each class what to bind
+  (`_bind_set_level()`, which the composite and set-level constraints
+  override) instead of testing the value with `isinstance` and `hasattr`. A
+  constraint of someone else's that does not derive from it still works at
+  run time: the walk takes the duck-typed path for it, in the `else` branch
+  of `isinstance(constraint, Constraint)`, which Codon decides as true. What
+  a set-level constraint caches (`_cached_ids`) is a `field(init=False,
+  repr=False, compare=False)`: declared, as Codon needs, but neither a
+  constructor parameter nor part of the repr or the comparisons, and unset
+  until the constraint is bound, as before (`dataclasses.fields()` now lists
+  it, so `dataclasses.asdict()` of a set-level constraint includes it, and
+  raises `AttributeError` before the constraint is bound; nothing in the
+  framework calls either on a constraint).
+- **A registry of classes at module level** (`sweeper.constraints`'
+  `_LEAF_REGISTRY`, `sweeper.bindings`' `_BINDING_REGISTRY`): Codon holds no
+  class as a value, and cannot type `dict[str, type]`. Declare it
+  `dict[str, Any]` and assign it in the `else` branch of `if TYPE_CHECKING:`;
+  only the uncalled parser reads it.
+- **An enum member looked up by name, or an enum iterated over**
+  (`ComparisonRule[name]`, `for r in ComparisonRule`): the `enum` shim models
+  neither. `sweeper.constraints._comparison_rule()` looks the member up in a
+  list of the members spelled out under `if TYPE_CHECKING:`, and by name in
+  the `else` branch; the validator that iterates is `UNCALLED`.
+- **An exception class raised with no arguments** (`raise _Exhausted()` in
+  `route.search`): Codon 0.19 raises no exception class without its own
+  `__init__`, and its `Exception` takes a message where Python's takes none.
+  The constructor calls `super().__init__("")` under `if TYPE_CHECKING:` and
+  `super().__init__()` in the `else` branch.
+- **An Optional chosen by a conditional expression, whose value goes to a
+  union field** (`beside = graph.left(l) if left else graph.right(l)`, then
+  `BindingResult(value=beside.id)`, a `float | int | list[int]`): Codon 0.19
+  generated invalid LLVM IR and crashed without a diagnostic ("Call
+  parameter type does not match function signature", `optimize.cpp:1070`).
+  Choose with an `if` statement into a local annotated `Optional[...]`.
+- **A function that returns a tuple with an `Optional` member**, `None` in
+  one return and a value in another (`route.frame.ego_placement()`):
+  annotate the local in each return's own assignment (`no_goal:
+  Optional[tuple[int, float]] = None`, `goal_at: Optional[tuple[int, float]]
+  = frame.locate(s)`): one local annotated `Optional` where it is assigned
+  `None`, and assigned the value later, was not enough.
+- **A loop variable assigned a subclass's value is retyped**: in a function
+  that already declared `other: ConstLanelet`, `other = near` (a `Lanelet`)
+  makes `other` a `Lanelet`, and a list of `(float, ConstLanelet)` then
+  refuses it. Give the upcast a name of its own (`nearby: ConstLanelet =
+  near`, `route.geometry`).
+- **A value of a type the model holds**: a checked module that hands a checked
+  value to a checked module that imports it through the model
+  (`MODELLED_IMPORTS`) hands the wrong type. `scenario_runner` hands the
+  checked `BaseScenario` to `measures.set_measured_scenario()`, and its
+  `EgoConfig` to `EgoVehicle.spawn()`, which take the model's: it makes those
+  calls in the `else` branch of `if TYPE_CHECKING:`, and takes the spawned
+  actor from `ego.actor` in the first.
+- **No module object to assign a global through**
+  (`vehicle_entity._warmup_done = True`): Codon 0.19 imports no module as a
+  value. The module sets its global in a function of its own
+  (`entity.vehicle_entity._set_warmup_done()`).
+- **The runner's boundary is modelled**: `coverage.codon` declares the
+  `CoverageCollector` (its constructor, `start()`, `tick()`, `end()` and
+  `write(path, scenario)`; openodd's `backend` and `generator` are refused),
+  `odd.codon` `resolve_odd(spec)`, whose union parameter (`str`, `Path`,
+  `OddDefinition` or `None`) is generic and checked in its body, and
+  `reset_probes()`, `coordinate.codon` `MapManager.reset()` and
+  `initialize()`, and `autoware_stack/launcher.codon` the launcher's
+  `prepare()` and `close()`, which the queue calls. `test_typecheck_model.py`
+  compares each with the Python one.

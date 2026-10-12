@@ -1,0 +1,57 @@
+# Model of ffmpeg-python's streams (ffmpeg.nodes), as far as the camera
+# recorder builds its pipeline (docs/typecheck.md), with the installed
+# package's signatures, which test_typecheck_model.py compares.
+#
+# ffmpeg.input() returns a FilterableStream, whose output() returns an
+# OutputStream; only an OutputStream has overwrite_output() and run_async(),
+# as in the package. An option (`vcodec="libx264"`, `r=20.0`) is any keyword
+# of any value, as ffmpeg-python passes it to ffmpeg as text. The filters,
+# run(), compile(), the other streams and the module-level forms of these
+# (`ffmpeg.output(stream, ...)`) are not declared. Nothing here runs: no
+# ffmpeg is started.
+
+import internal.static as static
+import subprocess
+
+
+def _filename(value, where: Literal[str]) -> None:
+    if not isinstance(value, str):
+        compile_error(where + ": the file name is a str")
+
+
+class OutputStream:
+    def overwrite_output(self) -> OutputStream:
+        return self
+
+    # run_async(stream_spec, cmd="ffmpeg", pipe_stdin=False, pipe_stdout=False,
+    # pipe_stderr=False, quiet=False, overwrite_output=False): the process,
+    # whose standard streams are bytes (checked as str).
+    def run_async(
+        self,
+        cmd="ffmpeg",
+        pipe_stdin: bool = False,
+        pipe_stdout: bool = False,
+        pipe_stderr: bool = False,
+        quiet: bool = False,
+        overwrite_output: bool = False,
+    ) -> subprocess.Popen[str]:
+        if isinstance(cmd, str) or isinstance(cmd, List[str]):
+            pass
+        else:
+            compile_error("run_async(): the command is a str or a list of str")
+        return subprocess.Popen[str](List[str]())
+
+
+class FilterableStream:
+    # output(*streams_and_filename, **kwargs), bound to this stream: other
+    # streams to map to the same output, then the file name, a str (ffmpeg-
+    # python raises a ValueError for any other value there). The file name
+    # given as `filename=` is not declared.
+    def output(self, *streams_and_filename, **kwargs) -> OutputStream:
+        if static.len(streams_and_filename) == 0:
+            compile_error("output(): the file name is the last argument")
+        _filename(streams_and_filename[-1], "output()")
+        for i in static.range(static.len(streams_and_filename) - 1):
+            if not isinstance(streams_and_filename[i], FilterableStream):
+                compile_error("output(): what precedes the file name is a stream")
+        return OutputStream()

@@ -1,0 +1,132 @@
+# The part of Python's signal the checked framework names, for the checker
+# (docs/typecheck.md): the signal numbers as Signals, SIG_DFL and SIG_IGN, and
+# signal(signalnum, handler), with CPython 3.10's signature.
+#
+# CPython's Signals is an IntEnum; here it is a class of its own holding the
+# number, with what the framework reads of a member: `name` ("SIGTERM"),
+# `value` and int() of it (its number), ==, != and hash() with another
+# Signals or an int, as an IntEnum compares, and str() and repr() as
+# Python 3.10 writes them ("Signals.SIGTERM", "<Signals.SIGTERM: 15>"; 3.11
+# writes str() as the number). Signals(number) looks a member up by its
+# number. Since a Signals is no int here, what takes a signal number takes an
+# int or a Signals (os.kill() and os.killpg(), signal(), Popen.send_signal());
+# the rest of an int's operations (arithmetic, %d formatting, ordering) are
+# not declared, so the check refuses them on a Signals, which CPython takes:
+# take int(sig) first. The numbers are Linux's, the only system the package
+# runs on.
+# SIG_DFL and SIG_IGN are CPython's Handlers, which are not ints here:
+# CPython's signal() takes them, or anything equal to them, but no other int
+# (`signal(SIGTERM, 5)` is a TypeError), so the check takes a handler that is
+# one of them or a function it can call as CPython calls a handler, with the
+# signal's number (an int, as CPython passes it) and the current frame (None
+# here: no frame type is declared). What signal() returns, the previous
+# handler, is a Handlers, a function or None in CPython: nothing of it is
+# declared, and it is no handler (CPython refuses None as one). getsignal(),
+# the other functions and the other constants are not declared either.
+# Nothing here runs: no handler is installed.
+
+_NAMES = {
+    1: "SIGHUP",
+    2: "SIGINT",
+    3: "SIGQUIT",
+    9: "SIGKILL",
+    10: "SIGUSR1",
+    12: "SIGUSR2",
+    14: "SIGALRM",
+    15: "SIGTERM",
+    17: "SIGCHLD",
+}
+
+
+class Signals:
+    _value: int
+    _name: str
+
+    # Signals(number): the member of that number (a ValueError in CPython
+    # for one Linux has no signal of).
+    def __init__(self, value: int):
+        self._value = value
+        self._name = _NAMES.get(value, "")
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def value(self) -> int:
+        return self._value
+
+    def __int__(self) -> int:
+        return self._value
+
+    def __index__(self) -> int:
+        return self._value
+
+    def __eq__(self, other: Signals) -> bool:
+        return self._value == other._value
+
+    def __eq__(self, other: int) -> bool:
+        return self._value == other
+
+    def __ne__(self, other: Signals) -> bool:
+        return self._value != other._value
+
+    def __ne__(self, other: int) -> bool:
+        return self._value != other
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def __str__(self) -> str:
+        return "Signals." + self._name
+
+    def __repr__(self) -> str:
+        return "<Signals." + self._name + ": " + str(self._value) + ">"
+
+
+def _signum(signalnum, where: Literal[str]) -> int:
+    # An int or a Signals, as what takes a signal number in CPython takes.
+    if isinstance(signalnum, int):
+        return signalnum
+    elif isinstance(signalnum, Signals):
+        return signalnum._value
+    else:
+        compile_error(where + ": a signal number is an int or a signal.Signals")
+        return 0
+
+
+SIGHUP = Signals(1)
+SIGINT = Signals(2)
+SIGQUIT = Signals(3)
+SIGKILL = Signals(9)
+SIGUSR1 = Signals(10)
+SIGUSR2 = Signals(12)
+SIGALRM = Signals(14)
+SIGTERM = Signals(15)
+SIGCHLD = Signals(17)
+
+
+@tuple
+class Handlers:
+    _value: int
+
+
+SIG_DFL = Handlers(0)
+SIG_IGN = Handlers(1)
+
+
+class _PreviousHandler:
+    """What signal() returns: CPython's previous handler, of no one type."""
+
+    pass
+
+
+def signal(signalnum, handler) -> _PreviousHandler:
+    number = _signum(signalnum, "signal()")
+    if isinstance(handler, Handlers):
+        pass
+    elif hasattr(handler, "__call__"):
+        handler(number, None)
+    else:
+        compile_error("signal(): the handler is SIG_DFL, SIG_IGN or a function")
+    return _PreviousHandler()

@@ -38,8 +38,8 @@ from __future__ import annotations
 import logging
 import math
 import random
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Optional
 
 from ..trajectory.relative_lane import _centreline, _heading_at
 from .geometry import MapFeatures
@@ -56,6 +56,10 @@ from .model import (
     tristate_holds,
 )
 
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet, LaneletMap
+    from lanelet2.routing import RoutingGraph
+
 __all__ = ["RouteSearchError", "find_route_matches", "junction_turn", "lane_shape"]
 
 logger = logging.getLogger(__name__)
@@ -68,8 +72,16 @@ class RouteSearchError(ValueError):
 class _Exhausted(Exception):
     """The search ran out of steps."""
 
+    def __init__(self) -> None:
+        # Written out: Codon 0.19 raises no exception class without one, and
+        # its Exception takes a message, where Python's takes none.
+        if TYPE_CHECKING:
+            super().__init__("")
+        else:
+            super().__init__()
 
-def junction_turn(features: MapFeatures, way: list[Any]) -> str:
+
+def junction_turn(features: MapFeatures, way: list[ConstLanelet]) -> str:
     """The turn a run of junction lanelets makes.
 
     ``straight`` when every one is tagged straight, else the one non-straight
@@ -98,12 +110,18 @@ class _Search:
     spec: RouteSearchSpec
     features: MapFeatures
     expansions: int = 0
+    # Set by __post_init__; declared, as Codon needs, but no part of what
+    # the dataclass compares or shows.
+    found: dict[tuple[tuple[int, ...], float, float, tuple[int, ...]], RouteMatch] = (
+        field(init=False, repr=False, compare=False)
+    )
+    _junction_ok: dict[
+        tuple[int, tuple[int, ...], Optional[int], Optional[int]], bool
+    ] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self.found: dict[
-            tuple[tuple[int, ...], float, float, tuple[int, ...]], RouteMatch
-        ] = {}
-        self._junction_ok: dict[tuple[Any, ...], bool] = {}
+        self.found = {}
+        self._junction_ok = {}
 
     # -- the walk ------------------------------------------------------------
 
@@ -130,16 +148,17 @@ class _Search:
                     for p in self.features.previous(lanelet)
                 ):
                     continue
-            self._extend([lanelet], 0, [0])
+            start: ConstLanelet = lanelet
+            self._extend([start], 0, [0])
             if stop_after is not None and len(self.found) >= stop_after:
                 return
 
     def _step(self) -> None:
         self.expansions += 1
         if self.expansions > MAX_EXPANSIONS:
-            raise _Exhausted
+            raise _Exhausted()
 
-    def _extend(self, path: list[Any], k: int, starts: list[int]) -> None:
+    def _extend(self, path: list[ConstLanelet], k: int, starts: list[int]) -> None:
         """*path*'s last lanelet has just joined segment *k* (starting at ``starts[k]``)."""
         self._step()
         seg = self.spec.segments[k]
@@ -149,7 +168,7 @@ class _Search:
             assert isinstance(seg, JunctionSegmentSpec)
             self._extend_junction(path, k, starts, seg)
 
-    def _successors(self, path: list[Any]) -> list[Any]:
+    def _successors(self, path: list[ConstLanelet]) -> list[ConstLanelet]:
         on = {int(ll.id) for ll in path}
         return [
             ll
@@ -158,7 +177,7 @@ class _Search:
         ]
 
     def _extend_lane(
-        self, path: list[Any], k: int, starts: list[int], seg: LaneSegmentSpec
+        self, path: list[ConstLanelet], k: int, starts: list[int], seg: LaneSegmentSpec
     ) -> None:
         f = self.features
         last_index = len(self.spec.segments) - 1
@@ -206,7 +225,7 @@ class _Search:
         if fits and openers and self._lane_holds(path, starts, k, seg, None):
             for nxt in openers:
                 path.append(nxt)
-                self._extend(path, k + 1, [*starts, len(path) - 1])
+                self._extend(path, k + 1, starts + [len(path) - 1])
                 path.pop()
         if len(lanelets) < MAX_LANELETS_PER_SEGMENT and (k == 0 or total < limit):
             for nxt in plain:
@@ -214,13 +233,17 @@ class _Search:
                 self._extend(path, k, starts)
                 path.pop()
 
-    def _starts_road(self, lanelet: Any) -> bool:
+    def _starts_road(self, lanelet: ConstLanelet) -> bool:
         """Whether a lane segment cannot be grown back past *lanelet*."""
         f = self.features
         return all(f.is_junction(p) or not f.is_road(p) for p in f.previous(lanelet))
 
     def _extend_junction(
-        self, path: list[Any], k: int, starts: list[int], seg: JunctionSegmentSpec
+        self,
+        path: list[ConstLanelet],
+        k: int,
+        starts: list[int],
+        seg: JunctionSegmentSpec,
     ) -> None:
         f = self.features
         last_index = len(self.spec.segments) - 1
@@ -239,7 +262,7 @@ class _Search:
                 if not self._junction_holds(path, starts, k, seg, nxt):
                     continue
                 path.append(nxt)
-                self._extend(path, k + 1, [*starts, len(path) - 1])
+                self._extend(path, k + 1, starts + [len(path) - 1])
                 path.pop()
         if len(way) < MAX_JUNCTION_LANELETS:
             for nxt in successors:
@@ -250,7 +273,7 @@ class _Search:
 
     # -- segment properties --------------------------------------------------
 
-    def _start_trim(self, path: list[Any], starts: list[int]) -> float:
+    def _start_trim(self, path: list[ConstLanelet], starts: list[int]) -> float:
         """Where on the first lanelet the route starts."""
         first = self.spec.segments[0]
         if not isinstance(first, LaneSegmentSpec) or len(self.spec.segments) == 1:
@@ -261,7 +284,7 @@ class _Search:
 
     def _lane_holds(
         self,
-        path: list[Any],
+        path: list[ConstLanelet],
         starts: list[int],
         k: int,
         seg: LaneSegmentSpec,
@@ -298,17 +321,23 @@ class _Search:
 
     def _junction_holds(
         self,
-        path: list[Any],
+        path: list[ConstLanelet],
         starts: list[int],
         k: int,
         seg: JunctionSegmentSpec,
-        exit_: Any,
+        exit_: Optional[ConstLanelet],
     ) -> bool:
         """Whether junction segment *k*, left onto *exit_*, fits."""
         f = self.features
         end = starts[k + 1] if k + 1 < len(starts) else len(path)
         way = path[starts[k] : end]
-        entry = path[starts[k] - 1] if starts[k] > 0 else f.straightest_previous(way[0])
+        # An if statement: Codon types no conditional expression whose
+        # branches are a lanelet and an Optional of one.
+        entry: Optional[ConstLanelet] = None
+        if starts[k] > 0:
+            entry = path[starts[k] - 1]
+        else:
+            entry = f.straightest_previous(way[0])
         key = (
             k,
             tuple(int(ll.id) for ll in way),
@@ -320,7 +349,11 @@ class _Search:
         return self._junction_ok[key]
 
     def _junction_fits(
-        self, seg: JunctionSegmentSpec, way: list[Any], entry: Any, exit_: Any
+        self,
+        seg: JunctionSegmentSpec,
+        way: list[ConstLanelet],
+        entry: Optional[ConstLanelet],
+        exit_: Optional[ConstLanelet],
     ) -> bool:
         f = self.features
         if seg.turn != "any" and junction_turn(f, way) != seg.turn:
@@ -350,7 +383,9 @@ class _Search:
 
     # -- a match ---------------------------------------------------------------
 
-    def _finish(self, path: list[Any], starts: list[int], end_s: float) -> None:
+    def _finish(
+        self, path: list[ConstLanelet], starts: list[int], end_s: float
+    ) -> None:
         f = self.features
         if len(starts) != len(self.spec.segments):
             return
@@ -402,8 +437,8 @@ class _Search:
 
 def find_route_matches(
     spec: RouteSearchSpec,
-    lanelet_map: Any,
-    routing_graph: Any = None,
+    lanelet_map: LaneletMap,
+    routing_graph: Optional[RoutingGraph] = None,
     *,
     features: Optional[MapFeatures] = None,
 ) -> list[RouteMatch]:
@@ -419,7 +454,10 @@ def find_route_matches(
         from ..sweeper.constraints import create_routing_graph  # noqa: PLC0415
 
         routing_graph = create_routing_graph(lanelet_map)
-    search = _Search(spec, features or MapFeatures(lanelet_map, routing_graph))
+    # An if statement: Codon types no `or` of an Optional and its value.
+    if features is None:
+        features = MapFeatures(lanelet_map, routing_graph)
+    search = _Search(spec, features)
     # Sorted by lanelet ids, the matches from one starting lanelet come before
     # those of any later one: unshuffled, the walk can stop once it has enough.
     stop_after = spec.max_matches if spec.seed is None else None

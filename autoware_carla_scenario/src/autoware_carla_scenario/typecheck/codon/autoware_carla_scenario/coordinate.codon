@@ -6,8 +6,11 @@
 
 import internal.static as static
 import numpy
+from pathlib import Path
 
 import typesafe_carla.carla as carla
+import lanelet2.core
+import lanelet2.routing
 
 from ._tc import _keyword_only
 from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanelet2Pose,
@@ -179,21 +182,26 @@ def to_map_frame(pose) -> BridgePose:
     raise NotImplementedError()
 
 
-def get_stop_line_linestrings(lanelet_id: int):
-    # Returns lanelet2 line strings, which the model does not have.
+def get_stop_line_linestrings(lanelet_id: int) -> List[lanelet2.core.ConstLineString3d]:
     raise NotImplementedError()
 
 
-def get_stop_line_linestrings_with_following(lanelet_id: int, depth: int = 1):
+def get_stop_line_linestrings_with_following(lanelet_id: int, depth: int = 1
+                                             ) -> List[Tuple[int, lanelet2.core.ConstLineString3d]]:
     raise NotImplementedError()
 
 
-# What lane_distance and utils.traffic_light read of the map MapManager has
-# loaded: pyxodr's RoadNetwork and Road, and the lxml elements they hold.
+# What lane_distance, utils.traffic_light and coordinate.transform read of the
+# map MapManager has loaded: pyxodr's RoadNetwork, Road, LaneSection and Lane,
+# and the lxml elements they hold.
 # Neither pyxodr nor lxml compiles with Codon, so only what is read is declared.
 
 
 class _XmlAttributes:
+    # KeyError when absent.
+    def __getitem__(self, key: str) -> str:
+        raise NotImplementedError()
+
     def get(self, key: str) -> Optional[str]:
         raise NotImplementedError()
 
@@ -220,8 +228,46 @@ class _XmlElement:
         raise NotImplementedError()
 
 
+# pyxodr's Lane (pyxodr.road_objects.lane): its id (the XML's, as an int) and
+# its XML element, whose <width> records coordinate.transform evaluates.
+class Lane:
+    lane_xml: _XmlElement
+
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+
+# pyxodr's LaneSection (pyxodr.road_objects.lane_section): its XML element and
+# its lanes, innermost first on each side.
+class LaneSection:
+    lane_section_xml: _XmlElement
+
+    @property
+    def left_lanes(self) -> List[Lane]:
+        raise NotImplementedError()
+
+    @property
+    def right_lanes(self) -> List[Lane]:
+        raise NotImplementedError()
+
+    @property
+    def lanes(self) -> List[Lane]:
+        raise NotImplementedError()
+
+
 class Road:
     road_xml: _XmlElement
+
+    # pyxodr's cached_property: the road's lane sections, in order along it.
+    @property
+    def lane_sections(self) -> List[LaneSection]:
+        raise NotImplementedError()
+
+    # pyxodr's cached_property: the elevation at each reference line point.
+    @property
+    def z_coordinates(self) -> numpy.ndarray[float, 1]:
+        raise NotImplementedError()
 
     # pyxodr's cached_property: the road's reference line, a 2-D array with a
     # row per point along the road (composition.temporary_stop sums its length).
@@ -238,41 +284,8 @@ class RoadNetwork:
     root: _XmlElement
 
 
-# lanelet2's map and routing graph, as MapManager hands them out: opaque here.
-# route.active hands them to RouteFrame (route.codon); composition.temporary_stop
-# walks the routing graph from a lanelet to its neighbours' ids. Only that much
-# of lanelet2's API is declared.
-
-
-# Opaque: a lanelet2.core.Lanelet (or ConstLanelet); only its id is read.
-class _Lanelet2Lanelet:
-    @property
-    def id(self) -> int:
-        raise NotImplementedError()
-
-
-# Opaque: lanelet2.core.LaneletLayer; only indexed by lanelet id.
-class _Lanelet2LaneletLayer:
-    def __getitem__(self, id: int) -> _Lanelet2Lanelet:
-        raise NotImplementedError()
-
-
-# Opaque: lanelet2.core.LaneletMap; only its lanelet layer is read.
-class _Lanelet2Map:
-    @property
-    def laneletLayer(self) -> _Lanelet2LaneletLayer:
-        raise NotImplementedError()
-
-
-# Opaque: lanelet2.routing.RoutingGraph; only previous and following are read.
-class _Lanelet2RoutingGraph:
-    def previous(self, lanelet: _Lanelet2Lanelet, withLaneChanges: bool = False
-                 ) -> List[_Lanelet2Lanelet]:
-        raise NotImplementedError()
-
-    def following(self, lanelet: _Lanelet2Lanelet, withLaneChanges: bool = False
-                  ) -> List[_Lanelet2Lanelet]:
-        raise NotImplementedError()
+# lanelet2's map and routing graph, as MapManager hands them out: lanelet2's
+# own classes, as the lanelet2 model (codon/lanelet2/) declares them.
 
 
 class MapManager:
@@ -280,12 +293,23 @@ class MapManager:
     def get_instance() -> MapManager:
         raise NotImplementedError()
 
-    @property
-    def lanelet_map(self) -> _Lanelet2Map:
+    # A classmethod in Python, as get_instance(): the queue resets the
+    # singleton before it loads a run's maps.
+    @staticmethod
+    def reset() -> None:
+        raise NotImplementedError()
+
+    def initialize(self, xodr_path: Path, lanelet2_path: Path,
+                   carla_world: Optional[carla.World] = None,
+                   projector_type: Optional[str] = None) -> None:
         raise NotImplementedError()
 
     @property
-    def routing_graph(self) -> _Lanelet2RoutingGraph:
+    def lanelet_map(self) -> lanelet2.core.LaneletMap:
+        raise NotImplementedError()
+
+    @property
+    def routing_graph(self) -> lanelet2.routing.RoutingGraph:
         raise NotImplementedError()
 
     @property
@@ -298,4 +322,9 @@ class MapManager:
 
     @property
     def z_offset(self) -> float:
+        raise NotImplementedError()
+
+    # The CARLA map of the world it was initialised with, or None.
+    @property
+    def carla_map(self) -> Optional[carla.Map]:
         raise NotImplementedError()

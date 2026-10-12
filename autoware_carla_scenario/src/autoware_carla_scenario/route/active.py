@@ -13,11 +13,14 @@ read as this one's.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from .model import RouteMatch
 
 if TYPE_CHECKING:
+    from lanelet2.core import LaneletMap
+    from lanelet2.routing import RoutingGraph
+
     from .frame import RouteFrame
 
 __all__ = [
@@ -32,7 +35,9 @@ _FRAME: Optional["RouteFrame"] = None
 
 
 def set_scenario_route(
-    match: RouteMatch, lanelet_map: Any = None, routing_graph: Any = None
+    match: RouteMatch,
+    lanelet_map: Optional[LaneletMap] = None,
+    routing_graph: Optional[RoutingGraph] = None,
 ) -> None:
     """Make *match* the scenario's route.
 

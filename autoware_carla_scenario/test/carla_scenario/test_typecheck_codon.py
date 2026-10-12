@@ -800,6 +800,60 @@ def test_a_scenario_may_use_the_os_and_shutil_shims_and_nothing_beyond_them(
     assert error.path == str(path)
 
 
+def test_a_scenario_may_use_the_subprocess_and_metadata_shims_and_nothing_beyond_them(
+    tmp_path: Path,
+) -> None:
+    # The subprocess and importlib.metadata shims serve the scenario check
+    # too, and a handler of a tuple of exceptions is split for it: a name the
+    # shims do not declare is refused, at its line, past the lines the split
+    # handler's copy adds.
+    setup = (
+        "import subprocess\n"
+        "from importlib import metadata\n"
+        "try:\n"
+        '    done = subprocess.run(["true"], capture_output=True, text=True, timeout=5)\n'
+        '    logger.info("%s %s", done.stdout, metadata.version("autoware-carla-scenario"))\n'
+        "except (OSError, subprocess.SubprocessError) as exc:\n"
+        '    logger.info("%s", str(exc))\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    wrong = 'logger.info("%s", subprocess.check_output(["true"]))'
+    scenario, config, path = _write_case(tmp_path, setup + wrong + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "check_output" in error.message
+    assert error.path == str(path)
+    lines = path.read_text().splitlines()
+    assert error.line == next(i for i, t in enumerate(lines, 1) if wrong in t)
+
+
+def test_a_scenario_may_use_the_signal_and_atexit_shims_and_nothing_beyond_them(
+    tmp_path: Path,
+) -> None:
+    # The signal and atexit shims serve the scenario check too: a scenario may
+    # register a function to run at exit, install a handler and signal a
+    # process, and a name the shims do not declare is refused.
+    setup = (
+        "import atexit\n"
+        "import os\n"
+        "import signal\n"
+        "atexit.register(os.getpid)\n"
+        "signal.signal(signal.SIGUSR1, lambda signum, frame: None)\n"
+        "signal.signal(signal.SIGUSR2, signal.SIG_IGN)\n"
+        'logger.info("%d", signal.SIGTERM)\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    wrong = 'logger.info("%s", str(signal.getsignal(signal.SIGUSR1)))'
+    scenario, config, path = _write_case(tmp_path, setup + wrong + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "getsignal" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, wrong)
+
+
 def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_it(
     tmp_path: Path,
 ) -> None:

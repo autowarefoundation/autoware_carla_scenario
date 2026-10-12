@@ -8,7 +8,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 
 import typesafe_carla.carla as carla
 
@@ -45,7 +45,15 @@ class CarlaServerManager:
         manager.stop()    # no-op if the server was not launched by us
     """
 
-    ENV_VAR: str = "CARLA_EXECUTABLE"
+    ENV_VAR: ClassVar[str] = "CARLA_EXECUTABLE"
+
+    host: str
+    port: int
+    timeout: float
+    extra_args: List[str]
+    reuse_if_running: bool
+    _process: Optional[subprocess.Popen[bytes]]
+    _reused: bool
 
     def __init__(
         self,
@@ -72,10 +80,12 @@ class CarlaServerManager:
         self.host = host
         self.port = port
         self.timeout = timeout
-        self.extra_args: List[str] = extra_args or []
+        self.extra_args = []
+        if extra_args:
+            self.extra_args = extra_args
         self.reuse_if_running = reuse_if_running
-        self._process: Optional[subprocess.Popen[bytes]] = None
-        self._reused: bool = False  # True when we connected to an existing server
+        self._process = None
+        self._reused = False  # True when we connected to an existing server
 
     # ------------------------------------------------------------------
     # Public API

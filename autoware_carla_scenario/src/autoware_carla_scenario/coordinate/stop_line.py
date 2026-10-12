@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 import lanelet2
 
@@ -13,6 +13,9 @@ from ..utils.stop_line import (
 )
 from .map_manager import MapManager
 from .poses import Lanelet2Pose
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLineString3d
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def get_stop_line_linestrings(lanelet_id: int) -> list[Any]:
+def get_stop_line_linestrings(lanelet_id: int) -> list[ConstLineString3d]:
     """Return stop line linestrings for *lanelet_id* in the loaded map.
 
     Requires :class:`MapManager` to be initialised.  Pass a map explicitly to
@@ -38,7 +41,7 @@ def get_stop_line_linestrings(lanelet_id: int) -> list[Any]:
 
 def get_stop_line_linestrings_with_following(
     lanelet_id: int, depth: int = 1
-) -> list[tuple[int, Any]]:
+) -> list[tuple[int, ConstLineString3d]]:
     """Return stop lines for *lanelet_id* and its successors in the loaded map,
     up to *depth* steps of successors.
 
@@ -49,12 +52,12 @@ def get_stop_line_linestrings_with_following(
     )
 
 
-def _linestring_to_pose(ls: object, lanelet_id: int) -> Lanelet2Pose | None:
+def _linestring_to_pose(ls: ConstLineString3d, lanelet_id: int) -> Lanelet2Pose | None:
     """Project a linestring centroid onto a lanelet centerline."""
     mm = MapManager.get_instance()
     lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
 
-    points = list(ls)  # type: ignore[call-overload]
+    points = list(ls)
     if not points:
         return None
 

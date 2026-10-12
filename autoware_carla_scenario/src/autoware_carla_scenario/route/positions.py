@@ -12,7 +12,7 @@ says which, so the action's error names the vertex and the reason.
 from __future__ import annotations
 
 import math
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from ..coordinate.poses import Lanelet2Pose
 from ..trajectory.model import (
@@ -32,6 +32,9 @@ from ..trajectory.relative_lane import (
     shift_lanes,
 )
 from .frame import RouteFrame
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet
 
 __all__ = ["RoutePose", "resolve_route_pose", "route_base_s"]
 
@@ -63,9 +66,20 @@ def route_base_s(
 
 
 def resolve_route_pose(
-    pose: RoutePose, frame: RouteFrame, ego_s: Optional[float] = None
+    pose: Union[
+        RouteLanePose,
+        RouteOppositePose,
+        RouteCrossingPose,
+        RouteCrosswalkPose,
+        RouteRoadsidePose,
+    ],
+    frame: RouteFrame,
+    ego_s: Optional[float] = None,
 ) -> Union[Lanelet2Pose, MapPose]:
     """Where *pose* is on *frame*'s map.
+
+    *pose* is a :data:`RoutePose`, its union spelled out: the static check
+    (docs/typecheck.md) compiles this once for each member.
 
     Raises:
         ValueError: When the map lacks what the pose names, saying what.
@@ -114,7 +128,8 @@ def _opposite(
             f"there is no opposite-direction lane abreast of route s={s:.1f} m "
             f"(lanelet {lanelet_id})"
         )
-    current, _side = found
+    opposite: tuple[ConstLanelet, str] = found
+    current, _side = opposite
     for step in range(1, pose.lane):
         outward = _outward(frame, current, x, y)
         if outward is None:
@@ -122,24 +137,27 @@ def _opposite(
                 f"the opposite road abreast of route s={s:.1f} m has {step} "
                 f"lane(s); there is no lane {pose.lane}"
             )
-        current = outward
+        farther: ConstLanelet = outward
+        current = farther
     on, _t = _arc(current, x, y)
     return Lanelet2Pose(
         lanelet_id=int(current.id), s=on, t=float(pose.offset), heading=_yaw(pose.yaw)
     )
 
 
-def _outward(frame: RouteFrame, lanelet: Any, x: float, y: float) -> Any:
+def _outward(
+    frame: RouteFrame, lanelet: ConstLanelet, x: float, y: float
+) -> Optional[ConstLanelet]:
     """*lanelet*'s same-direction neighbour farther from ``(x, y)``, or ``None``.
 
     The neighbour's lanelet abreast of the point, as *lanelet* is.
     """
-    best: Optional[tuple[float, Any]] = None
+    best: Optional[tuple[float, ConstLanelet]] = None
     for side in ("left", "right"):
-        beside = frame.features.neighbour(lanelet, side)
-        if beside is None:
+        neighbour = frame.features.neighbour(lanelet, side)
+        if neighbour is None:
             continue
-        beside = frame.features.abreast(beside, x, y)
+        beside = frame.features.abreast(neighbour, x, y)
         s, _t = _arc(beside, x, y)
         bx, by = _point_at(_centreline(beside), s)
         own_s, _ = _arc(lanelet, x, y)
@@ -148,7 +166,9 @@ def _outward(frame: RouteFrame, lanelet: Any, x: float, y: float) -> Any:
             gap = math.hypot(bx - x, by - y)
             if best is None or gap < best[0]:
                 best = (gap, beside)
-    return None if best is None else best[1]
+    if best is None:
+        return None
+    return best[1]
 
 
 def _crossing(pose: RouteCrossingPose, frame: RouteFrame) -> Lanelet2Pose:

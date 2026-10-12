@@ -50,6 +50,9 @@ _SCP_URL_PATTERN = re.compile(r"^(?:ssh://)?git@([^:/]+)[:/](.+?)(?:\.git)?/?$")
 class PinResolutionError(RuntimeError):
     """Raised when no immutable pin for the framework can be determined."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class Pin:
@@ -167,9 +170,13 @@ def framework_source_root() -> Path:
     installed wheel it is the ``site-packages`` directory, which has no
     ``pyproject.toml`` and therefore fails the git probe -- exactly as intended.
     """
-    import autoware_carla_scenario  # noqa: PLC0415
-
-    module_file = getattr(autoware_carla_scenario, "__file__", None)
+    # What getattr(autoware_carla_scenario, "__file__", None) reads: a
+    # package without the attribute (ImportError here) or with it None (a
+    # namespace package) has no source file to start from.
+    try:
+        from .. import __file__ as module_file  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - a loader that sets no __file__
+        return Path.cwd()
     if module_file is None:  # pragma: no cover - namespace package edge case
         return Path.cwd()
     # <root>/src/autoware_carla_scenario/__init__.py -> <root>
@@ -231,7 +238,7 @@ def _resolve_git_pin(source_root: Path) -> Optional[Pin]:
         kind="git",
         repository=normalize_repository_url(repository),
         commit=commit,
-        subdirectory=subdirectory or None,
+        subdirectory=subdirectory if subdirectory else None,
         version=_installed_version(),
         warnings=tuple(warnings),
     )
@@ -267,10 +274,12 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
             kind="path",
             path=str(source_root),
             version=_installed_version(),
-            warnings=(
-                "Development export: the package depends on the local path "
-                f"{source_root}, so it will not resolve on another machine. "
-                "Re-export without development mode before sharing it.",
+            warnings=tuple(
+                [
+                    "Development export: the package depends on the local path "
+                    f"{source_root}, so it will not resolve on another machine. "
+                    "Re-export without development mode before sharing it."
+                ]
             ),
         )
 

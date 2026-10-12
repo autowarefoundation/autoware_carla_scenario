@@ -219,10 +219,11 @@ def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
 )
 def test_a_re_exported_module_has_a_model_of_its_own(module: str, sibling: str) -> None:
     # The checked autoware_bridge and driver packages re-export a class of a
-    # module that is not checked (grpc), and the checked AutowareEgoEntity
-    # takes an AutowareLauncher (subprocess): each such module has a model of
-    # its own, under a package directory of the model, and its package and
-    # the package's other modules have none.
+    # module that is not checked (grpc), and a scenario's AutowareEgoEntity
+    # takes an AutowareLauncher (whose module the library check compiles from
+    # its source): each such module has a model of its own, under a package
+    # directory of the model, and its package and the package's other modules
+    # have none.
     assert _model_module(f"{_PACKAGE}.{module}") == f"{_PACKAGE}.{module}"
     assert _model_module(f"{_PACKAGE}.{module.split('.')[0]}") is None
     assert _model_module(f"{_PACKAGE}.{sibling}") is None
@@ -998,6 +999,53 @@ def test_abc_and_an_uncalled_method_compile(
     assert result.ok, result.format()
 
 
+_ELSE_IMPORT = """
+from __future__ import annotations
+
+import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+else:
+    from tqdm import tqdm
+
+
+def wait(steps: int) -> None:
+    if TYPE_CHECKING:
+        for _ in range(steps):
+            time.sleep(0.1)
+    else:
+        import json  # noqa: PLC0415
+
+        for _ in tqdm(range(steps), desc=json.dumps("wait")):
+            time.sleep(0.1)
+"""
+
+
+@needs_codon
+def test_an_import_in_the_else_branch_of_type_checking_is_not_compiled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon reads TYPE_CHECKING as a compile-time true and compiles only the
+    # first branch, so what the `else` branch imports needs no model (#126).
+    result = _check_case(_ELSE_IMPORT, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+def test_an_import_in_the_first_branch_of_type_checking_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    swapped = _ELSE_IMPORT.replace(
+        "    pass\nelse:\n    from tqdm import tqdm",
+        "    from tqdm import tqdm\nelse:\n    pass",
+    )
+    assert swapped != _ELSE_IMPORT
+    result = _check_case(swapped, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "tqdm has no Codon model" in result.diagnostics[0].message
+
+
 # ---------------------------------------------------------------------------
 # What the traffic backends need (#79)
 # ---------------------------------------------------------------------------
@@ -1414,6 +1462,38 @@ def test_the_file_system_shims_refuse_what_cpython_refuses(
     assert located[0].line == line, result.format()
 
 
+_STEM = """
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def numbered(path: Path, counter: int) -> Path:
+    return path.with_name(f"{path.stem}_{counter}{path.suffix}")
+"""
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        ("", ""),
+        # A property in CPython, and with_name() takes the name: each is a
+        # TypeError in CPython 3.10.
+        ("{path.stem}", "{path.stem()}"),
+        ("path.with_name(f", "path.with_name(1, f"),
+    ],
+    ids=["right", "stem-is-a-property", "with-name-takes-one-name"],
+)
+def test_the_pathlib_shim_has_the_stem_and_with_name(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # scenario_runner numbers a run's video after the file it would replace (#126).
+    source = _STEM.replace(right, wrong, 1) if right else _STEM
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok is (not right), result.format()
+
+
 # ---------------------------------------------------------------------------
 # The os and shutil shims, dict.get(key), and the missing exceptions (#117)
 # ---------------------------------------------------------------------------
@@ -1570,3 +1650,488 @@ def test_what_shutil_returns_for_a_path_is_only_a_path(
     result = _check_case(wrong, tmp_path, monkeypatch)
     assert not result.ok
     assert "name" in result.format()
+
+
+# ---------------------------------------------------------------------------
+# The subprocess and importlib.metadata shims, str.removesuffix(), a typed
+# *args and except (A, B) (#118)
+# ---------------------------------------------------------------------------
+
+
+_SUBPROCESS = """
+from __future__ import annotations
+
+import subprocess
+from importlib import metadata
+from pathlib import Path
+from typing import Optional
+
+
+def installed(name: str) -> Optional[str]:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError as exc:
+        return str(exc)
+
+
+def git(repo: Path, *args: str) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            cwd=repo,
+            env={"LANG": "C"},
+            check=False,
+        )
+        done = subprocess.run(["git"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or done.stderr is None:
+        return None
+    return f"{result.stdout} {done.args[0]}".strip()
+
+
+def url(text: str, repo: Path, base: Path) -> str:
+    inside = repo.relative_to(base).as_posix()
+    return text.removesuffix(".git").removeprefix("git+") + inside + str(Path.cwd())
+
+
+def spawn(repo: Path) -> int:
+    process: subprocess.Popen[bytes] = subprocess.Popen(
+        ["sleep", "1"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        cwd=str(repo),
+        start_new_session=True,
+    )
+    if process.poll() is None:
+        process.terminate()
+    return process.wait(timeout=5.0)
+
+
+def checked() -> subprocess.CompletedProcess[str]:
+    done = subprocess.CompletedProcess[str](["true"], 0, "out", None)
+    try:
+        done.check_returncode()
+    except subprocess.CalledProcessError as exc:
+        raise subprocess.TimeoutExpired(exc.cmd, 1, output=exc.stdout)
+    return done
+"""
+
+
+@needs_codon
+def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "subprocess.codon").is_file()
+    assert (model_dir() / "importlib" / "metadata.codon").is_file()
+    result = _check_case(_SUBPROCESS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython 3.10, the oldest
+        # Python the package supports (process_group is 3.11's, walk_up
+        # 3.12's), but relative-to-parts, which 3.10 takes and 3.14 refuses,
+        # and split-handler-body, a body of the wrong type in the
+        # handler `except (A, B):` becomes two of. The ones after that handler
+        # are located past the lines its copy adds.
+        ("metadata.version(name)", "metadata.version(distribution=name)"),
+        ("metadata.version(name)", 'metadata.version(name, "x")'),
+        ('["git"], capture_output=True', '["git"], capture_outputs=True'),
+        (
+            '["git"], capture_output=True',
+            '["git"], process_group=0, capture_output=True',
+        ),
+        ("        return None\n    if result", "        return 1\n    if result"),
+        ("done.stderr is None", "done.output is None"),
+        ('text.removesuffix(".git")', 'text.removesuffix(suffix=".git")'),
+        ("repo.relative_to(base)", "repo.relative_to(base, walk_up=True)"),
+        ("repo.relative_to(base)", 'repo.relative_to(base, "x")'),
+        ("repo.relative_to(base)", "repo.relative_to(other=base)"),
+        ("str(Path.cwd())", "str(Path.cwd(repo))"),
+        ("process.wait(timeout=5.0)", "process.wait(5.0, 1)"),
+        ("subprocess.TimeoutExpired(exc.cmd, 1,", "subprocess.TimeoutExpired(exc.cmd,"),
+    ],
+    ids=[
+        "version-keyword",
+        "version-arguments",
+        "run-unknown-keyword",
+        "run-process-group",
+        "split-handler-body",
+        "completed-has-no-output",
+        "removesuffix-positional-only",
+        "relative-to-walk-up",
+        "relative-to-parts",
+        "relative-to-keyword",
+        "cwd-arguments",
+        "wait-arguments",
+        "timeout-expired-arguments",
+    ],
+)
+def test_the_subprocess_and_metadata_shims_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _SUBPROCESS.replace(right, wrong, 1)
+    assert source != _SUBPROCESS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    first = wrong.splitlines()[0]
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if first in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+def test_a_typed_star_args_is_called_with_one_value() -> None:
+    checks = render_library_checks(
+        ast.parse(
+            "def git(repo: Path, *args: str, timeout: int) -> None: ...\n"
+            "def log(*values: object) -> None: ...\n"
+            "def anything(*values) -> None: ...\n"
+            "class Context:\n"
+            "    def __exit__(self, *args: object) -> None: ...\n"
+        )
+    )
+    calls = checks.source.splitlines()
+    assert (
+        "    git(_acs_value(Path), _acs_value(str), timeout=_acs_value(int))" in calls
+    )
+    assert "    log()" in calls
+    assert "    anything()" in calls
+    assert "    _acs_value(Context).__exit__()" in calls
+    assert not checks.problems
+
+
+# ---------------------------------------------------------------------------
+# The signal and atexit shims, a Popen's pipes, and the dotenv, ffmpeg and
+# carla_install models (#119)
+# ---------------------------------------------------------------------------
+
+
+_PROCESS_SIGNALS = """
+from __future__ import annotations
+
+import atexit
+import os
+import signal
+import subprocess
+from pathlib import Path
+from typing import Any, Optional
+
+import ffmpeg
+import numpy as np
+from dotenv import load_dotenv
+
+from .carla_install import installed_executable
+
+
+class Recorder:
+    _process: Optional[subprocess.Popen[bytes]]
+
+    def __init__(self) -> None:
+        self._process = None
+
+    def start(self, size: str) -> None:
+        load_dotenv(override=False)
+        load_dotenv(Path(".env"), None, True)
+        self._process = (
+            ffmpeg.input("pipe:", format="rawvideo", s=size, r=20.0)
+            .output("out.mp4", vcodec="libx264", crf=23)
+            .overwrite_output()
+            .run_async(pipe_stdin=True, pipe_stderr=True)
+        )
+        atexit.register(self.stop)
+        atexit.register(self.finish, 3, reason="exit")
+        signal.signal(signal.SIGTERM, self._on_signal)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    def _on_signal(self, signum: int, frame: Any) -> None:
+        self.stop()
+
+    def finish(self, code: int, reason: str = "") -> None:
+        self.stop()
+
+    def write(self) -> int:
+        bgr = np.zeros((2, 2, 3), dtype=np.uint8)
+        if self._process is None or self._process.stdin is None:
+            return 0
+        return self._process.stdin.write(bgr.data) + self._process.stdin.write(b"raw")
+
+    def stop(self) -> None:
+        if self._process is not None:
+            if self._process.stdin is not None:
+                self._process.stdin.close()
+            self._process.wait()
+            if self._process.stderr is not None:
+                logged: str = self._process.stderr.read()
+            os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+            atexit.unregister(self.stop)
+            self._process = None
+
+
+def launcher() -> Optional[Path]:
+    return installed_executable()
+"""
+
+
+@needs_codon
+def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for shim in ("signal.codon", "atexit.codon", "dotenv", "ffmpeg"):
+        assert (model_dir() / shim).exists(), shim
+    result = _check_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "at"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # with the installed python-dotenv and ffmpeg-python: a TypeError, an
+        # AttributeError or ffmpeg-python's ValueError when it is called, but
+        # handler-arity and register-arguments, which CPython takes and fails
+        # on later, with a TypeError when the signal arrives and one it
+        # reports at exit. Codon reports a method a stream of the chain lacks,
+        # and an error inside one, at the chain's first line (`at`).
+        ("signal.SIG_IGN)", "5)", "signal.SIGINT, 5)"),
+        ("signal.SIGKILL)", "signal.SIGKILLED)", None),
+        ("signal.SIGTERM, self._on_signal)", "signal.SIGTERM, self.stop)", None),
+        ("atexit.register(self.stop)", "atexit.register(func=self.stop)", None),
+        ('3, reason="exit")', '3, why="exit")', None),
+        ("atexit.unregister(self.stop)", "atexit.unregister(func=self.stop)", None),
+        ("load_dotenv(override=False)", "load_dotenv(overwrite=False)", None),
+        (
+            '            .output("out.mp4", vcodec="libx264", crf=23)\n',
+            "",
+            "ffmpeg.input(",
+        ),
+        ('.output("out.mp4",', '.output(Path("out.mp4"),', "ffmpeg.input("),
+        ("run_async(pipe_stdin=True,", "run_async(pipe_input=True,", None),
+        ("stdin.write(bgr.data)", "stdin.write(bgr.size)", None),
+        ("installed_executable()", "installed_executable(True)", None),
+    ],
+    ids=[
+        "signal-int-handler",
+        "signal-unknown-number",
+        "handler-arity",
+        "register-keyword",
+        "register-arguments",
+        "unregister-keyword",
+        "dotenv-keyword",
+        "input-has-no-overwrite-output",
+        "output-file-name-str",
+        "run-async-keyword",
+        "write-bytes-like",
+        "installed-executable-arguments",
+    ],
+)
+def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_refuses(
+    right: str,
+    wrong: str,
+    at: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _PROCESS_SIGNALS.replace(right, wrong, 1)
+    assert source != _PROCESS_SIGNALS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    needle = at if at is not None else wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if needle in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+# ---------------------------------------------------------------------------
+# The shlex and sys shims, signal.Signals, a file object (Path.open(), a
+# Popen stream) and the symlink queries (#127)
+# ---------------------------------------------------------------------------
+
+
+_STACK = """
+from __future__ import annotations
+
+import os
+import shlex
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import IO, Optional
+
+
+def command(root: str, args: list[str]) -> str:
+    argv = ["python3", "-m", "x y", *args]
+    return shlex.quote(root) + " " + shlex.join(argv)
+
+
+def interpreter() -> list[str]:
+    if sys.platform != "linux":
+        return list(sys.argv)
+    return [sys.executable, "-c", "pass"]
+
+
+def stop(pid: int, sig: signal.Signals) -> str:
+    try:
+        os.killpg(pid, sig)
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    signals = [sig, signal.SIGTERM, signal.Signals(9)]
+    name = signals[0].name
+    return f"{name} {int(signal.SIGINT)} {signal.SIGINT == 2}"
+
+
+def link(directory: Path, target: Path) -> Path:
+    path = directory / "link"
+    if path.is_symlink() or path.exists():
+        path.unlink()
+    path.symlink_to(target, target_is_directory=True)
+    return path
+
+
+def opened(directory: Path) -> IO[bytes]:
+    return (directory / "x.log").open("ab")
+
+
+def logged(directory: Path) -> Optional[int]:
+    log = opened(directory)
+    log.write(b"start\\n")
+    process: subprocess.Popen[bytes] = subprocess.Popen(
+        ["true"], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
+    )
+    code = process.wait()
+    process.send_signal(signal.SIGTERM)
+    log.close()
+    return code
+"""
+
+
+@needs_codon
+def test_a_checked_module_has_its_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Python sets a module's __file__, which Codon does not: the library check
+    # gives each checked module its source's path.
+    source = """
+    from __future__ import annotations
+
+    from pathlib import Path
+
+    from .entity_role import __file__ as role_file
+
+
+    def directory() -> Path:
+        return Path(role_file).resolve().parent
+    """
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+def _top_level_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+@needs_codon
+def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
+    # The shim replaces the sys module Codon ships, which Codon's own modules
+    # (time, random, itertools) and typesafe_carla's library import: it
+    # declares every name Codon's does.
+    tc = available_toolchain()
+    assert tc is not None
+    codon_sys = tc.codon_dir / "lib" / "codon" / "stdlib" / "sys.codon"
+    if not codon_sys.is_file():
+        pytest.skip("this Codon ships no stdlib/sys.codon")
+    shim = _top_level_names(model_dir() / "sys.codon")
+    assert _top_level_names(codon_sys) <= shim
+    assert {"platform", "executable"} <= shim
+
+
+@needs_codon
+def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for shim in ("shlex.codon", "sys.codon", "signal.codon", "typing.codon"):
+        assert (model_dir() / shim).is_file(), shim
+    result = _check_case(_STACK, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "at"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.13 when it is called: a TypeError, an AttributeError, or the
+        # ValueError of a Signals looked up by anything but its number. Codon
+        # reports a bad argument of a call written over several lines at the
+        # call's first line (`at`).
+        ("shlex.quote(root)", "shlex.quote(len(root))", None),
+        ("shlex.join(argv)", "shlex.join([len(root)])", None),
+        ('sys.platform != "linux"', 'sys.platfrom != "linux"', None),
+        ("signals[0].name", "signals[0].label", None),
+        ("os.killpg(pid, sig)", "os.killpg(pid, sig.name)", None),
+        ("signal.Signals(9)", 'signal.Signals("SIGKILL")', None),
+        ("target_is_directory=True)", "target_is_dir=True)", None),
+        ("path.is_symlink()", "path.is_symlink(True)", None),
+        ('.open("ab")', '.open("ab", buffer=0)', None),
+        ('log.write(b"start\\n")', 'log.write(len(b"start\\n"))', None),
+        ("stdout=log,", 'stdout="x.log",', "subprocess.Popen("),
+    ],
+    ids=[
+        "quote-str",
+        "join-str",
+        "sys-unknown-name",
+        "signal-unknown-attribute",
+        "killpg-signal-number",
+        "signals-by-number",
+        "symlink-to-keyword",
+        "is-symlink-arguments",
+        "open-keyword",
+        "write-bytes",
+        "popen-stream-file",
+    ],
+)
+def test_the_shlex_sys_signal_and_file_shims_refuse_what_cpython_refuses(
+    right: str,
+    wrong: str,
+    at: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _STACK.replace(right, wrong, 1)
+    assert source != _STACK
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    needle = at if at is not None else wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if needle in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()

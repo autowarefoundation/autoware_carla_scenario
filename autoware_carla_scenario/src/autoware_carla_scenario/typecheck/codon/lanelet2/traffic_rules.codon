@@ -1,0 +1,25 @@
+# Model of lanelet2.traffic_rules, for the checker (docs/typecheck.md): the
+# traffic rules a routing graph is built with. The locations and participants
+# are strings in Python ("de", "vehicle"), and so here; the rules' own queries
+# are not declared.
+
+
+class Locations:
+    Germany: ClassVar[str] = "de"
+
+
+class Participants:
+    Vehicle: ClassVar[str] = "vehicle"
+    VehicleCar: ClassVar[str] = "vehicle:car"
+    VehicleBus: ClassVar[str] = "vehicle:bus"
+    VehicleTruck: ClassVar[str] = "vehicle:truck"
+    Pedestrian: ClassVar[str] = "pedestrian"
+    Bicycle: ClassVar[str] = "bicycle"
+
+
+class TrafficRules:
+    pass
+
+
+def create(location: str, participant: str) -> TrafficRules:
+    raise NotImplementedError()
