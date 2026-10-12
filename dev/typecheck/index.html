@@ -2078,8 +2078,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 127 of
-the package's 225 modules (56%; about 25,400 of 69,200 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 129 of
+the package's 228 modules (57%; about 25,600 of 64,600 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -2093,23 +2093,26 @@ the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (<code>maps.resolver</code>, with the repository listing
 of <code>maps.catalogue</code>, the <code>map</code> config's paths of <code>maps.config</code> and the
-OpenDRIVE taken from CARLA by <code>maps.opendrive</code>), the Autoware
+OpenDRIVE taken from CARLA by <code>maps.opendrive</code>), what an exported scenario
+package pins the framework to and how it runs <code>uv</code> (<code>authoring.framework_pin</code>,
+<code>authoring.uv_tool</code>), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), the camera
+unit names (<code>odd.unit_names</code>), the CARLA-only helpers, the traffic-light
+lookups included, and the scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), the camera
 and LiDAR sensors (<code>sensor</code>), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (<code>driver.base</code>, <code>driver.control</code>, <code>driver.observation</code>, over
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>entity</code>, <code>driver</code> and <code>maps</code>
 packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 63
+below). 64
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
 match from YAML values of any type (<code>Range.parse()</code>, <code>parse_route_search()</code>,
 <code>RouteMatch.from_config()</code>) and what lays a route on a lanelet2 map handed
-over as <code>Any</code> (<code>set_scenario_route()</code>), the six members of
+over as <code>Any</code> (<code>set_scenario_route()</code>), the <code>[tool.uv.sources]</code> entry of a
+framework pin, a dict of str and bool values (<code>Pin.uv_source()</code>), the six members of
 <code>BaseScenario</code> built on the ego's class (<code>ego_type</code>, a <code>type[EgoVehicle]</code>:
 the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
 <code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
@@ -2120,20 +2123,23 @@ unchecked <code>trajectory.resolve</code> (<code>follow_trajectory._resolve_in_w
 the authoring package's pydantic specs, <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 98 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-42 build on an excluded module and 28 hold values Codon has no type for), so
+<code>encode_frame_jpeg()</code> (cv2). The 99 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (74 import what Codon cannot compile,
+43 build on an excluded module and 28 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>72 import what Codon cannot compile</strong>: lanelet2, pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
-  lacks (<code>json</code>, <code>subprocess</code>, <code>importlib</code>, <code>inspect</code>, or more of <code>pathlib</code>
-  or <code>shutil</code> than their shims declare), at module level or inside a function the check
-  calls. This is
+<li><strong>74 import what Codon cannot compile</strong>: lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
+  a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
+  beyond <code>importlib.metadata</code>, or more of <code>pathlib</code>, <code>shutil</code>,
+  <code>subprocess</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
+  declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue) and
-  everything that reads Lanelet2. A reason names <code>pathlib</code> only where the
-  module uses more of it than the shim declares, and <code>shutil</code> likewise.</li>
+  map cache, the Autoware launcher, the scenario runner and queue, the
+  record of a run's environment), the ODD and coverage modules that wrap
+  openodd, and everything that reads Lanelet2. A reason names <code>pathlib</code>
+  only where the module uses more of it than the shim declares, and the
+  other shimmed modules likewise.</li>
 <li><strong>22 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
@@ -2141,11 +2147,12 @@ each is counted once, in the first group that fits it:</p>
   <code>coverage</code>, <code>autoware_stack</code>, <code>examples</code>, <code>scaffold</code>), the
   authoring compiler, builders and validator, the route frame, poses and search
   (<code>route.frame</code>, <code>route.positions</code>, <code>route.search</code>, through lanelet2),
-  <code>odd.model</code> (over <code>coverage.items</code>), <code>trajectory.resolve</code> and
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 10 of the 22
+  <code>trajectory.resolve</code> and
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader), and <code>ui.runner</code>
+  (over <code>ui.models</code>); 9 of the 22
   also hold values Codon has no type for.</li>
-<li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
-  <code>Any</code> (<code>coverage.items</code>, <code>trajectory.authoring</code>, <code>authoring.registry</code>'s
+<li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
+  <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
   field defaults) or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>
   and <code>traffic.sumo.config</code> import only in their uncalled <code>from_mapping()</code>).</li>
 </ul>
@@ -2175,6 +2182,9 @@ it is called with the class itself. A <code>Callable</code> whose argument and r
 types Codon can express (<code>Callable[[carla.World], Optional[float]]</code>, a
 dataclass field too) is called with a value of Codon's <code>Callable</code> type, which
 a function of that signature converts to.</p>
+<p>A <code>*args: T</code> is given one <code>T</code> (<code>run_uv(cwd, *args: str, ...)</code> is called
+with one <code>str</code>), so the body is compiled for it; one with no annotation, or
+of <code>object</code> or <code>Any</code> (<code>__exit__(self, *args: object)</code>), is given nothing.</p>
 <p>A method with keyword-only parameters or <code>**kwargs</code> is called through its
 class (<code>TrafficBackend.start(_acs_value(TrafficBackend), ...,
 skip_actor_ids=...)</code>): Codon 0.19 calls a method a subclass may override
@@ -2283,22 +2293,26 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 <li><strong>A dict of values of different types</strong> (<code>{"at": None, "around": None}</code>
   read back as a tuple and a list) becomes a small class with one declared
   attribute per key.</li>
-<li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>importlib</code>,
+<li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>tempfile</code>,
   ...) are not available to a checked module; the <code>typing</code>,
   <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code>, <code>queue</code>, <code>pathlib</code>, <code>hashlib</code>,
-  <code>os</code>, <code>shutil</code>, <code>urllib.parse</code> and <code>__future__</code> shims of <code>codon/</code> are. Each takes the
+  <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>importlib.metadata</code>, <code>urllib.parse</code> and
+  <code>__future__</code> shims of <code>codon/</code> are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. <code>pathlib</code> declares <code>Path(*parts)</code>,
   <code>/</code>, <code>str()</code>, <code>==</code>, <code>hash()</code>, <code>expanduser()</code>, <code>resolve()</code> and
-  <code>Path.home()</code>; like Python's, it builds and joins a <code>Path</code> with a <code>str</code> or
+  <code>Path.home()</code> and <code>Path.cwd()</code>; like Python's, it builds and joins a <code>Path</code> with a <code>str</code> or
   an <code>os.PathLike</code> only (a <code>Path</code>, or what <code>shutil.copy2()</code> returns for one;
   an <code>Optional</code> of one is unwrapped, as Codon unwraps one passed anywhere). It declares the file-system queries too: <code>exists()</code>,
   <code>is_file()</code>, <code>is_dir()</code>, <code>glob(pattern)</code> and <code>absolute()</code>, with Python
   3.10's signatures (3.12 and 3.13 added the keyword-only <code>follow_symlinks</code>,
   <code>case_sensitive</code> and <code>recurse_symlinks</code>, which are refused), and <code>name</code>,
   <code>suffix</code>, <code>parent</code>, <code>parents</code> (indexed, iterated, <code>len()</code> and <code>in</code>; not
-  sliced) and the ordering of two <code>Path</code>s, so <code>sorted()</code> takes them. Nothing
+  sliced), <code>as_posix()</code>, <code>relative_to(other)</code> (one path, by position:
+  Python 3.10 also joins more parts, but 3.14 refuses them, so the check
+  does too; 3.12's <code>walk_up</code> is refused) and the ordering of two <code>Path</code>s, so
+  <code>sorted()</code> takes them. Nothing
   touches the file system: a query is <code>False</code> and a glob yields nothing.
   Of what writes, <code>mkdir(mode=0o777, parents=False, exist_ok=False)</code> and
   <code>write_text(data, encoding=None, errors=None, newline=None)</code> are declared
@@ -2321,7 +2335,36 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   follow_symlinks=True)</code>, <code>move(src, dst)</code>, <code>rmtree(path,
   ignore_errors=False)</code> and <code>which(cmd, mode=1, path=None)</code> of a <code>str</code>
   command; the callables CPython also takes (<code>onerror</code>, <code>copy_function</code>)
-  are not declared. <code>copy2()</code> and <code>move()</code> return a <code>str</code> for a <code>str</code>
+  are not declared. <code>subprocess</code> declares <code>run(args, *, input=None,
+  capture_output=False, timeout=None, check=False, ...)</code> and <code>Popen(args,
+  *, ...)</code> with the keywords of CPython's <code>Popen</code> the framework passes
+  (<code>stdin</code>, <code>stdout</code>, <code>stderr</code>, <code>cwd</code>, <code>env</code>, <code>text</code>, <code>encoding</code>, <code>errors</code>,
+  <code>start_new_session</code>), <code>CompletedProcess(args, returncode, stdout=None,
+  stderr=None)</code> and its <code>check_returncode()</code>, <code>Popen</code>'s <code>poll()</code>, <code>wait()</code>,
+  <code>communicate()</code>, <code>send_signal()</code>, <code>terminate()</code>, <code>kill()</code>, <code>pid</code>,
+  <code>returncode</code> and standard streams, <code>PIPE</code>, <code>STDOUT</code>, <code>DEVNULL</code>, and
+  <code>SubprocessError</code>, <code>CalledProcessError(returncode, cmd, output=None,
+  stderr=None)</code> and <code>TimeoutExpired(cmd, timeout, output=None,
+  stderr=None)</code>. The command is a list of <code>str</code>, a working directory a
+  <code>str</code> or an <code>os.PathLike</code>, a stream <code>None</code>, one of the constants or a file
+  descriptor, an environment a <code>dict</code> of <code>str</code>, a timeout a number of
+  seconds or <code>None</code>. What CPython also takes is refused: a <code>str</code> command,
+  <code>shell=True</code> and the other keywords, a file object for a stream,
+  <code>os.environ</code> itself as the environment (pass <code>os.environ.copy()</code>, which
+  is the <code>dict</code> CPython's returns, as <code>authoring.uv_tool</code> does), and
+  arguments after the command by position (<code>run(args, -1)</code>, which run()
+  hands to <code>Popen</code> as <code>bufsize</code>). Since the check reads <code>bytes</code> as <code>str</code>, a
+  process's output is a <code>str</code> with or without <code>text=True</code>, and
+  <code>CompletedProcess[bytes]</code> and <code>Popen[bytes]</code> are <code>[str]</code>; it is <code>None</code>
+  when it was not captured, as in CPython, so <code>stdout</code> and <code>stderr</code> are an
+  <code>Optional</code>. <code>importlib.metadata</code> declares <code>version(distribution_name)</code>
+  and <code>PackageNotFoundError</code>, a <code>ModuleNotFoundError</code> built from the
+  distribution's name; <code>from importlib import metadata</code> and <code>import
+  importlib.metadata</code> compile, and nothing else of <code>importlib</code> does (the
+  package imports its <code>metadata</code>, as Codon 0.19 finds a submodule no other
+  way, so the check also takes <code>importlib.metadata</code> after a bare <code>import
+  importlib</code>, which CPython takes only once something has imported the
+  submodule). <code>copy2()</code> and <code>move()</code> return a <code>str</code> for a <code>str</code>
   destination, as CPython does; for a <code>Path</code> one CPython returns the <code>Path</code>,
   or a <code>str</code> when it names a directory, so the check returns a path that
   <code>str()</code>, <code>os.fspath()</code> and <code>Path()</code> take and nothing else does. Python's
@@ -2343,18 +2386,24 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   it takes <code>hashlib.sha256("text")</code>, which CPython refuses (a <code>str</code> must be
   encoded first). <code>bytes.decode()</code> is not declared, since it would be a
   <code>str</code>'s too and pass <code>"text".decode()</code>; the check refuses
-  <code>data.decode()</code>, which CPython takes. <code>urllib.parse</code>
+  <code>data.decode()</code>, which CPython takes. <code>str.removeprefix(prefix, /)</code> and
+  <code>str.removesuffix(suffix, /)</code> (Python 3.9) are declared too. <code>urllib.parse</code>
   declares <code>urlsplit()</code>, <code>urlunsplit()</code> and <code>SplitResult</code> (its five parts,
   as attributes and as a tuple, <code>hostname</code>, <code>port</code>, <code>username</code>, <code>password</code>
   and <code>geturl()</code>). A scenario sees the same shims: it may import <code>pathlib</code>,
-  <code>hashlib</code>, <code>os</code>, <code>shutil</code> and <code>urllib.parse</code> and call what they declare,
-  file-system queries and the two writes included (<code>Path(...).exists()</code>,
-  <code>Path(...).write_text(...)</code>), read and set the environment
-  (<code>os.environ.get()</code>), copy, move and remove files with <code>shutil</code>, signal a
-  process with <code>os.kill()</code>, and catch the exceptions above. Any other name of
-  them (<code>Path.chmod()</code>, <code>hashlib.md5()</code>, <code>shutil.copytree()</code>,
-  <code>os.listdir()</code>, <code>urllib.request</code>) fails its check wherever Codon compiles
-  it.
+  <code>hashlib</code>, <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>importlib.metadata</code> and
+  <code>urllib.parse</code> and call what they declare, file-system queries and the two
+  writes included (<code>Path(...).exists()</code>, <code>Path(...).write_text(...)</code>), read
+  and set the environment (<code>os.environ.get()</code>), copy, move and remove files
+  with <code>shutil</code>, start and wait for a process with <code>subprocess.run()</code> or
+  <code>subprocess.Popen</code>, signal one with <code>os.kill()</code>, read an installed
+  distribution's version with <code>importlib.metadata.version()</code>, and catch the
+  exceptions above. Any other name of them (<code>Path.chmod()</code>, <code>hashlib.md5()</code>,
+  <code>shutil.copytree()</code>, <code>subprocess.check_output()</code>, <code>os.listdir()</code>,
+  <code>importlib.import_module()</code>, <code>urllib.request</code>) fails its check wherever
+  Codon compiles it. The model's top-level package declares <code>__file__</code> (a
+  <code>str</code>, as CPython sets it on a regular package), which
+  <code>authoring.framework_pin</code> imports (<code>from .. import __file__</code>).
   <code>collections.abc</code> is not: import <code>Sequence</code> and the other
   abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
   Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base, and so is
@@ -2597,9 +2646,17 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (<code>'MapSourceError' object has no attribute '_pytype'</code>), so it takes the
   message and passes it on: <code>def __init__(self, message: str) -&gt; None:
   super().__init__(message)</code> (<code>maps/source.py</code>).
-- <strong>One <code>except</code> clause per exception type</strong>: Codon 0.19 does not take a
-  tuple (<code>except (KeyError, ValueError):</code>). <code>raise X from None</code> is rewritten
-  to <code>raise X</code> by the check; <code>raise X from exc</code> compiles as it is.
+- <strong><code>except (A, B):</code> is split by the check</strong>: Codon 0.19 takes one class
+  per <code>except</code> clause ("expected type expression"), so the check rewrites a
+  tuple written out into one clause per class, in the tuple's order, each
+  with the same body (and the same <code>as</code> name), where the tuple's clause was:
+  Python tries a tuple's classes in order, so the same exceptions reach the
+  same body and the others the clauses after it. The copies are lines the
+  source does not have; an error in one is reported at the line it copies,
+  and the lines after them where they are. A tuple that is not written out
+  (<code>except errors:</code>, <code>except (*errors,):</code>) is left as it is, and Codon
+  refuses it. <code>raise X from None</code> is rewritten to <code>raise X</code> by the check;
+  <code>raise X from exc</code> compiles as it is.
 - <strong><code>frozenset</code> is checked as a <code>set</code></strong>: Codon 0.19 has none, so the check
   rewrites <code>frozenset(...)</code> to <code>set(...)</code> and <code>frozenset[X]</code> /
   <code>FrozenSet[X]</code> to <code>Set[X]</code>; the source keeps its <code>frozenset</code>.
@@ -2607,7 +2664,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>tuple[X, ...]</code> / <code>Tuple[X, ...]</code> becomes <code>List[X]</code>, and <code>tuple(x)</code> of a
   list or a generator becomes a list (a tuple passed to <code>tuple()</code> stays
   itself), so <code>self.vertices = tuple(vertices)</code> compiles; the source keeps
-  its tuple. A parameter <code>tuple[X, ...]</code> is dropped (a caller may pass a
+  its tuple. A dataclass field's <code>field(default=())</code> is an empty <code>List[X]</code>
+  (<code>Pin.warnings</code>); a tuple display (<code>("a",)</code>) stays a fixed-length Codon
+  tuple, which is no <code>List[X]</code>: pass <code>tuple([...])</code> of a list instead. A parameter <code>tuple[X, ...]</code> is dropped (a caller may pass a
   tuple), and the library check calls it with a <code>List[X]</code>.
   <code>Phase.states</code> and <code>SignalController.phases</code> (<code>signals.controller</code>) are
   checked this way. What only a tuple does is not checked: its hash (a
@@ -2845,7 +2904,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 04:02:00 UTC"><span class="timeago" datetime="2026-10-12T04:02:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 04:02:00 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 09:26:33 UTC"><span class="timeago" datetime="2026-10-12T09:26:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 09:26:33 UTC">2026-10-12</span>
   </span>
 
     
