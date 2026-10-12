@@ -11,9 +11,13 @@ attributes are measured and set. Here:
 * **knobs** -- how a run sets an attribute: the weather and the sun, through
   the ``environment`` config, for the built-in probes that read them
   (:data:`DEFAULT_KNOBS`), and a scenario's ``controls`` for the measures its
-  parameters set.
+  parameters set;
+* **where the ego is** -- in the world (the metres a tick stands for in
+  coverage) and on Earth (the positions of an exported COD).
 
-Importing :mod:`autoware_carla_scenario.odd` makes this openodd's default
+:class:`CarlaBackend` derives openodd's :class:`~openodd.Backend` for these;
+everything else -- the model, the reader, coverage, the sampler -- is
+openodd's.  Importing :mod:`autoware_carla_scenario.odd` makes this openodd's default
 backend, so ``openodd.load_odd_binding`` and this package's own read the same.
 """
 
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from openodd import Backend, OddKnob, set_default_backend
@@ -34,6 +39,7 @@ __all__ = [
     "CACHE_ENV",
     "CARLA_BACKEND",
     "DEFAULT_KNOBS",
+    "CarlaBackend",
     "sync_cache_env",
 ]
 
@@ -117,14 +123,33 @@ def _knob_for(attribute: Any, controls: Mapping[str, OddKnob]) -> Optional[OddKn
     return None
 
 
+@dataclass
+class CarlaBackend(Backend):
+    """openodd's backend for a CARLA run (see the module docstring)."""
+
+    name: str = "CARLA"
+    probes: Mapping[str, tuple[Callable[[Any], Any], str]] = field(
+        default_factory=lambda: BUILT_IN_PROBES
+    )
+    readers: Mapping[str, Callable[[str], tuple[Any, str]]] = field(
+        default_factory=lambda: {"measure": _measure}
+    )
+    knobs: Mapping[Any, OddKnob] = field(default_factory=lambda: dict(DEFAULT_KNOBS))
+    knob_for: Optional[Callable[[Any, Mapping[str, OddKnob]], Optional[OddKnob]]] = (
+        _knob_for
+    )
+
+    def position(self, context: Any) -> Optional[tuple[float, float, float]]:
+        """The ego's location in the CARLA world, in metres."""
+        return probes.ego_position(context)
+
+    def geolocation(self, context: Any) -> Optional[tuple[float, float]]:
+        """The ego's latitude and longitude, from the map's geoReference."""
+        return probes.ego_geolocation(context)
+
+
 #: The CARLA backend.
-CARLA_BACKEND = Backend(
-    name="CARLA",
-    probes=BUILT_IN_PROBES,
-    readers={"measure": _measure},
-    knobs=DEFAULT_KNOBS,
-    knob_for=_knob_for,
-)
+CARLA_BACKEND = CarlaBackend()
 
 #: Where this framework's git sources were cached before openodd: honoured
 #: when set (as ``$OPENODD_CACHE``).
