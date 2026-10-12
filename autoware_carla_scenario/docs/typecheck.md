@@ -304,7 +304,7 @@ which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
 `encode_frame_jpeg()` (cv2). The 97 `EXCLUDED` modules fall in
 three groups. Many fit more than one (72 import what Codon cannot compile,
-42 build on an excluded module and 28 hold values Codon has no type for), so
+44 build on an excluded module and 29 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
 - **72 import what Codon cannot compile**: lanelet2, pyxodr,
