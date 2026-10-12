@@ -5,7 +5,7 @@
 #
 # Everything above Thread is Codon's stdlib/threading.codon, Copyright (C)
 # 2022-2025 Exaloop Inc., under the Apache License 2.0
-# (test_typecheck_library.py checks that the shim keeps all of it).
+# (test_typecheck_threading.py checks that the shim keeps all of it).
 #
 # Thread is declared with CPython 3.10's signature, the oldest Python the
 # package supports: Thread(group=None, target=None, name=None, args=(),
