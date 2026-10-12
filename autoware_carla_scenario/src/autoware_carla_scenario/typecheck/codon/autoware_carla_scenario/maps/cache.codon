@@ -1,7 +1,8 @@
 # Model of autoware_carla_scenario.maps.cache (docs/typecheck.md), which
-# imports subprocess, shutil, tempfile and json: what the checked maps.resolver
-# and maps.catalogue use of it, with the signatures of the Python module. Its
-# MapSource is the checked one (_map_source.codon).
+# imports subprocess, tempfile and json: what the checked maps package
+# (maps.resolver, maps.catalogue, and the names the package re-exports) uses
+# of it, with the signatures of the Python module. Its MapSource is the
+# checked one (_map_source.codon).
 
 from pathlib import Path
 
@@ -9,6 +10,15 @@ from .._map_source import MapSource
 from .._tc import _keyword_only
 
 DERIVED_SUBDIR = ".derived"
+
+
+class MapCacheError(Static[RuntimeError]):
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
+def map_root() -> Path:
+    raise NotImplementedError()
 
 
 # A frozen dataclass in Python, so @tuple here: an assignment to a field fails

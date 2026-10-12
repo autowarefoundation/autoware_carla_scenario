@@ -151,3 +151,15 @@ def _required_str(value, where: Literal[str]) -> str:
         return value
     else:
         compile_error(where + " must be a str")
+
+
+@extend
+class Dict:
+    # Python's one-argument dict.get(key, /): the value, or None when the key
+    # is absent. Codon's own takes a default of the value's type, which stays.
+    # The parameter's name is no keyword anyone passes, as CPython takes the
+    # key by position only.
+    def get(self, _acs_key: K) -> Optional[V]:
+        if _acs_key in self:
+            return self[_acs_key]
+        return None
