@@ -1,0 +1,5 @@
+# pyxodr's Road, for the checker (docs/typecheck.md): the class
+# coordinate.codon declares (network.codon says why), so a checked module
+# can name it in an annotation (coordinate/transform.py).
+
+from autoware_carla_scenario.coordinate import Road

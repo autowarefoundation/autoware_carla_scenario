@@ -1,0 +1,11 @@
+# Model of autoware_lanelet2_extension_python.projection, for the checker
+# (docs/typecheck.md): the MGRS projector, which the framework imports so that
+# Autoware's regulatory elements are registered before lanelet2 reads a map.
+# Its projections are not declared.
+
+from lanelet2.io import Origin
+
+
+class MGRSProjector:
+    def __init__(self, origin: Origin):
+        pass

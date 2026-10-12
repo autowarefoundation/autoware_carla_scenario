@@ -113,7 +113,9 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.lane_distance",
     "autoware_carla_scenario.coordinate.poses",
     "autoware_carla_scenario.coordinate.snap",
+    "autoware_carla_scenario.coordinate.stop_line",
     "autoware_carla_scenario.coordinate.traffic_light",
+    "autoware_carla_scenario.coordinate.transform",
     "autoware_carla_scenario.driver",
     "autoware_carla_scenario.driver.base",
     "autoware_carla_scenario.driver.control",
@@ -178,9 +180,11 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.traffic.sumo.physics_control",
     "autoware_carla_scenario.trajectory",
     "autoware_carla_scenario.trajectory.model",
+    "autoware_carla_scenario.trajectory.relative_lane",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.opendrive",
     "autoware_carla_scenario.utils.powertrain",
+    "autoware_carla_scenario.utils.stop_line",
     "autoware_carla_scenario.utils.traffic_light",
     "autoware_carla_scenario.utils.vehicles",
 )
@@ -220,7 +224,7 @@ _YAML = (
 #: imports what Codon has nothing for (``json``) and only that function uses.
 #: Everything else in the module still is.
 UNCALLED: dict[str, str] = {
-    "autoware_carla_scenario.actions.follow_trajectory._resolve_in_world": "resolves the trajectory with trajectory.resolve, imported inside it, which is neither checked nor modelled (lanelet2 through trajectory.relative_lane and route.positions; its callables of a union parameter); FollowTrajectoryAction._resolve calls it in the `else` branch of `if TYPE_CHECKING:` and the check compiles the reference lookup it is handed (_reference_pose) instead",
+    "autoware_carla_scenario.actions.follow_trajectory._resolve_in_world": "resolves the trajectory with trajectory.resolve, imported inside it, which is neither checked nor modelled (lanelet2 through route.positions; its callables of a union parameter); FollowTrajectoryAction._resolve calls it in the `else` branch of `if TYPE_CHECKING:` and the check compiles the reference lookup it is handed (_reference_pose) instead",
     "autoware_carla_scenario.authoring.framework_pin.Pin.uv_source": 'builds the `[tool.uv.sources]` entry, a dict[str, Any] of str and bool values (`{"path": ..., "editable": True}`), which Codon cannot express',
     "autoware_carla_scenario.conditions.action_state.ActionStateCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.and_condition.AndCondition.get_details": _DETAILS,
@@ -317,8 +321,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, json, argparse, urllib.request, http, email, tarfile, platform, and more of shutil than its shim declares (`disk_usage()`)",
     "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2, pathlib, and pyxodr, whose model declares only the road network the framework reads, not how it is loaded; initialize() takes the CARLA world as `Any`",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
-    "autoware_carla_scenario.coordinate.stop_line": "imports lanelet2, and utils.stop_line (lanelet2 objects typed `Any`), which is not checked",
-    "autoware_carla_scenario.coordinate.transform": "imports lanelet2, autoware_lanelet2_extension_python",
     "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which re-export openodd's (a Rust extension)",
     "autoware_carla_scenario.coverage.cod": "re-exports openodd's COD export (a Rust extension)",
     "autoware_carla_scenario.coverage.collector": "derives openodd's collector (a Rust extension)",
@@ -354,9 +356,9 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest and scenario_queue (tqdm, pytest), which is not checked, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
     "autoware_carla_scenario.registry": "imports omegaconf (`DictConfig`, under `TYPE_CHECKING`) and more of importlib.metadata than its shim declares (`entry_points()`); holds scenario classes (`type[BaseScenario]`) and their config classes as values, which Codon cannot hold",
-    "autoware_carla_scenario.route.frame": "imports route.geometry and trajectory.relative_lane, which use lanelet2, and holds lanelet2's map, routing graph and lanelets (`Any`)",
+    "autoware_carla_scenario.route.frame": "imports route.geometry, which uses lanelet2, and holds lanelet2's map, routing graph and lanelets (`Any`)",
     "autoware_carla_scenario.route.geometry": "imports lanelet2, autoware_lanelet2_extension_python",
-    "autoware_carla_scenario.route.positions": "imports trajectory.relative_lane's lanelet2 helpers (`_arc`, `_centreline`, `advance_along_lane`, `shift_lanes`, ...), which the trajectory model does not declare, and route.frame (lanelet2, through route.geometry); walks lanelet2's lanelets (`Any`)",
+    "autoware_carla_scenario.route.positions": "imports route.frame (lanelet2, through route.geometry), which is not checked; walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.route.search": "imports route.geometry (lanelet2), whose MapFeatures the route model does not declare, and sweeper.constraints, which is neither checked nor modelled, and walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",
     "autoware_carla_scenario.scaffold.generator": "imports pathlib, argparse, keyword, and templating (jinja2), which is not checked",
@@ -364,7 +366,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.scenario_runner": "imports json, more of pathlib than its shim declares (`stem`, `with_name()`), coverage.collector (openodd, a Rust extension) and trajectory_recorder (json), which are neither checked nor modelled, odd's resolve_odd() and reset_probes() and, inside a method, odd.route's plan_route_coverage(), which the odd model does not declare, and environment (platform, json) inside it",
     "autoware_carla_scenario.sweeper": "re-exports sweeper.bindings and sweeper.constraints (lanelet2), sweeper.expand (omegaconf), sweeper.lanelet_constraint_sweeper (hydra) and sweeper.map_loader (lanelet2)",
     "autoware_carla_scenario.sweeper.bindings": "imports lanelet2",
-    "autoware_carla_scenario.sweeper.constraints": "evaluates lanelet2's lanelets and map typed `Any` and parses a constraint from a `dict[str, Any]` node, which Codon cannot express; lanelet2 and utils.stop_line, which is not checked, are imported inside the constraints that use them",
+    "autoware_carla_scenario.sweeper.constraints": "evaluates lanelet2's lanelets and map typed `Any` and parses a constraint from a `dict[str, Any]` node, which Codon cannot express; lanelet2 and utils.stop_line are imported inside the constraints that use them",
     "autoware_carla_scenario.sweeper.expand": "imports omegaconf",
     "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper": "imports pathlib, omegaconf, hydra, tqdm, json, signal",
     "autoware_carla_scenario.sweeper.map_loader": "imports lanelet2, pathlib",
@@ -374,8 +376,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.traffic.sumo.backend": "imports pathlib, traci, sumolib, libsumo",
     "autoware_carla_scenario.traffic.sumo.network": "imports pathlib, roadgen, sumo, tempfile",
     "autoware_carla_scenario.trajectory.authoring": "parses document values of `Any` (YAML rows, editor fields) into `dict[str, Any]`, which Codon cannot express",
-    "autoware_carla_scenario.trajectory.relative_lane": "imports lanelet2, autoware_lanelet2_extension_python",
-    "autoware_carla_scenario.trajectory.resolve": "imports trajectory.relative_lane (lanelet2) and route.positions (lanelet2, through route.frame), which are not checked and which the trajectory and route models do not declare, and reads MapManager's lanelet2 map and routing graph; takes and returns callables through aliases Codon reads as no type (`GroundHeight`, `PositionResolver` of a union parameter, `ReferencePose`), built as closures over a dict and a list; `road_height` takes `carla_map: Any`",
+    "autoware_carla_scenario.trajectory.resolve": "imports route.positions (lanelet2, through route.frame), which is not checked and which the route model does not declare, and reads MapManager's lanelet2 map and routing graph; takes and returns callables through aliases Codon reads as no type (`GroundHeight`, `PositionResolver` of a union parameter, `ReferencePose`), built as closures over a dict and a list; `road_height` takes `carla_map: Any`",
     "autoware_carla_scenario.trajectory_recorder": "imports pathlib, json",
     "autoware_carla_scenario.ui": "imports uvicorn and ui.app (fastapi) inside main()",
     "autoware_carla_scenario.ui.app": "imports pathlib, fastapi, json, asyncio, fnmatch",
@@ -384,7 +385,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.scanner": "imports pathlib, yaml, json",
     "autoware_carla_scenario.ui.sweep_resolver": "imports pathlib, omegaconf, hydra",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
-    "autoware_carla_scenario.utils.stop_line": "reads lanelet2's map, regulatory elements and linestrings typed `Any`, which Codon cannot express; lanelet2 is imported inside get_stop_line_linestrings_with_following",
 }
 
 #: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library

@@ -1,0 +1,15 @@
+# Model of lanelet2 (simple-lanelet2's Python API), for the checker
+# (docs/typecheck.md): what the checked framework modules read of a Lanelet2
+# map, and nothing more. Each submodule says what it declares;
+# test_typecheck_lanelet2_model.py checks every declared name against the
+# installed package and calls it on the fixture map.
+#
+# Python's lanelet2 package imports its submodules, so `import lanelet2` then
+# `lanelet2.geometry.to2D(...)` works; the model imports them too (Codon 0.19
+# finds a submodule only when its package imports it).
+
+import lanelet2.core as core
+import lanelet2.geometry as geometry
+import lanelet2.io as io
+import lanelet2.routing as routing
+import lanelet2.traffic_rules as traffic_rules

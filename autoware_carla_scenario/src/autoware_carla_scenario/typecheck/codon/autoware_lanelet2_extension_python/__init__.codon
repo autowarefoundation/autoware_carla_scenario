@@ -1,0 +1,7 @@
+# Model of autoware_lanelet2_extension_python, for the checker
+# (docs/typecheck.md): the MGRS projector (projection.codon) and Autoware's
+# regulatory elements (regulatory_elements.codon). Codon 0.19 finds a
+# submodule only when its package imports it, so this one does.
+
+import autoware_lanelet2_extension_python.projection as projection
+import autoware_lanelet2_extension_python.regulatory_elements as regulatory_elements

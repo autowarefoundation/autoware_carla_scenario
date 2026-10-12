@@ -1,0 +1,4 @@
+# pyxodr's Lane, for the checker (docs/typecheck.md): the class
+# coordinate.codon declares (network.codon says why).
+
+from autoware_carla_scenario.coordinate import Lane
