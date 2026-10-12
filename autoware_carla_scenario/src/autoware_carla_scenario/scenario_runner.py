@@ -14,6 +14,7 @@ import typesafe_carla.carla as carla
 
 if TYPE_CHECKING:
     from .entity.ego import EgoVehicle
+    from .odd.sampler import OddCase
     from .scenario_base import SpectatorCameraConfig
 
 from .camera_recorder import CameraRecorder
@@ -703,7 +704,11 @@ class ScenarioRunner:
     # ------------------------------------------------------------------
 
     def run_scenario(
-        self, scenario: BaseScenario, *, timeout_seconds: float | None = None
+        self,
+        scenario: BaseScenario,
+        *,
+        timeout_seconds: float | None = None,
+        case: OddCase | None = None,
     ) -> ScenarioResult:
         """Execute a single scenario from setup to teardown.
 
@@ -723,6 +728,10 @@ class ScenarioRunner:
             scenario: The scenario to run.
             timeout_seconds: The default timeout for this scenario; the
                 runner's ``timeout_seconds`` when ``None``.
+            case: The case drawn from the ODD that the scenario runs, and the
+                space it was drawn in: recorded in the coverage file with the
+                run's outcome, so that the merged report can assess its
+                flakiness and the next sweep's flaky search learn from it.
 
         Returns:
             The outcome of the scenario execution.
@@ -1154,6 +1163,9 @@ class ScenarioRunner:
             json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
+                if case is not None:
+                    coverage.record_case(*case)
+                coverage.record_outcome(result.passed)
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(

@@ -63,6 +63,7 @@ from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
+from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
     check_odd,
@@ -510,8 +511,12 @@ def run_scenario_with_queue(
     traffic_backend: TrafficBackend | None = None,
     odd: str | None = None,
     autoware_launcher: AutowareLauncher | None = None,
+    case: OddCase | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
+
+    *case* is the case drawn from the ODD that it runs, recorded with its
+    outcome in its coverage file (:meth:`ScenarioRunner.run_scenario`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -542,7 +547,7 @@ def run_scenario_with_queue(
         odd=odd,
         autoware_launcher=autoware_launcher,
     )
-    queue.add(scenario)
+    queue.add(scenario, case=case)
     with queue:
         results = queue.run_all()
     return results[0]
@@ -551,6 +556,13 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def _odd_case(cfg: DictConfig) -> OddCase | None:
+    """The case drawn from the ODD that the config runs (``odd_case``, set by
+    a sweep drawing from it), or ``None``."""
+    value = cfg.get(ODD_CASE_KEY)
+    return None if value is None else decode_case(str(value))
 
 
 def _odd_spec(cfg: DictConfig) -> str | None:
@@ -970,6 +982,7 @@ def run_batch(
         queue.add(
             scenario,
             timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
+            case=_odd_case(cfg),
         )
 
     logger.info("All %d scenario(s) built. Starting execution...", len(labels))
@@ -1201,6 +1214,7 @@ def run_scenario(
         traffic_backend=build_traffic_backend(cfg),
         odd=_odd_spec(cfg),
         autoware_launcher=build_autoware_launcher(cfg),
+        case=_odd_case(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"
