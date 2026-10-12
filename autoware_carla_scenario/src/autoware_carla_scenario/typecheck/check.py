@@ -921,11 +921,16 @@ def _library_files(
             redirected, dropped_decorators=[n for n in uncalled if "." not in n]
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
+        # Python sets a module's `__file__`, which Codon 0.19 does not: a
+        # checked module importing it from another (`from ..autoware_bridge
+        # import __file__`, in bridge_node) finds it here, after the checks so
+        # no line of the module moves.
+        file_global = f"\n__file__: str = {str(module.path)!r}\n"
         files.append(
             _LibraryFile(
                 name,
                 rel,
-                body + checks.source,
+                body + checks.source + file_global,
                 body.count("\n"),
                 checks.labels,
                 origin,

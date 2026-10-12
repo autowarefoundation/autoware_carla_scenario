@@ -51,3 +51,53 @@ def runtime_checkable(cls):
 # the type of its values (typecheck/transform.py), which Codon's own Literal
 # (a compile-time value's type) is not.
 Literal = str
+
+
+# Python's IO[AnyStr], the type of a file object (what Path.open() returns,
+# codon/pathlib.codon): generic in what it reads and writes, `bytes` (read as
+# `str` by the check) or `str`, so IO[bytes] and IO[str] are one type here.
+# Declared are name, mode, closed, close(), fileno(), flush(), read(),
+# readline(), write(), iteration over the lines and `with`, as typing.IO
+# declares them and a file object has them in CPython 3.10; the rest is not.
+# Nothing here runs: nothing is read or written.
+class IO:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
+    name: str
+    mode: str
+
+    def __init__(self, name: str, mode: str):
+        self.name = name
+        self.mode = mode
+
+    @property
+    def closed(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        pass
+
+    def fileno(self) -> int:
+        return -1
+
+    def flush(self) -> None:
+        pass
+
+    def read(self, n: int = -1) -> T:
+        return Ptr[T]()[0]
+
+    def readline(self, limit: int = -1) -> T:
+        return Ptr[T]()[0]
+
+    def write(self, s: T) -> int:
+        return 0
+
+    def __iter__(self) -> Generator[T]:
+        if False:
+            yield Ptr[T]()[0]
+
+    def __enter__(self) -> IO[T]:
+        return self
+
+    def __exit__(self, *args) -> None:
+        pass

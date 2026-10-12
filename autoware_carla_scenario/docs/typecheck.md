@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 131 of
-the package's 228 modules (57%; about 26,100 of 64,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 133 of
+the package's 228 modules (58%; about 26,600 of 64,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -275,6 +275,9 @@ OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the CARLA server manager (`server`) and the camera
 recorder that writes a run's video (`camera_recorder`), the Autoware
+launcher that runs a stack as a process group (`autoware_stack.launcher`)
+and the `scenario_bridge` node's command and Python root beside it
+(`autoware_stack.bridge_node`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
@@ -284,7 +287,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 64
+below). 66
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -299,22 +302,28 @@ the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), what resolves a followed trajectory with the
 unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 `signals.build_controllers()`, which reads
-the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
+the authoring package's pydantic specs, what builds the `scenario_bridge`
+node's command from its ROS parameters (`bridge_ros_args()`,
+`bridge_command()`: a `Mapping[str, Any]` of bool, int, float and str
+values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
+already sealed`, so the checker drops one and the check has nothing to call
+with), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 97 `EXCLUDED` modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-44 build on an excluded module and 29 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 95 `EXCLUDED` modules fall in
+three groups. Many fit more than one (70 import what Codon cannot compile,
+43 build on an excluded module and 27 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **72 import what Codon cannot compile**: lanelet2, pyxodr,
+- **70 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue, the
+  map cache, the Autoware stack's Docker launcher and dev container, the
+  scenario runner and queue, the
   record of a run's environment), the ODD and coverage modules that wrap
   openodd, and everything that reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
@@ -389,11 +398,18 @@ stands in for it in the check's workspace:
   `coordinate.codon`), or, for a module of a package that is itself checked,
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
-  `autoware_stack/launcher.codon`, `maps/cache.codon`), or, for a module of
+  `maps/cache.codon`), or, for a module of
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
+
+Each checked module gets the `__file__` Python sets on it (its source's path,
+a `str`), which Codon 0.19 does not, appended after the calls of the check
+so no line moves: `autoware_stack.bridge_node` finds the installed
+`autoware_bridge` package with `from ..autoware_bridge import __file__`.
+Codon has no module object, so `from .. import autoware_bridge` and
+`autoware_bridge.__file__` do not compile.
 
 Two checked modules that import each other can each need the other's types
 the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
@@ -494,8 +510,9 @@ What Codon 0.19 needs that Python does not, beyond
 - Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `importlib.metadata`,
-  `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
+  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
+  `importlib.metadata`, `urllib.parse` and `__future__` shims of `codon/`
+  are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
@@ -512,10 +529,18 @@ What Codon 0.19 needs that Python does not, beyond
   does too; 3.12's `walk_up` is refused) and the ordering of two `Path`s, so
   `sorted()` takes them. Nothing
   touches the file system: a query is `False` and a glob yields nothing.
-  Of what writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
+  `is_symlink()` takes no argument, as in every supported Python. Of what
+  writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
   `write_text(data, encoding=None, errors=None, newline=None)` are declared
-  (`maps.opendrive` caches what it fetches); `open()`, `chmod()`,
-  `read_text()` and the rest are not. `os` replaces Codon's own (whose
+  (`maps.opendrive` caches what it fetches), and so are `unlink(missing_ok=False)`,
+  `symlink_to(target, target_is_directory=False)` (a target that is a `str` or
+  an `os.PathLike`) and `open(mode="r", buffering=-1, encoding=None,
+  errors=None, newline=None)`, which returns a file object, `typing.IO[str]`
+  whatever the mode, since the check reads `bytes` as `str` (so `IO[bytes]`
+  and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
+  `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
+  `write()` (of a `str`, read as bytes too), iteration over the lines and
+  `with`. `chmod()`, `read_text()` and the rest are not. `os` replaces Codon's own (whose
   `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
   which Codon's runtime and typesafe_carla's library call: `environ` is a
   mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
@@ -524,7 +549,8 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's returns), `getenv(key, default=None)` (a `str` default gives a
   `str`, `None` an `Optional[str]`; a default of another type, which CPython
   takes, is refused), `fspath()`, `getpid()`, `getppid()`, `getpgid(pid)`,
-  `kill(pid, signal, /)`, `killpg(pgid, signal, /)`, `system(command)`,
+  `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
+  `signal.Signals`), `system(command)`,
   `mkdir()` (Codon's had one), the separators (`sep`, `pathsep`, `linesep`,
   `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
   `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
@@ -537,18 +563,19 @@ What Codon 0.19 needs that Python does not, beyond
   capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
   *, ...)` with the keywords of CPython's `Popen` the framework passes
   (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
-  `start_new_session`), `CompletedProcess(args, returncode, stdout=None,
+  `start_new_session`), a standard stream being `None`, one of the constants,
+  a file descriptor or a file object (`typing.IO`, what `Path.open()`
+  returns), `CompletedProcess(args, returncode, stdout=None,
   stderr=None)` and its `check_returncode()`, `Popen`'s `poll()`, `wait()`,
-  `communicate()`, `send_signal()`, `terminate()`, `kill()`, `pid`,
+  `communicate()`, `send_signal()` (of an `int` or a `signal.Signals`), `terminate()`, `kill()`, `pid`,
   `returncode` and standard streams, `PIPE`, `STDOUT`, `DEVNULL`, and
   `SubprocessError`, `CalledProcessError(returncode, cmd, output=None,
   stderr=None)` and `TimeoutExpired(cmd, timeout, output=None,
   stderr=None)`. The command is a list of `str`, a working directory a
-  `str` or an `os.PathLike`, a stream `None`, one of the constants or a file
-  descriptor, an environment a `dict` of `str`, a timeout a number of
-  seconds or `None`. What CPython also takes is refused: a `str` command,
-  `shell=True` and the other keywords, a file object for a stream,
-  `os.environ` itself as the environment (pass `os.environ.copy()`, which
+  `str` or an `os.PathLike`, a stream `None`, one of the constants, a file
+  descriptor or a file object, an environment a `dict` of `str`, a timeout
+  a number of seconds or `None`. What CPython also takes is refused: a `str`
+  command, `shell=True` and the other keywords, `os.environ` itself as the environment (pass `os.environ.copy()`, which
   is the `dict` CPython's returns, as `authoring.uv_tool` does), and
   arguments after the command by position (`run(args, -1)`, which run()
   hands to `Popen` as `bufsize`). Since the check reads `bytes` as `str`, a
@@ -568,18 +595,30 @@ What Codon 0.19 needs that Python does not, beyond
   importlib`, which CPython takes only once something has imported the
   submodule). `signal` declares Linux's signal numbers (`SIGHUP`, `SIGINT`,
   `SIGQUIT`, `SIGKILL`, `SIGUSR1`, `SIGUSR2`, `SIGALRM`, `SIGTERM`,
-  `SIGCHLD`) as `int`s, which CPython's `Signals` members are, so
-  `os.killpg(pgid, signal.SIGTERM)` compiles; `SIG_DFL` and `SIG_IGN`, which
+  `SIGCHLD`) as members of `Signals`, CPython's `IntEnum` of them, here a
+  class of its own: `name` (`"SIGTERM"`), `value` and `int()` (the number),
+  `==`, `!=` and `hash()` with a `Signals` or an `int`, `str()` and `repr()`
+  as Python 3.10 writes them, and `Signals(number)`, which looks a member up.
+  What takes a signal number (`os.kill()`, `os.killpg()`, `signal()`,
+  `Popen.send_signal()`) takes an `int` or a `Signals`, so
+  `os.killpg(pgid, signal.SIGTERM)` compiles; the rest of an `int`'s
+  operations (arithmetic, ordering) are not declared for a `Signals`, which
+  CPython takes: take `int(sig)` first. `SIG_DFL` and `SIG_IGN`, which
   are no `int`s here, since CPython takes no other `int` as a handler; and
   `signal(signalnum, handler)`, whose handler is one of those two or a
   function the check calls as CPython calls a handler, with the signal's
-  number and the current frame (`None` in the check, which has no frame
+  number (an `int`) and the current frame (`None` in the check, which has no frame
   type: annotate that parameter `Any`), so a function that cannot take them
   is refused where CPython fails only when the signal arrives. What it
   returns, the previous handler, is a value nothing is declared of (a
   `Handlers` member, a function or `None` in CPython, which takes no `None`
   as a handler), so it cannot be handed back to `signal()`; `getsignal()`,
-  `Signals`, `alarm()` and the rest of the module are not declared. `atexit`
+  `alarm()` and the rest of the module are not declared. `shlex` declares
+  `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
+  `quote()` of a false value that is no `str` (`None`, which CPython quotes
+  as `''`) is refused. `sys` replaces Codon's, keeping all of it (`argv`,
+  the standard streams, `exit()`, `maxsize`), and adds `platform`
+  (`"linux"`) and `executable` (a `str`). `atexit`
   declares `register(func, *args, **kwargs)`, which takes the function by
   position only and returns it, and which calls it with the arguments it is
   given, so a function that cannot take them is refused where CPython
@@ -613,7 +652,8 @@ What Codon 0.19 needs that Python does not, beyond
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
-  `urllib.parse`, `signal` and `atexit` and call what they declare,
+  `urllib.parse`, `signal`, `atexit`, `shlex` and `sys` and call what they
+  declare,
   file-system queries and the two writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
   and set the environment (`os.environ.get()`), copy, move and remove files
   with `shutil`, start and wait for a process with `subprocess.run()` or
@@ -886,6 +926,12 @@ What Codon 0.19 needs that Python does not, beyond
 - **A default of a subclass for an `Optional` of its base** goes through an
   `if` statement, not a conditional expression: `x if x is not None else
   Sub()` is refused (`Optional[Base]` is not `Optional[Sub]`).
+- **A conditional expression of two types** (`log if log is not None else
+  subprocess.DEVNULL`, a file or an `int`) is typed by its first branch.
+  Neither can an `if` statement assign the two to one name: call a function
+  once with each (`autoware_stack.launcher._start_session()`, whose
+  `Union[IO[bytes], int]` parameter the checker drops, so Codon compiles it
+  for each).
 - **A dict has no truth value** in Codon: `if not d:` is `if len(d) == 0:`.
 - **No `setattr(obj, name, value)` with a name known only at run time**:
   spell the assignments out (`actions/environment.py`).
@@ -1102,8 +1148,9 @@ What Codon 0.19 needs that Python does not, beyond
   doesn't match function result type`). `test_typecheck_model.py` compares
   each with the Python class, and checks that its constructor is the
   `compile_error`.
-- **A Protocol a checked module takes** is modelled with what it calls:
-  `autoware_stack/launcher.codon` declares the `AutowareLauncher` that
+- **A Protocol a scenario may take** is modelled with what is called of it:
+  the library check compiles `autoware_stack.launcher` from its source, and
+  for the scenario check `autoware_stack/launcher.codon` declares the `AutowareLauncher` that
   `AutowareEgoEntity` starts, polls and stops (`start(*, name,
   bridge_address)`, `poll()`, `stop()`) and the `AutowareEpisode` that
   `start()` returns. Python cannot instantiate a Protocol, so the model's

@@ -1,7 +1,7 @@
-# Model of autoware_carla_scenario.autoware_stack.launcher (docs/typecheck.md),
-# which imports subprocess: what the checked AutowareEgoEntity calls of the
-# launcher it is given, start(), poll() and stop(), and the episode start()
-# returns. AutowareLauncher is a Protocol in Python, which cannot be
+# Model of autoware_carla_scenario.autoware_stack.launcher (docs/typecheck.md)
+# for the scenario check (the library check compiles its source): what
+# AutowareEgoEntity calls of the launcher it is given, start(), poll() and
+# stop(), and the episode start() returns. AutowareLauncher is a Protocol in Python, which cannot be
 # instantiated, so its constructor fails the check.
 
 from .._tc import _keyword_only

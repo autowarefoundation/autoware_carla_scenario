@@ -1,0 +1,21 @@
+# Python's sys, for the checker (docs/typecheck.md). It replaces the sys
+# module Codon ships, keeping all of it (argv, the standard streams, exit()
+# and maxsize, which Codon's own modules and typesafe_carla's Codon library
+# read), and adds the two names the checked framework reads besides:
+# `platform`, "linux" (the only system the package runs on, as CPython's is
+# there), and `executable`, the interpreter's path, a str (CPython's may be
+# empty, never None). Nothing else of CPython's sys is declared.
+
+argv = list(__argv__, len(__argv__))
+
+stdin = File(_C.seq_stdin())
+stdout = File(_C.seq_stdout())
+stderr = File(_C.seq_stderr())
+
+def exit(status: int = 0):
+    raise SystemExit(status)
+
+maxsize = 0x7FFFFFFFFFFFFFFF
+
+platform = "linux"
+executable = "python3"
