@@ -73,6 +73,8 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.autoware_bridge.fake",
     "autoware_carla_scenario.autoware_bridge.ros_bridge",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api",
+    "autoware_carla_scenario.autoware_stack.bridge_node",
+    "autoware_carla_scenario.autoware_stack.launcher",
     "autoware_carla_scenario.camera_recorder",
     "autoware_carla_scenario.conditions",
     "autoware_carla_scenario.conditions.action_state",
@@ -214,6 +216,14 @@ _FROM_MAPPING = (
     "inside it, so it is not compiled"
 )
 
+#: The reason of what takes the bridge node's ROS parameters.
+_ROS_PARAMETERS = (
+    "takes the scenario_bridge node's ROS parameters as `Mapping[str, Any]` "
+    "(bool, int, float or str values), which Codon cannot express: Codon 0.19 "
+    "fails on a Union in a parameter annotation (`union already sealed`), so "
+    "the checker drops it and the check has nothing to call with"
+)
+
 #: The reason of a function that reads a YAML document's values.
 _YAML = (
     "reads a YAML mapping of values of any type (`Any`: numbers, strings, "
@@ -229,6 +239,8 @@ _YAML = (
 UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.actions.follow_trajectory._resolve_in_world": "resolves the trajectory with trajectory.resolve, imported inside it, which is neither checked nor modelled (lanelet2 through route.positions; its callables of a union parameter); FollowTrajectoryAction._resolve calls it in the `else` branch of `if TYPE_CHECKING:` and the check compiles the reference lookup it is handed (_reference_pose) instead",
     "autoware_carla_scenario.authoring.framework_pin.Pin.uv_source": 'builds the `[tool.uv.sources]` entry, a dict[str, Any] of str and bool values (`{"path": ..., "editable": True}`), which Codon cannot express',
+    "autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args": _ROS_PARAMETERS,
+    "autoware_carla_scenario.autoware_stack.bridge_node.bridge_command": f"{_ROS_PARAMETERS}; CommandAutowareLauncher.start() calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.conditions.action_state.ActionStateCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.and_condition.AndCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.base.BaseCondition.__init_subclass__": "wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for",
@@ -321,11 +333,9 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_bridge.ros_bridge.__main__": "runs the scenario_bridge node (rclpy)",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.client": "imports grpc",
     "autoware_carla_scenario.autoware_bridge.ros_bridge.node": "imports rclpy, autoware_adapi_v1_msgs, geometry_msgs, grpc",
-    "autoware_carla_scenario.autoware_stack": "re-exports autoware_stack.devcontainer (yaml, json) and autoware_stack.docker (shlex), which are neither checked nor modelled",
-    "autoware_carla_scenario.autoware_stack.bridge_node": "imports pathlib, shlex; takes the bridge's ROS parameters as `Mapping[str, Any]`, which Codon cannot express",
+    "autoware_carla_scenario.autoware_stack": "re-exports autoware_stack.devcontainer (yaml, json) and autoware_stack.docker (more of pathlib, os and subprocess than their shims declare), which are neither checked nor modelled",
     "autoware_carla_scenario.autoware_stack.devcontainer": "imports pathlib, yaml, json",
-    "autoware_carla_scenario.autoware_stack.docker": "imports shlex, more of pathlib than its shim declares (`read_text()`, `read_bytes()`, `open()`, `is_symlink()`), of os (`getuid()`, `getgid()`, `readlink()`) and of subprocess (iterating a `Popen`'s output), bridge_node's names and launcher's `DEFAULT_BRIDGE_PARAMETERS`, `AutowareStackError`, `ProcessGroup`, `episode_log_path()` and `fill_placeholders()`, which the autoware_stack models do not declare, and devcontainer (yaml, json), which is neither checked nor modelled; holds the bridge's ROS parameters as `Mapping[str, object]` (`bridge_parameters`), which Codon cannot express",
-    "autoware_carla_scenario.autoware_stack.launcher": "imports more of pathlib than its shim declares (`open()`), signal's `Signals` (its stop signal's type), which the signal shim does not declare, more of subprocess than its shim declares (a file object as a `Popen` stream) and of sys than Codon's declares (`sys.platform`, `sys.executable`), and bridge_node's bridge_command() and host_python_root() (shlex), which the autoware_stack model does not declare; holds the bridge's ROS parameters as `Mapping[str, Any]` (`DEFAULT_BRIDGE_PARAMETERS`, `bridge_parameters`), which Codon cannot express",
+    "autoware_carla_scenario.autoware_stack.docker": "imports more of pathlib than its shim declares (`read_text()`, `read_bytes()`), of os (`getuid()`, `getgid()`, `readlink()`) and of subprocess (iterating a `Popen`'s output), and devcontainer (yaml, json), which is neither checked nor modelled; holds the bridge's ROS parameters as `Mapping[str, object]` (`bridge_parameters`), which Codon cannot express, and hands them to bridge_node's bridge_command(), which the check leaves uncalled for that reason",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, json, argparse, urllib.request, http, email, tarfile, platform, and more of shutil than its shim declares (`disk_usage()`)",
     "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2's map loading (`lanelet2.io.load()`), which the lanelet2 model does not declare, pathlib, and pyxodr, whose model declares only the road network the framework reads, not how it is loaded",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",

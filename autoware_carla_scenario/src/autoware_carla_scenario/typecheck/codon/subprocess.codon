@@ -9,9 +9,10 @@
 # listed here (`shell`, `preexec_fn`, `executable`, `close_fds`, ...), so
 # the check refuses them. The command is a list of str (a str command, which
 # CPython takes too, is not declared); a working directory is a str or an
-# os.PathLike; a standard stream is None, PIPE, STDOUT, DEVNULL or a file
-# descriptor (a file object is not declared); an environment is a dict of
-# str; a timeout is a number of seconds or None.
+# os.PathLike; a standard stream is None, PIPE, STDOUT, DEVNULL, a file
+# descriptor or a file object (typing.IO, what Path.open() returns); an
+# environment is a dict of str; a timeout is a number of seconds or None. A
+# signal is an int or a signal.Signals.
 #
 # The check reads `bytes` as `str` (Codon 0.19 has none), so what a process
 # writes is a str whether or not text=True, and CompletedProcess[bytes] is a
@@ -21,6 +22,8 @@
 
 import internal.static as static
 from os import fspath
+from signal import Signals
+from typing import IO
 
 PIPE = -1
 STDOUT = -2
@@ -40,6 +43,21 @@ def _cwd(cwd) -> None:
         pass
     else:
         fspath(cwd)
+
+
+def _stream(stream, where: Literal[str]) -> None:
+    # None, PIPE, STDOUT, DEVNULL, a file descriptor or a file object (an
+    # Optional one unwrapped, as Codon passes one to a parameter of its type).
+    if isinstance(stream, None) or isinstance(stream, Optional[NoneType]):
+        pass
+    elif isinstance(stream, int) or isinstance(stream, Optional[int]):
+        pass
+    elif isinstance(stream, IO):
+        pass
+    elif isinstance(stream, Optional) and isinstance(stream.__val__(), IO):
+        pass
+    else:
+        compile_error(where + ": a stream is None, PIPE, STDOUT, DEVNULL, a file descriptor or a file object")
 
 
 def _timeout(timeout, where: Literal[str]) -> None:
@@ -175,9 +193,9 @@ def run(
     capture_output: bool = False,
     timeout=None,
     check: bool = False,
-    stdin: Optional[int] = None,
-    stdout: Optional[int] = None,
-    stderr: Optional[int] = None,
+    stdin=None,
+    stdout=None,
+    stderr=None,
     cwd=None,
     env: Optional[Dict[str, str]] = None,
     text: Optional[bool] = None,
@@ -186,6 +204,9 @@ def run(
     start_new_session: bool = False,
 ) -> CompletedProcess[str]:
     _keyword_only(_kw, "run(): what follows the command")
+    _stream(stdin, "run()")
+    _stream(stdout, "run()")
+    _stream(stderr, "run()")
     _cwd(cwd)
     _timeout(timeout, "run()")
     return CompletedProcess[str](args, 0)
@@ -240,9 +261,9 @@ class Popen:
         self,
         args: List[str],
         *_kw,
-        stdin: Optional[int] = None,
-        stdout: Optional[int] = None,
-        stderr: Optional[int] = None,
+        stdin=None,
+        stdout=None,
+        stderr=None,
         cwd=None,
         env: Optional[Dict[str, str]] = None,
         start_new_session: bool = False,
@@ -251,6 +272,9 @@ class Popen:
         errors: Optional[str] = None,
     ):
         _keyword_only(_kw, "Popen(): what follows the command")
+        _stream(stdin, "Popen()")
+        _stream(stdout, "Popen()")
+        _stream(stderr, "Popen()")
         _cwd(cwd)
         self.args = args
         self.pid = 0
@@ -272,8 +296,12 @@ class Popen:
         _timeout(timeout, "Popen.communicate()")
         return (Optional[T](), Optional[T]())
 
-    def send_signal(self, sig: int) -> None:
-        pass
+    # send_signal(sig): an int or a signal.Signals.
+    def send_signal(self, sig) -> None:
+        if isinstance(sig, int) or isinstance(sig, Signals):
+            pass
+        else:
+            compile_error("send_signal(): the signal is an int or a signal.Signals")
 
     def terminate(self) -> None:
         pass

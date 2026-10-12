@@ -343,6 +343,14 @@ def test_a_variable_length_tuple_of_a_union_attribute_is_a_list_of_the_union() -
     assert _annotation("tuple[A | Any, ...]", class_level=True) is None
 
 
+def test_a_file_object_is_the_typing_shims_io() -> None:
+    # typing.IO[AnyStr], what Path.open() returns: the typing shim's IO[T],
+    # with bytes read as str.
+    assert _annotation("Optional[IO[bytes]]") == "Optional[IO[str]]"
+    assert _annotation("typing.IO[str]", class_level=True) == "typing.IO[str]"
+    assert _annotation("IO") == "IO"
+
+
 @pytest.mark.parametrize(
     ("python", "codon"),
     [

@@ -1,0 +1,30 @@
+# The part of Python's shlex the checked framework names, for the checker
+# (docs/typecheck.md): quote(s) and join(split_command), CPython 3.10's, on
+# Codon's re.
+#
+# quote() takes a str, as CPython's re.search() does once the string is not
+# empty: CPython also returns "''" for any value that is false (`quote(None)`,
+# `quote(b"")`), which the check refuses. join() takes an iterable of str
+# (`join(split_command)`), joined with spaces after quoting each. split(),
+# shlex and the rest are not declared.
+
+import re
+
+_find_unsafe = re.compile(r"[^\w@%+=:,./-]", re.ASCII).search
+
+
+def quote(s: str) -> str:
+    """Return a shell-escaped version of the string *s*."""
+    if not s:
+        return "''"
+    if _find_unsafe(s) is None:
+        return s
+
+    # use single quotes, and put single quotes into double quotes
+    # the string $'b is then quoted as '$'"'"'b'
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
+def join(split_command) -> str:
+    """Return a shell-escaped string from *split_command*."""
+    return " ".join(quote(arg) for arg in split_command)
