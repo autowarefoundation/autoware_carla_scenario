@@ -1655,7 +1655,8 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
     [
         # Each is a TypeError or an AttributeError in CPython 3.10, the oldest
         # Python the package supports (process_group is 3.11's, walk_up
-        # 3.12's), but split-handler-body, a body of the wrong type in the
+        # 3.12's), but relative-to-parts, which 3.10 takes and 3.14 refuses,
+        # and split-handler-body, a body of the wrong type in the
         # handler `except (A, B):` becomes two of. The ones after that handler
         # are located past the lines its copy adds.
         ("metadata.version(name)", "metadata.version(distribution=name)"),
@@ -1669,6 +1670,8 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
         ("done.stderr is None", "done.output is None"),
         ('text.removesuffix(".git")', 'text.removesuffix(suffix=".git")'),
         ("repo.relative_to(base)", "repo.relative_to(base, walk_up=True)"),
+        ("repo.relative_to(base)", 'repo.relative_to(base, "x")'),
+        ("repo.relative_to(base)", "repo.relative_to(other=base)"),
         ("str(Path.cwd())", "str(Path.cwd(repo))"),
         ("process.wait(timeout=5.0)", "process.wait(5.0, 1)"),
         ("subprocess.TimeoutExpired(exc.cmd, 1,", "subprocess.TimeoutExpired(exc.cmd,"),
@@ -1682,6 +1685,8 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
         "completed-has-no-output",
         "removesuffix-positional-only",
         "relative-to-walk-up",
+        "relative-to-parts",
+        "relative-to-keyword",
         "cwd-arguments",
         "wait-arguments",
         "timeout-expired-arguments",

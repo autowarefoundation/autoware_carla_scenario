@@ -502,9 +502,10 @@ What Codon 0.19 needs that Python does not, beyond
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
-  sliced), `as_posix()`, `relative_to(*other)` (one or more parts; 3.12's
-  `walk_up` is refused) and the ordering of two `Path`s, so `sorted()`
-  takes them. Nothing
+  sliced), `as_posix()`, `relative_to(other)` (one path, by position:
+  Python 3.10 also joins more parts, but 3.14 refuses them, so the check
+  does too; 3.12's `walk_up` is refused) and the ordering of two `Path`s, so
+  `sorted()` takes them. Nothing
   touches the file system: a query is `False` and a glob yields nothing.
   Of what writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
   `write_text(data, encoding=None, errors=None, newline=None)` are declared

@@ -13,9 +13,6 @@
 # they create and write nothing.
 
 
-import internal.static as static
-
-
 def _part(part) -> str:
     if isinstance(part, Path):
         return part._path
@@ -121,13 +118,13 @@ class Path:
     def as_posix(self) -> str:
         return self._path
 
-    # relative_to(*other): CPython 3.10 joins one or more parts, and has no
-    # `walk_up` (3.12), which is refused. Nothing is computed: the path is
-    # returned as it is (CPython raises ValueError for one not under it).
-    def relative_to(self, *other) -> Path:
-        if static.len(other) == 0:
-            compile_error("relative_to() needs at least one argument")
-        Path(*other)
+    # relative_to(other), by position: what every supported Python takes.
+    # CPython 3.10 joins more parts (`relative_to(*other)`), 3.12 deprecates
+    # them and 3.14 refuses them (TypeError), so they are refused; so is 3.12's
+    # `walk_up`. Nothing is computed: the path is returned as it is (CPython
+    # raises ValueError for one not under it).
+    def relative_to(self, _acs_other) -> Path:
+        Path(_acs_other)
         return self
 
     # The name and its parts, as PurePath computes them.
