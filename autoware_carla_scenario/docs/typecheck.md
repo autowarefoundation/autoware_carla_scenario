@@ -1243,7 +1243,9 @@ What Codon 0.19 needs that Python does not, beyond
   repr=False, compare=False)`: declared, as Codon needs, but neither a
   constructor parameter nor part of the repr or the comparisons, and unset
   until the constraint is bound, as before (`dataclasses.fields()` now lists
-  it).
+  it, so `dataclasses.asdict()` of a set-level constraint includes it, and
+  raises `AttributeError` before the constraint is bound; nothing in the
+  framework calls either on a constraint).
 - **A registry of classes at module level** (`sweeper.constraints`'
   `_LEAF_REGISTRY`, `sweeper.bindings`' `_BINDING_REGISTRY`): Codon holds no
   class as a value, and cannot type `dict[str, type]`. Declare it
