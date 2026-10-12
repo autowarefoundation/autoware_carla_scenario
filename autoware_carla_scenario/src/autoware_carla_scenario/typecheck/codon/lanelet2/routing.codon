@@ -1,7 +1,7 @@
 # Model of lanelet2.routing, for the checker (docs/typecheck.md): the routing
-# graph and the neighbours it gives a lanelet, which it hands out as
-# ConstLanelets (a Lanelet goes in; core.codon). Its routes, paths and costs
-# are not declared.
+# graph and the neighbours it gives a lanelet (following, beside and
+# conflicting), which it hands out as ConstLanelets (a Lanelet goes in;
+# core.codon). Its routes, paths and costs are not declared.
 
 from lanelet2.core import ConstLanelet, LaneletMap
 from lanelet2.traffic_rules import TrafficRules
@@ -31,4 +31,11 @@ class RoutingGraph:
         raise NotImplementedError()
 
     def adjacentRight(self, lanelet: ConstLanelet, routingCostId: int = 0) -> Optional[ConstLanelet]:
+        raise NotImplementedError()
+
+    # The lanelets whose area overlaps this one's and that neither follows
+    # nor precedes it (crossing paths in a junction). simple-lanelet2 hands
+    # them out as ConstLanelets; lanelet2's own binding wraps each in a
+    # ConstLaneletOrArea, which the framework unwraps at run time.
+    def conflicting(self, lanelet: ConstLanelet, routingCostId: int = 0) -> List[ConstLanelet]:
         raise NotImplementedError()

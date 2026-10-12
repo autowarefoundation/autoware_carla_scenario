@@ -48,6 +48,11 @@ def length(obj) -> float:
     raise NotImplementedError()
 
 
+# length2d(lanelet): the 2D length of a lanelet's centreline.
+def length2d(lanelet: ConstLanelet) -> float:
+    raise NotImplementedError()
+
+
 def toArcCoordinates(obj: ConstLineString2d, point: BasicPoint2d) -> ArcCoordinates:
     raise NotImplementedError()
 

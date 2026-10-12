@@ -55,8 +55,15 @@ previous/following neighbours via the routing graph::
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet, LaneletMap
+    from lanelet2.routing import RoutingGraph
+
+    from ..conditions.comparison import ComparisonRule
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +73,35 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class Constraint(Protocol):
-    """Interface that all lanelet constraints must satisfy."""
+class Constraint(ABC):
+    """Interface that all lanelet constraints must satisfy.
 
-    def evaluate(self, lanelet: Any) -> bool:
+    The constraints of this module derive from it, so the static check
+    (docs/typecheck.md) dispatches ``evaluate()`` through it: Codon has no
+    structural typing.  At run time a constraint need not derive from it --
+    anything with an ``evaluate()`` method still works where a constraint is
+    taken, as it did when this was a ``Protocol``.
+    """
+
+    @abstractmethod
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if *lanelet* satisfies this constraint."""
         ...
 
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        """Pre-compute what :meth:`evaluate` needs of the whole map.
+
+        :func:`_bind_set_level_constraints` of this constraint: by default,
+        that of its children (a ``constraints`` sequence, a ``constraint``).
+        The set-level constraints also cache the IDs they match.
+        """
+        _bind_children(self, lanelet_map, routing_graph)
+
 
 @dataclass(frozen=True)
-class HasStopLineConstraint:
+class HasStopLineConstraint(Constraint):
     """Matches lanelets that own at least one stop-line regulatory element.
 
     Detection reuses the same three patterns as
@@ -88,7 +114,7 @@ class HasStopLineConstraint:
 
     type: str = "has_stop_line"
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if *lanelet* has at least one stop line."""
         from ..utils.stop_line import _collect_stop_lines_from_reg_elems
 
@@ -100,7 +126,7 @@ class HasStopLineConstraint:
 
 
 @dataclass(frozen=True)
-class EqualsConstraint:
+class EqualsConstraint(Constraint):
     """Matches a lanelet whose ID equals the given value.
 
     A general-purpose equality check on the lanelet ID::
@@ -119,17 +145,26 @@ class EqualsConstraint:
     def __post_init__(self) -> None:
         # An id written as a string -- quoted in YAML, or typed into the
         # editor's text field -- still names a lanelet.
-        if isinstance(self.value, str) and self.value.isdigit():
-            object.__setattr__(self, "value", int(self.value))
+        # (`value` is a str there: Codon narrows no union, so it is read
+        # through str() -- itself, for a str.)
+        value = self.value
+        if isinstance(value, str) and str(value).isdigit():
+            object.__setattr__(self, "value", int(str(value)))
 
-    def evaluate(self, lanelet: Any) -> bool:
-        if self.value == "any":
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
+        value = self.value
+        if isinstance(value, str) and str(value) == "any":
             return True
-        return lanelet.id == self.value
+        if TYPE_CHECKING:
+            # Codon narrows no union, nor compares an int with one: the int
+            # it holds, if it holds one (a lanelet id is an int).
+            return isinstance(value, int) and lanelet.id == int(value)
+        else:
+            return lanelet.id == value
 
 
 @dataclass(frozen=True)
-class InSetConstraint:
+class InSetConstraint(Constraint):
     """Matches lanelets whose ID is contained in a given set of values.
 
     Useful for filtering by a pre-defined list of lanelet IDs (e.g. IDs
@@ -152,12 +187,12 @@ class InSetConstraint:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_lookup", frozenset(self.values))
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         return lanelet.id in self._lookup
 
 
 @dataclass(frozen=True)
-class HasTrafficLightStopLineConstraint:
+class HasTrafficLightStopLineConstraint(Constraint):
     """Matches lanelets whose stop line originates from a traffic-light RE.
 
     Only Pattern 1 of ``_collect_stop_lines_from_reg_elems`` is checked:
@@ -167,7 +202,7 @@ class HasTrafficLightStopLineConstraint:
 
     type: str = "has_traffic_light_stop_line"
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if *lanelet* has a traffic-light stop line."""
         for reg_elem in lanelet.regulatoryElements:
             if hasattr(reg_elem, "stopLine"):
@@ -181,7 +216,7 @@ class HasTrafficLightStopLineConstraint:
 
 
 @dataclass(frozen=True)
-class IsJunctionConstraint:
+class IsJunctionConstraint(Constraint):
     """Matches lanelets that are inside a junction (intersection).
 
     A lanelet is considered a junction lanelet when it has the
@@ -205,13 +240,13 @@ class IsJunctionConstraint:
 
     type: str = "is_junction"
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if *lanelet* has a ``turn_direction`` attribute."""
         return "turn_direction" in lanelet.attributes
 
 
 @dataclass(frozen=True)
-class TurnDirectionConstraint:
+class TurnDirectionConstraint(Constraint):
     """Matches junction lanelets whose ``turn_direction`` tag has a given value.
 
     :class:`IsJunctionConstraint` asks whether the tag is there at all;  this
@@ -243,7 +278,7 @@ class TurnDirectionConstraint:
                 f"Unknown turn_direction {self.value!r}. Available: {sorted(valid)}"
             )
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if the lanelet turns the way this constraint says."""
         if "turn_direction" not in lanelet.attributes:
             return False
@@ -251,7 +286,7 @@ class TurnDirectionConstraint:
 
 
 @dataclass(frozen=True)
-class LaneletLengthConstraint:
+class LaneletLengthConstraint(Constraint):
     """Matches lanelets whose 2D centerline length satisfies a comparison rule.
 
     Uses ``lanelet2.geometry.length2d()`` to compute the length and the
@@ -282,19 +317,40 @@ class LaneletLengthConstraint:
         if self.rule not in valid:
             raise ValueError(f"Unknown rule {self.rule!r}. Available: {sorted(valid)}")
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if lanelet length satisfies the comparison rule."""
         import lanelet2.geometry
 
-        from ..conditions.comparison import ComparisonRule, compare
+        from ..conditions.comparison import compare
 
         length = lanelet2.geometry.length2d(lanelet)
-        rule_enum = ComparisonRule[self.rule.upper()]
+        rule_enum = _comparison_rule(self.rule.upper())
         return compare(length, rule_enum, self.value)
 
 
+def _comparison_rule(name: str) -> ComparisonRule:
+    """``ComparisonRule[name]``: the member called *name* (``KeyError`` if none)."""
+    from ..conditions.comparison import ComparisonRule
+
+    if TYPE_CHECKING:
+        # Codon's enum shim looks no member up by name and iterates over no
+        # enum class (docs/typecheck.md): the members, spelled out.
+        for rule in [
+            ComparisonRule.GREATER_THAN,
+            ComparisonRule.LESS_THAN,
+            ComparisonRule.EQUAL_TO,
+            ComparisonRule.GREATER_THAN_OR_EQUAL,
+            ComparisonRule.LESS_THAN_OR_EQUAL,
+        ]:
+            if rule.name == name:
+                return rule
+        raise KeyError(name)
+    else:
+        return ComparisonRule[name]
+
+
 @dataclass(frozen=True)
-class HasAdjacentConstraint:
+class HasAdjacentConstraint(Constraint):
     """Matches lanelets that have an adjacent lane in the specified direction.
 
     Uses the routing graph to determine whether a same-direction passable
@@ -328,22 +384,39 @@ class HasAdjacentConstraint:
                 f"got {self.value!r}"
             )
 
+    #: The IDs :meth:`find_matching_ids` found, which
+    #: :func:`_bind_set_level_constraints` caches before :meth:`evaluate`.
+    #: Declared, as Codon needs, but left out of the constructor, the repr and
+    #: the comparisons; unset until the constraint is bound.
+    _cached_ids: set[int] = field(init=False, repr=False, compare=False)
+
     def find_matching_ids(
-        self, lanelet_map: Any, routing_graph: Any | None = None
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets that have an adjacent lane."""
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
-        getter = routing_graph.left if self.value == "left" else routing_graph.right
+        # The neighbour on that side (no bound method held in a variable:
+        # Codon cannot type one of two).
+        left = self.value == "left"
         result: set[int] = set()
         for lanelet in lanelet_map.laneletLayer:
-            if getter(lanelet) is not None:
+            if left:
+                beside = routing_graph.left(lanelet)
+            else:
+                beside = routing_graph.right(lanelet)
+            if beside is not None:
                 result.add(lanelet.id)
         return result
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
+
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed adjacent set."""
-        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
+        return lanelet.id in self._cached_ids
 
 
 # ---------------------------------------------------------------------------
@@ -352,33 +425,48 @@ class HasAdjacentConstraint:
 
 
 @dataclass(frozen=True)
-class AndConstraint:
+class AndConstraint(Constraint):
     """Logical AND — all child constraints must be satisfied."""
 
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         return all(c.evaluate(lanelet) for c in self.constraints)
+
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        _bind_children(self, lanelet_map, routing_graph)
 
 
 @dataclass(frozen=True)
-class OrConstraint:
+class OrConstraint(Constraint):
     """Logical OR — at least one child constraint must be satisfied."""
 
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         return any(c.evaluate(lanelet) for c in self.constraints)
+
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        _bind_children(self, lanelet_map, routing_graph)
 
 
 @dataclass(frozen=True)
-class NotConstraint:
+class NotConstraint(Constraint):
     """Logical NOT — the child constraint must *not* be satisfied."""
 
     constraint: Constraint
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         return not self.constraint.evaluate(lanelet)
+
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        _bind_children(self, lanelet_map, routing_graph)
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +474,7 @@ class NotConstraint:
 # ---------------------------------------------------------------------------
 
 
-def create_routing_graph(lanelet_map: Any) -> Any:
+def create_routing_graph(lanelet_map: LaneletMap) -> RoutingGraph:
     """Build a routing graph for *lanelet_map* using default traffic rules."""
     import lanelet2.routing
     import lanelet2.traffic_rules
@@ -399,7 +487,7 @@ def create_routing_graph(lanelet_map: Any) -> Any:
 
 
 @dataclass(frozen=True)
-class PreviousOfConstraint:
+class PreviousOfConstraint(Constraint):
     """Matches lanelets that are *previous* neighbours of the inner result set.
 
     Inner constraints are evaluated against the full map first.  Then the
@@ -409,9 +497,14 @@ class PreviousOfConstraint:
     """
 
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
+    #: The IDs :meth:`find_matching_ids` found, which
+    #: :func:`_bind_set_level_constraints` caches before :meth:`evaluate`.
+    #: Declared, as Codon needs, but left out of the constructor, the repr and
+    #: the comparisons; unset until the constraint is bound.
+    _cached_ids: set[int] = field(init=False, repr=False, compare=False)
 
     def find_matching_ids(
-        self, lanelet_map: Any, routing_graph: Any | None = None
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets previous to the inner-constraint matches."""
         inner_matched = find_matching_lanelets(list(self.constraints), lanelet_map)
@@ -424,13 +517,19 @@ class PreviousOfConstraint:
                 result.add(prev_ll.id)
         return result
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
+        _bind_children(self, lanelet_map, routing_graph)
+
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed previous set."""
-        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
+        return lanelet.id in self._cached_ids
 
 
 @dataclass(frozen=True)
-class FollowingOfConstraint:
+class FollowingOfConstraint(Constraint):
     """Matches lanelets that are *following* neighbours of the inner result set.
 
     Behaves identically to :class:`PreviousOfConstraint` but queries
@@ -438,9 +537,14 @@ class FollowingOfConstraint:
     """
 
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
+    #: The IDs :meth:`find_matching_ids` found, which
+    #: :func:`_bind_set_level_constraints` caches before :meth:`evaluate`.
+    #: Declared, as Codon needs, but left out of the constructor, the repr and
+    #: the comparisons; unset until the constraint is bound.
+    _cached_ids: set[int] = field(init=False, repr=False, compare=False)
 
     def find_matching_ids(
-        self, lanelet_map: Any, routing_graph: Any | None = None
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets following the inner-constraint matches."""
         inner_matched = find_matching_lanelets(list(self.constraints), lanelet_map)
@@ -453,26 +557,43 @@ class FollowingOfConstraint:
                 result.add(fol_ll.id)
         return result
 
-    def evaluate(self, lanelet: Any) -> bool:
+    def _bind_set_level(
+        self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+    ) -> None:
+        _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
+        _bind_children(self, lanelet_map, routing_graph)
+
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed following set."""
-        return lanelet.id in self._cached_ids  # type: ignore[attr-defined]
+        return lanelet.id in self._cached_ids
 
 
 def _bind_set_level_constraints(
-    constraint: Any, lanelet_map: Any, routing_graph: Any | None = None
+    constraint: Any,
+    lanelet_map: LaneletMap,
+    routing_graph: Optional[RoutingGraph] = None,
 ) -> None:
     """Recursively pre-compute cached IDs for set-level constraints.
 
     Walks the constraint tree and, for every
-    :class:`PreviousOfConstraint` / :class:`FollowingOfConstraint`, calls
-    ``find_matching_ids`` and stores the result as ``_cached_ids`` using
-    ``object.__setattr__`` (the dataclasses are frozen).
+    :class:`PreviousOfConstraint` / :class:`FollowingOfConstraint` /
+    :class:`HasAdjacentConstraint`, calls ``find_matching_ids`` and stores the
+    result as ``_cached_ids`` (:func:`_cache_ids`).  Each class says what it
+    binds (:meth:`Constraint._bind_set_level`): Codon decides ``isinstance``
+    and ``hasattr`` by the static type, so the walk dispatches through the
+    base class.  A constraint that does not derive from :class:`Constraint`
+    only has its children walked, as before.
     """
-    if isinstance(
-        constraint, (PreviousOfConstraint, FollowingOfConstraint, HasAdjacentConstraint)
-    ):
-        ids = constraint.find_matching_ids(lanelet_map, routing_graph)
-        object.__setattr__(constraint, "_cached_ids", ids)
+    if isinstance(constraint, Constraint):
+        constraint._bind_set_level(lanelet_map, routing_graph)
+    else:
+        _bind_children(constraint, lanelet_map, routing_graph)
+
+
+def _bind_children(
+    constraint: Any, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
+) -> None:
+    """:func:`_bind_set_level_constraints` of *constraint*'s children, if any."""
     if hasattr(constraint, "constraints"):
         for child in constraint.constraints:
             _bind_set_level_constraints(child, lanelet_map, routing_graph)
@@ -480,21 +601,36 @@ def _bind_set_level_constraints(
         _bind_set_level_constraints(constraint.constraint, lanelet_map, routing_graph)
 
 
+def _cache_ids(constraint: Any, ids: set[int]) -> None:
+    """Store *ids* as the set-level *constraint*'s ``_cached_ids``.
+
+    With ``object.__setattr__``, since the dataclasses are frozen.
+    """
+    object.__setattr__(constraint, "_cached_ids", ids)
+
+
 # ---------------------------------------------------------------------------
 # Parsing & matching helpers
 # ---------------------------------------------------------------------------
 
+
 # Leaf constraints keyed by their ``type`` string.
-_LEAF_REGISTRY: dict[str, type] = {
-    "has_stop_line": HasStopLineConstraint,
-    "has_traffic_light_stop_line": HasTrafficLightStopLineConstraint,
-    "is_junction": IsJunctionConstraint,
-    "turn_direction": TurnDirectionConstraint,
-    "has_adjacent": HasAdjacentConstraint,
-    "lanelet_length": LaneletLengthConstraint,
-    "equals": EqualsConstraint,
-    "in_set": InSetConstraint,
-}
+#: Declared here, assigned only at run time: Codon holds no class as a value,
+#: and the function that reads it (parse_constraint) is not compiled (UNCALLED).
+_LEAF_REGISTRY: dict[str, Any]
+if TYPE_CHECKING:
+    pass
+else:
+    _LEAF_REGISTRY = {
+        "has_stop_line": HasStopLineConstraint,
+        "has_traffic_light_stop_line": HasTrafficLightStopLineConstraint,
+        "is_junction": IsJunctionConstraint,
+        "turn_direction": TurnDirectionConstraint,
+        "has_adjacent": HasAdjacentConstraint,
+        "lanelet_length": LaneletLengthConstraint,
+        "equals": EqualsConstraint,
+        "in_set": InSetConstraint,
+    }
 
 
 def parse_constraint(cfg: dict[str, Any]) -> Constraint:
@@ -578,8 +714,8 @@ def parse_constraint(cfg: dict[str, Any]) -> Constraint:
 
 def find_matching_lanelets(
     constraints: list[Constraint],
-    lanelet_map: Any,
-    routing_graph: Any | None = None,
+    lanelet_map: LaneletMap,
+    routing_graph: Optional[RoutingGraph] = None,
 ) -> list[int]:
     """Return IDs of lanelets satisfying *all* constraints.
 
@@ -598,7 +734,10 @@ def find_matching_lanelets(
         _bind_set_level_constraints(c, lanelet_map, routing_graph)
 
     matched: list[int] = []
-    for lanelet in lanelet_map.laneletLayer:
+    for each in lanelet_map.laneletLayer:
+        # A Lanelet, as evaluate() takes it: Codon passes no subclass to an
+        # overridden method.
+        lanelet: ConstLanelet = each
         if all(c.evaluate(lanelet) for c in constraints):
             matched.append(lanelet.id)
     matched.sort()

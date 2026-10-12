@@ -1,7 +1,8 @@
-# Model of autoware_carla_scenario.route (docs/typecheck.md). route.model and
-# route.active are checked; route.frame, which reaches lanelet2, is not: this
-# declares what the scenario check and the checked modules read of the
-# package, the scenario's route and its frame.
+# Model of autoware_carla_scenario.route (docs/typecheck.md). Its modules are
+# checked (route.model, route.active, route.frame and the geometry, poses and
+# search over lanelet2's model); this declares what the scenario check and
+# the checked modules that import the package read of it, the scenario's
+# route and its frame.
 
 
 class RouteMatch:
@@ -10,8 +11,8 @@ class RouteMatch:
 
 
 class RouteFrame:
-    # Generic: the checked route.active hands it the checked RouteMatch, and
-    # MapManager's lanelet2 map and routing graph (coordinate.codon).
+    # Generic: the scenario check builds none (the checked route.active
+    # builds the checked RouteFrame, of lanelet2's model).
     def __init__(self, match, lanelet_map, routing_graph):
         pass
 
