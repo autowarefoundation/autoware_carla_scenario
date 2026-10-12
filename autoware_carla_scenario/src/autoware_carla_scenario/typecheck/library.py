@@ -288,7 +288,7 @@ UNCALLED: dict[str, str] = {
 
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
-    "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, four of which are neither checked nor modelled: pytest_fixtures and scenario_queue (pytest), registry (omegaconf) and scenario_runner (json, through trajectory_recorder)",
+    "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, four of which are neither checked nor modelled: pytest_fixtures and scenario_queue (pytest), registry (omegaconf) and scenario_runner (json, through coverage.collector and trajectory_recorder)",
     "autoware_carla_scenario.actions.background_traffic": "holds lanelet constraints as `ConstraintSpec = Union[Mapping[str, Any], Any]` (a Hydra node or a parsed constraint), which Codon cannot express, and parses and matches them with sweeper.constraints (lanelet2), which is neither checked nor modelled; yaml is imported inside constraints_from_text",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (subprocess)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
@@ -313,7 +313,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_stack.bridge_node": "imports pathlib, shlex; takes the bridge's ROS parameters as `Mapping[str, Any]`, which Codon cannot express",
     "autoware_carla_scenario.autoware_stack.devcontainer": "imports pathlib, yaml, json",
     "autoware_carla_scenario.autoware_stack.docker": "imports pathlib, subprocess, shlex; holds the bridge's ROS parameters as `Mapping[str, Any]` (`bridge_parameters`), which Codon cannot express",
-    "autoware_carla_scenario.autoware_stack.launcher": "imports pathlib, subprocess, signal",
+    "autoware_carla_scenario.autoware_stack.launcher": "imports pathlib, subprocess, and signal's `Signals` (its stop signal's type), which the signal shim does not declare",
     "autoware_carla_scenario.carla_install": "imports pathlib, tqdm, json, argparse, urllib.request, http, email, tarfile, platform, and more of shutil than its shim declares (`disk_usage()`)",
     "autoware_carla_scenario.coordinate.map_manager": "imports lanelet2, pathlib, and pyxodr, whose model declares only the road network the framework reads, not how it is loaded; initialize() takes the CARLA world as `Any`",
     "autoware_carla_scenario.coordinate.projection": "imports lanelet2, autoware_lanelet2_extension_python, pathlib, yaml",
@@ -325,7 +325,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.coverage.items": "samples values of any type (value_label, bucket_of and a cover expression take or return Any: an enum, a bool, a number or a label; `values: Iterable[Any]`), which Codon cannot express",
     "autoware_carla_scenario.coverage.report": "imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports pathlib (`Path.is_file()`), and authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",
-    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, atexit, numpy.typing (`NDArray`), which Codon's numpy lacks, and carla_driver_interface's contract, policies, server and protocol, which its model (geometry only) does not declare",
+    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, numpy.typing (`NDArray`), which Codon's numpy lacks, and carla_driver_interface's contract, policies, server and protocol, which its model (geometry only) does not declare",
     "autoware_carla_scenario.driver.hdmap_export": "imports pathlib, roadgen, tempfile, json, and more of shutil than its shim declares (`copyfile()`)",
     "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface.protocol (the protobuf messages), which its model (geometry only) does not declare, and numpy.typing (`NDArray`), which Codon's numpy lacks",
     "autoware_carla_scenario.editor": "imports uvicorn and editor.app (fastapi) inside main()",
@@ -357,8 +357,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.route.search": "imports route.geometry (lanelet2), whose MapFeatures the route model does not declare, and sweeper.constraints, which is neither checked nor modelled, and walks lanelet2's lanelets (`Any`)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (pathlib, argparse)",
     "autoware_carla_scenario.scaffold.generator": "imports pathlib, argparse, keyword, and templating (jinja2), which is not checked",
-    "autoware_carla_scenario.scenario_queue": "imports pathlib, tqdm, pytest, and scenario_runner (json, through trajectory_recorder), which is neither checked nor modelled",
-    "autoware_carla_scenario.scenario_runner": "imports pathlib, and trajectory_recorder (json), which is neither checked nor modelled",
+    "autoware_carla_scenario.scenario_queue": "imports pathlib, tqdm, pytest, odd's resolve_odd(), which the odd model does not declare, and scenario_runner (json, through coverage.collector and trajectory_recorder), which is neither checked nor modelled",
+    "autoware_carla_scenario.scenario_runner": "imports pathlib, coverage.collector and trajectory_recorder (json), which are neither checked nor modelled, and odd's resolve_odd() and reset_probes(), which the odd model does not declare",
     "autoware_carla_scenario.sweeper": "re-exports sweeper.bindings and sweeper.constraints (lanelet2), sweeper.expand (omegaconf), sweeper.lanelet_constraint_sweeper (hydra) and sweeper.map_loader (lanelet2)",
     "autoware_carla_scenario.sweeper.bindings": "imports lanelet2",
     "autoware_carla_scenario.sweeper.constraints": "evaluates lanelet2's lanelets and map typed `Any` and parses a constraint from a `dict[str, Any]` node, which Codon cannot express; lanelet2 and utils.stop_line, which is not checked, are imported inside the constraints that use them",
