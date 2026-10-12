@@ -12,7 +12,7 @@ from .conditions import ScenarioResult
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
-from .odd import OddDefinition, resolve_odd
+from .odd import OddCase, OddDefinition, resolve_odd
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
@@ -78,6 +78,8 @@ class ScenarioQueue:
     _scenarios: List[BaseScenario]
     #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
     _timeouts: dict[int, float]
+    #: id(scenario) -> the ODD case it runs, to record.
+    _cases: dict[int, OddCase]
     _results: List[ScenarioResult]
     _scenario_results: dict[int, ScenarioResult]
     _runner: Optional[ScenarioRunner]
@@ -201,6 +203,7 @@ class ScenarioQueue:
 
         self._scenarios = []
         self._timeouts = {}
+        self._cases = {}
         self._results = []
         self._scenario_results = {}
         self._runner = None
@@ -210,7 +213,11 @@ class ScenarioQueue:
     # ------------------------------------------------------------------
 
     def add(
-        self, scenario: BaseScenario, *, timeout_seconds: Optional[float] = None
+        self,
+        scenario: BaseScenario,
+        *,
+        timeout_seconds: Optional[float] = None,
+        case: Optional[OddCase] = None,
     ) -> None:
         """Append a scenario to the queue.
 
@@ -218,10 +225,15 @@ class ScenarioQueue:
             scenario: A :class:`BaseScenario` instance to enqueue.
             timeout_seconds: This scenario's timeout; the queue's
                 ``timeout_seconds`` when ``None``.
+            case: The case drawn from the ODD it runs, and the space it was
+                drawn in, to record in its coverage file
+                (:meth:`ScenarioRunner.run_scenario`).
         """
         self._scenarios.append(scenario)
         if timeout_seconds is not None:
             self._timeouts[id(scenario)] = timeout_seconds
+        if case is not None:
+            self._cases[id(scenario)] = case
 
     # ------------------------------------------------------------------
     # Execution
@@ -264,7 +276,9 @@ class ScenarioQueue:
                             else "CARLA cooldown (retry)",
                         )
                     result = self._runner.run_scenario(
-                        scenario, timeout_seconds=self._timeouts.get(id(scenario))
+                        scenario,
+                        timeout_seconds=self._timeouts.get(id(scenario)),
+                        case=self._cases.get(id(scenario)),
                     )
                     self._scenario_results[id(scenario)] = result
                     results.append(result)

@@ -618,11 +618,14 @@ sweep:
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
     odd: null              # the ODD to draw from; the run's (`odd`) by default
     knobs: {}              # by ODD attribute, replacing the scenario's controls; see below
+    flaky: null            # look for flaky cases; see "Finding flaky cases" below
 ```
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
 gives each drawn case the next lanelet case in turn; one without draws from
-the ODD alone, and needs no map to expand.
+the ODD alone, and needs no map to expand. The last override,
+`++odd_case=...`, is the case itself, encoded: the run records it, with its
+outcome, in its coverage file (see [Finding flaky cases](#finding-flaky-cases)).
 
 ### Who knows what
 
@@ -763,6 +766,42 @@ draws = OddDraws()
 draws.add(sampler.odd, sampler.sample(20))
 later = OddSampler(sampler.odd, seed=0, strategy="coverage", drawn=draws.of(sampler.odd))
 ```
+
+### Finding flaky cases
+
+Every run a sweep draws from the ODD records its case in its coverage file:
+the values it ran with, why it was drawn, and whether it passed (openodd's
+`CoverageCollector.record_case` and `record_outcome`; the runner calls them,
+so a scenario needs nothing of its own). The merged report then lists the
+runs, flakiest first, with their flakiness assessed over all the runs of
+their scenario (`scenario-coverage`, section *Flaky cases*).
+
+With `flaky`, the sweep also looks for them. openodd's `FlakySearch` learns
+where the runs in `coverage_from` passed and failed (Gaussian-process
+classification), and draws part of each batch where a small change would flip
+the outcome -- after the sampler has covered every bucket, the rest of the
+batch still sweeping the ODD (openodd's
+[docs/flaky.md](https://github.com/hakuturu583/openodd_py/blob/main/docs/flaky.md)):
+
+```yaml
+sweep:
+  odd_sample:
+    count: 20
+    strategy: coverage
+    coverage_from: [outputs]       # the earlier sweeps' runs: what the search learns from
+    flaky:
+      explore_fraction: 0.8        # of each batch, once every bucket is covered
+      scenario: CutInScenario      # learn from this scenario's runs only (all, when left out)
+```
+
+`flaky: true` takes the defaults. Its other fields are `FlakySearch`'s:
+`pool`, `coverage_depth`, `threshold`, `epsilon`, `perturbations`, `draws`
+and `directions`. Only runs drawn in the same space -- the same attributes,
+ranges and labels -- with an outcome are learnt from; a sweep with no such
+run draws all its cases with the sampler's own policy. Each case chosen for
+its instability records the flakiness predicted for it, beside the one the
+report assesses. Run the sweeps one after another, each reading the earlier
+ones' outputs, and every sweep looks where the last left the outcome unsure.
 
 ## Checking an ODD
 
