@@ -1,0 +1,125 @@
+# Python's built-in exceptions that Codon 0.19 lacks (docs/typecheck.md).
+#
+# Every rewritten module (a checked module and a scenario alike) imports them
+# through the transform's prelude (typecheck/transform.py), so they read as
+# the builtins they are in Python. Each derives from its CPython base
+# (FileNotFoundError from OSError, BrokenPipeError from ConnectionError).
+#
+# Each is built as CPython builds one with a message: from nothing or from one
+# value by position, whose str() is the message (`FileNotFoundError(path)`).
+# CPython's other forms are not declared, so the check refuses them: a keyword
+# (CPython's OSError takes none, ImportError only `name` and `path`), other
+# values (`OSError(errno, strerror)`, but for two strs where a subclass is
+# derived from, below), and the attributes they fill (`errno`, `filename`,
+# `name`).
+
+import internal.static as static
+
+
+def _no_keywords(kwargs, where: Literal[str]):
+    # Each constructor takes `**kwargs`, so that a keyword is refused here
+    # rather than taken by the constructor the class inherits from Codon's
+    # (OSError's takes `message=`): Codon tries the class's own first.
+    if static.len(kwargs.args) > 0:
+        compile_error(where + " takes no keyword argument here")
+
+
+def _message(args, kwargs, where: Literal[str]) -> str:
+    # Codon 0.19 has no `/`: the message is a `*args` of at most one value.
+    _no_keywords(kwargs, where)
+    if static.len(args) == 0:
+        return ""
+    elif static.len(args) == 1:
+        return str(args[0])
+    else:
+        compile_error(where + " takes one message here")
+        return ""
+
+
+def _str(value: str) -> str:
+    return value
+
+
+# OSError's subclasses pass their own type name on, as Codon's LookupError
+# and RuntimeError take one for theirs; its own constructor stays.
+@extend
+class OSError:
+    def __init__(self, typename: str, message: str):
+        super().__init__(typename, message)
+        self.python_type = self.__class__._pytype
+
+
+class ImportError(Static[Exception]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    # A subclass passes its own type name and the message on, as two strs,
+    # which CPython takes too.
+    def __init__(self, *args, **kwargs):
+        if static.len(args) == 2:
+            _no_keywords(kwargs, "ImportError()")
+            super().__init__(_str(args[0]), _str(args[1]))
+        else:
+            super().__init__("ImportError", _message(args, kwargs, "ImportError()"))
+        self.python_type = self.__class__._pytype
+
+
+class ModuleNotFoundError(Static[ImportError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("ModuleNotFoundError", _message(args, kwargs, "ModuleNotFoundError()"))
+        self.python_type = self.__class__._pytype
+
+
+class FileNotFoundError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("FileNotFoundError", _message(args, kwargs, "FileNotFoundError()"))
+        self.python_type = self.__class__._pytype
+
+
+class PermissionError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("PermissionError", _message(args, kwargs, "PermissionError()"))
+        self.python_type = self.__class__._pytype
+
+
+class ProcessLookupError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("ProcessLookupError", _message(args, kwargs, "ProcessLookupError()"))
+        self.python_type = self.__class__._pytype
+
+
+class TimeoutError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("TimeoutError", _message(args, kwargs, "TimeoutError()"))
+        self.python_type = self.__class__._pytype
+
+
+class ConnectionError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    # A subclass passes its own type name and the message on, as two strs,
+    # which CPython takes too.
+    def __init__(self, *args, **kwargs):
+        if static.len(args) == 2:
+            _no_keywords(kwargs, "ConnectionError()")
+            super().__init__(_str(args[0]), _str(args[1]))
+        else:
+            super().__init__("ConnectionError", _message(args, kwargs, "ConnectionError()"))
+        self.python_type = self.__class__._pytype
+
+
+class BrokenPipeError(Static[ConnectionError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("BrokenPipeError", _message(args, kwargs, "BrokenPipeError()"))
+        self.python_type = self.__class__._pytype

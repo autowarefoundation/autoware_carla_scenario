@@ -1,0 +1,77 @@
+# Python's os.path (posixpath), for the checker (docs/typecheck.md): it
+# replaces Codon's, which declares splitext() alone, since the os shim
+# replaces the os package. The signatures are CPython 3.10's, keyword names
+# included; a path is a str or a pathlib.Path, and the result a str, as
+# CPython returns for either. Nothing touches the file system: a query is
+# False, and expanduser() and abspath() return the path as it is.
+
+from os import fspath
+
+
+def _join(a: str, b: str) -> str:
+    if b.startswith("/") or not a:
+        return b
+    if a.endswith("/"):
+        return a + b
+    return a + "/" + b
+
+
+def join(a, *p) -> str:
+    path = fspath(a)
+    for part in p:
+        path = _join(path, fspath(part))
+    return path
+
+
+def basename(p) -> str:
+    path = fspath(p)
+    return path[path.rfind("/") + 1:]
+
+
+def dirname(p) -> str:
+    path = fspath(p)
+    head = path[: path.rfind("/") + 1]
+    if head and head != "/" * len(head):
+        head = head.rstrip("/")
+    return head
+
+
+def splitext(p) -> Tuple[str, str]:
+    path = fspath(p)
+    sep_index = path.rfind("/")
+    dot_index = path.rfind(".")
+    if dot_index > sep_index:
+        # A leading dot (".bashrc") starts no extension.
+        name_index = sep_index + 1
+        while name_index < dot_index:
+            if path[name_index] != ".":
+                return path[:dot_index], path[dot_index:]
+            name_index += 1
+    return path, ""
+
+
+def isabs(s) -> bool:
+    return fspath(s).startswith("/")
+
+
+def exists(path) -> bool:
+    fspath(path)
+    return False
+
+
+def isfile(path) -> bool:
+    fspath(path)
+    return False
+
+
+def isdir(s) -> bool:
+    fspath(s)
+    return False
+
+
+def expanduser(path) -> str:
+    return fspath(path)
+
+
+def abspath(path) -> str:
+    return fspath(path)

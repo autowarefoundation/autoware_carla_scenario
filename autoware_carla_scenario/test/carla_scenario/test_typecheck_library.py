@@ -1258,13 +1258,13 @@ def test_the_pathlib_shim_builds_joins_and_prints_paths(
     )
     assert wrong != _PATHLIB
     assert not _check_case(wrong, tmp_path, monkeypatch).ok
-    # Python builds and joins a Path with a str or a Path only.
+    # Python builds and joins a Path with a str or an os.PathLike only.
     for part in ("Path(configured, 1)", "(Path(configured) / 1)"):
         wrong = _PATHLIB.replace("Path(configured)", part, 1)
         assert wrong != _PATHLIB
         result = _check_case(wrong, tmp_path, monkeypatch)
         assert not result.ok
-        assert "a str or a Path only" in result.format(), result.format()
+        assert "a str or an os.PathLike only" in result.format(), result.format()
 
 
 _URLLIB = """
@@ -1412,3 +1412,161 @@ def test_the_file_system_shims_refuse_what_cpython_refuses(
     located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
     assert located, result.format()
     assert located[0].line == line, result.format()
+
+
+# ---------------------------------------------------------------------------
+# The os and shutil shims, dict.get(key), and the missing exceptions (#117)
+# ---------------------------------------------------------------------------
+
+
+_OS_SHUTIL = """
+from __future__ import annotations
+
+import os
+import shutil
+from pathlib import Path
+from typing import Optional
+
+
+class MissingTool(FileNotFoundError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+def configured(name: str) -> Optional[Path]:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    return Path(value).expanduser()
+
+
+def environment(name: str) -> str:
+    unset: Optional[str] = os.environ.get(name)
+    fallback = os.getenv(name, "fallback")
+    maybe: Optional[str] = os.getenv(key=name)
+    os.environ[name] = fallback
+    env = os.environ.copy()
+    names = [key for key in os.environ if key.startswith("ACS_")]
+    return f"{unset} {maybe} {len(env)} {os.pathsep.join(names)}"
+
+
+def lookup(table: dict[str, int], key: str) -> Optional[int]:
+    return table.get(key)
+
+
+def processes(pgid: int) -> int:
+    os.killpg(os.getpgid(os.getpid()), 15)
+    os.kill(pgid, 9)
+    return os.system("true")
+
+
+def install(source: Path, destination: Path) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text("x", encoding="utf-8")
+    shutil.copy2(source, destination)
+    copied: str = shutil.copy2(str(source), "target.xodr", follow_symlinks=False)
+    moved = shutil.move(src=source, dst=destination)
+    shutil.rmtree(destination.parent, ignore_errors=True)
+    found: Optional[str] = shutil.which("git")
+    joined = os.path.join(destination, "a")
+    return f"{copied} {Path(moved)} {found} {joined}"
+
+
+def guarded(path: Path) -> str:
+    try:
+        return path.name
+    except ModuleNotFoundError as exc:
+        return str(exc)
+    except ImportError:
+        raise MissingTool("no tool")
+    except PermissionError:
+        raise TimeoutError("slow")
+    except BrokenPipeError:
+        raise ProcessLookupError(path)
+    except ConnectionError as exc:
+        raise OSError(str(exc))
+"""
+
+
+@needs_codon
+def test_the_os_and_shutil_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "os" / "__init__.codon").is_file()
+    assert (model_dir() / "shutil.codon").is_file()
+    result = _check_case(_OS_SHUTIL, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython 3.10, the oldest
+        # Python the package supports (rmtree() takes `onexc` from 3.12 on).
+        ('os.environ.get(name, "")', 'os.environ.get(name, "", "")'),
+        ("os.environ.copy()", 'os.environ.fromkeys(["a"])'),
+        ("os.environ[name] = fallback", "os.environ[name] = len(fallback)"),
+        ("os.getenv(key=name)", "os.getenv(name=name)"),
+        ("table.get(key)", "table.get(key=key)"),
+        ("os.kill(pgid, 9)", "os.kill(pid=pgid, signal=9)"),
+        ("os.getpgid(os.getpid())", "os.getpgid(os.getpid(), 0)"),
+        ('os.system("true")', 'os.system(cmd="true")'),
+        ("mkdir(parents=True, exist_ok=True)", "mkdir(exist_ok=True, missing_ok=True)"),
+        ('write_text("x", encoding="utf-8")', "write_text(1)"),
+        ("follow_symlinks=False)", "False)"),
+        ("ignore_errors=True)", "ignore_errors=True, onexc=None)"),
+        ('shutil.which("git")', 'shutil.which("git", 1, None, True)'),
+        ("dst=destination)", "dest=destination)"),
+        ('os.path.join(destination, "a")', "os.path.join(destination, 1)"),
+        ('raise TimeoutError("slow")', 'raise TimeoutError(message="slow")'),
+        ('raise MissingTool("no tool")', 'raise ImportError(message="no tool")'),
+    ],
+    ids=[
+        "environ-get-arguments",
+        "environ-is-no-dict",
+        "environ-value-str",
+        "getenv-keyword",
+        "dict-get-positional-only",
+        "kill-positional-only",
+        "getpgid-arguments",
+        "system-keyword",
+        "mkdir-keyword",
+        "write-text-str",
+        "copy2-follow-symlinks-keyword-only",
+        "rmtree-onexc",
+        "which-arguments",
+        "move-keyword",
+        "join-path",
+        "oserror-no-keyword",
+        "importerror-keyword",
+    ],
+)
+def test_the_os_and_shutil_shims_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _OS_SHUTIL.replace(right, wrong, 1)
+    assert source != _OS_SHUTIL
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+@needs_codon
+def test_what_shutil_returns_for_a_path_is_only_a_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # copy2() and move() return their Path destination, or a str when it names
+    # a directory: the check takes str() and Path() of it, and nothing else.
+    wrong = _OS_SHUTIL.replace("{Path(moved)}", "{moved.name}", 1)
+    assert wrong != _OS_SHUTIL
+    result = _check_case(wrong, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "name" in result.format()

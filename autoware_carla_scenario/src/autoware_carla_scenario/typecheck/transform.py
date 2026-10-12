@@ -81,6 +81,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 __all__ = [
+    "MISSING_BUILTIN_EXCEPTIONS",
     "PRELUDE",
     "UndeclaredAttribute",
     "class_declarations",
@@ -90,12 +91,29 @@ __all__ = [
     "undeclared_attributes",
 ]
 
+#: Python's built-in exceptions that Codon 0.19 lacks: the model's
+#: ``_exceptions.codon`` declares them, and :data:`PRELUDE` imports them into
+#: every transformed module, where Python finds them among its builtins.
+MISSING_BUILTIN_EXCEPTIONS = (
+    "BrokenPipeError",
+    "ConnectionError",
+    "FileNotFoundError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "PermissionError",
+    "ProcessLookupError",
+    "TimeoutError",
+)
+
 #: First lines of every transformed module; reported line numbers are shifted
 #: back by as many.
 PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_callable, _acs_tuple\n"
+    "from autoware_carla_scenario._exceptions import "
+    + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
+    + "\n"
 )
 
 _OPTIONAL_NAMES = {"Optional", "typing.Optional"}

@@ -1,0 +1,64 @@
+# The part of Python's shutil the checked framework names, for the checker
+# (docs/typecheck.md): copy2(), move(), rmtree() and which(), with CPython
+# 3.10's signatures, the oldest Python the package supports. A path is a str
+# or a pathlib.Path (os.PathLike). The callables CPython also takes
+# (rmtree()'s `onerror`, move()'s `copy_function`) are not declared, so the
+# check refuses them. Nothing here runs: nothing is copied, moved or removed,
+# and which() finds nothing.
+
+import internal.static as static
+from os import fspath
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+class _Destination:
+    """Where copy2() and move() put a file, when given a pathlib.Path: CPython
+    returns that Path, or a str when it names a directory (the file is put
+    inside it). Either is a path, so this is one too: str() and os.fspath()
+    take it, and nothing else."""
+
+    _path: str
+
+    def __init__(self, path: str):
+        self._path = path
+
+    def __str__(self) -> str:
+        return self._path
+
+    def __fspath__(self) -> str:
+        return self._path
+
+
+def _destination(dst):
+    # A str in, a str out: CPython returns `dst`, or `dst` joined with the
+    # source's name, both a str.
+    if isinstance(dst, str):
+        return dst
+    else:
+        return _Destination(fspath(dst))
+
+
+def copy2(src, dst, *_kw, follow_symlinks: bool = True):
+    _keyword_only(_kw, "copy2(): follow_symlinks")
+    fspath(src)
+    return _destination(dst)
+
+
+def move(src, dst):
+    fspath(src)
+    return _destination(dst)
+
+
+def rmtree(path, ignore_errors: bool = False) -> None:
+    fspath(path)
+
+
+# which(cmd, mode=os.F_OK | os.X_OK, path=None). A str command (a Path is
+# not declared, as CPython may return it as it is), so the result is a str.
+def which(cmd: str, mode: int = 1, path: Optional[str] = None) -> Optional[str]:
+    return Optional[str]()
