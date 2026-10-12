@@ -1,0 +1,190 @@
+# The part of Python's os the checked framework names, for the checker
+# (docs/typecheck.md). It replaces the os module Codon ships, whose environ
+# has no get() and iterates over (key, value) pairs. What else reads it is
+# kept: `os.getenv(key, default)` (Codon's internal/python.codon and
+# typesafe_carla's Codon library) and `key in os.environ` (Codon's getopt).
+#
+# The signatures are CPython 3.10's, the oldest Python the package supports,
+# so the check accepts the calls CPython does and refuses the others; a
+# positional-only parameter (`kill(pid, signal, /)`) is a `*args` here, as
+# Codon 0.19 has no `/`. A path is a str or a pathlib.Path (os.PathLike);
+# bytes paths and file descriptors are not declared, and an Optional path is
+# unwrapped, as Codon unwraps one passed to a parameter of its type. Nothing
+# here runs: the environment is empty, a process id is 0, and nothing is
+# killed.
+
+import internal.static as static
+
+
+def _positional_only(args, count: Literal[int], where: Literal[str]):
+    # Codon 0.19 has no `/`: positional-only parameters are a `*args` of
+    # exactly that many, so no keyword reaches them.
+    if static.len(args) != count:
+        compile_error(where + " takes its arguments by position only")
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+name = "posix"
+sep = "/"
+pathsep = ":"
+linesep = "\n"
+curdir = "."
+pardir = ".."
+extsep = "."
+devnull = "/dev/null"
+
+SEEK_SET = 0
+SEEK_CUR = 1
+SEEK_END = 2
+
+# The modes of os.access(), which shutil.which() takes.
+F_OK = 0
+X_OK = 1
+W_OK = 2
+R_OK = 4
+
+
+class _Environ:
+    """What os.environ is: a MutableMapping of str to str (os._Environ)."""
+
+    _map: Dict[str, str]
+
+    def __init__(self):
+        self._map = Dict[str, str]()
+
+    def __getitem__(self, key: str) -> str:
+        return self._map[key]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        self._map[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._map[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._map
+
+    def __iter__(self) -> Generator[str]:
+        for key in self._map:
+            yield key
+
+    def __len__(self) -> int:
+        return len(self._map)
+
+    def __repr__(self) -> str:
+        return "environ(" + repr(self._map) + ")"
+
+    # Mapping.get(key, default=None): a str, or None when it is absent.
+    def get(self, key: str, default: NoneType) -> Optional[str]:
+        if key in self._map:
+            return self._map[key]
+        return None
+
+    def get(self, key: str, default: str) -> str:
+        if key in self._map:
+            return self._map[key]
+        return default
+
+    def get(self, key: str) -> Optional[str]:
+        if key in self._map:
+            return self._map[key]
+        return None
+
+    def pop(self, key: str, default: str) -> str:
+        if key in self._map:
+            return self._map.pop(key)
+        return default
+
+    def pop(self, key: str) -> str:
+        return self._map.pop(key)
+
+    def setdefault(self, key: str, value: str) -> str:
+        return self._map.setdefault(key, value)
+
+    def keys(self) -> Generator[str]:
+        for key in self._map:
+            yield key
+
+    def values(self) -> Generator[str]:
+        for value in self._map.values():
+            yield value
+
+    def items(self) -> Generator[Tuple[str, str]]:
+        for item in self._map.items():
+            yield item
+
+    # A dict, as CPython's environ.copy() returns.
+    def copy(self) -> Dict[str, str]:
+        return self._map.copy()
+
+
+environ = _Environ()
+
+
+# getenv(key, default=None): a str, or the default when it is unset. One
+# function (Codon 0.19 overloads no module-level function), typed by its
+# default: a str gives a str, None an Optional[str]; CPython takes a default
+# of any type, which is not declared.
+def getenv(key: str, default=None):
+    if isinstance(default, str):
+        return environ.get(key, default)
+    elif isinstance(default, None) or isinstance(default, Optional[NoneType]):
+        return environ.get(key)
+    else:
+        compile_error("getenv(): the default is a str or None")
+
+
+def fspath(path) -> str:
+    if isinstance(path, str):
+        return path
+    elif isinstance(path, Optional):
+        # Unwrapped, as Codon passes an Optional to any parameter of its type
+        # (and as the pathlib shim takes one): Codon does not narrow `x` under
+        # `if x is not None:`.
+        return fspath(path.__val__())
+    elif hasattr(path, "__fspath__"):
+        return path.__fspath__()
+    else:
+        compile_error("expected str or os.PathLike object")
+        return ""
+
+
+def getpid() -> int:
+    return 0
+
+
+def getppid() -> int:
+    return 0
+
+
+def getpgid(pid: int) -> int:
+    return 0
+
+
+# kill(pid, signal, /) and killpg(pgid, signal, /).
+def kill(*args) -> None:
+    _positional_only(args, 2, "kill()")
+    pid: int = args[0]
+    signal: int = args[1]
+
+
+def killpg(*args) -> None:
+    _positional_only(args, 2, "killpg()")
+    pgid: int = args[0]
+    signal: int = args[1]
+
+
+def system(command: str) -> int:
+    return 0
+
+
+# Codon's os declared mkdir(); CPython's is mkdir(path, mode=0o777, *,
+# dir_fd=None) (511: Codon has no octal literal).
+def mkdir(path, mode: int = 511, *_kw, dir_fd: Optional[int] = None) -> None:
+    _keyword_only(_kw, "mkdir(): dir_fd")
+    fspath(path)

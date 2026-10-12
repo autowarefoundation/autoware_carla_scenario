@@ -19,9 +19,12 @@ import logging
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from .resolver import ResolvedMap
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,9 @@ DEFAULT_TIMEOUT = 60.0
 
 class OpenDriveUnavailable(RuntimeError):
     """No OpenDRIVE could be found or fetched for a map."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 def map_asset_env_var(map_name: str) -> str:
@@ -80,7 +86,7 @@ def _short_map_name(name: str) -> str:
     return name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
-def capture_opendrive(world: Any, destination: Path) -> Path:
+def capture_opendrive(world: carla.World, destination: Path) -> Path:
     """Write *world*'s OpenDRIVE to *destination*, and return it.
 
     The cheapest of the four sources: a run already has the town loaded.  It

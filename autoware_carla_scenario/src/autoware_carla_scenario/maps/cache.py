@@ -114,6 +114,9 @@ _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 class MapCacheError(RuntimeError):
     """A repository could not be cloned, updated or read."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 def map_root() -> Path:
     """Return the directory HD maps are kept in.

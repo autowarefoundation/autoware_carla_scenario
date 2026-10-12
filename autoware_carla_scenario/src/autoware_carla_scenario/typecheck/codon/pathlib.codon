@@ -8,7 +8,9 @@
 # take what CPython 3.10's take, the oldest Python the package supports: the
 # keyword-only `follow_symlinks` (3.12/3.13) and glob's `case_sensitive` and
 # `recurse_symlinks` (3.12/3.13) are refused, as CPython 3.10 refuses them.
-# They touch no file: a query is False, and a glob yields nothing.
+# They touch no file: a query is False, and a glob yields nothing. Of what
+# writes, mkdir() and write_text() are declared (CPython 3.10's signatures);
+# they create and write nothing.
 
 
 def _part(part) -> str:
@@ -20,8 +22,11 @@ def _part(part) -> str:
         # Unwrapped, as Codon passes an Optional to any parameter of its type:
         # Codon does not narrow `Path(x)` under `if x:`.
         return _part(part.__val__())
+    elif hasattr(part, "__fspath__"):
+        # Another os.PathLike (what shutil.copy2() returns for a Path).
+        return part.__fspath__()
     else:
-        compile_error("a Path is built from and joined with a str or a Path only")
+        compile_error("a Path is built from and joined with a str or an os.PathLike only")
         return ""
 
 
@@ -90,6 +95,10 @@ class Path:
 
     def __hash__(self) -> int:
         return hash(self._path)
+
+    # os.PathLike: os.fspath(), os.path and shutil take a Path.
+    def __fspath__(self) -> str:
+        return self._path
 
     def expanduser(self) -> Path:
         return self
@@ -161,3 +170,18 @@ class Path:
         # A generator of Paths, as CPython's glob() returns, of no path.
         if False:
             yield self
+
+    # The two writes the framework makes (maps.opendrive), with CPython
+    # 3.10's signatures (mode=0o777: Codon has no octal literal); nothing is
+    # created or written.
+    def mkdir(self, mode: int = 511, parents: bool = False, exist_ok: bool = False) -> None:
+        pass
+
+    def write_text(
+        self,
+        data: str,
+        encoding: Optional[str] = None,
+        errors: Optional[str] = None,
+        newline: Optional[str] = None,
+    ) -> int:
+        return len(data)

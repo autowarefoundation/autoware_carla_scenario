@@ -6,6 +6,7 @@ None of these need Codon: they pin down what reaches the compiler.
 from __future__ import annotations
 
 import ast
+import builtins
 import dataclasses
 import enum
 import textwrap
@@ -13,13 +14,38 @@ from typing import Any, Optional
 
 import pytest
 
+from autoware_carla_scenario.typecheck import model_dir
 from autoware_carla_scenario.typecheck.driver import render_driver
 from autoware_carla_scenario.typecheck.transform import (
+    MISSING_BUILTIN_EXCEPTIONS,
     PRELUDE,
     codon_annotation,
     transform_source,
     undeclared_attributes,
 )
+
+
+def test_the_prelude_imports_the_builtin_exceptions_codon_lacks() -> None:
+    # Each is one of Python's built-in exceptions, declared in the model's
+    # _exceptions.codon with its CPython base, and imported by every rewritten
+    # module, where Python finds it among its builtins.
+    tree = ast.parse(
+        (model_dir() / "autoware_carla_scenario" / "_exceptions.codon").read_text()
+    )
+    bases = {
+        node.name: ast.unparse(node.bases[0])
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name != "OSError"
+    }
+    assert sorted(bases) == sorted(MISSING_BUILTIN_EXCEPTIONS)
+    for name in MISSING_BUILTIN_EXCEPTIONS:
+        python = getattr(builtins, name)
+        assert issubclass(python, BaseException), name
+        assert bases[name] == f"Static[{python.__base__.__name__}]", name
+    imported = ast.parse(PRELUDE).body[-1]
+    assert isinstance(imported, ast.ImportFrom)
+    assert imported.module == "autoware_carla_scenario._exceptions"
+    assert [alias.name for alias in imported.names] == list(MISSING_BUILTIN_EXCEPTIONS)
 
 
 def _transform(source: str) -> str:
