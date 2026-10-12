@@ -762,7 +762,7 @@ class BaseScenario(ABC):
         """
         if not key:
             raise ValueError("register_measure(): key must not be empty")
-        from .odd.units import normalize_unit  # noqa: PLC0415
+        from .odd.unit_names import normalize_unit  # noqa: PLC0415
 
         built_in = BUILT_IN_MEASURES[key] if key in BUILT_IN_MEASURES else None
         if (

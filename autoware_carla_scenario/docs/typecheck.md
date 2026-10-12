@@ -257,7 +257,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 129 of
-the package's 225 modules (57%; about 25,700 of 69,200 lines) are `CHECKED`:
+the package's 228 modules (57%; about 25,600 of 64,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -275,7 +275,7 @@ OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units, the CARLA-only helpers, the traffic-light lookups included, and the
+unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light lookups included, and the
 scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
@@ -301,35 +301,36 @@ unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 96 `EXCLUDED` modules fall in
-three groups. Many fit more than one (69 import what Codon cannot compile,
+`encode_frame_jpeg()` (cv2). The 99 `EXCLUDED` modules fall in
+three groups. Many fit more than one (74 import what Codon cannot compile,
 43 build on an excluded module and 28 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **69 import what Codon cannot compile**: lanelet2, pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
+- **74 import what Codon cannot compile**: lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or a standard module Codon
   lacks (`json`, `inspect`, `tempfile`, `importlib` beyond
   `importlib.metadata`, or more of `pathlib`, `shutil` or `subprocess` than
   their shims declare), at module level or inside a function the check
   calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue) and
+  map cache, the Autoware launcher, the scenario runner and queue, the record of a
+  run's environment), the ODD and coverage modules that wrap openodd, and
   everything that reads Lanelet2. A reason names `pathlib` only where the
   module uses more of it than the shim declares, and `shutil` and
   `subprocess` likewise.
-- **23 build on an excluded module**, and import nothing Codon lacks
+- **22 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
   authoring compiler, builders and validator, the route frame, poses and search
   (`route.frame`, `route.positions`, `route.search`, through lanelet2),
-  `odd.model` (over `coverage.items`), `trajectory.resolve` and
+  `trajectory.resolve` and
   `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
-  (over `ui.models`); 10 of the 23
+  (over `ui.models`); 9 of the 22
   also hold values Codon has no type for.
-- **4 hold values Codon has no type for**, and nothing else keeps them out:
-  `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
+- **3 hold values Codon has no type for**, and nothing else keeps them out:
+  `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults) or a class as a value (`utils.config`, which `traffic.config`
   and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
 
