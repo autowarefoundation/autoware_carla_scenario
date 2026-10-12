@@ -313,7 +313,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.coordinate.transform": "imports lanelet2, autoware_lanelet2_extension_python",
     "autoware_carla_scenario.coverage": "re-exports coverage.collector and coverage.report, which import pathlib, json",
     "autoware_carla_scenario.coverage.cod": "imports pathlib, yaml, csv",
-    "autoware_carla_scenario.coverage.collector": "imports pathlib, json",
+    "autoware_carla_scenario.coverage.collector": "imports pathlib, json, importlib.metadata and openodd's cells (a Rust extension)",
     "autoware_carla_scenario.coverage.items": "re-exports openodd's cover items (a Rust extension)",
     "autoware_carla_scenario.coverage.report": "re-exports openodd's coverage merge (a Rust extension); imports pathlib, json, argparse",
     "autoware_carla_scenario.declarative": "imports pathlib (`Path.is_file()`), and authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (pathlib, yaml), which are not checked and have no model",

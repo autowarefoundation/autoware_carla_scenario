@@ -10,7 +10,12 @@ sample either.
 
 With an ODD, every tick also samples the ODD's attributes, once each
 (:meth:`OddDefinition.sample`).  Those values fill the ODD's cover items and
-decide whether the tick was inside the ODD.
+decide whether the tick was inside the ODD, and the tick's step (its seconds
+and the ego's metres) is counted in its *cell* -- one bucket of each attribute
+(openodd's ``OddCells``) -- so the run can be sliced by any attributes later.
+
+Every coverage file says what wrote it (``generator``: openodd's and this
+framework's versions), so files from different versions can be told apart.
 
 The coverage file (``{Scenario}_coverage.json``) holds, per bucket of one
 run, its hits and, for items sampled every tick, its exposure: the seconds
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import itertools
 from datetime import datetime, timezone
+from importlib import metadata
 import json
 import math
 import logging
@@ -57,6 +63,26 @@ logger = logging.getLogger(__name__)
 
 #: Written to every coverage file, so a reader can refuse one it does not know.
 COVERAGE_SCHEMA = "autoware_carla_scenario.coverage/1"
+#: This framework's distribution, named in a coverage file's ``generator``.
+FRAMEWORK_DISTRIBUTION = "autoware-carla-scenario"
+
+
+def generator() -> dict[str, Optional[str]]:
+    """What writes the coverage files: openodd's and this framework's versions
+    (``None`` when one cannot be told)."""
+
+    def version(distribution: str) -> Optional[str]:
+        try:
+            return metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            return None
+
+    framework = version(FRAMEWORK_DISTRIBUTION)
+    return {
+        "openodd": version("openodd-py"),
+        "framework": f"{FRAMEWORK_DISTRIBUTION}=={framework}" if framework else None,
+    }
+
 
 #: Beside a run's coverage file, the transmission archive of its ODD.
 ODD_ARCHIVE_SUFFIX = "_odd.tar.gz"
@@ -141,6 +167,32 @@ class _OddMonitor:
         self.out_intervals: list[list[float]] = []
         #: Whether the excursion going on is the last interval listed.
         self._recording = False
+        #: Steps, seconds and metres per combination of the attributes'
+        #: buckets (``odd.cells``); ``None`` if openodd cannot count them.
+        self.cells: Any = None
+        try:
+            from openodd import OddCells  # noqa: PLC0415 - the ODD's own library
+
+            self.cells = OddCells(odd)
+        except Exception:
+            logger.warning("coverage: cannot count the ODD's cells", exc_info=True)
+        self._cell_failed = False
+
+    def count(self, values: dict[str, Any], seconds: float, meters: float) -> None:
+        """Count one tick's step in its cell (best effort, logged once)."""
+        if self.cells is None:
+            return
+        try:
+            self.cells.add(
+                [values.get(a.name) for a in self.odd.attributes], seconds, meters
+            )
+        except Exception:
+            if not self._cell_failed:
+                self._cell_failed = True
+                logger.warning(
+                    "coverage: could not count a tick in the ODD's cells (logged once)",
+                    exc_info=True,
+                )
 
     def record(
         self,
@@ -197,6 +249,7 @@ class _OddMonitor:
                 "attributes": [_attribute_meta(a) for a in self.odd.attributes],
                 "rows": self.rows,
             },
+            "cells": self.cells.to_dict() if self.cells is not None else None,
         }
 
 
@@ -428,6 +481,8 @@ class CoverageCollector:
             for item, module in self._situation_items.items():
                 values[item] = _situation_value(verdict.modules.get(module))
         step = self._step(world, elapsed)
+        if self._odd is not None:
+            self._odd.count(attributes, step.seconds, step.meters)
         self._sample_event(world, SamplingEvent.TICK, values, step)
         for key, entry in self._conditions.items():
             condition, was_satisfied = entry
@@ -455,6 +510,7 @@ class CoverageCollector:
         """One run's coverage, in the coverage-file format."""
         return {
             "schema": COVERAGE_SCHEMA,
+            "generator": generator(),
             "scenario": scenario,
             "items": [e.to_dict() for e in self._items],
             "crosses": [c.to_dict() for c in self._crosses],

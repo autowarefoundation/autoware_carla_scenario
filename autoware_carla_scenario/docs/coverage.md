@@ -310,6 +310,7 @@ coverage file only.
 ```json
 {
   "schema": "autoware_carla_scenario.coverage/1",
+  "generator": {"openodd": "0.3.0", "framework": "autoware-carla-scenario==10.0.13"},
   "scenario": "CutInScenario",
   "items": [
     {
@@ -322,6 +323,9 @@ coverage file only.
       "buckets": ["[0, 5)", "[5, 15)", "[15, 40]"],
       "outside_odd": [],
       "target": 1,
+      "cover_by": "hits",
+      "min_stay": null,
+      "amount": "hits",
       "samples": 1,
       "ignored": 0,
       "hits": {"[0, 5)": 0, "[5, 15)": 1, "[15, 40]": 0},
@@ -359,10 +363,31 @@ coverage file only.
     "ticks": {"inside": 512, "assumed": 8, "outside": 40},
     "seconds": {"inside": 25.6, "assumed": 0.4, "outside": 2.0},
     "module_ticks": {"roads": {"failed_ticks": 40, "missing_ticks": 8}},
-    "out_intervals": [[12.3, 14.3]]
+    "out_intervals": [[12.3, 14.3]],
+    "started_at": "2026-10-12T09:00:00.000+00:00",
+    "samples": {"attributes": [{"name": "scenery.speed_limit", "unit": "km/h", "values": null}, "..."],
+                "rows": [[0.05, 35.6812345, 139.7671234, 50, "..."], "..."]},
+    "cells": {
+      "attributes": ["scenery.speed_limit", "environment.rain"],
+      "rows": [[["[50, 60)", "none"], 512, 25.6, 301.2], [["[40, 50)", "<missing>"], 40, 2.0, 18.5]]
+    }
   }
 }
 ```
+
+- `generator` says what wrote the file: openodd's version and this framework's
+  (`null` when one cannot be told), so files from different versions can be
+  told apart when they are merged or traced.
+- `amount` is the measure a bucket's coverage is read from: `cover_by`, or
+  with a `min_stay` the stays long enough to count (`counted.<cover_by>`). An
+  ODD attribute's item also names its `attribute` (the name without `odd.`).
+- `odd.cells` counts every tick in its cell: one bucket of each attribute that
+  has buckets (`attributes`, in order), bucketed by openodd exactly as the
+  items are. Each row is the cell's labels, its ticks, seconds and the metres the
+  ego drove in it, most ticks first. A missing value is `<missing>`, a number
+  outside the buckets `<below>` / `<above>`. A reader can slice the run by any
+  attributes from it (how a run with heavy rain spent its time across speed
+  limits, say) without the per-tick `samples`, which stay for the COD export.
 
 The ODD's `structure`, `revision` (an ODD read from files) and `version`
 (what its root modules declare) say which ODD the run was measured against;
