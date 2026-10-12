@@ -2203,15 +2203,20 @@ def test_the_os_pathlib_and_popen_shims_take_what_docker_reads(
     ("right", "wrong"),
     [
         # Each fails in CPython 3.10 (the oldest Python the package supports)
-        # and 3.14 when it is called: a TypeError or an AttributeError.
+        # and 3.14 when it is called: a TypeError or an AttributeError; but
+        # is-relative-to-parts, which 3.10 takes and 3.14 refuses, and
+        # read-text-newline, which 3.13 takes and 3.10 refuses.
         ("os.getuid()", "os.getuid(0)"),
         ("os.getgid()", "os.getgid(0)"),
         ("os.readlink(path)", "os.readlink(path, None)"),
         ("target.is_absolute()", "target.is_absolute(True)"),
         ("target.is_relative_to(mount)", "target.is_relative_to(len(mount))"),
+        ("target.is_relative_to(mount)", 'target.is_relative_to(mount, "x")'),
+        ("target.is_relative_to(mount)", "target.is_relative_to(other=mount)"),
         ('source.rglob("package.xml")', "source.rglob()"),
         ("path.read_bytes()", 'path.read_bytes("rb")'),
         ("path.read_text()", 'path.read_text(encodig="utf-8")'),
+        ("path.read_text()", 'path.read_text(newline="")'),
         ("sys.stdout.write(line)", "sys.stdout.write(line.decode())"),
     ],
     ids=[
@@ -2220,9 +2225,12 @@ def test_the_os_pathlib_and_popen_shims_take_what_docker_reads(
         "readlink-dir-fd-keyword",
         "is-absolute-arguments",
         "is-relative-to-path",
+        "is-relative-to-parts",
+        "is-relative-to-keyword",
         "rglob-pattern",
         "read-bytes-arguments",
         "read-text-keyword",
+        "read-text-newline",
         "popen-line-is-str",
     ],
 )
