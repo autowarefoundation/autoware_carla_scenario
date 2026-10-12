@@ -2082,8 +2082,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 135 of
-the package's 228 modules (59%; about 27,700 of 64,800 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 137 of
+the package's 228 modules (60%; about 29,500 of 65,000 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2096,7 +2096,9 @@ the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
 (<code>entity.autoware_entity</code>), the entity registry and the policy
-warm-up with the Chaos powertrain model, <code>BaseScenario</code>,
+warm-up with the Chaos powertrain model, <code>BaseScenario</code>, the scenario
+runner's run loop and the queue that runs scenarios one after another
+(<code>scenario_runner</code>, <code>scenario_queue</code>),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (<code>maps.resolver</code>, with the repository listing
@@ -2114,7 +2116,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>entity</code>, <code>driver</code> and <code>maps</code>
 packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 65
+below). 69
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search or a
@@ -2132,15 +2134,20 @@ the road-marking pattern of the stop lines, which returns a <code>refers</code>
 parameter (any of lanelet2's primitives) as a line string
 (<code>utils.stop_line._road_marking_stop_lines()</code>),
 <code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs, <code>maps.config.resolve_map_paths()</code>,
+the authoring package's pydantic specs, what the runner does with <code>json</code>,
+lanelet2 or a condition's details (writing the result and its environment,
+<code>_write_result()</code>; checking the planned route against the ODD,
+<code>ScenarioRunner._warn_if_route_leaves_odd()</code>; collecting the condition
+statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
+(<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 93 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (68 import what Codon cannot compile,
-43 build on an excluded module and 27 hold values Codon has no type for), so
+<code>encode_frame_jpeg()</code> (cv2). The 91 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (66 import what Codon cannot compile,
+40 build on an excluded module and 27 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>68 import what Codon cannot compile</strong>: lanelet2 beyond what its model
+<li><strong>66 import what Codon cannot compile</strong>: lanelet2 beyond what its model
   declares (most of these walk its objects typed <code>Any</code>), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
@@ -2148,9 +2155,9 @@ each is counted once, in the first group that fits it:</p>
   <code>subprocess</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue, the
-  record of a run's environment), the ODD and coverage modules that wrap
-  openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
+  map cache, the Autoware launcher, the record of a run's environment), the
+  ODD and coverage modules that wrap openodd, and the rest of what reads
+  Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
 <li><strong>22 build on an excluded module</strong>, and import nothing Codon lacks
@@ -2216,7 +2223,9 @@ stands in for it in the check's workspace:</p>
   <code>autoware_bridge/grpc_server.codon</code>, <code>driver/egodriver_client.codon</code>,
   <code>autoware_stack/launcher.codon</code>, <code>maps/cache.codon</code>), or, for a module of
   the top-level package, a model of that module (<code>carla_install.codon</code>, for
-  <code>server</code>, declares <code>installed_executable()</code>). A module with no
+  <code>server</code>, declares <code>installed_executable()</code>; <code>trajectory_recorder.codon</code>,
+  for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
+  closes, whose JSON lines hold values of mixed types). A module with no
   model (<code>utils.config</code>) cannot be imported by a checked module until it is
   checked itself.</li>
 </ul>
@@ -2324,7 +2333,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   3.10's signatures (3.12 and 3.13 added the keyword-only <code>follow_symlinks</code>,
   <code>case_sensitive</code> and <code>recurse_symlinks</code>, which are refused), and <code>name</code>,
   <code>suffix</code>, <code>parent</code>, <code>parents</code> (indexed, iterated, <code>len()</code> and <code>in</code>; not
-  sliced), <code>as_posix()</code>, <code>relative_to(other)</code> (one path, by position:
+  sliced), <code>stem</code>, <code>with_name(name)</code> (of a <code>str</code>), <code>as_posix()</code>, <code>relative_to(other)</code> (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
   does too; 3.12's <code>walk_up</code> is refused) and the ordering of two <code>Path</code>s, so
   <code>sorted()</code> takes them. Nothing
@@ -2450,7 +2459,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>typing.Protocol</code>, whose <code>@runtime_checkable</code> is dropped too.
   <code>typing.Any</code> imports, and every annotation naming it is dropped.
   <code>typing.TYPE_CHECKING</code> is a compile-time true, so Codon compiles only the
-  first branch of <code>if TYPE_CHECKING: ... else: ...</code>. The <code>logging</code> shim's
+  first branch of <code>if TYPE_CHECKING: ... else: ...</code>, and the check reports
+  no import in the <code>else</code> branch: <code>scenario_queue</code> imports tqdm there, at
+  module level, and waits without the progress bar in the first branch. The <code>logging</code> shim's
   methods take <code>exc_info</code> as a <code>bool</code>.</li>
 <li><strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
   <code>RoadNetwork</code>, <code>Road</code>, <code>LaneSection</code> and <code>Lane</code> that <code>coordinate.codon</code>
@@ -2792,8 +2803,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   refuses it. <code>raise X from None</code> is rewritten to <code>raise X</code> by the check;
   <code>raise X from exc</code> compiles as it is.
 - <strong><code>frozenset</code> is checked as a <code>set</code></strong>: Codon 0.19 has none, so the check
-  rewrites <code>frozenset(...)</code> to <code>set(...)</code> and <code>frozenset[X]</code> /
-  <code>FrozenSet[X]</code> to <code>Set[X]</code>; the source keeps its <code>frozenset</code>.
+  rewrites <code>frozenset(...)</code> to <code>set(...)</code>, <code>frozenset[X](...)</code> to
+  <code>Set[X](...)</code> and <code>frozenset[X]</code> / <code>FrozenSet[X]</code> to <code>Set[X]</code>; the source
+  keeps its <code>frozenset</code>. An empty one is <code>frozenset[str]()</code>: a bare
+  <code>frozenset()</code> is a set of no element type in Codon
+  (<code>scenario_runner._destroy_all_dynamic_actors()</code>).
 - <strong>A variable-length tuple attribute is checked as a list</strong>: a class-level
   <code>tuple[X, ...]</code> / <code>Tuple[X, ...]</code> becomes <code>List[X]</code>, and <code>tuple(x)</code> of a
   list or a generator becomes a list (a tuple passed to <code>tuple()</code> stays
@@ -3018,7 +3032,27 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (<code>trajectory/__init__.py</code> re-exports <code>ResolvedTrajectory</code>), declare it in
   the model module. When the package does not export it, add it to
   <code>_BOUNDARY</code> in <code>test_typecheck_model.py</code>, so it is compared with the Python
-  class as an exported name is.</p>
+  class as an exported name is.
+- <strong>A value of a type the model holds</strong>: a checked module that hands a checked
+  value to a checked module that imports it through the model
+  (<code>MODELLED_IMPORTS</code>) hands the wrong type. <code>scenario_runner</code> hands the
+  checked <code>BaseScenario</code> to <code>measures.set_measured_scenario()</code>, and its
+  <code>EgoConfig</code> to <code>EgoVehicle.spawn()</code>, which take the model's: it makes those
+  calls in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>, and takes the spawned
+  actor from <code>ego.actor</code> in the first.
+- <strong>No module object to assign a global through</strong>
+  (<code>vehicle_entity._warmup_done = True</code>): Codon 0.19 imports no module as a
+  value. The module sets its global in a function of its own
+  (<code>entity.vehicle_entity._set_warmup_done()</code>).
+- <strong>The runner's boundary is modelled</strong>: <code>coverage.codon</code> declares the
+  <code>CoverageCollector</code> (its constructor, <code>start()</code>, <code>tick()</code>, <code>end()</code> and
+  <code>write(path, scenario)</code>; openodd's <code>backend</code> and <code>generator</code> are refused),
+  <code>odd.codon</code> <code>resolve_odd(spec)</code>, whose union parameter (<code>str</code>, <code>Path</code>,
+  <code>OddDefinition</code> or <code>None</code>) is generic and checked in its body, and
+  <code>reset_probes()</code>, <code>coordinate.codon</code> <code>MapManager.reset()</code> and
+  <code>initialize()</code>, and <code>autoware_stack/launcher.codon</code> the launcher's
+  <code>prepare()</code> and <code>close()</code>, which the queue calls. <code>test_typecheck_model.py</code>
+  compares each with the Python one.</p>
 
 
 
@@ -3041,7 +3075,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 13:55:56 UTC"><span class="timeago" datetime="2026-10-12T13:55:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 13:55:56 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 15:43:29 UTC"><span class="timeago" datetime="2026-10-12T15:43:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 15:43:29 UTC">2026-10-12</span>
   </span>
 
     
