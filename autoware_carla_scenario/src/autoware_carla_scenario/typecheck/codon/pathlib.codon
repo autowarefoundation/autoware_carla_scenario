@@ -110,6 +110,23 @@ class Path:
     def home() -> Path:
         return Path("~")
 
+    @staticmethod
+    def cwd() -> Path:
+        return Path(".")
+
+    # The path with "/" separators (as CPython's on POSIX).
+    def as_posix(self) -> str:
+        return self._path
+
+    # relative_to(other), by position: what every supported Python takes.
+    # CPython 3.10 joins more parts (`relative_to(*other)`), 3.12 deprecates
+    # them and 3.14 refuses them (TypeError), so they are refused; so is 3.12's
+    # `walk_up`. Nothing is computed: the path is returned as it is (CPython
+    # raises ValueError for one not under it).
+    def relative_to(self, _acs_other) -> Path:
+        Path(_acs_other)
+        return self
+
     # The name and its parts, as PurePath computes them.
     @property
     def name(self) -> str:

@@ -123,6 +123,20 @@ class LibraryChecks:
     problems: list[tuple[int, str]] = field(default_factory=list)
 
 
+def _called_vararg(vararg: ast.arg | None) -> ast.arg | None:
+    """``*args: T``, which the check passes one T; ``None`` for any other.
+
+    A ``*args`` with no annotation, or of ``object`` or ``Any``
+    (``__exit__(self, *args: object)``), is given nothing, as before: there
+    is no value of it to give.
+    """
+    if vararg is None or vararg.annotation is None:
+        return None
+    if _dotted(vararg.annotation) in ("object", "Any", "typing.Any"):
+        return None
+    return vararg
+
+
 class _Renderer:
     def __init__(
         self,
@@ -195,6 +209,10 @@ class _Renderer:
     ) -> None:
         args = func.args
         positional = [*args.posonlyargs, *args.args][1 if drop_first else 0 :]
+        vararg = _called_vararg(args.vararg)
+        if vararg is not None:
+            # `*args: T`, given one T, so the body is compiled for one.
+            positional.append(vararg)
         every = [*positional, *args.kwonlyargs]
         choices = [self.types(arg, owner, where) for arg in every]
         if any(c is None for c in choices):

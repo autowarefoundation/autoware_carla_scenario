@@ -64,7 +64,7 @@ from .transform import (
     PRELUDE,
     class_declarations,
     redirect_imports,
-    transform_source,
+    transform_source_lines,
     undeclared_attributes,
 )
 
@@ -397,6 +397,9 @@ class _Workspace:
     #: workspace-relative file -> (its lines before the calls the library
     #: check appended, appended line -> the call on it)
     appended: dict[str, tuple[int, dict[int, str]]] = field(default_factory=dict)
+    #: workspace-relative file -> the line of the original each of its lines
+    #: after the prelude comes from (:func:`.transform.transform_source_lines`)
+    origins: dict[str, list[int]] = field(default_factory=dict)
     #: What an error in the driver program is reported at.
     driver_label: str = _DRIVER_LABEL
 
@@ -433,8 +436,10 @@ def _build_workspace(
             problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(transform_source(module.text))
+        text, origin = transform_source_lines(module.text)
+        dest.write_text(text)
         ws.files[rel.as_posix()] = str(module.path)
+        ws.origins[rel.as_posix()] = origin
     # Every package on the way needs an __init__; one not compiled is empty.
     for rel_name in list(ws.files):
         parent = Path(rel_name).parent
@@ -448,6 +453,17 @@ def _build_workspace(
             parent = parent.parent
     (root / DRIVER_MODULE).write_text(driver.source)
     return ws, problems
+
+
+def _original_line(origin: list[int] | None, line: int) -> int:
+    """The line of the original file that *line* of its rewrite comes from."""
+    line -= _PRELUDE_LINES
+    if not origin or line < 1:
+        return line
+    if line <= len(origin):
+        return origin[line - 1]
+    # After the module (an Enum's constructor): as many lines past its end.
+    return line - len(origin) + max(origin)
 
 
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
@@ -469,7 +485,7 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             # A call the library check appended: name the call it makes.
             call = ws.appended[rel][1].get(line - ws.appended[rel][0])
             return (f"<library check: {call or rel}>", 0, False)
-        return (ws.files[rel], line - _PRELUDE_LINES, True)
+        return (ws.files[rel], _original_line(ws.origins.get(rel), line), True)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
     for raw in output.splitlines():
@@ -778,6 +794,9 @@ class _LibraryFile:
     #: Lines of :attr:`text` before the appended calls.
     offset: int
     labels: dict[int, str]
+    #: The line of the module each line of :attr:`text` after the prelude
+    #: comes from (:func:`.transform.transform_source_lines`).
+    origin: list[int]
 
 
 def _uncalled(module: str) -> list[str]:
@@ -898,13 +917,18 @@ def _library_files(
         # A function the check never compiles cannot decorate one it does: a
         # run-time-only wrapper (trajectory.model's TrajectoryVertex.__init__)
         # is dropped, and the function it wraps is compiled as written.
-        body = transform_source(
+        body, origin = transform_source_lines(
             redirected, dropped_decorators=[n for n in uncalled if "." not in n]
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
         files.append(
             _LibraryFile(
-                name, rel, body + checks.source, body.count("\n"), checks.labels
+                name,
+                rel,
+                body + checks.source,
+                body.count("\n"),
+                checks.labels,
+                origin,
             )
         )
     return files
@@ -962,6 +986,7 @@ def _build_library_workspace(
         dest.write_text(file.text)
         ws.files[file.rel] = str(module.path)
         ws.appended[file.rel] = (file.offset, file.labels)
+        ws.origins[file.rel] = file.origin
     (root / Path(files[0].rel).parent / "__init__.codon").write_text("")
     for stem, text in replaced_models(sources.modules, problems).items():
         (root / _PACKAGE / f"{stem}.codon").write_text(text)

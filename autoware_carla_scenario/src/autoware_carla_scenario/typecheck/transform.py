@@ -4,7 +4,8 @@ Codon reads Python syntax and checks it with static types, but it lacks some
 of what typed Python writes. A scenario's source goes through
 :func:`transform_source` before it is compiled, and every rewrite keeps each
 statement on its line, so what Codon reports maps straight back onto the file
-the author wrote:
+the author wrote (but the copies of a handler that catches a tuple, below,
+which :func:`transform_source_lines` maps back onto the handler):
 
 * ``X | None`` and ``Optional[X]`` / ``Union[X, None]`` become ``Optional[X]``.
   An annotation Codon cannot express (another ``Union``, which crashes Codon
@@ -61,6 +62,9 @@ the author wrote:
   value, and the ``typing`` shim's ``Literal`` is ``str``.
 * A class-level ``tuple[A | B, ...]`` becomes ``List[Union[A, B]]``, which
   Codon 0.19 holds as it holds an attribute of a union of classes.
+* ``except (A, B):``, which Codon 0.19 refuses ("expected type
+  expression"), becomes one handler per class, in order, each with the same
+  body (:func:`split_tuple_excepts`).
 * A function decorator named in *dropped_decorators* is removed: the
   library check drops the run-time-only wrappers ``UNCALLED`` lists.  An
   annotation naming a module-level ``TypeVar`` (which types such a wrapper
@@ -86,8 +90,10 @@ __all__ = [
     "UndeclaredAttribute",
     "class_declarations",
     "redirect_imports",
+    "split_tuple_excepts",
     "uncalled_nodes",
     "transform_source",
+    "transform_source_lines",
     "undeclared_attributes",
 ]
 
@@ -138,6 +144,10 @@ _CONCRETE_GENERICS = {
     "typing.ClassVar",
     # The `queue` shim's Queue[T] (codon/queue.codon).
     "queue.Queue",
+    # The `subprocess` shim's (codon/subprocess.codon): what a process reads
+    # and writes is a T (`bytes`, checked as `str`, or `str`).
+    "subprocess.Popen",
+    "subprocess.CompletedProcess",
 }
 #: Abstract collections: kept in class-level declarations (the typing shim
 #: maps them onto List / Dict), dropped from parameters, which a caller may
@@ -489,7 +499,8 @@ def _field_default(
 
     An empty collection takes the type of the field's *annotation* when Codon
     can express it (``list[int]()``): Codon types a bare ``[]`` from what is
-    put in it, and nothing is, so it would be a list of ``None``.  One whose
+    put in it, and nothing is, so it would be a list of ``None``.  So does
+    ``default=()`` of a ``tuple[X, ...]``, checked as a ``List[X]``.  One whose
     annotation names ``Any`` (``dict[str, Any]``, a free-form mapping) takes
     the annotation as written, as the class-level declaration keeps it: the
     ``Any`` of the ``typing`` shim, an empty class, so the default has the
@@ -497,6 +508,17 @@ def _field_default(
     """
     for kw in call.keywords:
         if kw.arg == "default":
+            if (
+                isinstance(kw.value, ast.Tuple)
+                and not kw.value.elts
+                and annotation is not None
+            ):
+                # `field(default=())` of a `tuple[X, ...]`, which is checked as
+                # a `List[X]` (Codon's tuples have a fixed length): an empty
+                # one of that type.
+                typed = codon_annotation(annotation, class_level=True)
+                if typed is not None and typed.startswith("List["):
+                    return f"{typed}()"
             return edits.text(*edits.node_span(kw.value))
         if kw.arg == "default_factory":
             factory = kw.value
@@ -984,6 +1006,78 @@ class _Rewriter(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def _splittable(handler: ast.ExceptHandler) -> bool:
+    """Whether *handler* catches a tuple of classes written out (``(A, B)``)."""
+    kind = handler.type
+    return (
+        isinstance(kind, ast.Tuple)
+        and len(kind.elts) > 0
+        and not any(isinstance(e, ast.Starred) for e in kind.elts)
+    )
+
+
+def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
+    """Split each ``except (A, B):`` into one handler per class, in order.
+
+    Codon 0.19 takes one class per handler (a tuple is "expected type
+    expression").  ``except (A, B) as e: body`` becomes ``except (A) as e:
+    body`` followed by ``except (B) as e: body``, the same handler for each
+    class in the tuple's order, before the handlers that followed it: Python
+    tries a tuple's classes in order and the handlers in order, so the same
+    exceptions reach the same body.  A tuple that is not written out (a name,
+    ``*classes``) and the empty tuple, which catches nothing, are left as
+    they are.
+
+    The copies are new lines, inserted after the handler.  Returns the source
+    and, for each of its lines, the line of *source* it comes from: a copy's
+    lines map to the handler they copy, so an error in either is reported at
+    the line the author wrote.
+    """
+    lines = source.encode().splitlines(keepends=True)
+    origin = list(range(1, len(lines) + 1))
+    while True:
+        handlers = [
+            handler
+            for node in ast.walk(ast.parse(b"".join(lines)))
+            if isinstance(node, ast.Try)
+            for handler in node.handlers
+            if _splittable(handler)
+        ]
+        if not handlers:
+            return b"".join(lines).decode(), origin
+        # The last one first: one nested in a handler's body is split before
+        # that handler is copied, and nothing above it moves.
+        handler = max(handlers, key=lambda h: (h.lineno, h.col_offset))
+        kind = handler.type
+        assert isinstance(kind, ast.Tuple)
+        first, last = handler.lineno, handler.end_lineno or handler.lineno
+        block = lines[first - 1 : last]
+        starts = [0]
+        for line in block:
+            starts.append(starts[-1] + len(line))
+        text = b"".join(block)
+        start = starts[kind.lineno - first] + kind.col_offset
+        end = starts[(kind.end_lineno or kind.lineno) - first] + (
+            kind.end_col_offset or 0
+        )
+        # A tuple written over several lines keeps its line breaks, inside
+        # the brackets, so each copy has as many lines as the handler.
+        breaks = b"\n" * text[start:end].count(b"\n")
+        copies = [
+            text[:start]
+            + b"("
+            # The class as one line, with no comment (`(errors  # why\n.Error,
+            # ...)` would comment the rest of the copy out).
+            + ast.unparse(element).encode()
+            + breaks
+            + b")"
+            + text[end:]
+            for element in kind.elts
+        ]
+        lines[first - 1 : last] = b"".join(copies).splitlines(keepends=True)
+        origin[first - 1 : last] = origin[first - 1 : last] * len(copies)
+
+
 def transform_source(source: str, dropped_decorators: Collection[str] = ()) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
@@ -991,13 +1085,27 @@ def transform_source(source: str, dropped_decorators: Collection[str] = ()) -> s
     ``@abstractmethod``: the library check passes the run-time-only wrappers
     :data:`.library.UNCALLED` lists, which Codon never compiles.
     """
+    return transform_source_lines(source, dropped_decorators)[0]
+
+
+def transform_source_lines(
+    source: str, dropped_decorators: Collection[str] = ()
+) -> tuple[str, list[int]]:
+    """:func:`transform_source`, and the line of *source* each line comes from.
+
+    The second value has one entry per line after :data:`PRELUDE`, up to the
+    end of the module (the class constructors appended after it have none):
+    every rewrite keeps a line on its line but :func:`split_tuple_excepts`,
+    whose copies of a handler map to the lines they copy.
+    """
     if not source.endswith("\n"):
         source += "\n"
+    source, origin = split_tuple_excepts(source)
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
     rewriter = _Rewriter(edits, _exception_classes(tree), dropped_decorators)
     rewriter.visit(tree)
-    return PRELUDE + edits.apply() + _enum_lookups(rewriter.enums)
+    return PRELUDE + edits.apply() + _enum_lookups(rewriter.enums), origin
 
 
 def _enum_lookups(enums: list[tuple[str, str]]) -> str:

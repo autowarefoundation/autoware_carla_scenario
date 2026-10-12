@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 127 of
-the package's 225 modules (56%; about 25,400 of 69,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 129 of
+the package's 228 modules (57%; about 25,600 of 64,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -271,23 +271,26 @@ the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
 of `maps.catalogue`, the `map` config's paths of `maps.config` and the
-OpenDRIVE taken from CARLA by `maps.opendrive`), the Autoware
+OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
+package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
+`authoring.uv_tool`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-units, the CARLA-only helpers, the traffic-light lookups included, and the
-scenario configs (`scenario_config`, `examples.configs`), the camera
+unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
+lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
 `driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 63
+below). 64
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
 match from YAML values of any type (`Range.parse()`, `parse_route_search()`,
 `RouteMatch.from_config()`) and what lays a route on a lanelet2 map handed
-over as `Any` (`set_scenario_route()`), the six members of
+over as `Any` (`set_scenario_route()`), the `[tool.uv.sources]` entry of a
+framework pin, a dict of str and bool values (`Pin.uv_source()`), the six members of
 `BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 `register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
@@ -298,20 +301,23 @@ unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 98 `EXCLUDED` modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-42 build on an excluded module and 28 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 99 `EXCLUDED` modules fall in
+three groups. Many fit more than one (74 import what Codon cannot compile,
+43 build on an excluded module and 28 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **72 import what Codon cannot compile**: lanelet2, pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
-  lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
-  or `shutil` than their shims declare), at module level or inside a function the check
-  calls. This is
+- **74 import what Codon cannot compile**: lanelet2, pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
+  a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
+  beyond `importlib.metadata`, or more of `pathlib`, `shutil`,
+  `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
+  declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue) and
-  everything that reads Lanelet2. A reason names `pathlib` only where the
-  module uses more of it than the shim declares, and `shutil` likewise.
+  map cache, the Autoware launcher, the scenario runner and queue, the
+  record of a run's environment), the ODD and coverage modules that wrap
+  openodd, and everything that reads Lanelet2. A reason names `pathlib`
+  only where the module uses more of it than the shim declares, and the
+  other shimmed modules likewise.
 - **22 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
@@ -319,11 +325,12 @@ each is counted once, in the first group that fits it:
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
   authoring compiler, builders and validator, the route frame, poses and search
   (`route.frame`, `route.positions`, `route.search`, through lanelet2),
-  `odd.model` (over `coverage.items`), `trajectory.resolve` and
-  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 22
+  `trajectory.resolve` and
+  `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
+  (over `ui.models`); 9 of the 22
   also hold values Codon has no type for.
-- **4 hold values Codon has no type for**, and nothing else keeps them out:
-  `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
+- **3 hold values Codon has no type for**, and nothing else keeps them out:
+  `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults) or a class as a value (`utils.config`, which `traffic.config`
   and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
 
@@ -358,6 +365,10 @@ it is called with the class itself. A `Callable` whose argument and result
 types Codon can express (`Callable[[carla.World], Optional[float]]`, a
 dataclass field too) is called with a value of Codon's `Callable` type, which
 a function of that signature converts to.
+
+A `*args: T` is given one `T` (`run_uv(cwd, *args: str, ...)` is called
+with one `str`), so the body is compiled for it; one with no annotation, or
+of `object` or `Any` (`__exit__(self, *args: object)`), is given nothing.
 
 A method with keyword-only parameters or `**kwargs` is called through its
 class (`TrafficBackend.start(_acs_value(TrafficBackend), ...,
@@ -477,22 +488,26 @@ What Codon 0.19 needs that Python does not, beyond
 - **A dict of values of different types** (`{"at": None, "around": None}`
   read back as a tuple and a list) becomes a small class with one declared
   attribute per key.
-- Standard modules Codon does not have (`json`, `inspect`, `importlib`,
+- Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
+  `os`, `shutil`, `subprocess`, `importlib.metadata`, `urllib.parse` and
+  `__future__` shims of `codon/` are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
   `/`, `str()`, `==`, `hash()`, `expanduser()`, `resolve()` and
-  `Path.home()`; like Python's, it builds and joins a `Path` with a `str` or
+  `Path.home()` and `Path.cwd()`; like Python's, it builds and joins a `Path` with a `str` or
   an `os.PathLike` only (a `Path`, or what `shutil.copy2()` returns for one;
   an `Optional` of one is unwrapped, as Codon unwraps one passed anywhere). It declares the file-system queries too: `exists()`,
   `is_file()`, `is_dir()`, `glob(pattern)` and `absolute()`, with Python
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
-  sliced) and the ordering of two `Path`s, so `sorted()` takes them. Nothing
+  sliced), `as_posix()`, `relative_to(other)` (one path, by position:
+  Python 3.10 also joins more parts, but 3.14 refuses them, so the check
+  does too; 3.12's `walk_up` is refused) and the ordering of two `Path`s, so
+  `sorted()` takes them. Nothing
   touches the file system: a query is `False` and a glob yields nothing.
   Of what writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
   `write_text(data, encoding=None, errors=None, newline=None)` are declared
@@ -515,7 +530,36 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
   ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
   command; the callables CPython also takes (`onerror`, `copy_function`)
-  are not declared. `copy2()` and `move()` return a `str` for a `str`
+  are not declared. `subprocess` declares `run(args, *, input=None,
+  capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
+  *, ...)` with the keywords of CPython's `Popen` the framework passes
+  (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
+  `start_new_session`), `CompletedProcess(args, returncode, stdout=None,
+  stderr=None)` and its `check_returncode()`, `Popen`'s `poll()`, `wait()`,
+  `communicate()`, `send_signal()`, `terminate()`, `kill()`, `pid`,
+  `returncode` and standard streams, `PIPE`, `STDOUT`, `DEVNULL`, and
+  `SubprocessError`, `CalledProcessError(returncode, cmd, output=None,
+  stderr=None)` and `TimeoutExpired(cmd, timeout, output=None,
+  stderr=None)`. The command is a list of `str`, a working directory a
+  `str` or an `os.PathLike`, a stream `None`, one of the constants or a file
+  descriptor, an environment a `dict` of `str`, a timeout a number of
+  seconds or `None`. What CPython also takes is refused: a `str` command,
+  `shell=True` and the other keywords, a file object for a stream,
+  `os.environ` itself as the environment (pass `os.environ.copy()`, which
+  is the `dict` CPython's returns, as `authoring.uv_tool` does), and
+  arguments after the command by position (`run(args, -1)`, which run()
+  hands to `Popen` as `bufsize`). Since the check reads `bytes` as `str`, a
+  process's output is a `str` with or without `text=True`, and
+  `CompletedProcess[bytes]` and `Popen[bytes]` are `[str]`; it is `None`
+  when it was not captured, as in CPython, so `stdout` and `stderr` are an
+  `Optional`. `importlib.metadata` declares `version(distribution_name)`
+  and `PackageNotFoundError`, a `ModuleNotFoundError` built from the
+  distribution's name; `from importlib import metadata` and `import
+  importlib.metadata` compile, and nothing else of `importlib` does (the
+  package imports its `metadata`, as Codon 0.19 finds a submodule no other
+  way, so the check also takes `importlib.metadata` after a bare `import
+  importlib`, which CPython takes only once something has imported the
+  submodule). `copy2()` and `move()` return a `str` for a `str`
   destination, as CPython does; for a `Path` one CPython returns the `Path`,
   or a `str` when it names a directory, so the check returns a path that
   `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
@@ -537,18 +581,24 @@ What Codon 0.19 needs that Python does not, beyond
   it takes `hashlib.sha256("text")`, which CPython refuses (a `str` must be
   encoded first). `bytes.decode()` is not declared, since it would be a
   `str`'s too and pass `"text".decode()`; the check refuses
-  `data.decode()`, which CPython takes. `urllib.parse`
+  `data.decode()`, which CPython takes. `str.removeprefix(prefix, /)` and
+  `str.removesuffix(suffix, /)` (Python 3.9) are declared too. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
-  `hashlib`, `os`, `shutil` and `urllib.parse` and call what they declare,
-  file-system queries and the two writes included (`Path(...).exists()`,
-  `Path(...).write_text(...)`), read and set the environment
-  (`os.environ.get()`), copy, move and remove files with `shutil`, signal a
-  process with `os.kill()`, and catch the exceptions above. Any other name of
-  them (`Path.chmod()`, `hashlib.md5()`, `shutil.copytree()`,
-  `os.listdir()`, `urllib.request`) fails its check wherever Codon compiles
-  it.
+  `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata` and
+  `urllib.parse` and call what they declare, file-system queries and the two
+  writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
+  and set the environment (`os.environ.get()`), copy, move and remove files
+  with `shutil`, start and wait for a process with `subprocess.run()` or
+  `subprocess.Popen`, signal one with `os.kill()`, read an installed
+  distribution's version with `importlib.metadata.version()`, and catch the
+  exceptions above. Any other name of them (`Path.chmod()`, `hashlib.md5()`,
+  `shutil.copytree()`, `subprocess.check_output()`, `os.listdir()`,
+  `importlib.import_module()`, `urllib.request`) fails its check wherever
+  Codon compiles it. The model's top-level package declares `__file__` (a
+  `str`, as CPython sets it on a regular package), which
+  `authoring.framework_pin` imports (`from .. import __file__`).
   `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
@@ -795,9 +845,17 @@ What Codon 0.19 needs that Python does not, beyond
   (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
   message and passes it on: `def __init__(self, message: str) -> None:
   super().__init__(message)` (`maps/source.py`).
-- **One `except` clause per exception type**: Codon 0.19 does not take a
-  tuple (`except (KeyError, ValueError):`). `raise X from None` is rewritten
-  to `raise X` by the check; `raise X from exc` compiles as it is.
+- **`except (A, B):` is split by the check**: Codon 0.19 takes one class
+  per `except` clause ("expected type expression"), so the check rewrites a
+  tuple written out into one clause per class, in the tuple's order, each
+  with the same body (and the same `as` name), where the tuple's clause was:
+  Python tries a tuple's classes in order, so the same exceptions reach the
+  same body and the others the clauses after it. The copies are lines the
+  source does not have; an error in one is reported at the line it copies,
+  and the lines after them where they are. A tuple that is not written out
+  (`except errors:`, `except (*errors,):`) is left as it is, and Codon
+  refuses it. `raise X from None` is rewritten to `raise X` by the check;
+  `raise X from exc` compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
   rewrites `frozenset(...)` to `set(...)` and `frozenset[X]` /
   `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`.
@@ -805,7 +863,9 @@ What Codon 0.19 needs that Python does not, beyond
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays
   itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
-  its tuple. A parameter `tuple[X, ...]` is dropped (a caller may pass a
+  its tuple. A dataclass field's `field(default=())` is an empty `List[X]`
+  (`Pin.warnings`); a tuple display (`("a",)`) stays a fixed-length Codon
+  tuple, which is no `List[X]`: pass `tuple([...])` of a list instead. A parameter `tuple[X, ...]` is dropped (a caller may pass a
   tuple), and the library check calls it with a `List[X]`.
   `Phase.states` and `SignalController.phases` (`signals.controller`) are
   checked this way. What only a tuple does is not checked: its hash (a

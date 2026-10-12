@@ -1,0 +1,278 @@
+# The part of Python's subprocess the checked framework names, for the
+# checker (docs/typecheck.md): run(), Popen, CompletedProcess, the PIPE,
+# STDOUT and DEVNULL constants and the exceptions, with CPython 3.10's
+# signatures, the oldest Python the package supports.
+#
+# Codon 0.19 has no `*,`: what CPython takes by keyword only follows `*_kw`.
+# What CPython takes by position after the command (`run(args, bufsize)`,
+# which run() hands to Popen) is not declared, nor are the parameters not
+# listed here (`shell`, `preexec_fn`, `executable`, `close_fds`, ...), so
+# the check refuses them. The command is a list of str (a str command, which
+# CPython takes too, is not declared); a working directory is a str or an
+# os.PathLike; a standard stream is None, PIPE, STDOUT, DEVNULL or a file
+# descriptor (a file object is not declared); an environment is a dict of
+# str; a timeout is a number of seconds or None.
+#
+# The check reads `bytes` as `str` (Codon 0.19 has none), so what a process
+# writes is a str whether or not text=True, and CompletedProcess[bytes] is a
+# CompletedProcess[str]. It is None when it was not captured, as in CPython,
+# so stdout and stderr are Optional. Nothing here runs: no process is
+# started, and none is waited for.
+
+import internal.static as static
+from os import fspath
+
+PIPE = -1
+STDOUT = -2
+DEVNULL = -3
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+def _cwd(cwd) -> None:
+    # None, a str or an os.PathLike (an Optional one unwrapped, as the os
+    # shim's fspath() does).
+    if isinstance(cwd, None) or isinstance(cwd, Optional[NoneType]):
+        pass
+    else:
+        fspath(cwd)
+
+
+def _timeout(timeout, where: Literal[str]) -> None:
+    if isinstance(timeout, None) or isinstance(timeout, Optional[NoneType]):
+        pass
+    elif isinstance(timeout, int) or isinstance(timeout, float):
+        pass
+    elif isinstance(timeout, Optional[int]) or isinstance(timeout, Optional[float]):
+        pass
+    else:
+        compile_error(where + ": the timeout is a number of seconds or None")
+
+
+def _seconds(timeout) -> float:
+    if isinstance(timeout, float):
+        return timeout
+    elif isinstance(timeout, int):
+        return float(timeout)
+    else:
+        compile_error("the timeout is a number of seconds")
+        return 0.0
+
+
+class SubprocessError(Static[Exception]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    # CPython's takes any values, as Exception does; declared are none, one
+    # message, and the type name and message a subclass passes on.
+    def __init__(self, *args):
+        if static.len(args) == 0:
+            super().__init__("SubprocessError", "")
+        elif static.len(args) == 1:
+            super().__init__("SubprocessError", str(args[0]))
+        elif static.len(args) == 2:
+            super().__init__(str(args[0]), str(args[1]))
+        else:
+            compile_error("SubprocessError() takes one message here")
+        self.python_type = self.__class__._pytype
+
+
+class CalledProcessError(Static[SubprocessError]):
+    _pytype: ClassVar[cobj] = cobj()
+    returncode: int
+    cmd: List[str]
+    output: Optional[str]
+    stderr: Optional[str]
+
+    # CalledProcessError(returncode, cmd, output=None, stderr=None).
+    def __init__(
+        self,
+        returncode: int,
+        cmd: List[str],
+        output: Optional[str] = None,
+        stderr: Optional[str] = None,
+    ):
+        super().__init__(
+            "CalledProcessError",
+            f"Command '{cmd}' returned non-zero exit status {returncode}.",
+        )
+        self.python_type = self.__class__._pytype
+        self.returncode = returncode
+        self.cmd = cmd
+        self.output = output
+        self.stderr = stderr
+
+    # An alias of `output`, as in CPython.
+    @property
+    def stdout(self) -> Optional[str]:
+        return self.output
+
+
+class TimeoutExpired(Static[SubprocessError]):
+    _pytype: ClassVar[cobj] = cobj()
+    cmd: List[str]
+    timeout: float
+    output: Optional[str]
+    stderr: Optional[str]
+
+    # TimeoutExpired(cmd, timeout, output=None, stderr=None).
+    def __init__(
+        self,
+        cmd: List[str],
+        timeout,
+        output: Optional[str] = None,
+        stderr: Optional[str] = None,
+    ):
+        super().__init__(
+            "TimeoutExpired", f"Command '{cmd}' timed out after {timeout} seconds"
+        )
+        self.python_type = self.__class__._pytype
+        self.cmd = cmd
+        self.timeout = _seconds(timeout)
+        self.output = output
+        self.stderr = stderr
+
+    @property
+    def stdout(self) -> Optional[str]:
+        return self.output
+
+
+class CompletedProcess:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
+    args: List[str]
+    returncode: int
+    stdout: Optional[T]
+    stderr: Optional[T]
+
+    # CompletedProcess(args, returncode, stdout=None, stderr=None).
+    def __init__(
+        self,
+        args: List[str],
+        returncode: int,
+        stdout: Optional[T] = None,
+        stderr: Optional[T] = None,
+    ):
+        self.args = args
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def check_returncode(self) -> None:
+        if self.returncode:
+            raise CalledProcessError(self.returncode, self.args, self.stdout, self.stderr)
+
+
+# run(*popenargs, input=None, capture_output=False, timeout=None,
+# check=False, **kwargs), the keywords Popen takes among kwargs.
+def run(
+    args: List[str],
+    *_kw,
+    input: Optional[str] = None,
+    capture_output: bool = False,
+    timeout=None,
+    check: bool = False,
+    stdin: Optional[int] = None,
+    stdout: Optional[int] = None,
+    stderr: Optional[int] = None,
+    cwd=None,
+    env: Optional[Dict[str, str]] = None,
+    text: Optional[bool] = None,
+    encoding: Optional[str] = None,
+    errors: Optional[str] = None,
+    start_new_session: bool = False,
+) -> CompletedProcess[str]:
+    _keyword_only(_kw, "run(): what follows the command")
+    _cwd(cwd)
+    _timeout(timeout, "run()")
+    return CompletedProcess[str](args, 0)
+
+
+class _Stream:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
+    """A standard stream of a Popen: what it reads or writes is a T."""
+
+    def write(self, data: T) -> int:
+        return 0
+
+    def read(self, size: int = -1) -> T:
+        return Ptr[T]()[0]
+
+    def readline(self, size: int = -1) -> T:
+        return Ptr[T]()[0]
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class Popen:
+    # Codon's generic parameter, in a form Python 3.10 can parse.
+    T: type
+    args: List[str]
+    pid: int
+    returncode: Optional[int]
+    stdin: Optional[_Stream[T]]
+    stdout: Optional[_Stream[T]]
+    stderr: Optional[_Stream[T]]
+
+    # Popen(args, bufsize=-1, executable=None, stdin=None, stdout=None,
+    # stderr=None, ..., cwd=None, env=None, ..., start_new_session=False,
+    # ..., *, ..., encoding=None, errors=None, text=None, ...): the command,
+    # and the parameters declared here by keyword.
+    def __init__(
+        self,
+        args: List[str],
+        *_kw,
+        stdin: Optional[int] = None,
+        stdout: Optional[int] = None,
+        stderr: Optional[int] = None,
+        cwd=None,
+        env: Optional[Dict[str, str]] = None,
+        start_new_session: bool = False,
+        text: Optional[bool] = None,
+        encoding: Optional[str] = None,
+        errors: Optional[str] = None,
+    ):
+        _keyword_only(_kw, "Popen(): what follows the command")
+        _cwd(cwd)
+        self.args = args
+        self.pid = 0
+        self.returncode = None
+        self.stdin = None
+        self.stdout = None
+        self.stderr = None
+
+    def poll(self) -> Optional[int]:
+        return self.returncode
+
+    def wait(self, timeout=None) -> int:
+        _timeout(timeout, "Popen.wait()")
+        return 0
+
+    def communicate(
+        self, input: Optional[T] = None, timeout=None
+    ) -> Tuple[Optional[T], Optional[T]]:
+        _timeout(timeout, "Popen.communicate()")
+        return (Optional[T](), Optional[T]())
+
+    def send_signal(self, sig: int) -> None:
+        pass
+
+    def terminate(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+    def __enter__(self) -> Popen[T]:
+        return self
+
+    def __exit__(self, *args) -> None:
+        pass

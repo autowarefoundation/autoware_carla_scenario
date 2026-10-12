@@ -66,8 +66,14 @@ class ImportError(Static[Exception]):
 class ModuleNotFoundError(Static[ImportError]):
     _pytype: ClassVar[cobj] = cobj()
 
+    # A subclass (importlib.metadata's PackageNotFoundError) passes its own
+    # type name and the message on, as two strs, which CPython takes too.
     def __init__(self, *args, **kwargs):
-        super().__init__("ModuleNotFoundError", _message(args, kwargs, "ModuleNotFoundError()"))
+        if static.len(args) == 2:
+            _no_keywords(kwargs, "ModuleNotFoundError()")
+            super().__init__(_str(args[0]), _str(args[1]))
+        else:
+            super().__init__("ModuleNotFoundError", _message(args, kwargs, "ModuleNotFoundError()"))
         self.python_type = self.__class__._pytype
 
 
