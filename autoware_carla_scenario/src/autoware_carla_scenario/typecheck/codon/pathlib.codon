@@ -146,6 +146,18 @@ class Path:
         return name[i:] if 0 < i < len(name) - 1 else ""
 
     @property
+    def stem(self) -> str:
+        name = self.name
+        i = name.rfind(".")
+        return name[:i] if 0 < i < len(name) - 1 else name
+
+    # with_name(name): the path with its last part replaced (CPython raises
+    # ValueError for a path with no name, or a name that is not one).
+    def with_name(self, name: str) -> Path:
+        i = self._path.rfind("/")
+        return Path(self._path[:i + 1] + name if i >= 0 else name)
+
+    @property
     def parent(self) -> Path:
         i = self._path.rfind("/")
         if i < 0:

@@ -999,6 +999,53 @@ def test_abc_and_an_uncalled_method_compile(
     assert result.ok, result.format()
 
 
+_ELSE_IMPORT = """
+from __future__ import annotations
+
+import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+else:
+    from tqdm import tqdm
+
+
+def wait(steps: int) -> None:
+    if TYPE_CHECKING:
+        for _ in range(steps):
+            time.sleep(0.1)
+    else:
+        import json  # noqa: PLC0415
+
+        for _ in tqdm(range(steps), desc=json.dumps("wait")):
+            time.sleep(0.1)
+"""
+
+
+@needs_codon
+def test_an_import_in_the_else_branch_of_type_checking_is_not_compiled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon reads TYPE_CHECKING as a compile-time true and compiles only the
+    # first branch, so what the `else` branch imports needs no model (#126).
+    result = _check_case(_ELSE_IMPORT, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+def test_an_import_in_the_first_branch_of_type_checking_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    swapped = _ELSE_IMPORT.replace(
+        "    pass\nelse:\n    from tqdm import tqdm",
+        "    from tqdm import tqdm\nelse:\n    pass",
+    )
+    assert swapped != _ELSE_IMPORT
+    result = _check_case(swapped, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "tqdm has no Codon model" in result.diagnostics[0].message
+
+
 # ---------------------------------------------------------------------------
 # What the traffic backends need (#79)
 # ---------------------------------------------------------------------------
@@ -1413,6 +1460,38 @@ def test_the_file_system_shims_refuse_what_cpython_refuses(
     located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
     assert located, result.format()
     assert located[0].line == line, result.format()
+
+
+_STEM = """
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def numbered(path: Path, counter: int) -> Path:
+    return path.with_name(f"{path.stem}_{counter}{path.suffix}")
+"""
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        ("", ""),
+        # A property in CPython, and with_name() takes the name: each is a
+        # TypeError in CPython 3.10.
+        ("{path.stem}", "{path.stem()}"),
+        ("path.with_name(f", "path.with_name(1, f"),
+    ],
+    ids=["right", "stem-is-a-property", "with-name-takes-one-name"],
+)
+def test_the_pathlib_shim_has_the_stem_and_with_name(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # scenario_runner numbers a run's video after the file it would replace (#126).
+    source = _STEM.replace(right, wrong, 1) if right else _STEM
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok is (not right), result.format()
 
 
 # ---------------------------------------------------------------------------

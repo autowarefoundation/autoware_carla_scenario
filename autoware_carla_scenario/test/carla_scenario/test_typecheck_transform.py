@@ -265,6 +265,9 @@ def test_a_frozenset_is_checked_as_a_set() -> None:
 
         def more(xs: frozenset[str]) -> None:
             ys = frozenset({"a"})
+
+        def empty(keep: frozenset[str] = frozenset[str]()) -> None:
+            pass
         """
     )
     lines = out.splitlines()
@@ -272,6 +275,8 @@ def test_a_frozenset_is_checked_as_a_set() -> None:
     assert lines[2] == "    return set()"
     assert lines[4] == "def more(xs: Set[str]) -> None:"
     assert lines[5] == '    ys = set({"a"})'
+    # An empty one typed by its element, which a bare set() is not.
+    assert lines[7] == "def empty(keep: Set[str] = Set[str]()) -> None:"
     assert _annotation("typing.FrozenSet[int]") == "Set[int]"
     assert _annotation("frozenset") is None
 

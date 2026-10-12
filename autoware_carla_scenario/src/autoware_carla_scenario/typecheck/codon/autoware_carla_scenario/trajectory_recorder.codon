@@ -1,0 +1,27 @@
+# Model of autoware_carla_scenario.trajectory_recorder (docs/typecheck.md),
+# which writes JSON lines of mixed value types with json: what the checked
+# scenario_runner uses of it, with the signatures of the Python class.
+
+from pathlib import Path
+
+import typesafe_carla.carla as carla
+
+
+class TrajectoryRecorder:
+    path: Path
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    @property
+    def active(self) -> bool:
+        raise NotImplementedError()
+
+    def start(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def record(self, world: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+    def close(self) -> None:
+        raise NotImplementedError()
