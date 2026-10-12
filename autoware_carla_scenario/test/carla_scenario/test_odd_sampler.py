@@ -685,7 +685,7 @@ def test_coverage_counted_another_way_is_not_read() -> None:
     )
 
     # The ODD counts hits; seconds say nothing about them.
-    assert sampler._amount == {}
+    assert sampler.coverage_amounts == {}
 
 
 # ---------------------------------------------------------------------------

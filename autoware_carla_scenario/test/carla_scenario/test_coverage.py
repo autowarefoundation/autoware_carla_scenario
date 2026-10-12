@@ -659,3 +659,23 @@ class TestCriteria:
             load_openodd(
                 taxonomy, bindings={"wind_speed": {"probe": "rain", "targets": 3}}
             )
+
+
+def test_an_odd_read_from_files_is_written_beside_the_coverage(tmp_path: Path) -> None:
+    import openodd
+
+    from autoware_carla_scenario.coverage import CoverageCollector
+    from autoware_carla_scenario.odd import load_openodd
+
+    (tmp_path / "odd.yaml").write_text(
+        "TAXONOMY: {rain: [none, heavy]}\nODD:\n  dry:\n    METADATA: {version: 1.0.0}\n"
+        "    EXCLUDE_OR: {rain: heavy}\n"
+    )
+    odd = load_openodd(tmp_path / "odd.yaml", bindings={"rain": {"probe": "rain"}})
+    collector = CoverageCollector([], odd=odd)
+    collector.write(tmp_path / "out" / "S_coverage.json", "S")
+    doc = json.loads((tmp_path / "out" / "S_coverage.json").read_text())
+    archive = (tmp_path / "out" / "S_odd.tar.gz").read_bytes()
+    manifest = openodd.read_archive_manifest(archive)
+    assert manifest["revision"] == doc["odd"]["revision"] == odd.revision
+    assert doc["odd"]["version"] == "1.0.0"
