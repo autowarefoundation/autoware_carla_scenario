@@ -122,8 +122,12 @@ Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
 in step with the Python definition of the same name (parameter names, order,
 defaults, keyword-only parameters, methods, enum members).
 
-A scenario that imports a module with no model (lanelet2, or a framework module
-outside the public API) is refused with a message naming the module.
+A scenario that imports a module with no model (lanelet2's `matching`, say,
+or a framework module outside the public API) is refused with a message
+naming the module. Third-party packages the framework reads are modelled as
+far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
+ffmpeg-python; see *Making a module compile*), and a scenario may use what
+those models declare.
 
 ## Writing a scenario that type-checks
 
@@ -256,9 +260,13 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 131 of
-the package's 228 modules (57%; about 26,100 of 64,700 lines) are `CHECKED`:
-the kinematics, the coordinate frames and poses, the condition base and
+Every module now has an entry other than `"not yet checked (#45)"`. 135 of
+the package's 228 modules (59%; about 27,700 of 64,800 lines) are `CHECKED`:
+the kinematics, the coordinate frames and poses, the conversions between
+Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
+lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
+and the lane arithmetic of a relative lane pose (`trajectory.relative_lane`),
+all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
 walk-straight actions, the logical scenario's route search and matches (`route.model`) and
@@ -284,7 +292,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 64
+below). 65
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -298,16 +306,20 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), what resolves a followed trajectory with the
 unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
+the road-marking pattern of the stop lines, which returns a `refers`
+parameter (any of lanelet2's primitives) as a line string
+(`utils.stop_line._road_marking_stop_lines()`),
 `signals.build_controllers()`, which reads
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 97 `EXCLUDED` modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-44 build on an excluded module and 29 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 93 `EXCLUDED` modules fall in
+three groups. Many fit more than one (68 import what Codon cannot compile,
+43 build on an excluded module and 27 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **72 import what Codon cannot compile**: lanelet2, pyxodr,
+- **68 import what Codon cannot compile**: lanelet2 beyond what its model
+  declares (most of these walk its objects typed `Any`), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
@@ -316,7 +328,7 @@ each is counted once, in the first group that fits it:
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher, the scenario runner and queue, the
   record of a run's environment), the ODD and coverage modules that wrap
-  openodd, and everything that reads Lanelet2. A reason names `pathlib`
+  openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
 - **22 build on an excluded module**, and import nothing Codon lacks
@@ -411,7 +423,7 @@ with an example scenario in it failed in Codon 0.19's code generation
 `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code (`coordinate.codon` for
-`transform.py` and `map_manager.py`) declares only what the checked modules
+`map_manager.py`) declares only what the checked modules
 and scenarios use of it: `MapManager` there is `get_instance()` and the
 `road_network` it reads, not the class's whole API.
 
@@ -636,11 +648,84 @@ What Codon 0.19 needs that Python does not, beyond
   first branch of `if TYPE_CHECKING: ... else: ...`. The `logging` shim's
   methods take `exc_info` as a `bool`.
 - **pyxodr's road network is the model's**: `codon/pyxodr/` names the
-  `RoadNetwork` that `coordinate.codon` declares (what the framework reads of
-  it, down to the XML elements), so a module that may not import
-  `coordinate` annotates with pyxodr's own class under `TYPE_CHECKING`
-  (`utils/traffic_light.py`) and takes the network `MapManager` returns.
+  `RoadNetwork`, `Road`, `LaneSection` and `Lane` that `coordinate.codon`
+  declares (what the framework reads of them, down to the XML elements), so
+  a checked module annotates with pyxodr's own classes under `TYPE_CHECKING`
+  (`utils/traffic_light.py`, which may not import `coordinate`;
+  `coordinate/transform.py`) and takes the network `MapManager` returns.
   Nothing else of pyxodr is there.
+- **lanelet2 is modelled**: `codon/lanelet2/` and
+  `codon/autoware_lanelet2_extension_python/` declare the classes and
+  functions of simple-lanelet2's Python API the checked modules use, with
+  its parameter names: `lanelet2.core`'s map, lanelet layer, lanelets, line
+  strings, points, attribute maps and regulatory elements (their ids,
+  attributes, centrelines, bounds, rule parameters and stop lines),
+  `BasicPoint2d`; `lanelet2.geometry`'s `to2D()`, `length()`,
+  `toArcCoordinates()` (an `ArcCoordinates`), `findNearest()` (of the
+  lanelet layer) and `inside()`; `lanelet2.routing.RoutingGraph(laneletMap,
+  trafficRules)` with `following()`, `previous()`, `left()`, `right()`,
+  `adjacentLeft()` and `adjacentRight()`; `lanelet2.traffic_rules.create()`
+  with its `Locations` and `Participants`; `lanelet2.io.Origin`; and
+  Autoware's `MGRSProjector`, `AutowareTrafficLight` and `RoadMarking`.
+  Each module's header says what it leaves out; parts of the API the
+  framework does not use yet (loading a map, routes, matching, editing)
+  are not declared, and the check refuses them. The model's `MapManager`
+  hands out its `lanelet_map` and `routing_graph` as these classes. Python's
+  lanelet2 has no signatures to introspect (it is a compiled extension), so
+  `test_typecheck_lanelet2_model.py` checks that every declared name exists in
+  the installed package, that its parameters are the ones the package's
+  stubs (`lanelet2/*.pyi`) name, and that each declared call, made on the
+  fixture map, returns what the model says. What the model has to say about
+  lanelet2 that Python does not:
+  - **A mutable class derives from its Const twin** (`Lanelet` from
+    `ConstLanelet`, `LineString3d` from `ConstLineString3d`, `Point3d` from
+    `ConstPoint3d`): in Python they are unrelated classes, but every function
+    that takes the Const one takes the mutable one, which has all its
+    members. So a layer's `Lanelet` goes where the routing graph takes a
+    `ConstLanelet`, and a variable that holds either is annotated with the
+    Const class (`lanelet: ConstLanelet = lanelet_map.laneletLayer[...]`, as
+    `trajectory/relative_lane.py` walks from a lanelet to the ones that
+    follow it). lanelet2's stubs, which mypy reads, keep the two unrelated,
+    so a function that takes either spells the union out
+    (`Union[ConstLanelet, Lanelet]`), which the check drops, as it drops any
+    union parameter. A member the mutable class narrows (`Lanelet.leftBound`
+    and `TrafficLight.stopLine` are `LineString3d`s) is declared with the
+    Const type, so the check reads less than Python hands out, never more.
+    (Codon 0.19 does not convert an `Optional` of a subclass to its base in
+    one step, `Optional[LineString3d]` into a `list[ConstLineString3d]`:
+    that would take an annotated local of the subclass first.)
+  - **An overloaded function dispatches on its argument**: Codon 0.19 cannot
+    overload a module-level function, so `to2D()` and `length()` are generic
+    and declare the overloads the framework calls (of a line string); any
+    other argument is a compile error. Codon decides `isinstance` by the
+    static type, and `isinstance(Lanelet, ConstLanelet)` is false there as
+    in Python, so each overload names both twins.
+  - **A regulatory element is its own class**: lanelet2 hands each one out as
+    the class of what it is (`TrafficLight`, `RightOfWay`, `TrafficSign`, or
+    Autoware's), all derived from `RegulatoryElement`, as the model declares
+    them, and a lanelet's `regulatoryElements` is a list of the base. Codon
+    decides `hasattr(element, "stopLine")` by that static type, so the
+    stop-line branch of code that duck-types the element would never be
+    compiled. `utils/stop_line.py` therefore reads one element in a public
+    function whose parameter is annotated with the union of the classes it
+    reads (`Union[TrafficLight, AutowareTrafficLight, RightOfWay,
+    TrafficSign, RoadMarking, RegulatoryElement]`), which the library check
+    calls once per member, so each branch is compiled for each class that
+    takes it. At run time it still asks the element, as before.
+  - **A rule parameter is declared by its role**: lanelet2 holds a point, a
+    line string, a polygon, a lanelet or an area in a regulatory element's
+    `parameters[role]`, and Codon has no type for "one of five classes".
+    `ref_line`, `cancel_line` and `light_bulbs` hold line strings
+    (`ConstLineString3d`), `right_of_way` and `yield` lanelets
+    (`ConstLanelet`); any other role is a compile error. `refers` holds a
+    different class per element (line strings or polygons for a traffic
+    light, polygons for Autoware's detection areas, lanelets for its
+    crosswalks), so the model declares it as a class of its own with only
+    what all five have, `id` and `attributes`. The stop line a road marking
+    refers to is therefore not checked: `utils/stop_line.py` reads it in a
+    function called in the `else` branch of `if TYPE_CHECKING:` (`UNCALLED`).
+    `test_typecheck_lanelet2_model.py` reads the roles off the model and
+    checks each against what the fixture map's elements hold.
 - **carla_driver_interface's geometry is modelled**:
   `codon/carla_driver_interface/geometry.codon` declares the `Pose` and
   `Trajectory` the driver modules use (and `waypoints_to_proto`, which
@@ -1062,9 +1147,9 @@ What Codon 0.19 needs that Python does not, beyond
   branch of `if TYPE_CHECKING:`. Codon decides `hasattr` by the static type,
   which lacks the method, so it compiles none of the calls: the check covers
   the lookup around them, not the calls (`RoutingAction.execute()`).
-- **A lanelet2 object at the model boundary is opaque**: the model's
-  `MapManager` hands out its `lanelet_map` and `routing_graph` as classes
-  with nothing in them, which the model's `RouteFrame` takes, so the checked
+- **lanelet2's map at the model boundary**: the model's `MapManager` hands
+  out its `lanelet_map` and `routing_graph` as the lanelet2 model's classes
+  (above), which the model's `RouteFrame` takes, so the checked
   `scenario_route_frame()` (`route.active`) compiles; `route.frame` itself,
   which reads them, is not checked.
 - **A model shared with checked modules is split out**: the model's
@@ -1109,12 +1194,15 @@ What Codon 0.19 needs that Python does not, beyond
   `start()` returns. Python cannot instantiate a Protocol, so the model's
   constructor is a `compile_error`.
 - **A model function returning a checked class**: `to_map_frame`
-  (`coordinate.codon`, for `coordinate.transform`, which imports lanelet2)
-  returns autoware_bridge's `BridgePose`, which `_bridge_pose.codon` models
+  (`coordinate.codon`, which the scenario check and the checked modules that
+  import the `coordinate` package compile against) returns
+  autoware_bridge's `BridgePose`, which `_bridge_pose.codon` models
   (`BridgePose`, its `Vector3` and `Quaternion`, as `@tuple`s, since they are
   frozen, and `moved_forward()`); `REPLACED_MODELS` replaces it with the
   checked `autoware_bridge.base`, so `AutowareEgoEntity` hands the pose
-  `to_map_frame` returns to the checked `AutowareBridge.configure()`.
+  `to_map_frame` returns to the checked `AutowareBridge.configure()`
+  (it imports `coordinate.transform` itself, which is checked, so the library
+  check compiles the real `to_map_frame` there).
 - **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
   which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`).
 - **A method that takes `**kwargs`, called on a value whose class a checked

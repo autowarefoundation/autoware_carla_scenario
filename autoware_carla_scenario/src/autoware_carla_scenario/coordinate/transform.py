@@ -30,12 +30,16 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Optional, Union, overload
 
 import typesafe_carla.carla as carla
 import numpy as np
 
 if TYPE_CHECKING:
+    from pyxodr.road_objects.lane import Lane
+    from pyxodr.road_objects.lane_section import LaneSection
+    from pyxodr.road_objects.road import Road
+
     from ..autoware_bridge.base import BridgePose
 
 # autoware_lanelet2_extension_python must be imported before lanelet2
@@ -44,7 +48,7 @@ import lanelet2.core
 import lanelet2.geometry
 
 from .map_manager import MapManager
-from .poses import AnyPose, CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +163,9 @@ def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> tuple[float, float, float]
     return pose.x + offset_x, -pose.y + offset_y, -math.radians(pose.yaw)
 
 
-def to_carla_location(pose: Union[AnyPose, "carla.Location"]) -> "carla.Location":
+def to_carla_location(
+    pose: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose, "carla.Location"],
+) -> "carla.Location":
     """Convert any pose type to a ``carla.Location``.
 
     Accepts ``Lanelet2Pose``, ``OpenDrivePose``, ``CarlaWorldPose``, or a raw
@@ -173,11 +179,13 @@ def to_carla_location(pose: Union[AnyPose, "carla.Location"]) -> "carla.Location
         A ``carla.Location`` instance.
     """
     if isinstance(pose, (Lanelet2Pose, OpenDrivePose)):
-        pose = to_carla_world(pose)
-    if isinstance(pose, CarlaWorldPose):
+        world = to_carla_world(pose)
+        return carla.Location(x=world.x, y=world.y, z=world.z)
+    elif isinstance(pose, CarlaWorldPose):
         return carla.Location(x=pose.x, y=pose.y, z=pose.z)
-    # Assume carla.Location
-    return pose
+    else:
+        # Assume carla.Location
+        return pose
 
 
 @overload
@@ -197,7 +205,9 @@ def to_carla_world(pose: Union[Lanelet2Pose, OpenDrivePose]) -> CarlaWorldPose:
     raise TypeError(f"Unsupported pose type: {type(pose)}")
 
 
-def to_opendrive(pose: AnyPose) -> OpenDrivePose:
+def to_opendrive(
+    pose: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose],
+) -> OpenDrivePose:
     """Convert any pose to an OpenDrivePose.
 
     OpenDRIVE is the frame the runtime works in, so this is the normalisation
@@ -237,7 +247,9 @@ def to_lanelet2(pose: Union[OpenDrivePose, CarlaWorldPose]) -> Lanelet2Pose:
     raise TypeError(f"Unsupported pose type: {type(pose)}")
 
 
-def to_map_frame(pose: AnyPose) -> "BridgePose":
+def to_map_frame(
+    pose: Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose],
+) -> "BridgePose":
     """Convert any pose to a 6-DoF pose in Autoware's ``map`` frame.
 
     Autoware's ``map`` frame is the frame its own ``map_loader`` produces: the
@@ -264,11 +276,10 @@ def to_map_frame(pose: AnyPose) -> "BridgePose":
     """
     from ..autoware_bridge.base import BridgePose  # noqa: PLC0415
 
-    carla_pose = (
-        to_carla_world(pose)
-        if isinstance(pose, (Lanelet2Pose, OpenDrivePose))
-        else pose
-    )
+    if isinstance(pose, (Lanelet2Pose, OpenDrivePose)):
+        carla_pose = to_carla_world(pose)
+    else:
+        carla_pose = pose
 
     mm = MapManager.get_instance()
     offset_x, offset_y = mm.mgrs_offset
@@ -386,7 +397,7 @@ def _carla_to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose:
 
 def _carla_to_opendrive_via_waypoint(
     pose: CarlaWorldPose,
-    carla_map: Any,
+    carla_map: carla.Map,
     mm: MapManager,
 ) -> Optional[OpenDrivePose]:
     """Use ``carla.Map.get_waypoint()`` for accurate road/lane identification.
@@ -456,7 +467,7 @@ def _carla_to_opendrive_bruteforce(
     point = np.array([pose.x, -pose.y])
 
     # (outside, dist, at_end, road_id, road, s, t, heading_ref) of the best so far
-    best: Optional[tuple] = None
+    best: Optional[tuple[float, float, bool, str, Road, float, float, float]] = None
     for road_id, road in mm.road_network.road_ids_to_object.items():
         ref_line: np.ndarray = road.reference_line  # shape (N, 2)
         if len(ref_line) < 2:
@@ -499,7 +510,10 @@ def _carla_to_opendrive_bruteforce(
     )
 
 
-def _beats(candidate: tuple, best: tuple) -> bool:
+def _beats(
+    candidate: tuple[float, float, bool, str, Road, float, float, float],
+    best: tuple[float, float, bool, str, Road, float, float, float],
+) -> bool:
     """Whether road *candidate* holds the point better than road *best*.
 
     Both are ``(outside, dist, at_end, ...)``.  A point on the seam between two
@@ -585,7 +599,7 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
     # it -- are all as near in plan view, so the pose's elevation picks one.
     nearest = results[0][0]
     ll2_z = pose.z + mm.z_offset
-    best: Optional[tuple[float, Any, float, float, float]] = None
+    best: Optional[tuple[float, lanelet2.core.Lanelet, float, float, float]] = None
     for distance, candidate in results:
         if distance > nearest + _SEAM_TOLERANCE:
             break
@@ -707,7 +721,7 @@ def _normalize_angle(angle: float) -> float:
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
-def _lane_width_at_ds(lane, ds: float) -> float:
+def _lane_width_at_ds(lane: Lane, ds: float) -> float:
     """Return the width of *lane* at offset *ds* from the lane-section start.
 
     Lane widths in OpenDRIVE are cubic polynomials:
@@ -721,13 +735,13 @@ def _lane_width_at_ds(lane, ds: float) -> float:
 
     active = width_elements[0]
     for elem in width_elements:
-        s_offset = float(elem.attrib.get("sOffset", 0.0))
+        s_offset = float(elem.attrib.get("sOffset", "0.0"))
         if s_offset <= ds:
             active = elem
         else:
             break
 
-    return _cubic(active, ds - float(active.attrib.get("sOffset", 0.0)))
+    return _cubic(active, ds - float(active.attrib.get("sOffset", "0.0")))
 
 
 def _cubic(elem, ds: float) -> float:
@@ -739,25 +753,29 @@ def _cubic(elem, ds: float) -> float:
     return a + b * ds + c * ds**2 + d * ds**3
 
 
-def _lane_offset_at_s(road, s: float) -> float:
+def _lane_offset_at_s(road: Road, s: float) -> float:
     """The road's ``<laneOffset>`` at *s*: how far (m) its lanes sit left of
     the reference line.  Zero when the road declares none.
     """
     lanes_xml = road.road_xml.find("lanes")
     if lanes_xml is None:
         return 0.0
-    active = None
-    for elem in lanes_xml.findall("laneOffset"):
-        if float(elem.attrib.get("s", 0.0)) <= s:
-            active = elem
+    # The last record starting at or before s, if any: counted rather than
+    # held in a local that starts as None, which Codon cannot type.
+    offsets = lanes_xml.findall("laneOffset")
+    started = 0
+    for elem in offsets:
+        if float(elem.attrib.get("s", "0.0")) <= s:
+            started += 1
         else:
             break
-    if active is None:
+    if started == 0:
         return 0.0
-    return _cubic(active, s - float(active.attrib.get("s", 0.0)))
+    active = offsets[started - 1]
+    return _cubic(active, s - float(active.attrib.get("s", "0.0")))
 
 
-def _find_lane_section_at_s(road, s: float):
+def _find_lane_section_at_s(road: Road, s: float) -> Optional[LaneSection]:
     """Return the active lane section covering arc length *s*.
 
     Returns ``None`` when the road has no lane sections.
@@ -768,7 +786,7 @@ def _find_lane_section_at_s(road, s: float):
 
     active_section = lane_sections[0]
     for section in lane_sections:
-        s_start = float(section.lane_section_xml.attrib.get("s", 0.0))
+        s_start = float(section.lane_section_xml.attrib.get("s", "0.0"))
         if s_start <= s:
             active_section = section
         else:
@@ -776,7 +794,7 @@ def _find_lane_section_at_s(road, s: float):
     return active_section
 
 
-def _lane_center_t(road, s: float, lane_id: int) -> float | None:
+def _lane_center_t(road: Road, s: float, lane_id: int) -> float | None:
     """Return the *t* offset that places a point at the centre of *lane_id*.
 
     OpenDRIVE measures *t* from the road reference line.  For lane −1 the
@@ -794,7 +812,7 @@ def _lane_center_t(road, s: float, lane_id: int) -> float | None:
     if active_section is None:
         return None
 
-    section_s_start = float(active_section.lane_section_xml.attrib.get("s", 0.0))
+    section_s_start = float(active_section.lane_section_xml.attrib.get("s", "0.0"))
     ds = s - section_s_start
 
     lanes_by_id = {lane.id: lane for lane in active_section.lanes}
@@ -817,7 +835,7 @@ def _lane_center_t(road, s: float, lane_id: int) -> float | None:
     return sign * total
 
 
-def _find_lane_at_t(road, s: float, t: float) -> int:
+def _find_lane_at_t(road: Road, s: float, t: float) -> int:
     """Find the lane ID at lateral offset t for a given s on a road.
 
     Lanes are stacked outwards from the reference line, each as wide as its
@@ -840,13 +858,13 @@ def _find_lane_at_t(road, s: float, t: float) -> int:
     return edges[-1][0] if edges else 0
 
 
-def _side_width(road, s: float, is_left: bool) -> float:
+def _side_width(road: Road, s: float, is_left: bool) -> float:
     """Total width (m) of the lanes on one side of *road* at *s*."""
     edges = _lane_edges(road, s, is_left)
     return edges[-1][1] if edges else 0.0
 
 
-def _lane_edges(road, s: float, is_left: bool) -> list[tuple[int, float]]:
+def _lane_edges(road: Road, s: float, is_left: bool) -> list[tuple[int, float]]:
     """``(lane_id, outer |t|)`` of each lane on one side of *road* at *s*.
 
     Innermost first, as pyxodr orders a section's ``left_lanes`` and
@@ -855,9 +873,9 @@ def _lane_edges(road, s: float, is_left: bool) -> list[tuple[int, float]]:
     active_section = _find_lane_section_at_s(road, s)
     if active_section is None:
         return []
-    ds = s - float(active_section.lane_section_xml.attrib.get("s", 0.0))
+    ds = s - float(active_section.lane_section_xml.attrib.get("s", "0.0"))
     lanes = active_section.left_lanes if is_left else active_section.right_lanes
-    edges = []
+    edges: list[tuple[int, float]] = []
     outer = 0.0
     for lane in lanes:
         outer += _lane_width_at_ds(lane, ds)

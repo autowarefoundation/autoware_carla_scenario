@@ -20,7 +20,7 @@ synthetic map with no :class:`~autoware_carla_scenario.coordinate.MapManager`;
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional, Union
 
 # autoware_lanelet2_extension_python must be imported before lanelet2.
 from autoware_lanelet2_extension_python.projection import MGRSProjector as _  # noqa: F401
@@ -29,6 +29,10 @@ import lanelet2.geometry
 
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose
 from .model import RelativeLanePose
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet, Lanelet, LaneletMap
+    from lanelet2.routing import RoutingGraph
 
 __all__ = [
     "advance_along_lane",
@@ -56,11 +60,11 @@ _MAX_HOPS = 10_000
 # ---------------------------------------------------------------------------
 
 
-def _centreline(lanelet: Any) -> list[tuple[float, float]]:
+def _centreline(lanelet: Union[ConstLanelet, Lanelet]) -> list[tuple[float, float]]:
     return [(float(p.x), float(p.y)) for p in lanelet.centerline]
 
 
-def _length(lanelet: Any) -> float:
+def _length(lanelet: Union[ConstLanelet, Lanelet]) -> float:
     return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
 
 
@@ -88,11 +92,11 @@ def _point_at(points: list[tuple[float, float]], s: float) -> tuple[float, float
     return points[-1]
 
 
-def _start_heading(lanelet: Any) -> float:
+def _start_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
     return _heading_at(_centreline(lanelet), 0.0)
 
 
-def _end_heading(lanelet: Any) -> float:
+def _end_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
     points = _centreline(lanelet)
     (x0, y0), (x1, y1) = points[-2], points[-1]
     return math.atan2(y1 - y0, x1 - x0)
@@ -103,7 +107,9 @@ def _turn(a: float, b: float) -> float:
     return abs((b - a + math.pi) % (2.0 * math.pi) - math.pi)
 
 
-def _arc(lanelet: Any, x: float, y: float) -> tuple[float, float]:
+def _arc(
+    lanelet: Union[ConstLanelet, Lanelet], x: float, y: float
+) -> tuple[float, float]:
     """``(s, t)`` of a point against *lanelet*'s centreline; ``s`` clamped."""
     arc = lanelet2.geometry.toArcCoordinates(
         lanelet2.geometry.to2D(lanelet.centerline), lanelet2.core.BasicPoint2d(x, y)
@@ -117,7 +123,7 @@ def _arc(lanelet: Any, x: float, y: float) -> tuple[float, float]:
 
 
 def reference_lane_pose(
-    lanelet_map: Any,
+    lanelet_map: LaneletMap,
     x: float,
     y: float,
     heading: float,
@@ -147,7 +153,7 @@ def reference_lane_pose(
     if not found:
         raise ValueError("the map has no lanelets to place a relative pose on")
     nearest = float(found[0][0])
-    best: Optional[tuple[tuple[float, float, int], Any, float, float]] = None
+    best: Optional[tuple[tuple[float, float, int], Lanelet, float, float]] = None
     for distance, lanelet in found:
         if float(distance) > nearest + _ON_TOLERANCE_M:
             continue
@@ -177,7 +183,9 @@ def reference_lane_pose(
 # ---------------------------------------------------------------------------
 
 
-def _straightest(candidates: Iterable[Any], heading: float, *, ahead: bool) -> Any:
+def _straightest(
+    candidates: Iterable[ConstLanelet], heading: float, *, ahead: bool
+) -> Optional[ConstLanelet]:
     """Of *candidates*, the one that turns least from *heading*; then lowest id.
 
     *ahead* compares each candidate's start with *heading* (a lanelet that
@@ -196,7 +204,11 @@ def _straightest(candidates: Iterable[Any], heading: float, *, ahead: bool) -> A
 
 
 def advance_along_lane(
-    lanelet_map: Any, routing_graph: Any, lanelet_id: int, s: float, ds: float
+    lanelet_map: LaneletMap,
+    routing_graph: RoutingGraph,
+    lanelet_id: int,
+    s: float,
+    ds: float,
 ) -> tuple[int, float]:
     """``(lanelet_id, s)`` *ds* metres along the lane from *s* on *lanelet_id*.
 
@@ -208,7 +220,8 @@ def advance_along_lane(
         ValueError: If the walk runs off a lanelet that nothing follows (or
             precedes).
     """
-    lanelet = lanelet_map.laneletLayer[lanelet_id]
+    # A Lanelet, then the routing graph's ConstLanelets.
+    lanelet: ConstLanelet = lanelet_map.laneletLayer[lanelet_id]
     target = s + ds
     for _hop in range(_MAX_HOPS):
         length = _length(lanelet)
@@ -244,15 +257,29 @@ def advance_along_lane(
 # ---------------------------------------------------------------------------
 
 
-def _neighbour(routing_graph: Any, lanelet: Any, left: bool) -> Any:
+def _neighbour(
+    routing_graph: RoutingGraph, lanelet: ConstLanelet, left: bool
+) -> Optional[ConstLanelet]:
     """The lane to the *left* (or right) of *lanelet*, lane-changeable or not."""
+    # A lanelet is always true, so this is `left(...) or adjacentLeft(...)`,
+    # which Codon cannot type (an Optional of a class with no truth value).
     if left:
-        return routing_graph.left(lanelet) or routing_graph.adjacentLeft(lanelet)
-    return routing_graph.right(lanelet) or routing_graph.adjacentRight(lanelet)
+        changeable = routing_graph.left(lanelet)
+        if changeable is not None:
+            return changeable
+        return routing_graph.adjacentLeft(lanelet)
+    changeable = routing_graph.right(lanelet)
+    if changeable is not None:
+        return changeable
+    return routing_graph.adjacentRight(lanelet)
 
 
 def shift_lanes(
-    lanelet_map: Any, routing_graph: Any, lanelet_id: int, s: float, d_lane: int
+    lanelet_map: LaneletMap,
+    routing_graph: RoutingGraph,
+    lanelet_id: int,
+    s: float,
+    d_lane: int,
 ) -> tuple[int, float]:
     """``(lanelet_id, s)`` *d_lane* lanes to the left (negative: right) of a point.
 
@@ -264,14 +291,16 @@ def shift_lanes(
     Raises:
         ValueError: If a lanelet on the way has no neighbour on that side.
     """
-    lanelet = lanelet_map.laneletLayer[lanelet_id]
+    lanelet: ConstLanelet = lanelet_map.laneletLayer[lanelet_id]
     left = d_lane > 0
     side = "left" if left else "right"
     for step in range(abs(d_lane)):
         neighbour = _neighbour(routing_graph, lanelet, left)
         if neighbour is None:
+            # No sign in a format spec: Codon's parser rejects `{d_lane:+d}`.
+            signed = d_lane.__format__("+d")
             raise ValueError(
-                f"d_lane={d_lane:+d}: lanelet {lanelet.id} has no lane to its "
+                f"d_lane={signed}: lanelet {lanelet.id} has no lane to its "
                 f"{side} (after {step} of {abs(d_lane)} lane changes)"
             )
         x, y = _point_at(_centreline(lanelet), s)
@@ -286,8 +315,8 @@ def shift_lanes(
 
 
 def relative_lane_pose(
-    lanelet_map: Any,
-    routing_graph: Any,
+    lanelet_map: LaneletMap,
+    routing_graph: RoutingGraph,
     reference: Lanelet2Pose,
     position: RelativeLanePose,
 ) -> Lanelet2Pose:

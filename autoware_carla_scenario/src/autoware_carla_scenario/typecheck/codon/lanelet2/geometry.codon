@@ -1,0 +1,63 @@
+# Model of lanelet2.geometry, for the checker (docs/typecheck.md): the
+# functions the checked modules call, with lanelet2's parameter names.
+#
+# lanelet2 overloads its geometry functions on the primitive they are handed
+# (to2D() of a line string, a polygon, a point, ...). Codon 0.19 cannot
+# overload a module-level function, so an overloaded one is generic and
+# dispatches on the argument's class, declaring the overloads the framework
+# uses; any other argument is a compile error. Codon decides isinstance() by
+# the static type, so each overload names the mutable class and its Const
+# twin (core.codon).
+
+from lanelet2.core import (BasicPoint2d, ConstLanelet, ConstLineString2d,
+                           ConstLineString3d, Lanelet, LaneletLayer,
+                           LineString2d, LineString3d)
+
+
+class ArcCoordinates:
+    # How far along the line string the point's foot is, and how far to the
+    # side of it (positive to the left).
+    @property
+    def length(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def distance(self) -> float:
+        raise NotImplementedError()
+
+
+def _line_string(obj, where: Literal[str]) -> None:
+    if not (isinstance(obj, ConstLineString2d) or isinstance(obj, LineString2d)
+            or isinstance(obj, ConstLineString3d) or isinstance(obj, LineString3d)):
+        compile_error("lanelet2.geometry." + where + ": only a line string's overload is declared")
+
+
+# to2D(obj): the 2D line string of a 3D one (a LineString2d of a LineString3d).
+def to2D(obj):
+    if isinstance(obj, LineString3d):
+        return LineString2d()
+    elif isinstance(obj, ConstLineString3d):
+        return ConstLineString2d()
+    else:
+        compile_error("lanelet2.geometry.to2D: only a 3D line string's overload is declared")
+
+
+# length(obj): the length of a line string, 2D or 3D.
+def length(obj) -> float:
+    _line_string(obj, "length")
+    raise NotImplementedError()
+
+
+def toArcCoordinates(obj: ConstLineString2d, point: BasicPoint2d) -> ArcCoordinates:
+    raise NotImplementedError()
+
+
+# findNearest(layer, point, n): the n primitives of the layer nearest the
+# point, nearest first, each with its distance. Of the layers only the
+# lanelets' is declared.
+def findNearest(layer: LaneletLayer, point: BasicPoint2d, n: int) -> List[Tuple[float, Lanelet]]:
+    raise NotImplementedError()
+
+
+def inside(lanelet: ConstLanelet, point: BasicPoint2d) -> bool:
+    raise NotImplementedError()

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from lanelet2.core import LaneletMap
 
 lanelet2 = pytest.importorskip("lanelet2")
 
@@ -13,7 +18,7 @@ from autoware_carla_scenario.utils.stop_line import (  # noqa: E402
 
 def _road_with_stop_line_on(
     index: int, count: int = 3
-) -> tuple[object, list[int], int]:
+) -> tuple[LaneletMap, list[int], int]:
     """*count* 10 m lanelets end to end, a traffic light's stop line at the
     start of lanelet *index*."""
     from lanelet2.core import (
