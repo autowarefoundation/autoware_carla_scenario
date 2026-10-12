@@ -1570,3 +1570,156 @@ def test_what_shutil_returns_for_a_path_is_only_a_path(
     result = _check_case(wrong, tmp_path, monkeypatch)
     assert not result.ok
     assert "name" in result.format()
+
+
+# ---------------------------------------------------------------------------
+# The subprocess and importlib.metadata shims, str.removesuffix(), a typed
+# *args and except (A, B) (#118)
+# ---------------------------------------------------------------------------
+
+
+_SUBPROCESS = """
+from __future__ import annotations
+
+import subprocess
+from importlib import metadata
+from pathlib import Path
+from typing import Optional
+
+
+def installed(name: str) -> Optional[str]:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError as exc:
+        return str(exc)
+
+
+def git(repo: Path, *args: str) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            cwd=repo,
+            env={"LANG": "C"},
+            check=False,
+        )
+        done = subprocess.run(["git"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or done.stderr is None:
+        return None
+    return f"{result.stdout} {done.args[0]}".strip()
+
+
+def url(text: str, repo: Path, base: Path) -> str:
+    inside = repo.relative_to(base).as_posix()
+    return text.removesuffix(".git").removeprefix("git+") + inside + str(Path.cwd())
+
+
+def spawn(repo: Path) -> int:
+    process: subprocess.Popen[bytes] = subprocess.Popen(
+        ["sleep", "1"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        cwd=str(repo),
+        start_new_session=True,
+    )
+    if process.poll() is None:
+        process.terminate()
+    return process.wait(timeout=5.0)
+
+
+def checked() -> subprocess.CompletedProcess[str]:
+    done = subprocess.CompletedProcess[str](["true"], 0, "out", None)
+    try:
+        done.check_returncode()
+    except subprocess.CalledProcessError as exc:
+        raise subprocess.TimeoutExpired(exc.cmd, 1, output=exc.stdout)
+    return done
+"""
+
+
+@needs_codon
+def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "subprocess.codon").is_file()
+    assert (model_dir() / "importlib" / "metadata.codon").is_file()
+    result = _check_case(_SUBPROCESS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython 3.10, the oldest
+        # Python the package supports (process_group is 3.11's, walk_up
+        # 3.12's), but split-handler-body, a body of the wrong type in the
+        # handler `except (A, B):` becomes two of. The ones after that handler
+        # are located past the lines its copy adds.
+        ("metadata.version(name)", "metadata.version(distribution=name)"),
+        ("metadata.version(name)", 'metadata.version(name, "x")'),
+        ('["git"], capture_output=True', '["git"], capture_outputs=True'),
+        (
+            '["git"], capture_output=True',
+            '["git"], process_group=0, capture_output=True',
+        ),
+        ("        return None\n    if result", "        return 1\n    if result"),
+        ("done.stderr is None", "done.output is None"),
+        ('text.removesuffix(".git")', 'text.removesuffix(suffix=".git")'),
+        ("repo.relative_to(base)", "repo.relative_to(base, walk_up=True)"),
+        ("str(Path.cwd())", "str(Path.cwd(repo))"),
+        ("process.wait(timeout=5.0)", "process.wait(5.0, 1)"),
+        ("subprocess.TimeoutExpired(exc.cmd, 1,", "subprocess.TimeoutExpired(exc.cmd,"),
+    ],
+    ids=[
+        "version-keyword",
+        "version-arguments",
+        "run-unknown-keyword",
+        "run-process-group",
+        "split-handler-body",
+        "completed-has-no-output",
+        "removesuffix-positional-only",
+        "relative-to-walk-up",
+        "cwd-arguments",
+        "wait-arguments",
+        "timeout-expired-arguments",
+    ],
+)
+def test_the_subprocess_and_metadata_shims_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _SUBPROCESS.replace(right, wrong, 1)
+    assert source != _SUBPROCESS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    first = wrong.splitlines()[0]
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if first in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+def test_a_typed_star_args_is_called_with_one_value() -> None:
+    checks = render_library_checks(
+        ast.parse(
+            "def git(repo: Path, *args: str, timeout: int) -> None: ...\n"
+            "def log(*values: object) -> None: ...\n"
+            "def anything(*values) -> None: ...\n"
+            "class Context:\n"
+            "    def __exit__(self, *args: object) -> None: ...\n"
+        )
+    )
+    calls = checks.source.splitlines()
+    assert (
+        "    git(_acs_value(Path), _acs_value(str), timeout=_acs_value(int))" in calls
+    )
+    assert "    log()" in calls
+    assert "    anything()" in calls
+    assert "    _acs_value(Context).__exit__()" in calls
+    assert not checks.problems

@@ -1,0 +1,24 @@
+# The part of Python's importlib.metadata the checked framework names, for
+# the checker (docs/typecheck.md): version() and PackageNotFoundError, with
+# CPython 3.10's signatures, the oldest Python the package supports. Nothing
+# here runs: no distribution is looked up, and every version is empty.
+# metadata(), entry_points(), distribution() and the rest are not declared,
+# so the check refuses them.
+
+from autoware_carla_scenario._exceptions import ModuleNotFoundError
+
+
+# PackageNotFoundError(ModuleNotFoundError), raised with the distribution's
+# name, by position; str() of it is CPython's message. Its `name` (the
+# distribution's) is not declared: ModuleNotFoundError's is a module's.
+class PackageNotFoundError(Static[ModuleNotFoundError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, name: str):
+        super().__init__("PackageNotFoundError", "No package metadata was found for " + name)
+        self.python_type = self.__class__._pytype
+
+
+# version(distribution_name): the version of an installed distribution.
+def version(distribution_name: str) -> str:
+    return ""

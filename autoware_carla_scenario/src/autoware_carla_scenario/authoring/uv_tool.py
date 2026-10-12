@@ -25,6 +25,9 @@ __all__ = ["UvUnavailable", "run_uv", "uv_executable", "uv_version"]
 class UvUnavailable(RuntimeError):
     """Raised when ``uv`` is needed and is not installed."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 def uv_executable() -> Optional[str]:
     """Return the path to ``uv``, or ``None`` when it is not installed."""
@@ -40,9 +43,14 @@ def uv_version() -> Optional[str]:
     uv = uv_executable()
     if uv is None:
         return None
+    executable: str = uv
     try:
         result = subprocess.run(  # noqa: S603
-            [uv, "--version"], capture_output=True, text=True, check=False, timeout=30
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -75,13 +83,16 @@ def run_uv(
             "uv is not installed, so the package's dependencies can be neither "
             "resolved nor built. An export needs both."
         )
-    environment = dict(os.environ)
+    executable: str = uv
+    environment = os.environ.copy()
     # A parent VIRTUAL_ENV would make uv operate on the editor's environment
     # instead of the package's own.
-    environment.pop("VIRTUAL_ENV", None)
-    environment.update(env or {})
+    if "VIRTUAL_ENV" in environment:
+        del environment["VIRTUAL_ENV"]
+    if env is not None:
+        environment.update(env)
     return subprocess.run(  # noqa: S603
-        [uv, *args],
+        [executable, *args],
         cwd=str(cwd),
         capture_output=True,
         text=True,

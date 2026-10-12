@@ -27,6 +27,19 @@ class str:
     def encode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
         return self
 
+    # str.removeprefix(prefix, /) and str.removesuffix(suffix, /) (Python
+    # 3.9), which Codon 0.19 lacks. The parameter's name is no keyword anyone
+    # passes, as CPython takes it by position only.
+    def removeprefix(self, _acs_prefix: str) -> str:
+        if _acs_prefix and self.startswith(_acs_prefix):
+            return self[len(_acs_prefix):]
+        return self
+
+    def removesuffix(self, _acs_suffix: str) -> str:
+        if _acs_suffix and self.endswith(_acs_suffix):
+            return self[: len(self) - len(_acs_suffix)]
+        return self
+
 
 def _acs_value(T: type) -> T:
     """A T, for the library check's calls (typecheck/library_driver.py):

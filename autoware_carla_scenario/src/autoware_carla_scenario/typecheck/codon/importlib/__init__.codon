@@ -1,0 +1,9 @@
+# Python's importlib, for the checker (docs/typecheck.md): only its
+# `metadata` submodule (importlib/metadata.codon). Codon 0.19 finds a
+# submodule by `from importlib import metadata` only when the package
+# imports it, so this one does; the check therefore also takes
+# `importlib.metadata` after a bare `import importlib`, which CPython takes
+# only once something has imported the submodule. Nothing of importlib
+# itself is declared (import_module() and the rest), so the check refuses it.
+
+import importlib.metadata as metadata

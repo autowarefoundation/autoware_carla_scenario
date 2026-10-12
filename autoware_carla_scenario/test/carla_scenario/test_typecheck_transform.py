@@ -20,7 +20,9 @@ from autoware_carla_scenario.typecheck.transform import (
     MISSING_BUILTIN_EXCEPTIONS,
     PRELUDE,
     codon_annotation,
+    split_tuple_excepts,
     transform_source,
+    transform_source_lines,
     undeclared_attributes,
 )
 
@@ -917,3 +919,138 @@ def test_a_scenario_with_a_custom_builder_is_not_checked() -> None:
     finally:
         unregister_scenario("typecheck_builder_case")
     assert get_scenario_classes("typecheck_builder_case") is None
+
+
+# ---------------------------------------------------------------------------
+# except (A, B): one handler per class (#118)
+# ---------------------------------------------------------------------------
+
+
+_TUPLE_EXCEPTS = textwrap.dedent(
+    """
+    def probe(repo):
+        try:
+            run(repo)
+        except (OSError, subprocess.SubprocessError) as exc:  # why
+            log(exc)
+            try:
+                retry()
+            except (KeyError,
+                    ValueError):
+                pass
+        except RuntimeError:
+            return 2
+        else:
+            return 3
+        return 0
+    """
+)
+
+
+def _handlers(tree: ast.AST) -> list[list[tuple[Optional[str], Optional[str], str]]]:
+    """Each try statement's handlers: (class, name, body) in order."""
+    return [
+        [
+            (
+                ast.unparse(h.type) if h.type else None,
+                h.name,
+                "; ".join(ast.unparse(s) for s in h.body),
+            )
+            for h in node.handlers
+        ]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+    ]
+
+
+def test_a_tuple_except_becomes_one_handler_per_class_in_order() -> None:
+    out, _ = split_tuple_excepts(_TUPLE_EXCEPTS)
+    handlers = _handlers(ast.parse(out))
+    # The outer try: OSError, then SubprocessError, each with the same body
+    # (the inner try split too), then the handler that followed the tuple.
+    outer = handlers[0]
+    assert [(c, n) for c, n, _ in outer] == [
+        ("OSError", "exc"),
+        ("subprocess.SubprocessError", "exc"),
+        ("RuntimeError", None),
+    ]
+    assert outer[0][2] == outer[1][2]
+    inner = handlers[1:]
+    assert len(inner) == 2  # the inner try, once in each copy
+    for handlers_of_copy in inner:
+        assert [c for c, _, _ in handlers_of_copy] == ["KeyError", "ValueError"]
+    assert not [
+        h
+        for h in ast.walk(ast.parse(out))
+        if isinstance(h, ast.ExceptHandler) and isinstance(h.type, ast.Tuple)
+    ]
+
+
+def test_a_tuple_except_catches_what_it_caught() -> None:
+    # Python runs the split source as it ran the original: the same
+    # exceptions reach the same body, and the others the handlers after it.
+    source = textwrap.dedent(
+        """
+        def caught(error):
+            try:
+                raise error
+            except (KeyError, LookupError) as exc:
+                return "lookup " + type(exc).__name__
+            except (ValueError,):
+                return "value"
+            except Exception:
+                return "other"
+        """
+    )
+    out, _ = split_tuple_excepts(source)
+    assert "(KeyError, LookupError)" not in out and "(ValueError,)" not in out
+    for text in (source, out):
+        namespace: dict[str, Any] = {}
+        exec(compile(text, "<split>", "exec"), namespace)  # noqa: S102
+        caught = namespace["caught"]
+        assert caught(KeyError()) == "lookup KeyError"
+        assert caught(IndexError()) == "lookup IndexError"
+        assert caught(ValueError()) == "value"
+        assert caught(TypeError()) == "other"
+
+
+def test_each_line_of_a_split_handler_maps_to_the_line_it_copies() -> None:
+    out, origin = split_tuple_excepts(_TUPLE_EXCEPTS)
+    source_lines = _TUPLE_EXCEPTS.splitlines()
+    out_lines = out.splitlines()
+    assert len(origin) == len(out_lines)
+    for line, original in zip(out_lines, origin):
+        if "except" not in line and line.strip() not in ("):", ""):
+            assert line == source_lines[original - 1]
+    # The last line of the module is the last line of the source.
+    assert origin[-1] == len(source_lines)
+    # transform_source_lines() gives the same map, after the prelude.
+    text, mapped = transform_source_lines(_TUPLE_EXCEPTS)
+    assert text.startswith(PRELUDE) and mapped == origin
+    # Every other line is where it was.
+    assert split_tuple_excepts("x = 1\ny = 2\n") == ("x = 1\ny = 2\n", [1, 2])
+
+
+@pytest.mark.parametrize(
+    "handler",
+    ["except errors:", "except (*errors,):", "except ():", "except Exception:"],
+)
+def test_a_tuple_that_is_not_written_out_is_left_as_it_is(handler: str) -> None:
+    source = f"try:\n    pass\n{handler}\n    pass\n"
+    assert split_tuple_excepts(source) == (source, [1, 2, 3, 4])
+
+
+def test_an_empty_tuple_default_takes_the_type_of_its_field() -> None:
+    out = _transform(
+        """
+        @dataclass(frozen=True)
+        class Pin:
+            warnings: tuple[str, ...] = field(default=())
+            pair: tuple[str, int] = field(default=("a", 1))
+            none: Optional[tuple[str, ...]] = field(default=None)
+        """
+    )
+    # Checked as a List[str] (Codon's tuples have a fixed length).
+    assert "    warnings: List[str] = List[str]()" in out
+    assert '    pair: tuple[str, int] = ("a", 1)' in out
+    assert "    none: Optional[List[str]] = None" in out
