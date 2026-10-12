@@ -11,5 +11,6 @@
 import lanelet2.core as core
 import lanelet2.geometry as geometry
 import lanelet2.io as io
+import lanelet2.projection as projection
 import lanelet2.routing as routing
 import lanelet2.traffic_rules as traffic_rules

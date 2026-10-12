@@ -10,6 +10,8 @@ from pathlib import Path
 
 import typesafe_carla.carla as carla
 import lanelet2.core
+import lanelet2.io
+import lanelet2.projection
 import lanelet2.routing
 
 from ._tc import _keyword_only
@@ -279,13 +281,26 @@ class Road:
         raise NotImplementedError()
 
 
+# pyxodr's RoadNetwork: read from an .xodr file (MapManager.initialize()),
+# its roads by id (filled by get_roads()) and the XML root. pyxodr also takes
+# the lane types to ignore, which the framework leaves at pyxodr's.
 class RoadNetwork:
     road_ids_to_object: Dict[str, Road]
     root: _XmlElement
 
+    def __init__(self, xodr_file_path: str, resolution: float = 0.1):
+        pass
+
+    def get_roads(self, include_connecting_roads: bool = True,
+                  verbose: bool = False) -> List[Road]:
+        raise NotImplementedError()
+
 
 # lanelet2's map and routing graph, as MapManager hands them out: lanelet2's
-# own classes, as the lanelet2 model (codon/lanelet2/) declares them.
+# own classes, as the lanelet2 model (codon/lanelet2/) declares them. The
+# library check compiles coordinate/map_manager.py from its source
+# (typecheck/library.py), so this MapManager is the scenario check's: what a
+# scenario may read of the one coordinate exports.
 
 
 class MapManager:
@@ -328,3 +343,28 @@ class MapManager:
     @property
     def carla_map(self) -> Optional[carla.Map]:
         raise NotImplementedError()
+
+
+# What the checked coordinate/map_manager.py and sweeper/map_loader.py import
+# of coordinate/projection.py, which is not checked (it reads the map's
+# map_projector_info.yaml with yaml): where a map is anchored, the projector
+# it is read with, and the OpenDRIVE geoReference parser map_manager
+# re-exports. None is exported by the coordinate package.
+
+# map_origin(lanelet2_path, xodr_path): ((lat, lon, alt), what said so).
+# Raises ValueError for an OpenDRIVE file without a geoReference.
+def map_origin(lanelet2_path: Path, xodr_path: Optional[Path] = None
+               ) -> Tuple[Tuple[float, float, float], str]:
+    raise NotImplementedError()
+
+
+# resolve_projector(...): the projector (any of lanelet2's or Autoware's) and
+# its name. Raises ValueError for a projector_type it does not know.
+def resolve_projector(lanelet2_path: Path, origin: lanelet2.io.Origin,
+                      projector_type: Optional[str] = None
+                      ) -> Tuple[lanelet2.projection.Projector, str]:
+    raise NotImplementedError()
+
+
+def _parse_geo_reference(xodr_content: str) -> Tuple[float, float, float]:
+    raise NotImplementedError()

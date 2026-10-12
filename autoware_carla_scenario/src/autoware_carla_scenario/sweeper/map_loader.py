@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Optional
 
 import lanelet2.core
 import lanelet2.io
@@ -45,7 +45,7 @@ def load_lanelet2_map(
     lanelet2_path: str | Path,
     xodr_path: str | Path | None = None,
     projector_type: str | None = None,
-) -> Any:
+) -> lanelet2.core.LaneletMap:
     """Load a Lanelet2 map, anchored at the origin its map states.
 
     This is a lightweight alternative to :meth:`MapManager.initialize` that
@@ -69,33 +69,37 @@ def load_lanelet2_map(
         FileNotFoundError: If a named file does not exist.
         ValueError: If a given XODR file lacks a valid ``geoReference``.
     """
-    lanelet2_path = Path(lanelet2_path)
-    xodr_path = Path(xodr_path) if xodr_path is not None else None
+    # New names rather than the parameters rebound: Codon types a variable
+    # once, and each parameter may be a str (docs/typecheck.md).
+    osm_path = Path(lanelet2_path)
+    xodr: Optional[Path] = None
+    if xodr_path is not None:
+        xodr = Path(xodr_path)
 
-    if not lanelet2_path.exists():
-        raise FileNotFoundError(f"Lanelet2 file not found: {lanelet2_path}")
-    if xodr_path is not None and not xodr_path.exists():
-        raise FileNotFoundError(f"OpenDRIVE file not found: {xodr_path}")
+    if not osm_path.exists():
+        raise FileNotFoundError(f"Lanelet2 file not found: {osm_path}")
+    if xodr is not None and not xodr.exists():
+        raise FileNotFoundError(f"OpenDRIVE file not found: {xodr}")
 
-    (lat, lon, _alt), anchored_by = map_origin(lanelet2_path, xodr_path)
+    (lat, lon, _alt), anchored_by = map_origin(osm_path, xodr)
     logger.info(
-        "Anchoring %s at (%s, %s) from %s", lanelet2_path.name, lat, lon, anchored_by
+        "Anchoring %s at (%s, %s) from %s", osm_path.name, lat, lon, anchored_by
     )
 
     origin = lanelet2.io.Origin(lat, lon)
-    projector, projector_type = resolve_projector(lanelet2_path, origin, projector_type)
-    lanelet_map = lanelet2.io.load(str(lanelet2_path), projector)
+    projector, projector_name = resolve_projector(osm_path, origin, projector_type)
+    lanelet_map = lanelet2.io.load(str(osm_path), projector)
 
     logger.info(
         "Loaded Lanelet2 map from %s with the %s projection (%d lanelets)",
-        lanelet2_path,
-        projector_type,
+        osm_path,
+        projector_name,
         len(list(lanelet_map.laneletLayer)),
     )
     return lanelet_map
 
 
-def load_map(paths: "MapPaths") -> Any:
+def load_map(paths: "MapPaths") -> lanelet2.core.LaneletMap:
     """Load the Lanelet2 map a resolved ``map`` config names.
 
     The one way this framework turns a resolved map config into a parsed map.

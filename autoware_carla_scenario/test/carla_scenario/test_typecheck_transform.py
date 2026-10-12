@@ -562,6 +562,67 @@ def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() 
     assert lines[8] == '    raise RuntimeError("bad f") from exc'
 
 
+def test_super_new_in_a_singleton_s_new_allocates_the_class() -> None:
+    # Codon 0.19's object.__new__ takes no class (MapManager's singleton).
+    out = _transform(
+        """
+        class Single:
+            def __new__(cls) -> "Single":
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                return cls._instance
+
+            def other(self) -> None:
+                def inner() -> None:
+                    super().__new__(Single)
+        """
+    )
+    lines = out.splitlines()
+    assert lines[4] == "            cls._instance = Single.__new__()"
+    assert lines[9] == "            Single.__new__()"
+
+
+def test_a_callable_alias_is_none_on_its_lines() -> None:
+    # Codon 0.19 reads the right-hand side as an expression ("expected type
+    # expression"); an annotation spells the callable out.
+    out = _transform(
+        """
+        Height = Callable[[float, float], Optional[float]]
+        Resolver = Callable[
+            [int],
+            float,
+        ]
+        Pair = Tuple[float, float]
+
+
+        def f() -> None:
+            local = Callable[[int], int]
+        """
+    )
+    lines = out.splitlines()
+    assert lines[1] == "Height = None"
+    assert lines[2:6] == ["Resolver = (None", "", "", ")"]
+    assert lines[6] == "Pair = Tuple[float, float]"
+    assert lines[10] == "    local = Callable[[int], int]"
+
+
+def test_a_return_annotation_over_several_lines_is_dropped_in_place() -> None:
+    out = _transform(
+        """
+        def make(
+            n: int,
+        ) -> Callable[
+            [int],
+            int,
+        ]:
+            return n
+        """
+    )
+    lines = out.splitlines()
+    assert lines[1:7] == ["def make(", "    n: int,", "", "", "", "):"]
+    assert lines[7] == "    return n"
+
+
 def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     source = textwrap.dedent(
         """

@@ -1,11 +1,24 @@
 # Model of autoware_lanelet2_extension_python.projection, for the checker
-# (docs/typecheck.md): the MGRS projector, which the framework imports so that
-# Autoware's regulatory elements are registered before lanelet2 reads a map.
-# Its projections are not declared.
+# (docs/typecheck.md): Autoware's MGRS and transverse Mercator projectors,
+# derived from lanelet2's Projector as in C++ (lanelet2/projection.codon says
+# why), with the point each projects. The MGRS grid's code is not declared.
 
+from lanelet2.core import BasicPoint3d, GPSPoint
 from lanelet2.io import Origin
+from lanelet2.projection import Projector
 
 
-class MGRSProjector:
+class MGRSProjector(Projector):
     def __init__(self, origin: Origin):
         pass
+
+    def forward(self, point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()
+
+
+class TransverseMercatorProjector(Projector):
+    def __init__(self, origin: Origin):
+        pass
+
+    def forward(self, point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()

@@ -472,6 +472,22 @@ def variadic(f: Callable[..., float]) -> None:
 
 def register(cb: Union[float, Callable[[float], None]]) -> None:
     pass
+
+
+def maybe(f: Optional[Callable[[float], int]] = None) -> None:
+    pass
+
+
+def place(f: Callable[[Union[Straight, Turn]], float]) -> None:
+    pass
+
+
+def refer(f: Optional[Callable[[Optional[Union[EntityRole, str]]], Pose]]) -> None:
+    pass
+
+
+def unknown(f: Callable[[Union[Straight, Any]], float]) -> None:
+    pass
 """
 
 
@@ -483,9 +499,16 @@ def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
     # A union with a callable in it: called once with each member.
     assert "    register(_acs_value(float))" in calls
     assert "    register(_acs_value(Callable[[float], None]))" in calls
+    # An Optional one: called with the callable.
+    assert "    maybe(_acs_value(Callable[[float], int]))" in calls
+    # A union among the arguments, a Callable type Codon 0.19 crashes on: a
+    # callable of any arguments returning the result's type.
+    assert "    place(_acs_value(_acs_Returning[float]))" in calls
+    assert "    refer(_acs_value(_acs_Returning[Pose]))" in calls
     lines = _CALLABLES.splitlines()
     assert sorted(lines[line - 1].split("(")[0] for line, _ in checks.problems) == [
         "def anything",
+        "def unknown",
         "def variadic",
     ]
 
@@ -934,6 +957,54 @@ def ambient_controller_name() -> Optional[str]:
     assert result.ok, result.format()
 
 
+_SINGLETON_AND_UNION_CALLABLE = """
+from __future__ import annotations
+
+from typing import Callable, ClassVar, Optional, Union
+
+from autoware_carla_scenario.entity_role import EntityRole
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+#: A callable alias, which Codon 0.19 refuses as an expression.
+Lookup = Callable[[Optional[Union[EntityRole, str]]], Vector3]
+
+
+class Single:
+    _instance: ClassVar[Optional["Single"]] = None
+    size: Optional[float]
+
+    def __new__(cls) -> "Single":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.size = None
+        return cls._instance
+
+    def __init__(self) -> None:
+        pass
+
+
+def length(
+    lookup: Callable[[Optional[Union[EntityRole, str]]], Vector3],
+) -> float:
+    return lookup(EntityRole.ego()).dot(lookup(None)) + (Single().size or 0.0)
+"""
+
+
+@needs_codon
+def test_a_singleton_and_a_callable_of_a_union_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # super().__new__(cls) allocates the class, and a callable with a union
+    # argument is called with one of any arguments returning its result type.
+    right = _SINGLETON_AND_UNION_CALLABLE
+    result = _check_case(right, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+    # What the callable returns is typed: a Vector3 has no norm_of().
+    wrong = right.replace(".dot(lookup(None))", ".norm_of(lookup(None))")
+    assert wrong != right
+    assert not _check_case(wrong, tmp_path, monkeypatch).ok
+
+
 @needs_codon
 def test_a_module_importing_what_codon_cannot_compile_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1282,6 +1353,10 @@ def cache_dir(configured: str) -> Path:
 
 def log_file(run: Run) -> str:
     return str(run.output_dir / "sumo" / "fcd.xml")
+
+
+def log_text(run: Run) -> str:
+    return (run.output_dir / "fcd.xml").read_text(encoding="utf-8")
 
 
 def is_default(run: Run, configured: str) -> bool:

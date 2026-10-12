@@ -47,6 +47,18 @@ def _acs_value(T: type) -> T:
     return Ptr[T]()[0]
 
 
+class _acs_Returning:
+    """What the library check (typecheck/library_driver.py) calls a function
+    with for a parameter of a Callable one of whose arguments is a union, a
+    type Codon 0.19 crashes on: a callable taking any arguments and returning
+    an R. Nothing compiled is run."""
+
+    R: type
+
+    def __call__(self, *args) -> R:
+        return _acs_value(R)
+
+
 def _keyword_only(extra, where: Literal[str]):
     if static.len(extra) > 0:
         compile_error(where + " is keyword-only")

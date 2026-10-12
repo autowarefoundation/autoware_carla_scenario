@@ -2,7 +2,8 @@
 #
 # lanelet2 hands out every primitive as the Python class of what it is; the
 # model declares those classes with the members the checked modules read.
-# Everything here is read-only: nothing builds or edits a map.
+# Everything here is read-only: nothing builds or edits a map (lanelet2.io
+# loads one).
 #
 # Const and mutable twins. lanelet2 has a Const class and a mutable one for
 # each primitive (ConstLanelet / Lanelet, ConstLineString3d / LineString3d,
@@ -62,6 +63,40 @@ class BasicPoint2d:
     def __init__(self, x: float, y: float):
         self.x = x
         self.y = y
+
+
+# A projector's result: a point in metres, built by no checked module.
+class BasicPoint3d:
+    @property
+    def x(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def y(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def z(self) -> float:
+        raise NotImplementedError()
+
+
+# A point in WGS84, which a projector projects. Python names the third
+# argument `ele` (and reads it as `alt` too); the framework passes all three.
+class GPSPoint:
+    def __init__(self, lat: float, lon: float, ele: float = 0.0):
+        pass
+
+    @property
+    def lat(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def lon(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def alt(self) -> float:
+        raise NotImplementedError()
 
 
 class ConstPoint3d:
