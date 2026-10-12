@@ -1,0 +1,34 @@
+# Model of lanelet2.routing, for the checker (docs/typecheck.md): the routing
+# graph and the neighbours it gives a lanelet, which it hands out as
+# ConstLanelets (a Lanelet goes in; core.codon). Its routes, paths and costs
+# are not declared.
+
+from lanelet2.core import ConstLanelet, LaneletMap
+from lanelet2.traffic_rules import TrafficRules
+
+
+class RoutingGraph:
+    # RoutingGraph(laneletMap, trafficRules): Python also takes the routing
+    # costs, which the framework leaves at lanelet2's.
+    def __init__(self, laneletMap: LaneletMap, trafficRules: TrafficRules):
+        pass
+
+    def following(self, lanelet: ConstLanelet, withLaneChanges: bool = False) -> List[ConstLanelet]:
+        raise NotImplementedError()
+
+    def previous(self, lanelet: ConstLanelet, withLaneChanges: bool = False) -> List[ConstLanelet]:
+        raise NotImplementedError()
+
+    # The neighbour a lane change reaches, or None.
+    def left(self, lanelet: ConstLanelet, routingCostId: int = 0) -> Optional[ConstLanelet]:
+        raise NotImplementedError()
+
+    def right(self, lanelet: ConstLanelet, routingCostId: int = 0) -> Optional[ConstLanelet]:
+        raise NotImplementedError()
+
+    # The neighbour no lane change reaches (a solid line between), or None.
+    def adjacentLeft(self, lanelet: ConstLanelet, routingCostId: int = 0) -> Optional[ConstLanelet]:
+        raise NotImplementedError()
+
+    def adjacentRight(self, lanelet: ConstLanelet, routingCostId: int = 0) -> Optional[ConstLanelet]:
+        raise NotImplementedError()

@@ -1,0 +1,8 @@
+# Model of lanelet2.io, for the checker (docs/typecheck.md): the map origin a
+# projector is built at. Loading and writing a map are not declared.
+
+
+class Origin:
+    # Python's defaults are 0; the framework passes the latitude and longitude.
+    def __init__(self, lat: float, lon: float, alt: float = 0.0):
+        pass
