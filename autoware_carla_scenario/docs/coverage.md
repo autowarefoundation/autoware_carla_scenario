@@ -14,6 +14,14 @@ Both follow `cover()` in
 [ASAM OpenSCENARIO DSL](https://publications.pages.asam.net/standards/ASAM_OpenSCENARIO/ASAM_OpenSCENARIO_DSL/latest/language-reference/coverage_main.html)
 and keep its vocabulary.
 
+Coverage is [openodd](https://github.com/hakuturu583/openodd_py)'s: the cover
+items, the collector, the coverage file, the merge, the report and the COD
+export. The runner registers a scenario's items and drives openodd's
+collector on every tick with the CARLA backend (`odd/backend.py`'s
+`CarlaBackend`), which says where the ego is: in the world, for the metres a
+tick stands for, and on Earth, for a COD's positions. `scenario-coverage` is
+openodd's `openodd-coverage`.
+
 ## How it works
 
 1. A **cover item** names a value and divides its possible values into
@@ -309,8 +317,8 @@ coverage file only.
 
 ```json
 {
-  "schema": "autoware_carla_scenario.coverage/1",
-  "generator": {"openodd": "0.3.0", "framework": "autoware-carla-scenario==10.0.13"},
+  "schema": "openodd.coverage/1",
+  "generator": {"openodd": "0.4.0", "framework": "autoware-carla-scenario==10.0.13"},
   "scenario": "CutInScenario",
   "items": [
     {
@@ -391,9 +399,10 @@ coverage file only.
 
 The ODD's `structure`, `revision` (an ODD read from files) and `version`
 (what its root modules declare) say which ODD the run was measured against;
-see [Versions of an ODD](odd.md#versions-of-an-odd). The merge is
-[openodd](https://github.com/hakuturu583/openodd_py)'s, which reads this
-schema as its own (`openodd.coverage/1`).
+see [Versions of an ODD](odd.md#versions-of-an-odd). The format, the
+collector that writes it, the merge and the COD export are
+[openodd](https://github.com/hakuturu583/openodd_py)'s; files written before
+the collector moved there (`autoware_carla_scenario.coverage/1`) still merge.
 
 ## Not yet supported
 

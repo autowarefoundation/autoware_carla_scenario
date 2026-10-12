@@ -25,12 +25,13 @@ are measured, judged and reported the same way:
 OpenODD also maps its model to OpenSCENARIO DSL (chapter 9, model to DSL only)
 and to tables (chapter 8). Neither is read here.
 
-The reading, judging, versioning and sampling are
+The reading, judging, versioning, sampling and coverage are
 [openodd](https://github.com/hakuturu583/openodd_py) (`openodd-py`, a Rust
 core with a Python API), which knows nothing of CARLA. This framework is its
-**backend** (`autoware_carla_scenario.odd.backend`): the built-in probes a
-binding file names, `measure:` keys read from the running scenario, and the
-knobs that set the weather and the sun. Importing `autoware_carla_scenario.odd`
+**backend**: `autoware_carla_scenario.odd.backend.CarlaBackend`, a subclass
+of `openodd.Backend`, gives the built-in probes a binding file names,
+`measure:` keys read from the running scenario, the knobs that set the
+weather and the sun, and where the ego is (for coverage). Importing `autoware_carla_scenario.odd`
 makes it openodd's default backend, so `openodd.load_odd_binding()` and
 `autoware_carla_scenario.odd.load_odd_binding()` read the same.
 
