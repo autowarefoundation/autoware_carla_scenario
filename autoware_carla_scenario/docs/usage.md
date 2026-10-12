@@ -464,6 +464,8 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_result.json` | Machine-readable result with condition statuses |
 | `{ScenarioName}_coverage.json` | ODD and scenario coverage hits of the run (merge with `scenario-coverage`, see [Coverage](coverage.md)) |
 | `{ScenarioName}_odd.tar.gz` | The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see [Versions of an ODD](odd.md#versions-of-an-odd)) |
+| `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
+| `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
 | `{ScenarioName}.mp4` | Rendered video from recording (optional, if spectator is configured) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 

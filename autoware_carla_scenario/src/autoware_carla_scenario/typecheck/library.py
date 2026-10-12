@@ -330,6 +330,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen, json), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)",
     "autoware_carla_scenario.examples": "re-exports examples.run (pathlib, omegaconf, hydra, json) and the registry (omegaconf, importlib)",
     "autoware_carla_scenario.examples.expand": "imports json, the registry (omegaconf, importlib) and sweeper.expand (omegaconf), which are not checked, and examples.run (hydra) inside it",
+    "autoware_carla_scenario.environment": "imports importlib.metadata, platform, subprocess, hashlib, json, pathlib, urllib",
     "autoware_carla_scenario.examples.run": "imports pathlib, omegaconf, hydra, json",
     "autoware_carla_scenario.maps": "re-exports maps.cache (subprocess, json) and maps.resolver (pathlib, hashlib)",
     "autoware_carla_scenario.maps.cache": "imports pathlib, subprocess, shutil, tempfile, json, hashlib",

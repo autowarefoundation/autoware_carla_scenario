@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -1142,7 +1143,15 @@ class ScenarioRunner:
             )
             json_path = self.output_dir / f"{file_stem}_result.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
-            json_path.write_text(result.to_json(indent=2), encoding="utf-8")
+            # What it ran with: the lock and the environment beside the result,
+            # and their summary (with the environment's id) in it.
+            from .environment import write as write_environment  # noqa: PLC0415
+
+            environment = write_environment(self.output_dir, file_stem, scenario)
+            data = json.loads(result.to_json())
+            if environment is not None:
+                data["environment"] = environment
+            json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
