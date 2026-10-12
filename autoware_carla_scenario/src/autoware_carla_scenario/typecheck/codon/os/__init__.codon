@@ -14,6 +14,7 @@
 # killed.
 
 import internal.static as static
+from signal import Signals as _Signals
 
 
 def _positional_only(args, count: Literal[int], where: Literal[str]):
@@ -27,6 +28,16 @@ def _keyword_only(extra, where: Literal[str]):
     # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
     if static.len(extra) > 0:
         compile_error(where + " is keyword-only")
+
+
+def _signal_number(sig, where: Literal[str]) -> None:
+    # An int, or a signal.Signals, which CPython's IntEnum is an int of.
+    if isinstance(sig, int):
+        pass
+    elif isinstance(sig, _Signals):
+        pass
+    else:
+        compile_error(where + ": the signal is an int or a signal.Signals")
 
 
 name = "posix"
@@ -166,17 +177,18 @@ def getpgid(pid: int) -> int:
     return 0
 
 
-# kill(pid, signal, /) and killpg(pgid, signal, /).
+# kill(pid, signal, /) and killpg(pgid, signal, /): the signal is an int or
+# a signal.Signals (an IntEnum, so an int, in CPython).
 def kill(*args) -> None:
     _positional_only(args, 2, "kill()")
     pid: int = args[0]
-    signal: int = args[1]
+    _signal_number(args[1], "kill()")
 
 
 def killpg(*args) -> None:
     _positional_only(args, 2, "killpg()")
     pgid: int = args[0]
-    signal: int = args[1]
+    _signal_number(args[1], "killpg()")
 
 
 def system(command: str) -> int:

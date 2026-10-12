@@ -149,6 +149,9 @@ _CONCRETE_GENERICS = {
     # and writes is a T (`bytes`, checked as `str`, or `str`).
     "subprocess.Popen",
     "subprocess.CompletedProcess",
+    # The `typing` shim's IO[T] (codon/typing.codon), a file object.
+    "IO",
+    "typing.IO",
 }
 #: Abstract collections: kept in class-level declarations (the typing shim
 #: maps them onto List / Dict), dropped from parameters, which a caller may

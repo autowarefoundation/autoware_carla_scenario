@@ -16,9 +16,8 @@ from __future__ import annotations
 import hashlib
 import os
 import shlex
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 __all__ = [
     "BRIDGE_APT_PACKAGES",
@@ -39,9 +38,9 @@ BRIDGE_APT_PACKAGES: tuple[str, ...] = ("python3-grpcio", "python3-protobuf")
 
 def bridge_package_dir() -> Path:
     """The installed :mod:`autoware_carla_scenario.autoware_bridge` directory."""
-    from .. import autoware_bridge  # noqa: PLC0415 - only its location is wanted
+    from ..autoware_bridge import __file__ as bridge_file  # noqa: PLC0415 - only its location is wanted
 
-    return Path(autoware_bridge.__file__).resolve().parent
+    return Path(bridge_file).resolve().parent
 
 
 def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[str]:
@@ -65,7 +64,8 @@ def bridge_command(
         BRIDGE_MODULE,
         *bridge_ros_args(bridge_address, parameters),
     ]
-    return f'PYTHONPATH={root}"${{PYTHONPATH:+:$PYTHONPATH}}" {shlex.join(argv)}'
+    # Concatenated: Codon 0.19 cannot parse `{{` in an f-string.
+    return "PYTHONPATH=" + root + '"${PYTHONPATH:+:$PYTHONPATH}" ' + shlex.join(argv)
 
 
 def host_python_root(cache_dir: Path | None = None) -> Path:
@@ -77,12 +77,13 @@ def host_python_root(cache_dir: Path | None = None) -> Path:
     installed location.
     """
     package = bridge_package_dir()
-    base = (
-        cache_dir
-        or Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-        / "autoware_carla_scenario"
-        / "ros_bridge"
-    )
+    if cache_dir is not None:
+        base = cache_dir
+    else:
+        default_cache = Path.home() / ".cache"
+        cache_home = os.environ.get("XDG_CACHE_HOME")
+        cache = Path(cache_home) if cache_home is not None else default_cache
+        base = cache / "autoware_carla_scenario" / "ros_bridge"
     root = base / hashlib.sha256(str(package).encode()).hexdigest()[:16]
     link = root / "autoware_carla_scenario" / "autoware_bridge"
     if not link.is_symlink() or link.resolve() != package:

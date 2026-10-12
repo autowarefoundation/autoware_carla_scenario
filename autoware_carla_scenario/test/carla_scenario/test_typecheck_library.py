@@ -219,10 +219,11 @@ def test_a_module_of_a_checked_package_can_have_a_model_of_its_own() -> None:
 )
 def test_a_re_exported_module_has_a_model_of_its_own(module: str, sibling: str) -> None:
     # The checked autoware_bridge and driver packages re-export a class of a
-    # module that is not checked (grpc), and the checked AutowareEgoEntity
-    # takes an AutowareLauncher (subprocess): each such module has a model of
-    # its own, under a package directory of the model, and its package and
-    # the package's other modules have none.
+    # module that is not checked (grpc), and a scenario's AutowareEgoEntity
+    # takes an AutowareLauncher (whose module the library check compiles from
+    # its source): each such module has a model of its own, under a package
+    # directory of the model, and its package and the package's other modules
+    # have none.
     assert _model_module(f"{_PACKAGE}.{module}") == f"{_PACKAGE}.{module}"
     assert _model_module(f"{_PACKAGE}.{module.split('.')[0]}") is None
     assert _model_module(f"{_PACKAGE}.{sibling}") is None
@@ -1943,6 +1944,186 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_r
 ) -> None:
     source = _PROCESS_SIGNALS.replace(right, wrong, 1)
     assert source != _PROCESS_SIGNALS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    needle = at if at is not None else wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if needle in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+# ---------------------------------------------------------------------------
+# The shlex and sys shims, signal.Signals, a file object (Path.open(), a
+# Popen stream) and the symlink queries (#127)
+# ---------------------------------------------------------------------------
+
+
+_STACK = """
+from __future__ import annotations
+
+import os
+import shlex
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import IO, Optional
+
+
+def command(root: str, args: list[str]) -> str:
+    argv = ["python3", "-m", "x y", *args]
+    return shlex.quote(root) + " " + shlex.join(argv)
+
+
+def interpreter() -> list[str]:
+    if sys.platform != "linux":
+        return list(sys.argv)
+    return [sys.executable, "-c", "pass"]
+
+
+def stop(pid: int, sig: signal.Signals) -> str:
+    try:
+        os.killpg(pid, sig)
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    signals = [sig, signal.SIGTERM, signal.Signals(9)]
+    name = signals[0].name
+    return f"{name} {int(signal.SIGINT)} {signal.SIGINT == 2}"
+
+
+def link(directory: Path, target: Path) -> Path:
+    path = directory / "link"
+    if path.is_symlink() or path.exists():
+        path.unlink()
+    path.symlink_to(target, target_is_directory=True)
+    return path
+
+
+def opened(directory: Path) -> IO[bytes]:
+    return (directory / "x.log").open("ab")
+
+
+def logged(directory: Path) -> Optional[int]:
+    log = opened(directory)
+    log.write(b"start\\n")
+    process: subprocess.Popen[bytes] = subprocess.Popen(
+        ["true"], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
+    )
+    code = process.wait()
+    process.send_signal(signal.SIGTERM)
+    log.close()
+    return code
+"""
+
+
+@needs_codon
+def test_a_checked_module_has_its_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Python sets a module's __file__, which Codon does not: the library check
+    # gives each checked module its source's path.
+    source = """
+    from __future__ import annotations
+
+    from pathlib import Path
+
+    from .entity_role import __file__ as role_file
+
+
+    def directory() -> Path:
+        return Path(role_file).resolve().parent
+    """
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+def _top_level_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+@needs_codon
+def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
+    # The shim replaces the sys module Codon ships, which Codon's own modules
+    # (time, random, itertools) and typesafe_carla's library import: it
+    # declares every name Codon's does.
+    tc = available_toolchain()
+    assert tc is not None
+    codon_sys = tc.codon_dir / "lib" / "codon" / "stdlib" / "sys.codon"
+    if not codon_sys.is_file():
+        pytest.skip("this Codon ships no stdlib/sys.codon")
+    shim = _top_level_names(model_dir() / "sys.codon")
+    assert _top_level_names(codon_sys) <= shim
+    assert {"platform", "executable"} <= shim
+
+
+@needs_codon
+def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for shim in ("shlex.codon", "sys.codon", "signal.codon", "typing.codon"):
+        assert (model_dir() / shim).is_file(), shim
+    result = _check_case(_STACK, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "at"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.13 when it is called: a TypeError, an AttributeError, or the
+        # ValueError of a Signals looked up by anything but its number. Codon
+        # reports a bad argument of a call written over several lines at the
+        # call's first line (`at`).
+        ("shlex.quote(root)", "shlex.quote(len(root))", None),
+        ("shlex.join(argv)", "shlex.join([len(root)])", None),
+        ('sys.platform != "linux"', 'sys.platfrom != "linux"', None),
+        ("signals[0].name", "signals[0].label", None),
+        ("os.killpg(pid, sig)", "os.killpg(pid, sig.name)", None),
+        ("signal.Signals(9)", 'signal.Signals("SIGKILL")', None),
+        ("target_is_directory=True)", "target_is_dir=True)", None),
+        ("path.is_symlink()", "path.is_symlink(True)", None),
+        ('.open("ab")', '.open("ab", buffer=0)', None),
+        ('log.write(b"start\\n")', 'log.write(len(b"start\\n"))', None),
+        ("stdout=log,", 'stdout="x.log",', "subprocess.Popen("),
+    ],
+    ids=[
+        "quote-str",
+        "join-str",
+        "sys-unknown-name",
+        "signal-unknown-attribute",
+        "killpg-signal-number",
+        "signals-by-number",
+        "symlink-to-keyword",
+        "is-symlink-arguments",
+        "open-keyword",
+        "write-bytes",
+        "popen-stream-file",
+    ],
+)
+def test_the_shlex_sys_signal_and_file_shims_refuse_what_cpython_refuses(
+    right: str,
+    wrong: str,
+    at: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _STACK.replace(right, wrong, 1)
+    assert source != _STACK
     result = _check_case(source, tmp_path, monkeypatch)
     assert not result.ok
     needle = at if at is not None else wrong
