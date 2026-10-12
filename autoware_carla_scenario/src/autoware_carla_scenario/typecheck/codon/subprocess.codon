@@ -242,6 +242,12 @@ class _Stream:
     def close(self) -> None:
         pass
 
+    # Iteration over the lines, as a file object iterates: a T each (a str,
+    # with or without text=True). Nothing is read: there are none.
+    def __iter__(self) -> Generator[T]:
+        if False:
+            yield Ptr[T]()[0]
+
 
 class Popen:
     # Codon's generic parameter, in a form Python 3.10 can parse.

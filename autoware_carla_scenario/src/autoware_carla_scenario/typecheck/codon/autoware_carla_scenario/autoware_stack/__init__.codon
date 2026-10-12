@@ -1,3 +1,6 @@
 # This package holds models of single modules of autoware_carla_scenario.autoware_stack
-# (docs/typecheck.md), which is not checked. A scenario importing the package
-# itself finds none of its names here.
+# (docs/typecheck.md): launcher.codon, for the scenario check (the library
+# check compiles the checked launcher's source), and devcontainer.codon, which
+# the checked autoware_stack package and its docker module import. The
+# package itself is checked, so a scenario importing it finds none of its
+# names here.
