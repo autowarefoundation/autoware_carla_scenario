@@ -773,6 +773,33 @@ def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
     assert error.path == str(path)
 
 
+def test_a_scenario_may_use_the_os_and_shutil_shims_and_nothing_beyond_them(
+    tmp_path: Path,
+) -> None:
+    # The os and shutil shims serve the scenario check too, as do Python's
+    # exceptions Codon lacks (the prelude imports them): a scenario may read
+    # the environment and copy a file, and a name the shims do not declare is
+    # refused.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "import os\n"
+        "import shutil\n"
+        'logger.info("%s %s", os.environ.get("ACS_X", ""), os.getenv("ACS_X"))\n'
+        "try:\n"
+        '    shutil.copy2("a.xodr", "b.xodr")\n'
+        "except FileNotFoundError as exc:\n"
+        '    logger.info("%s %s", str(exc), shutil.which("git"))\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    scenario, config, path = _write_case(
+        tmp_path, 'import shutil\nshutil.copytree("a", "b")\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "copytree" in error.message
+    assert error.path == str(path)
+
+
 def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_it(
     tmp_path: Path,
 ) -> None:

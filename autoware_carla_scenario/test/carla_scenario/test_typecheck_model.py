@@ -307,7 +307,14 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_map_source": (maps_source, ("MapSource",)),
     "maps/cache": (
         maps_cache,
-        ("CachedRepo", "DERIVED_SUBDIR", "GitMapCache", "is_lfs_pointer"),
+        (
+            "CachedRepo",
+            "DERIVED_SUBDIR",
+            "GitMapCache",
+            "MapCacheError",
+            "is_lfs_pointer",
+            "map_root",
+        ),
     ),
 }
 

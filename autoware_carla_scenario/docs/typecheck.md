@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 125 of
-the package's 225 modules (56%; about 25,100 of 69,100 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 127 of
+the package's 225 modules (56%; about 25,400 of 69,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -270,14 +270,15 @@ warm-up with the Chaos powertrain model, `BaseScenario`,
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
-of `maps.catalogue` and the `map` config's paths of `maps.config`), the Autoware
+of `maps.catalogue`, the `map` config's paths of `maps.config` and the
+OpenDRIVE taken from CARLA by `maps.opendrive`), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
 units, the CARLA-only helpers, the traffic-light lookups included, and the
 scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
-`driver.geometry`), and the `autoware_bridge`, `entity` and `driver`
+`driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
 below). 63
@@ -297,29 +298,29 @@ unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 100 `EXCLUDED` modules fall in
-three groups. Many fit more than one (73 import what Codon cannot compile,
-43 build on an excluded module and 29 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 98 `EXCLUDED` modules fall in
+three groups. Many fit more than one (72 import what Codon cannot compile,
+42 build on an excluded module and 29 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **73 import what Codon cannot compile**: lanelet2, pyxodr,
+- **72 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`json`, `subprocess`, `importlib`, `inspect`, or more of `pathlib`
-  than its shim's `Path`), at module level or inside a function the check
+  or `shutil` than their shims declare), at module level or inside a function the check
   calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
   map cache, the Autoware launcher, the scenario runner and queue) and
   everything that reads Lanelet2. A reason names `pathlib` only where the
-  module uses more of it than the shim declares.
-- **23 build on an excluded module**, and import nothing Codon lacks
+  module uses more of it than the shim declares, and `shutil` likewise.
+- **22 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
-  packages that re-export one (`authoring`, `maps`, `odd`, `sweeper`,
+  packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
   authoring compiler, builders and validator, the route frame, poses and search
   (`route.frame`, `route.positions`, `route.search`, through lanelet2),
   `odd.model` (over `coverage.items`), `trajectory.resolve` and
-  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 23
+  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 22
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
@@ -467,8 +468,9 @@ What Codon 0.19 needs that Python does not, beyond
 - An exception's `__init__` passes one message string to `super().__init__`.
   An exception class with nothing in its body but a docstring needs that
   `__init__` written out (`def __init__(self, message: str) -> None:`).
-- **`key in d` and `d[key]` instead of `d.get(key)`**: Codon's `dict.get`
-  wants a default of the value's type. Likewise `if not x: continue` instead
+- **`d.get(key, default)` takes a default of the value's type**, as Codon's
+  `dict.get` does; `d.get(key)` is an `Optional` of it, as in Python (the
+  model's `_tc.codon` declares it). Likewise `if not x: continue` instead
   of `(x or {})`, `s.startswith(a) or s.startswith(b)` instead of
   `s.startswith((a, b))`, and `if x is None: return None` / `return x.attr`
   instead of `None if x is None else x.attr`.
@@ -478,22 +480,56 @@ What Codon 0.19 needs that Python does not, beyond
 - Standard modules Codon does not have (`json`, `inspect`, `importlib`,
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
+  `os`, `shutil`, `urllib.parse` and `__future__` shims of `codon/` are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
   `/`, `str()`, `==`, `hash()`, `expanduser()`, `resolve()` and
   `Path.home()`; like Python's, it builds and joins a `Path` with a `str` or
-  a `Path` only (an `Optional` of one is unwrapped, as Codon unwraps one
-  passed anywhere). It declares the file-system queries too: `exists()`,
+  an `os.PathLike` only (a `Path`, or what `shutil.copy2()` returns for one;
+  an `Optional` of one is unwrapped, as Codon unwraps one passed anywhere). It declares the file-system queries too: `exists()`,
   `is_file()`, `is_dir()`, `glob(pattern)` and `absolute()`, with Python
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
   sliced) and the ordering of two `Path`s, so `sorted()` takes them. Nothing
   touches the file system: a query is `False` and a glob yields nothing.
-  Nothing writes either: `mkdir()`, `write_text()`, `open()`, `chmod()` and
-  the rest are not declared. `hashlib` declares `sha256(string=b"", *,
+  Of what writes, `mkdir(mode=0o777, parents=False, exist_ok=False)` and
+  `write_text(data, encoding=None, errors=None, newline=None)` are declared
+  (`maps.opendrive` caches what it fetches); `open()`, `chmod()`,
+  `read_text()` and the rest are not. `os` replaces Codon's own (whose
+  `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
+  which Codon's runtime and typesafe_carla's library call: `environ` is a
+  mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
+  over the keys, `len()`, `get(key)`, `get(key, default)`, `pop()`,
+  `setdefault()`, `keys()`, `values()`, `items()` and `copy()`, a `dict`, as
+  CPython's returns), `getenv(key, default=None)` (a `str` default gives a
+  `str`, `None` an `Optional[str]`; a default of another type, which CPython
+  takes, is refused), `fspath()`, `getpid()`, `getppid()`, `getpgid(pid)`,
+  `kill(pid, signal, /)`, `killpg(pgid, signal, /)`, `system(command)`,
+  `mkdir()` (Codon's had one), the separators (`sep`, `pathsep`, `linesep`,
+  `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
+  `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
+  `isdir()`, `expanduser()` and `abspath()`, of a `str` or a `Path`, with
+  CPython's parameter names. `shutil` declares `copy2(src, dst, *,
+  follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
+  ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
+  command; the callables CPython also takes (`onerror`, `copy_function`)
+  are not declared. `copy2()` and `move()` return a `str` for a `str`
+  destination, as CPython does; for a `Path` one CPython returns the `Path`,
+  or a `str` when it names a directory, so the check returns a path that
+  `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
+  built-in exceptions that Codon lacks (`ImportError`,
+  `ModuleNotFoundError`, `FileNotFoundError`, `PermissionError`,
+  `ProcessLookupError`, `TimeoutError`, `ConnectionError`,
+  `BrokenPipeError`) are declared in the model's `_exceptions.codon`, each
+  derived from its CPython base, and the prelude of every rewritten module
+  imports them, so `except ImportError:` compiles as Python reads it. Each
+  takes no message or one value by position, as CPython does; a keyword
+  (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
+  their attributes (`errno`, `filename`) are refused. Nothing in these
+  shims runs: no environment is read, no file is copied and no process is
+  signalled. `hashlib` declares `sha256(string=b"", *,
   usedforsecurity=True)` and its hash object (`update(data, /)`, `digest()`,
   `hexdigest()`, `copy()`, `name`, `digest_size`, `block_size`); no other
   hash. `str.encode()` takes `(encoding="utf-8", errors="strict")`. Since
@@ -505,10 +541,14 @@ What Codon 0.19 needs that Python does not, beyond
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
-  `hashlib` and `urllib.parse` and call what they declare, file-system
-  queries included (`Path(...).exists()`), and any other name of them
-  (`Path.chmod()`, `hashlib.md5()`, `urllib.request`) fails its check
-  wherever Codon compiles it.
+  `hashlib`, `os`, `shutil` and `urllib.parse` and call what they declare,
+  file-system queries and the two writes included (`Path(...).exists()`,
+  `Path(...).write_text(...)`), read and set the environment
+  (`os.environ.get()`), copy, move and remove files with `shutil`, signal a
+  process with `os.kill()`, and catch the exceptions above. Any other name of
+  them (`Path.chmod()`, `hashlib.md5()`, `shutil.copytree()`,
+  `os.listdir()`, `urllib.request`) fails its check wherever Codon compiles
+  it.
   `collections.abc` is not: import `Sequence` and the other
   abstract collections from `typing`. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
@@ -616,9 +656,9 @@ What Codon 0.19 needs that Python does not, beyond
 - **No `**` in a dict display** (`{"a": 1, **other}`): Codon's parser fails on
   it, even in a function it never compiles. Build the dict, then
   `update()` it.
-- **`dict.get()` takes a default** in Codon, of the value type. Where
-  "absent" has no value of that type, test membership:
-  `d[k] if k in d else None`.
+- **`dict.get(key, default)` takes a default of the value type** in Codon.
+  Where "absent" has no value of that type, take `d.get(k)`, an `Optional`
+  of the value type, as the check declares it with Python's meaning.
 - **CARLA's containers are not lists.** `world.get_actors()` is a
   `carla.ActorList`; a parameter that takes it or a list is
   `Union[carla.ActorList, list[carla.Actor]]`, and the check calls it with
@@ -833,8 +873,6 @@ What Codon 0.19 needs that Python does not, beyond
   calls them under an `isinstance` test on its parameter's own class, which
   Codon decides as true, and hands anything else (a test double) to
   `register_entity`, so at run time it is registered as before.
-- **`dict.get` takes its default**: Codon's has no one-argument form. Test
-  `key in d` and index instead of `d.get(key)`.
 - **No sign in an f-string format spec**: Codon's parser rejects
   `f"{x:+.1f}"`. Format the value first (`x.__format__("+.1f")`) and put the
   string in the f-string.
