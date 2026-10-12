@@ -127,7 +127,11 @@ def _run_worker(
                 )
             )
 
-            cmd = ["uv", "run", "scenario"] + overrides + extra_overrides
+            # `["uv", "run", "scenario", *overrides, *extra_overrides]`:
+            # extend() takes any iterable, as unpacking does.
+            cmd = ["uv", "run", "scenario"]
+            cmd.extend(overrides)
+            cmd.extend(extra_overrides)
             # Direct each job's output to multirun/{date}/{time}/{index}/
             if multirun_dir:
                 cmd.append(f"hydra.run.dir={multirun_dir}/{i}")
