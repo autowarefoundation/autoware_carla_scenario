@@ -1066,7 +1066,9 @@ def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
         copies = [
             text[:start]
             + b"("
-            + _source_segment(lines, element).encode()
+            # The class as one line, with no comment (`(errors  # why\n.Error,
+            # ...)` would comment the rest of the copy out).
+            + ast.unparse(element).encode()
             + breaks
             + b")"
             + text[end:]
@@ -1074,17 +1076,6 @@ def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
         ]
         lines[first - 1 : last] = b"".join(copies).splitlines(keepends=True)
         origin[first - 1 : last] = origin[first - 1 : last] * len(copies)
-
-
-def _source_segment(lines: list[bytes], node: ast.AST) -> str:
-    """The text of *node* in the source of *lines*, on one line."""
-    first = node.lineno - 1  # type: ignore[attr-defined]
-    last = node.end_lineno - 1  # type: ignore[attr-defined]
-    text = b"".join(lines[first : last + 1])
-    end = len(text) - len(lines[last]) + node.end_col_offset  # type: ignore[attr-defined]
-    segment = text[node.col_offset : end].decode()  # type: ignore[attr-defined]
-    # A class name written over lines (`errors\n.Error`) is in brackets.
-    return " ".join(segment.split("\n"))
 
 
 def transform_source(source: str, dropped_decorators: Collection[str] = ()) -> str:

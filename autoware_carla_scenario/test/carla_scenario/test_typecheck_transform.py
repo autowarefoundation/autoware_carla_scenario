@@ -1031,6 +1031,23 @@ def test_each_line_of_a_split_handler_maps_to_the_line_it_copies() -> None:
     assert split_tuple_excepts("x = 1\ny = 2\n") == ("x = 1\ny = 2\n", [1, 2])
 
 
+def test_a_class_written_over_lines_with_a_comment_is_copied_whole() -> None:
+    # The comment inside the tuple would otherwise swallow the rest of the
+    # class (`.Error`) and of the copy, which still parses.
+    source = (
+        "try:\n"
+        "    pass\n"
+        "except (errors  # why\n"
+        "        .Error, KeyError) as exc:\n"
+        "    pass\n"
+    )
+    out, origin = split_tuple_excepts(source)
+    assert _handlers(ast.parse(out)) == [
+        [("errors.Error", "exc", "pass"), ("KeyError", "exc", "pass")]
+    ]
+    assert origin == [1, 2, 3, 4, 5, 3, 4, 5]
+
+
 @pytest.mark.parametrize(
     "handler",
     ["except errors:", "except (*errors,):", "except ():", "except Exception:"],
