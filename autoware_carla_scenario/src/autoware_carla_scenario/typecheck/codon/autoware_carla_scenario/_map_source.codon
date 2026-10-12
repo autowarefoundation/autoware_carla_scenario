@@ -1,0 +1,15 @@
+# Model of autoware_carla_scenario.maps.source's MapSource (docs/typecheck.md):
+# what maps/cache.codon takes and returns. maps.source is checked, and the
+# library check compiles it in this module's place (REPLACED_MODELS,
+# typecheck/library.py), so the model GitMapCache takes the checked MapSource
+# the checked maps.resolver hands it. Only the fields are declared.
+#
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+
+
+@tuple
+class MapSource:
+    repo_url: str
+    ref: str = ""
+    path: str = ""

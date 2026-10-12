@@ -1,0 +1,57 @@
+# Model of autoware_carla_scenario.maps.cache (docs/typecheck.md), which
+# imports subprocess, shutil, tempfile and json: what the checked maps.resolver
+# and maps.catalogue use of it, with the signatures of the Python module. Its
+# MapSource is the checked one (_map_source.codon).
+
+from pathlib import Path
+
+from .._map_source import MapSource
+from .._tc import _keyword_only
+
+DERIVED_SUBDIR = ".derived"
+
+
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+@tuple
+class CachedRepo:
+    source: MapSource
+    root: Path
+    worktree: Path
+    commit: str = ""
+    materialised: Optional[str] = None
+
+
+class GitMapCache:
+    root: Path
+
+    def __init__(self, root: Optional[Path] = None):
+        raise NotImplementedError()
+
+    def derived_dir(self, path: str) -> Path:
+        raise NotImplementedError()
+
+    def provisioned(self, source: MapSource) -> Optional[Path]:
+        raise NotImplementedError()
+
+    def at_tip(self, source: MapSource) -> MapSource:
+        raise NotImplementedError()
+
+    def last_tip(self, source: MapSource) -> str:
+        raise NotImplementedError()
+
+    def peek(self, source: MapSource) -> Optional[CachedRepo]:
+        raise NotImplementedError()
+
+    def list_files(self, source: MapSource, *_kw, refresh: bool = False) -> List[str]:
+        _keyword_only(_kw, "GitMapCache.list_files(): refresh")
+        raise NotImplementedError()
+
+    def checkout(self, source: MapSource, *_kw, include: List[str] = List[str](),
+                 materialise: bool = True, refresh: bool = False) -> CachedRepo:
+        _keyword_only(_kw, "GitMapCache.checkout(): include, materialise and refresh")
+        raise NotImplementedError()
+
+
+def is_lfs_pointer(path: Path) -> bool:
+    raise NotImplementedError()
