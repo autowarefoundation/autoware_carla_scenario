@@ -786,8 +786,10 @@ class BaseScenario(ABC):
         say -- does not outlive it into a retry, while those registered in
         ``__init__`` stay.
         """
-        initial = getattr(self, "_initial_measures", None)
-        if initial is None:
+        # Declared, never set in __init__: absent until the first attempt.
+        try:
+            initial = self._initial_measures
+        except AttributeError:
             self._initial_measures = dict(self._measures)
         else:
             self._measures = dict(initial)

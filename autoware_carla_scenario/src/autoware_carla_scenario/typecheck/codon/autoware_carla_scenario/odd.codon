@@ -4,6 +4,8 @@
 # builder function is called, every attribute's probe is called with a world,
 # and every condition a module holds must be one an attribute built.
 
+from pathlib import Path
+
 import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only, _expect_float, _expect_optional_float
@@ -179,6 +181,28 @@ class OddDefinition:
 
 
 def default_odd() -> OddDefinition:
+    raise NotImplementedError()
+
+
+def resolve_odd(spec = None) -> OddDefinition:
+    """Union[str, Path, OddDefinition, None]: a Union parameter crashes Codon
+    0.19, so the spec is generic and its type is checked here."""
+    if isinstance(spec, None):
+        pass
+    elif isinstance(spec, Optional[NoneType]):
+        pass
+    elif isinstance(spec, str) or isinstance(spec, Optional[str]):
+        pass
+    elif isinstance(spec, Path) or isinstance(spec, Optional[Path]):
+        pass
+    elif isinstance(spec, OddDefinition) or isinstance(spec, Optional[OddDefinition]):
+        pass
+    else:
+        compile_error("resolve_odd(): the spec is a str, a Path, an OddDefinition or None")
+    raise NotImplementedError()
+
+
+def reset_probes() -> None:
     raise NotImplementedError()
 
 

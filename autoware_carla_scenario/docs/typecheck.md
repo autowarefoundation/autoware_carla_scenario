@@ -256,8 +256,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 131 of
-the package's 228 modules (57%; about 26,100 of 64,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 133 of
+the package's 228 modules (58%; about 27,900 of 64,800 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
@@ -266,7 +266,9 @@ the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
 (`entity.autoware_entity`), the entity registry and the policy
-warm-up with the Chaos powertrain model, `BaseScenario`,
+warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
+runner's run loop and the queue that runs scenarios one after another
+(`scenario_runner`, `scenario_queue`),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
@@ -284,7 +286,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 64
+below). 68
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -299,23 +301,27 @@ the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), what resolves a followed trajectory with the
 unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
 `signals.build_controllers()`, which reads
-the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
+the authoring package's pydantic specs, what the runner does with `json`,
+lanelet2 or a condition's details (writing the result and its environment,
+`_write_result()`; checking the planned route against the ODD,
+`ScenarioRunner._warn_if_route_leaves_odd()`; collecting the condition
+statuses, `_collect_condition_statuses()`), the queue's pytest fixture
+(`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 97 `EXCLUDED` modules fall in
-three groups. Many fit more than one (72 import what Codon cannot compile,
-44 build on an excluded module and 29 hold values Codon has no type for), so
+`encode_frame_jpeg()` (cv2). The 95 `EXCLUDED` modules fall in
+three groups. Many fit more than one (70 import what Codon cannot compile,
+41 build on an excluded module and 29 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **72 import what Codon cannot compile**: lanelet2, pyxodr,
+- **70 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware launcher, the scenario runner and queue, the
-  record of a run's environment), the ODD and coverage modules that wrap
+  map cache, the Autoware launcher, the record of a run's environment), the ODD and coverage modules that wrap
   openodd, and everything that reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
@@ -391,7 +397,9 @@ stands in for it in the check's workspace:
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
   `autoware_stack/launcher.codon`, `maps/cache.codon`), or, for a module of
   the top-level package, a model of that module (`carla_install.codon`, for
-  `server`, declares `installed_executable()`). A module with no
+  `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
+  for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
+  closes, whose JSON lines hold values of mixed types). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
@@ -507,7 +515,7 @@ What Codon 0.19 needs that Python does not, beyond
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
-  sliced), `as_posix()`, `relative_to(other)` (one path, by position:
+  sliced), `stem`, `with_name(name)` (of a `str`), `as_posix()`, `relative_to(other)` (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
   does too; 3.12's `walk_up` is refused) and the ordering of two `Path`s, so
   `sorted()` takes them. Nothing
@@ -633,7 +641,9 @@ What Codon 0.19 needs that Python does not, beyond
   `typing.Protocol`, whose `@runtime_checkable` is dropped too.
   `typing.Any` imports, and every annotation naming it is dropped.
   `typing.TYPE_CHECKING` is a compile-time true, so Codon compiles only the
-  first branch of `if TYPE_CHECKING: ... else: ...`. The `logging` shim's
+  first branch of `if TYPE_CHECKING: ... else: ...`, and the check reports
+  no import in the `else` branch: `scenario_queue` imports tqdm there, at
+  module level, and waits without the progress bar in the first branch. The `logging` shim's
   methods take `exc_info` as a `bool`.
 - **pyxodr's road network is the model's**: `codon/pyxodr/` names the
   `RoadNetwork` that `coordinate.codon` declares (what the framework reads of
@@ -906,8 +916,11 @@ What Codon 0.19 needs that Python does not, beyond
   refuses it. `raise X from None` is rewritten to `raise X` by the check;
   `raise X from exc` compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
-  rewrites `frozenset(...)` to `set(...)` and `frozenset[X]` /
-  `FrozenSet[X]` to `Set[X]`; the source keeps its `frozenset`.
+  rewrites `frozenset(...)` to `set(...)`, `frozenset[X](...)` to
+  `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source
+  keeps its `frozenset`. An empty one is `frozenset[str]()`: a bare
+  `frozenset()` is a set of no element type in Codon
+  (`scenario_runner._destroy_all_dynamic_actors()`).
 - **A variable-length tuple attribute is checked as a list**: a class-level
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays
@@ -1130,3 +1143,23 @@ What Codon 0.19 needs that Python does not, beyond
   the model module. When the package does not export it, add it to
   `_BOUNDARY` in `test_typecheck_model.py`, so it is compared with the Python
   class as an exported name is.
+- **A value of a type the model holds**: a checked module that hands a checked
+  value to a checked module that imports it through the model
+  (`MODELLED_IMPORTS`) hands the wrong type. `scenario_runner` hands the
+  checked `BaseScenario` to `measures.set_measured_scenario()`, and its
+  `EgoConfig` to `EgoVehicle.spawn()`, which take the model's: it makes those
+  calls in the `else` branch of `if TYPE_CHECKING:`, and takes the spawned
+  actor from `ego.actor` in the first.
+- **No module object to assign a global through**
+  (`vehicle_entity._warmup_done = True`): Codon 0.19 imports no module as a
+  value. The module sets its global in a function of its own
+  (`entity.vehicle_entity._set_warmup_done()`).
+- **The runner's boundary is modelled**: `coverage.codon` declares the
+  `CoverageCollector` (its constructor, `start()`, `tick()`, `end()` and
+  `write(path, scenario)`; openodd's `backend` and `generator` are refused),
+  `odd.codon` `resolve_odd(spec)`, whose union parameter (`str`, `Path`,
+  `OddDefinition` or `None`) is generic and checked in its body, and
+  `reset_probes()`, `coordinate.codon` `MapManager.reset()` and
+  `initialize()`, and `autoware_stack/launcher.codon` the launcher's
+  `prepare()` and `close()`, which the queue calls. `test_typecheck_model.py`
+  compares each with the Python one.
