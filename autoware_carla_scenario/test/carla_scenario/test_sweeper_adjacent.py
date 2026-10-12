@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -24,8 +25,9 @@ class _Graph:
         return None if found is None else SimpleNamespace(id=found)
 
 
-_MAP = SimpleNamespace(laneletLayer={i: SimpleNamespace(id=i) for i in (1, 2, 3)})
-_GRAPH = _Graph(left={2: 1}, right={2: 3})
+# Stand-ins for lanelet2's map and routing graph, so typed `Any`.
+_MAP: Any = SimpleNamespace(laneletLayer={i: SimpleNamespace(id=i) for i in (1, 2, 3)})
+_GRAPH: Any = _Graph(left={2: 1}, right={2: 3})
 
 
 @pytest.mark.parametrize(("side", "beside"), [("left", 1), ("right", 3)])

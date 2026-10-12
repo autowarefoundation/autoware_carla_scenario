@@ -260,13 +260,16 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 141 of
-the package's 228 modules (62%; about 30,800 of 65,000 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 147 of
+the package's 228 modules (64%; about 33,700 of 65,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
 and the lane arithmetic of a relative lane pose (`trajectory.relative_lane`),
-all against the lanelet2 model, the condition base and
+the sweeper's lanelet constraints and parameter bindings
+(`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
+frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
+`route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
 walk-straight actions, the logical scenario's route search and matches (`route.model`) and
@@ -299,13 +302,15 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 71
+below). 73
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
-backend's options node (`Mapping[str, Any]`), what reads a route search or a
-match from YAML values of any type (`Range.parse()`, `parse_route_search()`,
-`RouteMatch.from_config()`) and what lays a route on a lanelet2 map handed
-over as `Any` (`set_scenario_route()`), the `[tool.uv.sources]` entry of a
+backend's options node (`Mapping[str, Any]`), what reads a route search, a
+match, a constraint or a binding from YAML values of any type
+(`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
+`parse_constraint()`, `parse_binding()`), the length constraint's check of
+its rule, which iterates over the `ComparisonRule` enum
+(`LaneletLengthConstraint.__post_init__()`), the `[tool.uv.sources]` entry of a
 framework pin, a dict of str and bool values (`Pin.uv_source()`), the six members of
 `BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
@@ -330,39 +335,40 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 87 `EXCLUDED` modules fall in
-three groups. Many fit more than one (63 import what Codon cannot compile,
-37 build on an excluded module and 25 hold values Codon has no type for), so
-each is counted once, in the first group that fits it:
+`encode_frame_jpeg()` (cv2). The 81 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 60 import what Codon cannot
+compile, 31 build on an excluded module and 21 hold values Codon has no type
+for), so each is counted once, in the first group that fits it:
 
-- **63 import what Codon cannot compile**: lanelet2 beyond what its model
+- **60 import what Codon cannot compile**: lanelet2 beyond what its model
   declares (most of these walk its objects typed `Any`), pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
   declare), at module level or inside a function the check calls. This is
-  the tooling around a run (the editor, the UI, authoring, the sweeper, the
-  map cache, the Autoware stack's dev container, the
+  the tooling around a run (the editor, the UI, authoring, the sweeper's
+  expansion, Hydra sweeper and map loader, the map cache, the Autoware
+  stack's dev container, the
   record of a run's environment), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **21 build on an excluded module**, and import nothing Codon lacks
+- **17 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator, the route frame, poses and search
-  (`route.frame`, `route.positions`, `route.search`, through lanelet2),
-  `trajectory.resolve` and
+  authoring compiler, builders and validator,
   `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
-  (over `ui.models`); 9 of the 21
+  (over `ui.models`); 5 of the 17
   also hold values Codon has no type for.
-- **3 hold values Codon has no type for**, and nothing else keeps them out:
+- **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
-  field defaults) or a class as a value (`utils.config`, which `traffic.config`
-  and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
+  field defaults), a class as a value (`utils.config`, which `traffic.config`
+  and `traffic.sumo.config` import only in their uncalled `from_mapping()`),
+  or callables through aliases Codon reads as no type, built as closures
+  (`trajectory.resolve`).
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -724,11 +730,16 @@ What Codon 0.19 needs that Python does not, beyond
   its parameter names: `lanelet2.core`'s map, lanelet layer, lanelets, line
   strings, points, attribute maps and regulatory elements (their ids,
   attributes, centrelines, bounds, rule parameters and stop lines),
-  `BasicPoint2d`; `lanelet2.geometry`'s `to2D()`, `length()`,
-  `toArcCoordinates()` (an `ArcCoordinates`), `findNearest()` (of the
-  lanelet layer) and `inside()`; `lanelet2.routing.RoutingGraph(laneletMap,
-  trafficRules)` with `following()`, `previous()`, `left()`, `right()`,
-  `adjacentLeft()` and `adjacentRight()`; `lanelet2.traffic_rules.create()`
+  `BasicPoint2d`, and the lanelets whose bound a line string is
+  (`LaneletLayer.findUsages()`, of a line string only); `lanelet2.geometry`'s
+  `to2D()`, `length()`, `length2d()` (of a lanelet), `toArcCoordinates()`
+  (an `ArcCoordinates`), `findNearest()` (of the lanelet layer) and
+  `inside()`; `lanelet2.routing.RoutingGraph(laneletMap, trafficRules)` with
+  `following()`, `previous()`, `left()`, `right()`, `adjacentLeft()`,
+  `adjacentRight()` and `conflicting()` (a list of `ConstLanelet`s, as
+  simple-lanelet2 hands them out: lanelet2's own binding wraps each in a
+  `ConstLaneletOrArea`, which `route.geometry` still unwraps at run time);
+  `lanelet2.traffic_rules.create()`
   with its `Locations` and `Participants`; `lanelet2.io.Origin`; and
   Autoware's `MGRSProjector`, `AutowareTrafficLight` and `RoadMarking`.
   Each module's header says what it leaves out; parts of the API the
@@ -1231,9 +1242,8 @@ What Codon 0.19 needs that Python does not, beyond
   the lookup around them, not the calls (`RoutingAction.execute()`).
 - **lanelet2's map at the model boundary**: the model's `MapManager` hands
   out its `lanelet_map` and `routing_graph` as the lanelet2 model's classes
-  (above), which the model's `RouteFrame` takes, so the checked
-  `scenario_route_frame()` (`route.active`) compiles; `route.frame` itself,
-  which reads them, is not checked.
+  (above), which the checked `RouteFrame` (`route.frame`) takes, so the
+  checked `scenario_route_frame()` (`route.active`) builds it from them.
 - **A model shared with checked modules is split out**: the model's
   `EgoConfig` derives from `VehicleEntityConfig`, and the checked
   `EgoVehicle.spawn()` hands its spawn location to the checked
@@ -1302,6 +1312,56 @@ What Codon 0.19 needs that Python does not, beyond
   the model module. When the package does not export it, add it to
   `_BOUNDARY` in `test_typecheck_model.py`, so it is compared with the Python
   class as an exported name is.
+- **A Protocol that checked code dispatches through becomes a base class**:
+  Codon has no structural typing, and decides `isinstance` and `hasattr` by
+  the static type. `sweeper.constraints.Constraint` was a `Protocol`; it is
+  an `ABC` whose `evaluate()` is abstract (so, as before, it cannot be
+  instantiated itself), and every constraint of the module derives from it.
+  What walks a constraint tree asks each class what to bind
+  (`_bind_set_level()`, which the composite and set-level constraints
+  override) instead of testing the value with `isinstance` and `hasattr`. A
+  constraint of someone else's that does not derive from it still works at
+  run time: the walk takes the duck-typed path for it, in the `else` branch
+  of `isinstance(constraint, Constraint)`, which Codon decides as true. What
+  a set-level constraint caches (`_cached_ids`) is a `field(init=False,
+  repr=False, compare=False)`: declared, as Codon needs, but neither a
+  constructor parameter nor part of the repr or the comparisons, and unset
+  until the constraint is bound, as before (`dataclasses.fields()` now lists
+  it, so `dataclasses.asdict()` of a set-level constraint includes it, and
+  raises `AttributeError` before the constraint is bound; nothing in the
+  framework calls either on a constraint).
+- **A registry of classes at module level** (`sweeper.constraints`'
+  `_LEAF_REGISTRY`, `sweeper.bindings`' `_BINDING_REGISTRY`): Codon holds no
+  class as a value, and cannot type `dict[str, type]`. Declare it
+  `dict[str, Any]` and assign it in the `else` branch of `if TYPE_CHECKING:`;
+  only the uncalled parser reads it.
+- **An enum member looked up by name, or an enum iterated over**
+  (`ComparisonRule[name]`, `for r in ComparisonRule`): the `enum` shim models
+  neither. `sweeper.constraints._comparison_rule()` looks the member up in a
+  list of the members spelled out under `if TYPE_CHECKING:`, and by name in
+  the `else` branch; the validator that iterates is `UNCALLED`.
+- **An exception class raised with no arguments** (`raise _Exhausted()` in
+  `route.search`): Codon 0.19 raises no exception class without its own
+  `__init__`, and its `Exception` takes a message where Python's takes none.
+  The constructor calls `super().__init__("")` under `if TYPE_CHECKING:` and
+  `super().__init__()` in the `else` branch.
+- **An Optional chosen by a conditional expression, whose value goes to a
+  union field** (`beside = graph.left(l) if left else graph.right(l)`, then
+  `BindingResult(value=beside.id)`, a `float | int | list[int]`): Codon 0.19
+  generated invalid LLVM IR and crashed without a diagnostic ("Call
+  parameter type does not match function signature", `optimize.cpp:1070`).
+  Choose with an `if` statement into a local annotated `Optional[...]`.
+- **A function that returns a tuple with an `Optional` member**, `None` in
+  one return and a value in another (`route.frame.ego_placement()`):
+  annotate the local in each return's own assignment (`no_goal:
+  Optional[tuple[int, float]] = None`, `goal_at: Optional[tuple[int, float]]
+  = frame.locate(s)`): one local annotated `Optional` where it is assigned
+  `None`, and assigned the value later, was not enough.
+- **A loop variable assigned a subclass's value is retyped**: in a function
+  that already declared `other: ConstLanelet`, `other = near` (a `Lanelet`)
+  makes `other` a `Lanelet`, and a list of `(float, ConstLanelet)` then
+  refuses it. Give the upcast a name of its own (`nearby: ConstLanelet =
+  near`, `route.geometry`).
 - **A value of a type the model holds**: a checked module that hands a checked
   value to a checked module that imports it through the model
   (`MODELLED_IMPORTS`) hands the wrong type. `scenario_runner` hands the

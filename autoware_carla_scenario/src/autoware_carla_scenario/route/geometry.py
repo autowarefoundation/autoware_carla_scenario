@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 # autoware_lanelet2_extension_python must be imported before lanelet2.
 from autoware_lanelet2_extension_python.projection import MGRSProjector as _  # noqa: F401
@@ -56,6 +56,10 @@ from ..trajectory.relative_lane import (
     _straightest,
     _turn,
 )
+
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet, ConstLineString3d, Lanelet, LaneletMap
+    from lanelet2.routing import RoutingGraph
 
 __all__ = [
     "APPROACH_OPPOSITE_MIN_DEG",
@@ -132,7 +136,7 @@ class JunctionMember:
             way through.
     """
 
-    lanelet: Any
+    lanelet: ConstLanelet
     approach: str
     turn: str
     conflicts: bool
@@ -151,7 +155,7 @@ class Crosswalk:
         heading: The ego's path direction there (rad).
     """
 
-    lanelet: Any
+    lanelet: ConstLanelet
     leg: str
     u: float
     point: tuple[float, float]
@@ -181,22 +185,30 @@ def _segment_intersection(
 class MapFeatures:
     """The questions a route search asks of a map, answered once per lanelet."""
 
-    def __init__(self, lanelet_map: Any, routing_graph: Any) -> None:
+    map: LaneletMap
+    graph: RoutingGraph
+    _lengths: dict[int, float]
+    _lanes: dict[tuple[int, str], int]
+    _opposite: dict[int, Optional[tuple[ConstLanelet, str]]]
+    _crosswalks: Optional[list[tuple[ConstLanelet, list[tuple[float, float]]]]]
+    _conflicting: dict[int, list[ConstLanelet]]
+
+    def __init__(self, lanelet_map: LaneletMap, routing_graph: RoutingGraph) -> None:
         self.map = lanelet_map
         self.graph = routing_graph
-        self._lengths: dict[int, float] = {}
-        self._lanes: dict[tuple[int, str], int] = {}
-        self._opposite: dict[int, Optional[tuple[Any, str]]] = {}
-        self._crosswalks: Optional[list[tuple[Any, list[tuple[float, float]]]]] = None
-        self._conflicting: dict[int, list[Any]] = {}
+        self._lengths = {}
+        self._lanes = {}
+        self._opposite = {}
+        self._crosswalks = None
+        self._conflicting = {}
 
     # -- lanelets ------------------------------------------------------------
 
-    def lanelet(self, lanelet_id: int) -> Any:
+    def lanelet(self, lanelet_id: int) -> Lanelet:
         """The lanelet with *lanelet_id*."""
         return self.map.laneletLayer[int(lanelet_id)]
 
-    def length(self, lanelet: Any) -> float:
+    def length(self, lanelet: ConstLanelet) -> float:
         """Its centreline length (m)."""
         found = self._lengths.get(int(lanelet.id))
         if found is None:
@@ -205,39 +217,39 @@ class MapFeatures:
         return found
 
     @staticmethod
-    def is_junction(lanelet: Any) -> bool:
+    def is_junction(lanelet: ConstLanelet) -> bool:
         """Whether it is a junction lanelet (``turn_direction`` tagged)."""
         return "turn_direction" in lanelet.attributes
 
     @staticmethod
-    def turn(lanelet: Any) -> str:
+    def turn(lanelet: ConstLanelet) -> str:
         """Its ``turn_direction``, or ``""``."""
         if "turn_direction" not in lanelet.attributes:
             return ""
         return str(lanelet.attributes["turn_direction"])
 
     @staticmethod
-    def is_road(lanelet: Any) -> bool:
+    def is_road(lanelet: ConstLanelet) -> bool:
         """Whether a vehicle route may use it (not a crosswalk, walkway...)."""
         if "subtype" not in lanelet.attributes:
             return True
         return str(lanelet.attributes["subtype"]) not in _NOT_ROADS
 
-    def following(self, lanelet: Any) -> list[Any]:
+    def following(self, lanelet: ConstLanelet) -> list[ConstLanelet]:
         """The lanelets following it, by id."""
         return sorted(self.graph.following(lanelet), key=lambda ll: int(ll.id))
 
-    def previous(self, lanelet: Any) -> list[Any]:
+    def previous(self, lanelet: ConstLanelet) -> list[ConstLanelet]:
         """The lanelets preceding it, by id."""
         return sorted(self.graph.previous(lanelet), key=lambda ll: int(ll.id))
 
-    def straightest_previous(self, lanelet: Any) -> Any:
+    def straightest_previous(self, lanelet: ConstLanelet) -> Optional[ConstLanelet]:
         """The predecessor that turns least into it, or ``None``."""
         return _straightest(
             self.graph.previous(lanelet), _start_heading(lanelet), ahead=False
         )
 
-    def straightest_following(self, lanelet: Any) -> Any:
+    def straightest_following(self, lanelet: ConstLanelet) -> Optional[ConstLanelet]:
         """The successor that turns least out of it, or ``None``."""
         return _straightest(
             self.graph.following(lanelet), _end_heading(lanelet), ahead=True
@@ -245,28 +257,31 @@ class MapFeatures:
 
     # -- lanes beside --------------------------------------------------------
 
-    def neighbour(self, lanelet: Any, side: str) -> Any:
+    def neighbour(self, lanelet: ConstLanelet, side: str) -> Optional[ConstLanelet]:
         """The same-direction lane on *side*, lane-changeable or not."""
         return _neighbour(self.graph, lanelet, side == "left")
 
-    def lanes_beside(self, lanelet: Any, side: str) -> int:
+    def lanes_beside(self, lanelet: ConstLanelet, side: str) -> int:
         """How many same-direction lanes lie on its *side*."""
         key = (int(lanelet.id), side)
-        found = self._lanes.get(key)
-        if found is None:
-            found, current, seen = 0, lanelet, {int(lanelet.id)}
-            while found < _MAX_LANES:
-                current = self.neighbour(current, side)
-                if current is None or int(current.id) in seen:
-                    break
-                seen.add(int(current.id))
-                found += 1
-            self._lanes[key] = found
+        known = self._lanes.get(key)
+        if known is not None:
+            return known
+        found, current, seen = 0, lanelet, {int(lanelet.id)}
+        while found < _MAX_LANES:
+            beside = self.neighbour(current, side)
+            if beside is None or int(beside.id) in seen:
+                break
+            seen.add(int(beside.id))
+            found += 1
+            current = beside
+        self._lanes[key] = found
         return found
 
-    def outermost(self, lanelet: Any, side: str) -> Any:
+    def outermost(self, lanelet: ConstLanelet, side: str) -> ConstLanelet:
         """The last same-direction lane on its *side* (itself if none)."""
-        current, seen = lanelet, {int(lanelet.id)}
+        current: ConstLanelet = lanelet
+        seen = {int(lanelet.id)}
         for _step in range(_MAX_LANES):
             beside = self.neighbour(current, side)
             if beside is None or int(beside.id) in seen:
@@ -277,7 +292,7 @@ class MapFeatures:
 
     # -- the other direction -------------------------------------------------
 
-    def opposite(self, lanelet: Any) -> Optional[tuple[Any, str]]:
+    def opposite(self, lanelet: ConstLanelet) -> Optional[tuple[ConstLanelet, str]]:
         """``(lanelet, side)`` of the lane running the other way beside it.
 
         Looked for abreast of *lanelet*'s middle (:meth:`opposite_abreast`);
@@ -292,8 +307,8 @@ class MapFeatures:
         return self._opposite[key]
 
     def opposite_abreast(
-        self, lanelet: Any, x: float, y: float
-    ) -> Optional[tuple[Any, str]]:
+        self, lanelet: ConstLanelet, x: float, y: float
+    ) -> Optional[tuple[ConstLanelet, str]]:
         """``(lanelet, side)`` of the opposite-direction lane abreast of ``(x, y)``.
 
         ``(x, y)`` is a point on *lanelet*.  The outermost same-direction lane
@@ -303,21 +318,24 @@ class MapFeatures:
         to touch the edge lane's middle, which on a road whose two directions
         are split into lanelets at different places is another one.
         """
-        best: Optional[tuple[float, int, Any, str]] = None
+        best: Optional[tuple[float, int, ConstLanelet, str]] = None
         for side in ("left", "right"):
             edge = self.abreast(self.outermost(lanelet, side), x, y)
             found = self._opposite_of_edge(edge, side, x, y)
             if found is None:
                 continue
-            gap, other = found
-            other = self.abreast(other, x, y)
+            hit: tuple[float, ConstLanelet] = found
+            gap, beyond = hit
+            other = self.abreast(beyond, x, y)
             key = (gap, int(other.id))
             if best is None or key < best[:2]:
                 best = (gap, int(other.id), other, side)
-        return None if best is None else (best[2], best[3])
+        if best is None:
+            return None
+        return best[2], best[3]
 
     @staticmethod
-    def gap_to(lanelet: Any, x: float, y: float) -> float:
+    def gap_to(lanelet: ConstLanelet, x: float, y: float) -> float:
         """How far ``(x, y)`` is from *lanelet*'s centreline (m)."""
         points = _centreline(lanelet)
         best = math.inf
@@ -329,19 +347,20 @@ class MapFeatures:
             best = min(best, math.hypot(x0 + f * dx - x, y0 + f * dy - y))
         return best
 
-    def abreast(self, lanelet: Any, x: float, y: float) -> Any:
+    def abreast(self, lanelet: ConstLanelet, x: float, y: float) -> ConstLanelet:
         """The lanelet of *lanelet*'s lane that ``(x, y)`` is abreast of.
 
         Walks the lane forwards and backwards through the routing graph --
         not into or out of a junction -- while that brings its centreline
         nearer the point.
         """
-        current, best = lanelet, self.gap_to(lanelet, x, y)
+        current: ConstLanelet = lanelet
+        best = self.gap_to(lanelet, x, y)
         junction = self.is_junction(lanelet)
         seen = {int(lanelet.id)}
         for _hop in range(_MAX_ABREAST_HOPS):
-            nearer = None
-            for other in [*self.previous(current), *self.following(current)]:
+            nearer: Optional[ConstLanelet] = None
+            for other in self.previous(current) + self.following(current):
                 if int(other.id) in seen or self.is_junction(other) != junction:
                     continue
                 gap = self.gap_to(other, x, y)
@@ -354,8 +373,8 @@ class MapFeatures:
         return current
 
     def _opposite_of_edge(
-        self, edge: Any, side: str, px: float, py: float
-    ) -> Optional[tuple[float, Any]]:
+        self, edge: ConstLanelet, side: str, px: float, py: float
+    ) -> Optional[tuple[float, ConstLanelet]]:
         """The lanelet running the other way beyond *edge*'s *side* bound.
 
         Looked for abreast of ``(px, py)``.
@@ -365,12 +384,13 @@ class MapFeatures:
         mx, my = _point_at(points, along)
         heading = _heading_at(points, along)
         bound = edge.leftBound if side == "left" else edge.rightBound
-        candidates: list[tuple[float, Any]] = []
+        candidates: list[tuple[float, ConstLanelet]] = []
         try:
             sharing = list(self.map.laneletLayer.findUsages(bound))
         except Exception:  # noqa: BLE001 -- a binding without the overload
             sharing = []
-        for other in sharing:
+        for usage in sharing:
+            other: ConstLanelet = usage
             if int(other.id) == int(edge.id) or not self.is_road(other):
                 continue
             if self._runs_opposite(other, mx, my, heading):
@@ -381,28 +401,33 @@ class MapFeatures:
             nx, ny = bx - mx, by - my
             norm = math.hypot(nx, ny) or 1.0
             probe = (bx + nx / norm * 1.0, by + ny / norm * 1.0)
-            for distance, other in lanelet2.geometry.findNearest(
+            for distance, near in lanelet2.geometry.findNearest(
                 self.map.laneletLayer, lanelet2.core.BasicPoint2d(*probe), 6
             ):
+                nearby: ConstLanelet = near
                 if float(distance) > OPPOSITE_SEARCH_M:
                     continue
-                if int(other.id) == int(edge.id) or not self.is_road(other):
+                if int(nearby.id) == int(edge.id) or not self.is_road(nearby):
                     continue
-                if self.is_junction(other) != self.is_junction(edge):
+                if self.is_junction(nearby) != self.is_junction(edge):
                     continue
-                if self._runs_opposite(other, mx, my, heading):
-                    candidates.append((float(distance), other))
+                if self._runs_opposite(nearby, mx, my, heading):
+                    candidates.append((float(distance), nearby))
         if not candidates:
             return None
         return min(candidates, key=lambda item: (item[0], int(item[1].id)))
 
-    def _runs_opposite(self, other: Any, x: float, y: float, heading: float) -> bool:
+    def _runs_opposite(
+        self, other: ConstLanelet, x: float, y: float, heading: float
+    ) -> bool:
         s, _t = _arc(other, x, y)
         other_heading = _heading_at(_centreline(other), s)
         return math.degrees(_turn(heading, other_heading)) >= OPPOSITE_MIN_TURN_DEG
 
     @staticmethod
-    def nearest_on(linestring: Any, x: float, y: float) -> tuple[float, float]:
+    def nearest_on(
+        linestring: ConstLineString3d, x: float, y: float
+    ) -> tuple[float, float]:
         points = [(float(p.x), float(p.y)) for p in linestring]
         best = points[0]
         best_gap = math.inf
@@ -420,14 +445,14 @@ class MapFeatures:
     # -- regulatory elements -------------------------------------------------
 
     @staticmethod
-    def has_stop_line(lanelet: Any) -> bool:
+    def has_stop_line(lanelet: ConstLanelet) -> bool:
         """Whether it owns a stop line (see ``has_stop_line``)."""
         from ..sweeper.constraints import HasStopLineConstraint  # noqa: PLC0415
 
         return HasStopLineConstraint().evaluate(lanelet)
 
     @staticmethod
-    def has_traffic_light_stop_line(lanelet: Any) -> bool:
+    def has_traffic_light_stop_line(lanelet: ConstLanelet) -> bool:
         """Whether its stop line is a traffic light's."""
         from ..sweeper.constraints import (  # noqa: PLC0415
             HasTrafficLightStopLineConstraint,
@@ -436,7 +461,7 @@ class MapFeatures:
         return HasTrafficLightStopLineConstraint().evaluate(lanelet)
 
     @staticmethod
-    def has_traffic_light(lanelet: Any) -> bool:
+    def has_traffic_light(lanelet: ConstLanelet) -> bool:
         """Whether a traffic light regulates it."""
         for element in lanelet.regulatoryElements:
             attributes = element.attributes
@@ -451,17 +476,25 @@ class MapFeatures:
 
     # -- junctions -----------------------------------------------------------
 
-    def conflicting(self, lanelet: Any) -> list[Any]:
+    def conflicting(self, lanelet: ConstLanelet) -> list[ConstLanelet]:
         """The lanelets the routing graph says conflict with it."""
         key = int(lanelet.id)
         if key not in self._conflicting:
-            found = []
+            found: list[ConstLanelet] = []
             for item in self.graph.conflicting(lanelet):
-                found.append(getattr(item, "lanelet", None) or item)
+                # A binding that wraps each in a ConstLaneletOrArea (an area
+                # has no lanelet, and is dropped below); simple-lanelet2 hands
+                # out the lanelets themselves, which have no `lanelet`.
+                conflict = item
+                if hasattr(item, "lanelet"):
+                    inner = item.lanelet
+                    if inner:
+                        conflict = inner
+                found.append(conflict)
             self._conflicting[key] = [ll for ll in found if hasattr(ll, "centerline")]
         return self._conflicting[key]
 
-    def junction_members(self, way: Sequence[Any]) -> list[JunctionMember]:
+    def junction_members(self, way: Sequence[ConstLanelet]) -> list[JunctionMember]:
         """The other lanelets of the junction *way* (the ego's) drives through.
 
         By id; the ego's approach (``same``) left out.
@@ -472,7 +505,7 @@ class MapFeatures:
         cy = sum(p[1] for p in centre_points) / len(centre_points)
         entry_heading = _start_heading(way[0])
         direct = {int(o.id) for ll in way for o in self.conflicting(ll)}
-        members: dict[int, Any] = {}
+        members: dict[int, ConstLanelet] = {}
         frontier = list(way)
         while frontier:
             current = frontier.pop()
@@ -513,9 +546,9 @@ class MapFeatures:
             )
         return [paths[key] for key in sorted(paths)]
 
-    def _path_into(self, lanelet: Any) -> list[Any]:
+    def _path_into(self, lanelet: ConstLanelet) -> list[ConstLanelet]:
         """*lanelet* and the junction lanelets before it, from where they enter."""
-        path = [lanelet]
+        path: list[ConstLanelet] = [lanelet]
         for _hop in range(_MAX_JUNCTION_HOPS):
             before = [p for p in self.previous(path[0]) if self.is_junction(p)]
             if not before:
@@ -523,23 +556,31 @@ class MapFeatures:
             entering = _straightest(before, _start_heading(path[0]), ahead=False)
             if entering is None or any(int(entering.id) == int(p.id) for p in path):
                 break
-            path.insert(0, entering)
+            enters: ConstLanelet = entering
+            path.insert(0, enters)
         return path
 
     # -- crosswalks ----------------------------------------------------------
 
-    def _all_crosswalks(self) -> list[tuple[Any, list[tuple[float, float]]]]:
+    def _all_crosswalks(self) -> list[tuple[ConstLanelet, list[tuple[float, float]]]]:
         if self._crosswalks is None:
-            self._crosswalks = [
-                (ll, _centreline(ll))
-                for ll in self.map.laneletLayer
-                if "subtype" in ll.attributes
-                and str(ll.attributes["subtype"]) == "crosswalk"
-            ]
+            crosswalks: list[tuple[ConstLanelet, list[tuple[float, float]]]] = []
+            for each in self.map.laneletLayer:
+                ll: ConstLanelet = each
+                if (
+                    "subtype" in ll.attributes
+                    and str(ll.attributes["subtype"]) == "crosswalk"
+                ):
+                    crosswalks.append((ll, _centreline(ll)))
+            self._crosswalks = crosswalks
+            return crosswalks
         return self._crosswalks
 
     def junction_crosswalks(
-        self, way: Sequence[Any], entry: Any, exit_: Any
+        self,
+        way: Sequence[ConstLanelet],
+        entry: Optional[ConstLanelet],
+        exit_: Optional[ConstLanelet],
     ) -> list[Crosswalk]:
         """The crosswalks across the legs of the junction *way* drives through.
 
@@ -549,8 +590,9 @@ class MapFeatures:
         path: list[tuple[float, float]] = []
         offsets: list[float] = []
         if entry is not None:
-            points = _centreline(entry)
-            length = self.length(entry)
+            entering: ConstLanelet = entry
+            points = _centreline(entering)
+            length = self.length(entering)
             start = max(0.0, length - CROSSWALK_WINDOW_M)
             path.extend(_slice(points, start, length))
             offsets.append(start - length)
@@ -560,7 +602,8 @@ class MapFeatures:
             points = _centreline(ll)
             path.extend(points if not path else points[1:])
         if exit_ is not None:
-            path.extend(_slice(_centreline(exit_), 0.0, CROSSWALK_WINDOW_M)[1:])
+            leaving: ConstLanelet = exit_
+            path.extend(_slice(_centreline(leaving), 0.0, CROSSWALK_WINDOW_M)[1:])
         if len(path) < 2:
             return []
         through = sum(self.length(ll) for ll in way)
