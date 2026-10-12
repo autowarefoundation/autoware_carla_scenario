@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 145 of
-the package's 228 modules (64%; about 33,000 of 65,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 146 of
+the package's 228 modules (64%; about 33,200 of 65,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -279,7 +279,9 @@ NPC vehicle and pedestrian entities, the Autoware ego
 (`entity.autoware_entity`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
 runner's run loop and the queue that runs scenarios one after another
-(`scenario_runner`, `scenario_queue`),
+(`scenario_runner`, `scenario_queue`), the UI's runner, which runs them in
+a subprocess on a thread (`ui.runner`, over a model of the pydantic
+`ui.models`),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
@@ -333,9 +335,9 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 83 `EXCLUDED` modules fall in
+`encode_frame_jpeg()` (cv2). The 82 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 61 import what Codon cannot
-compile, 33 build on an excluded module and 21 hold values Codon has no type
+compile, 32 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **61 import what Codon cannot compile**: lanelet2 beyond what its model
@@ -352,14 +354,13 @@ for), so each is counted once, in the first group that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **18 build on an excluded module**, and import nothing Codon lacks
+- **17 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `autoware_stack`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator,
-  `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
-  (over `ui.models`); 5 of the 18
+  authoring compiler, builders and validator and
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 17
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -537,8 +538,8 @@ What Codon 0.19 needs that Python does not, beyond
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
   `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
-  `importlib.metadata`, `urllib.parse` and `__future__` shims of `codon/`
-  are. Each takes the
+  `threading`, `importlib.metadata`, `urllib.parse` and `__future__` shims
+  of `codon/` are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
@@ -1177,6 +1178,20 @@ What Codon 0.19 needs that Python does not, beyond
   the `Empty` and `Full` exceptions). Declare the queue's item type at class
   level (`_frame_queue: queue.Queue[carla.Image]`); `queue.Queue()` in
   `__init__` takes it from there.
+- **`threading.Thread`** is the `threading` shim's, with CPython 3.10's
+  signature (`Thread(group=None, target=None, name=None, args=(),
+  kwargs=None, *, daemon=None)`, `start()`, `join(timeout=None)`,
+  `is_alive()`); the check compiles the call the thread makes,
+  `target(*args)`, so a target that does not take its arguments fails it.
+  `args` is a tuple, `kwargs` None and `group` None. The shim replaces the
+  `threading` module Codon ships, which Codon's numpy and typesafe_carla's
+  Codon library import for `Lock`, so it keeps all of that module
+  (`Lock`, `RLock`, `active_count()`, `get_native_id()`, `get_ident()`), as
+  Codon has it; a test compares the two.
+- **A datetime is formatted from its fields**: Codon's `datetime` has no
+  `__format__`, so `f"{now:%Y-%m-%d}"` is
+  `f"{now.year:04d}-{now.month:02d}-{now.day:02d}"`, the same string for
+  every year from 1000 on (`ui.runner._multirun_dir()`).
 - **A dataclass derived from a dataclass** is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
   base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`). Of two
