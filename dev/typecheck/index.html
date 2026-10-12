@@ -2082,8 +2082,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 145 of
-the package's 228 modules (64%; about 33,000 of 65,300 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 146 of
+the package's 228 modules (64%; about 33,200 of 65,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2101,7 +2101,9 @@ NPC vehicle and pedestrian entities, the Autoware ego
 (<code>entity.autoware_entity</code>), the entity registry and the policy
 warm-up with the Chaos powertrain model, <code>BaseScenario</code>, the scenario
 runner's run loop and the queue that runs scenarios one after another
-(<code>scenario_runner</code>, <code>scenario_queue</code>),
+(<code>scenario_runner</code>, <code>scenario_queue</code>), the UI's runner, which runs them in
+a subprocess on a thread (<code>ui.runner</code>, over a model of the pydantic
+<code>ui.models</code>),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (<code>maps.resolver</code>, with the repository listing
@@ -2155,9 +2157,9 @@ statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixtur
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 83 <code>EXCLUDED</code> modules fall in
+<code>encode_frame_jpeg()</code> (cv2). The 82 <code>EXCLUDED</code> modules fall in
 three groups. Many fit more than one (about 61 import what Codon cannot
-compile, 33 build on an excluded module and 21 hold values Codon has no type
+compile, 32 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
 <li><strong>61 import what Codon cannot compile</strong>: lanelet2 beyond what its model
@@ -2174,14 +2176,13 @@ for), so each is counted once, in the first group that fits it:</p>
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
-<li><strong>18 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>17 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
   <code>coverage</code>, <code>autoware_stack</code>, <code>examples</code>, <code>scaffold</code>), the
-  authoring compiler, builders and validator,
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader), and <code>ui.runner</code>
-  (over <code>ui.models</code>); 5 of the 18
+  authoring compiler, builders and validator and
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 17
   also hold values Codon has no type for.</li>
 <li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
@@ -2341,8 +2342,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   ...) are not available to a checked module; the <code>typing</code>,
   <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code>, <code>queue</code>, <code>pathlib</code>, <code>hashlib</code>,
   <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>signal</code>, <code>atexit</code>, <code>shlex</code>, <code>sys</code>,
-  <code>importlib.metadata</code>, <code>urllib.parse</code> and <code>__future__</code> shims of <code>codon/</code>
-  are. Each takes the
+  <code>threading</code>, <code>importlib.metadata</code>, <code>urllib.parse</code> and <code>__future__</code> shims
+  of <code>codon/</code> are. Each takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. <code>pathlib</code> declares <code>Path(*parts)</code>,
@@ -2977,6 +2978,20 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the <code>Empty</code> and <code>Full</code> exceptions). Declare the queue's item type at class
   level (<code>_frame_queue: queue.Queue[carla.Image]</code>); <code>queue.Queue()</code> in
   <code>__init__</code> takes it from there.
+- <strong><code>threading.Thread</code></strong> is the <code>threading</code> shim's, with CPython 3.10's
+  signature (<code>Thread(group=None, target=None, name=None, args=(),
+  kwargs=None, *, daemon=None)</code>, <code>start()</code>, <code>join(timeout=None)</code>,
+  <code>is_alive()</code>); the check compiles the call the thread makes,
+  <code>target(*args)</code>, so a target that does not take its arguments fails it.
+  <code>args</code> is a tuple, <code>kwargs</code> None and <code>group</code> None. The shim replaces the
+  <code>threading</code> module Codon ships, which Codon's numpy and typesafe_carla's
+  Codon library import for <code>Lock</code>, so it keeps all of that module
+  (<code>Lock</code>, <code>RLock</code>, <code>active_count()</code>, <code>get_native_id()</code>, <code>get_ident()</code>), as
+  Codon has it; a test compares the two.
+- <strong>A datetime is formatted from its fields</strong>: Codon's <code>datetime</code> has no
+  <code>__format__</code>, so <code>f"{now:%Y-%m-%d}"</code> is
+  <code>f"{now.year:04d}-{now.month:02d}-{now.day:02d}"</code>, the same string for
+  every year from 1000 on (<code>ui.runner._multirun_dir()</code>).
 - <strong>A dataclass derived from a dataclass</strong> is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
   base is checked (<code>CarlaCameraSensorConfig(CameraSensorConfig)</code>). Of two
@@ -3181,7 +3196,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 18:37:11 UTC"><span class="timeago" datetime="2026-10-12T18:37:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 18:37:11 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 20:53:23 UTC"><span class="timeago" datetime="2026-10-12T20:53:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 20:53:23 UTC">2026-10-12</span>
   </span>
 
     
