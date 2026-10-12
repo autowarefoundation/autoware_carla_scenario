@@ -288,6 +288,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.scenario_base.BaseScenario.register_route_to_goal": "asks require_goal, which reads the ego's class (`ego_type`)",
     "autoware_carla_scenario.scenario_base.BaseScenario.register_cover": "builds a CoverItem of values of any type (`expression: Callable[[carla.World], Any]`, `values: Iterable[Any]`, `ignore: Callable[[Any], bool]`, `event: SamplingEvent | BaseCondition`), which Codon cannot express; coverage.items is not checked",
     "autoware_carla_scenario.signals.controller.build_controllers": "reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed `list[Any]` so the runtime does not import authoring, with getattr defaults for fields older documents lack",
+    "autoware_carla_scenario.utils.stop_line._road_marking_stop_lines": "returns a road marking's `refers` parameters as line strings, and a `refers` parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the `else` branch of `if TYPE_CHECKING:`",
 }
 
 #: Every other module, with the reason it is not compiled.

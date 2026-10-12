@@ -123,25 +123,41 @@ def regulatory_element_stop_lines(
 
     # Pattern 3: Road marking — refers with type="stop_line"
     if attrs is not None and _attr_get(attrs, "subtype") == "road_marking":
-        try:
-            params = reg_elem.parameters
-            if "refers" in params:
-                for refers_ls in params["refers"]:
-                    if refers_ls.id not in seen_ids:
-                        ls_attrs = (
-                            refers_ls.attributes
-                            if hasattr(refers_ls, "attributes")
-                            else None
-                        )
-                        if (
-                            ls_attrs is not None
-                            and _attr_get(ls_attrs, "type") == "stop_line"
-                        ):
-                            seen_ids.add(refers_ls.id)
-                            results.append(refers_ls)
-        except Exception:
+        if TYPE_CHECKING:
+            # A `refers` parameter may be any of lanelet2's primitives, which
+            # the model types as what they all have; this pattern returns them
+            # as line strings, so Codon does not compile it (UNCALLED).
             pass
+        else:
+            results.extend(_road_marking_stop_lines(reg_elem, seen_ids))
 
+    return results
+
+
+def _road_marking_stop_lines(
+    reg_elem: RegulatoryElement, seen_ids: set[int]
+) -> list[ConstLineString3d]:
+    """The ``refers`` of a road marking with ``type="stop_line"`` not in
+    *seen_ids* (pattern 3 of :func:`regulatory_element_stop_lines`)."""
+    results: list[ConstLineString3d] = []
+    try:
+        params = reg_elem.parameters
+        if "refers" in params:
+            for refers_ls in params["refers"]:
+                if refers_ls.id not in seen_ids:
+                    ls_attrs = (
+                        refers_ls.attributes
+                        if hasattr(refers_ls, "attributes")
+                        else None
+                    )
+                    if (
+                        ls_attrs is not None
+                        and _attr_get(ls_attrs, "type") == "stop_line"
+                    ):
+                        seen_ids.add(refers_ls.id)
+                        results.append(refers_ls)
+    except Exception:
+        pass
     return results
 
 

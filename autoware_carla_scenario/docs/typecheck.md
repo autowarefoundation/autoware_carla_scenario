@@ -292,7 +292,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `entity`, `driver` and `maps`
 packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 64
+below). 65
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search or a
@@ -306,6 +306,9 @@ the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), what resolves a followed trajectory with the
 unchecked `trajectory.resolve` (`follow_trajectory._resolve_in_world()`),
+the road-marking pattern of the stop lines, which returns a `refers`
+parameter (any of lanelet2's primitives) as a line string
+(`utils.stop_line._road_marking_stop_lines()`),
 `signals.build_controllers()`, which reads
 the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
@@ -712,13 +715,17 @@ What Codon 0.19 needs that Python does not, beyond
   - **A rule parameter is declared by its role**: lanelet2 holds a point, a
     line string, a polygon, a lanelet or an area in a regulatory element's
     `parameters[role]`, and Codon has no type for "one of five classes".
-    `ref_line`, `cancel_line`, `light_bulbs` and `refers` hold line strings
+    `ref_line`, `cancel_line` and `light_bulbs` hold line strings
     (`ConstLineString3d`), `right_of_way` and `yield` lanelets
-    (`ConstLanelet`); any other role is a compile error. `refers` holds line
-    strings for the traffic lights, traffic signs and road markings the
-    framework reads it of; Autoware's detection areas, crosswalks and other
-    area elements refer to polygons or lanelets, which the model does not
-    declare.
+    (`ConstLanelet`); any other role is a compile error. `refers` holds a
+    different class per element (line strings or polygons for a traffic
+    light, polygons for Autoware's detection areas, lanelets for its
+    crosswalks), so the model declares it as a class of its own with only
+    what all five have, `id` and `attributes`. The stop line a road marking
+    refers to is therefore not checked: `utils/stop_line.py` reads it in a
+    function called in the `else` branch of `if TYPE_CHECKING:` (`UNCALLED`).
+    `test_typecheck_lanelet2_model.py` reads the roles off the model and
+    checks each against what the fixture map's elements hold.
 - **carla_driver_interface's geometry is modelled**:
   `codon/carla_driver_interface/geometry.codon` declares the `Pose` and
   `Trajectory` the driver modules use (and `waypoints_to_proto`, which

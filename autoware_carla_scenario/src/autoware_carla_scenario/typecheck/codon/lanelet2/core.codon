@@ -32,12 +32,13 @@
 # variant per parameter: a point, line string, polygon, lanelet or area. Codon
 # has no type for a value of one of five classes, so a role is declared by
 # what it holds: "ref_line", "cancel_line" and "light_bulbs" line strings,
-# "right_of_way" and "yield" lanelets, and "refers" line strings, which is
-# what it holds for the traffic lights, traffic signs and road markings the
-# framework reads it of (Autoware's detection areas, crosswalks and the other
-# area elements refer to polygons or lanelets, which the model does not
-# declare). Any other role is a compile error. As in Python, a line string of
-# a role is a ConstLineString3d.
+# "right_of_way" and "yield" lanelets. "refers" holds a different class per
+# element (line strings or polygons for a traffic light or sign, polygons for
+# Autoware's detection areas (the fixture map's), lanelets for its
+# crosswalks, a line string for a road marking), so it is declared
+# as _RuleParameter: what every one of the five classes has, its id and
+# attributes. Any other role is a compile error. As in Python, a line string
+# of a role is a ConstLineString3d.
 
 
 class AttributeMap:
@@ -129,6 +130,18 @@ class LineString3d(ConstLineString3d):
     pass
 
 
+# A rule parameter of a role that holds any of lanelet2's primitives (see the
+# top): only what all of them have. Not a Python class.
+class _RuleParameter:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+
 class ConstRuleParameterMap:
     def __contains__(self, role: str) -> bool:
         raise NotImplementedError()
@@ -138,10 +151,12 @@ class ConstRuleParameterMap:
 
     # The parameters of one role, by what the role holds (see the top).
     def __getitem__(self, key: Literal[str]):
-        if key == "ref_line" or key == "refers" or key == "cancel_line" or key == "light_bulbs":
+        if key == "ref_line" or key == "cancel_line" or key == "light_bulbs":
             return List[ConstLineString3d]()
         elif key == "right_of_way" or key == "yield":
             return List[ConstLanelet]()
+        elif key == "refers":
+            return List[_RuleParameter]()
         else:
             compile_error("lanelet2 model: the rule parameters of role '" + key + "' are not declared")
 

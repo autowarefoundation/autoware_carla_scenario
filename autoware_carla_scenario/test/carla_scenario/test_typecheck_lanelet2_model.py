@@ -286,21 +286,60 @@ def test_the_map_and_its_lanelets(lanelet_map: Any) -> None:
     assert (point.x, point.y) == (1.0, 2.0)
 
 
-#: The rule parameter roles the model declares, and the class each holds;
-#: "refers" only of the classes the model reads it of.
-_ROLES = {
-    "ref_line": "ConstLineString3d",
-    "cancel_line": "ConstLineString3d",
-    "light_bulbs": "ConstLineString3d",
-    "right_of_way": "ConstLanelet",
-    "yield": "ConstLanelet",
-}
-_REFERS_LINE_STRINGS = ("TrafficLight", "TrafficSign", "RoadMarking")
+def _model_roles() -> dict[str, str]:
+    """Role -> the class the model's ``ConstRuleParameterMap.__getitem__``
+    says its parameters are, read off its ``if key == ...`` branches."""
+    core = dict((c.name, c) for _m, c in _classes())["ConstRuleParameterMap"]
+    getitem = next(
+        n
+        for n in core.body
+        if isinstance(n, ast.FunctionDef) and n.name == "__getitem__"
+    )
+    roles: dict[str, str] = {}
+    branch: ast.stmt | None = getitem.body[0]
+    while isinstance(branch, ast.If):
+        keys = [
+            n.comparators[0].value
+            for n in ast.walk(branch.test)
+            if isinstance(n, ast.Compare) and isinstance(n.comparators[0], ast.Constant)
+        ]
+        returned = branch.body[0]
+        assert isinstance(returned, ast.Return) and isinstance(returned.value, ast.Call)
+        assert isinstance(returned.value.func, ast.Subscript)
+        cls = returned.value.func.slice
+        assert isinstance(cls, ast.Name)
+        roles.update({str(key): cls.id for key in keys})
+        branch = branch.orelse[0] if branch.orelse else None
+    return roles
+
+
+#: A model class that is no Python class: a parameter of a role that holds
+#: any of lanelet2's primitives, of which the model declares the members
+#: every primitive has.
+_ANY_PRIMITIVE = "_RuleParameter"
+
+
+def test_the_model_declares_the_roles_the_framework_reads() -> None:
+    assert _model_roles() == {
+        "ref_line": "ConstLineString3d",
+        "cancel_line": "ConstLineString3d",
+        "light_bulbs": "ConstLineString3d",
+        "right_of_way": "ConstLanelet",
+        "yield": "ConstLanelet",
+        "refers": _ANY_PRIMITIVE,
+    }
 
 
 def test_the_regulatory_elements(lanelet_map: Any) -> None:
     core = lanelet2.core
+    roles = _model_roles()
+    any_primitive = next(
+        c
+        for c in ast.walk(_MODELS["lanelet2.core"])
+        if isinstance(c, ast.ClassDef) and c.name == _ANY_PRIMITIVE
+    )
     seen: set[str] = set()
+    held: dict[str, set[str]] = {}
     for lanelet in lanelet_map.laneletLayer:
         for element in lanelet.regulatoryElements:
             assert isinstance(element, core.RegulatoryElement)
@@ -309,17 +348,19 @@ def test_the_regulatory_elements(lanelet_map: Any) -> None:
             params = element.parameters
             assert isinstance(params, core.ConstRuleParameterMap)
             assert isinstance(len(params), int)
-            for role, cls in _ROLES.items():
+            for role, cls in roles.items():
                 assert isinstance(role in params, bool)
-                if role in params:
-                    assert all(type(p).__name__ == cls for p in params[role]), role
-            if isinstance(
-                element, (core.TrafficLight, core.TrafficSign, autoware_res.RoadMarking)
-            ):
-                if "refers" in params:
-                    assert all(
-                        isinstance(p, core.ConstLineString3d) for p in params["refers"]
-                    )
+                if role not in params:
+                    continue
+                for p in params[role]:
+                    held.setdefault(role, set()).add(type(p).__name__)
+                    if cls == _ANY_PRIMITIVE:
+                        for member in _members(any_primitive):
+                            assert hasattr(p, member), f"{role}: {type(p)}.{member}"
+                        assert isinstance(p.id, int)
+                        assert isinstance(p.attributes, core.AttributeMap)
+                    else:
+                        assert type(p).__name__ == cls, f"{role}: {type(p)}"
             if isinstance(element, (core.TrafficLight, core.RightOfWay)):
                 stop_line = element.stopLine
                 assert stop_line is None or isinstance(stop_line, core.LineString3d)
@@ -327,7 +368,9 @@ def test_the_regulatory_elements(lanelet_map: Any) -> None:
     # The fixture map has every class the model declares a branch for.
     assert {"AutowareTrafficLight", "RightOfWay", "TrafficSign", "RoadMarking"} <= seen
     assert issubclass(autoware_res.AutowareTrafficLight, core.TrafficLight)
-    assert set(_REFERS_LINE_STRINGS) <= {c.name for _m, c in _classes()}
+    # "refers" is declared as any primitive because it holds more than one
+    # class: polygons (the detection areas) besides line strings.
+    assert len(held["refers"]) > 1, held["refers"]
 
 
 def test_the_geometry_functions(lanelet_map: Any) -> None:
