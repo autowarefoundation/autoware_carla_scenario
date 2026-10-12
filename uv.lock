@@ -213,7 +213,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },
-    { name = "openodd-py", specifier = ">=0.3.0" },
+    { name = "openodd-py", specifier = ">=0.4.0" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -2789,14 +2789,14 @@ wheels = [
 
 [[package]]
 name = "openodd-py"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/14/52/c347c7f6c84294dbb13cfbd00b9eb4ac10e16555bc5e0f41f9c950d3c07a/openodd_py-0.3.0.tar.gz", hash = "sha256:994b7002a9f6cfc537ced387aba1489ff1b10be88674124a89afd82da8f7c8d7", size = 126377, upload-time = "2026-10-12T02:32:05.515Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/9e/301a57042ec5cc1ebcd442f914d4c71dcd883f47912f9e63c253deb3c024/openodd_py-0.4.0.tar.gz", hash = "sha256:96d6020174fd2a7a2b09dfe0a2fc669c34fc0c25d1f823c1d9f13c32870109fa", size = 143523, upload-time = "2026-10-12T04:13:49.831Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/fb/d21e39737fa693c16ea563d3efafb95e87b2436e1715f29255f295b633de/openodd_py-0.3.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:fef2f2dd7a90eafe129cd6e300b07e1464a89a927b2017abdaae20f5902cb2e7", size = 3487682, upload-time = "2026-10-12T02:31:59.256Z" },
-    { url = "https://files.pythonhosted.org/packages/13/48/4faa0d2446f150268e444351baf675e9b1089651df93abcf9f78d46a6bd8/openodd_py-0.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:69fdea1fd2d1886edac56d5ab73acd0a0cdd992f4582269d53eec6bab84b0efb", size = 1932047, upload-time = "2026-10-12T02:32:00.924Z" },
-    { url = "https://files.pythonhosted.org/packages/06/75/2f6a0a6d24f8b7ac2a5295214b04f37320ab85c5f3e5686c8a0fe4fccc37/openodd_py-0.3.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8ba8415d10b6c28ceac2706d33a8bb88fa79ee87bae1fa77a1eaf4e0a585a8a7", size = 1960949, upload-time = "2026-10-12T02:32:02.621Z" },
-    { url = "https://files.pythonhosted.org/packages/42/98/4863dc4c5f884e3f68dc360475977615aba7af41fa3456d776e2f4f3cdab/openodd_py-0.3.0-cp310-abi3-win_amd64.whl", hash = "sha256:9eb1498f60c27e5eb47d3a597cbb4a06d65d9891b6f0c0fc855fb23f2d7190d4", size = 1696653, upload-time = "2026-10-12T02:32:04.1Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/a2/5bd8f618341018776ed28359212927bf339be4237b986eeba96d3a463830/openodd_py-0.4.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:92db4381b9c8acd556e354cf443c0477e3403b6f71c60db465db48473975ef40", size = 3500541, upload-time = "2026-10-12T04:13:42.88Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/00/5de405ae26adc229f23a39c4f808fa14c807c01e3acc61b7af8a0d04d28b/openodd_py-0.4.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1c907187620e7cc4529dac5d183914083b5d748967a5916a4463bd06c9c3790d", size = 1942471, upload-time = "2026-10-12T04:13:45.057Z" },
+    { url = "https://files.pythonhosted.org/packages/db/74/febba8de41d1462ecfbbf3cbfa0d9843b932568525e13911f9f5eedadbfb/openodd_py-0.4.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:db28fe72c4fd00c37b2378aeb897d172c74daed626ff14c8029fff950f4df11c", size = 1973748, upload-time = "2026-10-12T04:13:46.809Z" },
+    { url = "https://files.pythonhosted.org/packages/90/41/48ece2699806a677f5f22a65259184fe91915b0f1c78703f04e080b8664a/openodd_py-0.4.0-cp310-abi3-win_amd64.whl", hash = "sha256:ec40eb9026c8cd412f68f09547cb1b832256a14cfd051ca0f0b016aa9cb75549", size = 1709381, upload-time = "2026-10-12T04:13:48.442Z" },
 ]
 
 [[package]]
