@@ -302,11 +302,11 @@ the authoring package's pydantic specs, `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
 `encode_frame_jpeg()` (cv2). The 96 `EXCLUDED` modules fall in
-three groups. Many fit more than one (70 import what Codon cannot compile,
-42 build on an excluded module and 28 hold values Codon has no type for), so
+three groups. Many fit more than one (69 import what Codon cannot compile,
+43 build on an excluded module and 28 hold values Codon has no type for), so
 each is counted once, in the first group that fits it:
 
-- **70 import what Codon cannot compile**: lanelet2, pyxodr,
+- **69 import what Codon cannot compile**: lanelet2, pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, or a standard module Codon
   lacks (`json`, `inspect`, `tempfile`, `importlib` beyond
   `importlib.metadata`, or more of `pathlib`, `shutil` or `subprocess` than
@@ -317,7 +317,7 @@ each is counted once, in the first group that fits it:
   everything that reads Lanelet2. A reason names `pathlib` only where the
   module uses more of it than the shim declares, and `shutil` and
   `subprocess` likewise.
-- **22 build on an excluded module**, and import nothing Codon lacks
+- **23 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
@@ -325,7 +325,8 @@ each is counted once, in the first group that fits it:
   authoring compiler, builders and validator, the route frame, poses and search
   (`route.frame`, `route.positions`, `route.search`, through lanelet2),
   `odd.model` (over `coverage.items`), `trajectory.resolve` and
-  `traffic.registry` (the `registry`, in its plugin loader); 10 of the 22
+  `traffic.registry` (the `registry`, in its plugin loader), and `ui.runner`
+  (over `ui.models`); 10 of the 23
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`coverage.items`, `trajectory.authoring`, `authoring.registry`'s
