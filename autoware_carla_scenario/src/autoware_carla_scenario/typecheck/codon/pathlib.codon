@@ -3,6 +3,12 @@
 # "/", so a module that builds, joins and prints paths type-checks. Like
 # CPython's, a Path is built from and joined with a str or a Path only, and
 # compares unequal to anything that is not a Path.
+#
+# The file-system queries (exists(), is_file(), is_dir(), glob(), absolute())
+# take what CPython 3.10's take, the oldest Python the package supports: the
+# keyword-only `follow_symlinks` (3.12/3.13) and glob's `case_sensitive` and
+# `recurse_symlinks` (3.12/3.13) are refused, as CPython 3.10 refuses them.
+# They touch no file: a query is False, and a glob yields nothing.
 
 
 def _part(part) -> str:
@@ -17,6 +23,30 @@ def _part(part) -> str:
     else:
         compile_error("a Path is built from and joined with a str or a Path only")
         return ""
+
+
+class _PathParents:
+    """What Path.parents is: a read-only sequence of the logical ancestors.
+    Generic in the path (Codon's generic parameter), as Path is defined after."""
+
+    T: type
+    _paths: List[T]
+
+    def __init__(self, paths: List[T]):
+        self._paths = paths
+
+    def __len__(self) -> int:
+        return len(self._paths)
+
+    def __getitem__(self, index: int) -> T:
+        return self._paths[index]
+
+    def __iter__(self) -> Generator[T]:
+        for path in self._paths:
+            yield path
+
+    def __contains__(self, path: T) -> bool:
+        return path in self._paths
 
 
 class Path:
@@ -70,3 +100,64 @@ class Path:
     @staticmethod
     def home() -> Path:
         return Path("~")
+
+    # The name and its parts, as PurePath computes them.
+    @property
+    def name(self) -> str:
+        if self._path == "/" or self._path == ".":
+            return ""
+        i = self._path.rfind("/")
+        return self._path[i + 1:] if i >= 0 else self._path
+
+    @property
+    def suffix(self) -> str:
+        name = self.name
+        i = name.rfind(".")
+        return name[i:] if 0 < i < len(name) - 1 else ""
+
+    @property
+    def parent(self) -> Path:
+        i = self._path.rfind("/")
+        if i < 0:
+            return Path(".")
+        return Path(self._path[:i] if i > 0 else "/")
+
+    @property
+    def parents(self) -> _PathParents[Path]:
+        found = List[Path]()
+        path = self
+        while path.name:
+            path = path.parent
+            found.append(path)
+        return _PathParents[Path](found)
+
+    # Paths order by their string; CPython compares a Path with a Path only
+    # (a str is a TypeError), so sorted() works on paths alone.
+    def __lt__(self, other: Path) -> bool:
+        return self._path < other._path
+
+    def __le__(self, other: Path) -> bool:
+        return self._path <= other._path
+
+    def __gt__(self, other: Path) -> bool:
+        return self._path > other._path
+
+    def __ge__(self, other: Path) -> bool:
+        return self._path >= other._path
+
+    def absolute(self) -> Path:
+        return self
+
+    def exists(self) -> bool:
+        return False
+
+    def is_file(self) -> bool:
+        return False
+
+    def is_dir(self) -> bool:
+        return False
+
+    def glob(self, pattern: str) -> Generator[Path]:
+        # A generator of Paths, as CPython's glob() returns, of no path.
+        if False:
+            yield self

@@ -20,6 +20,13 @@ class str:
     def __mod__(self, args) -> str:
         return self
 
+    # str.encode, with CPython's signature. The check reads `bytes` as `str`
+    # (Codon 0.19 has none), so it returns a str. bytes.decode is not
+    # declared: it would be a str's too, and so pass `"text".decode()`, which
+    # CPython refuses (str has no decode()); nothing checked decodes.
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        return self
+
 
 def _acs_value(T: type) -> T:
     """A T, for the library check's calls (typecheck/library_driver.py):

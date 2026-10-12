@@ -72,6 +72,9 @@ _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 class MapResolutionError(RuntimeError):
     """A map source was cloned but does not hold a usable map."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class ResolvedMap:
@@ -204,17 +207,21 @@ def _find_xodr(directory: Path, derived: Path) -> tuple[Optional[Path], bool]:
     installing it back would be a no-op that also demands an environment
     variable pointing into the CARLA installation.
     """
+    # Each through an annotated local: Codon types a tuple by its members, and
+    # every return of the function is a tuple of an Optional[Path].
     for candidate in sorted(directory.glob("*.xodr")):
         if candidate.is_file():
-            return candidate, False
+            shipped: Optional[Path] = candidate
+            return shipped, False
     for candidate in sorted(derived.glob("*.xodr")):
         if candidate.is_file():
-            return candidate, True
+            fetched: Optional[Path] = candidate
+            return fetched, True
     return None, False
 
 
 def resolve_map(
-    source: "str | MapSource",
+    source: str | MapSource,
     *,
     cache: Optional[GitMapCache] = None,
     refresh: bool = False,
@@ -270,7 +277,7 @@ def resolve_map(
 
 
 def resolve_directory(
-    directory: "str | Path", *, cache: Optional[GitMapCache] = None
+    directory: str | Path, *, cache: Optional[GitMapCache] = None
 ) -> ResolvedMap:
     """Return the map held in the local *directory*, touching no network.
 
@@ -338,7 +345,7 @@ def _peek_ref(store: GitMapCache, source: MapSource) -> Optional[CachedRepo]:
 
 
 def cached_map(
-    source: "str | MapSource", *, cache: Optional[GitMapCache] = None
+    source: str | MapSource, *, cache: Optional[GitMapCache] = None
 ) -> Optional[ResolvedMap]:
     """Return *source*'s map if it is already on disk, without fetching it.
 
@@ -395,7 +402,7 @@ def cached_map(
 
 
 def pin_source(
-    source: "str | MapSource",
+    source: str | MapSource,
     *,
     cache: Optional[GitMapCache] = None,
     refresh: bool = False,

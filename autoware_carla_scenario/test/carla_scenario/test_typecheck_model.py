@@ -30,6 +30,8 @@ from autoware_carla_scenario.coordinate import transform as coordinate_transform
 from autoware_carla_scenario.coverage import items as coverage_items
 from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity
+from autoware_carla_scenario.maps import cache as maps_cache
+from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
@@ -301,6 +303,12 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         ("AutowareEpisode", "AutowareLauncher"),
     ),
     "driver/egodriver_client": (egodriver_client, ("EgoDriverGrpcClient",)),
+    # MapSource is shared with the checked maps.source (REPLACED_MODELS).
+    "_map_source": (maps_source, ("MapSource",)),
+    "maps/cache": (
+        maps_cache,
+        ("CachedRepo", "DERIVED_SUBDIR", "GitMapCache", "is_lfs_pointer"),
+    ),
 }
 
 #: Classes the model declares only so a checked package can re-export them:
