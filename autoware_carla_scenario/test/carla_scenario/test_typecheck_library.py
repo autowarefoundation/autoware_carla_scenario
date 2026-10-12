@@ -1964,6 +1964,33 @@ def test_a_checked_module_has_its_file(
     assert result.ok, result.format()
 
 
+def _top_level_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+@needs_codon
+def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
+    # The shim replaces the sys module Codon ships, which Codon's own modules
+    # (time, random, itertools) and typesafe_carla's library import: it
+    # declares every name Codon's does.
+    tc = available_toolchain()
+    assert tc is not None
+    codon_sys = tc.codon_dir / "lib" / "codon" / "stdlib" / "sys.codon"
+    if not codon_sys.is_file():
+        pytest.skip("this Codon ships no stdlib/sys.codon")
+    shim = _top_level_names(model_dir() / "sys.codon")
+    assert _top_level_names(codon_sys) <= shim
+    assert {"platform", "executable"} <= shim
+
+
 @needs_codon
 def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

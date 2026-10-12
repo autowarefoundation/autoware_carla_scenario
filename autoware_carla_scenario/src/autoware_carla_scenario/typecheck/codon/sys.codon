@@ -5,6 +5,10 @@
 # `platform`, "linux" (the only system the package runs on, as CPython's is
 # there), and `executable`, the interpreter's path, a str (CPython's may be
 # empty, never None). Nothing else of CPython's sys is declared.
+#
+# Everything above `platform` is Codon's stdlib/sys.codon, Copyright (C)
+# 2022-2025 Exaloop Inc., under the Apache License 2.0
+# (test_typecheck_library.py checks that the shim keeps all of it).
 
 argv = list(__argv__, len(__argv__))
 
