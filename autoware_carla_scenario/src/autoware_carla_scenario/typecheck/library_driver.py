@@ -25,8 +25,8 @@ accepted for the other operand of ``__eq__`` and ``__ne__``, which Python
 requires; it is given a value of the class itself.  A ``Callable[[A], R]``
 with types Codon can express is given a value of Codon's ``Callable`` type
 (:func:`callable_annotation`); one with a union among its argument types,
-which Codon 0.19 crashes on, a callable of any arguments returning an ``R``
-(:func:`union_callable_annotation`).
+which Codon 0.19 crashes on, a callable of as many arguments, of any type,
+returning an ``R`` (:func:`union_callable_annotation`).
 """
 
 from __future__ import annotations
@@ -117,14 +117,15 @@ def _members_or_self(node: ast.AST) -> list[ast.AST]:
 
 
 def union_callable_annotation(node: ast.AST) -> str | None:
-    """``_acs_Returning[R]`` for a ``Callable[[A, B], R]`` with a union among
+    """``_acs_Returning[R, 2]`` for a ``Callable[[A, B], R]`` with a union among
     ``A, B``, or an ``Optional`` of one; ``None`` for any other annotation.
 
     Codon 0.19 crashes on a ``Callable`` type with a union argument ("union
-    already sealed").  The check calls with ``_acs_Returning[R]`` (the model's
-    ``_tc.codon``) instead: a callable that takes any arguments and returns an
-    ``R``.  So the body is compiled with what it passes, unchecked, and with
-    the ``R`` it gets back, checked.  Every member of each union, and ``R``,
+    already sealed").  The check calls with ``_acs_Returning[R, N]`` (the
+    model's ``_tc.codon``) instead: a callable that takes ``N`` arguments of
+    any type and returns an ``R``.  So the body is compiled with the number of
+    arguments it passes checked, their types unchecked, and with the ``R`` it
+    gets back checked.  Every member of each union, and ``R``,
     must be a type Codon can express.
     """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -152,7 +153,7 @@ def union_callable_annotation(node: ast.AST) -> str | None:
     ret = codon_annotation(result, class_level=True)
     if not union or ret is None:
         return None
-    return f"_acs_Returning[{ret}]"
+    return f"_acs_Returning[{ret}, {len(params.elts)}]"
 
 
 def workspace_module(module: str) -> str:

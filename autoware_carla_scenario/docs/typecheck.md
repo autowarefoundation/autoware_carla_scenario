@@ -402,9 +402,10 @@ Codon's `Callable` type, which a function of that signature converts to. One
 with a union among its argument types (`Callable[[Optional[Union[EntityRole,
 str]]], CarlaWorldPose]`, the reference lookup of `trajectory.resolve`) is no
 type Codon 0.19 can hold: it crashes on it ("union already sealed"). Such a
-parameter is called with `_acs_Returning[R]` (`_tc.codon`), a callable that
-takes any arguments and returns an `R`, so the body is compiled with what it
-passes unchecked and with what it gets back checked.
+parameter is called with `_acs_Returning[R, N]` (`_tc.codon`), a callable
+that takes `N` arguments (as many as the `Callable` does) of any type and
+returns an `R`, so the body is compiled with the number of arguments it passes
+checked, their types unchecked, and with what it gets back checked.
 
 A `*args: T` is given one `T` (`run_uv(cwd, *args: str, ...)` is called
 with one `str`), so the body is compiled for it; one with no annotation, or
@@ -1393,7 +1394,7 @@ What Codon 0.19 needs that Python does not, beyond
   ("union already sealed"), whether a parameter's, a variable's or a
   return's. Spell the callable out in the annotation (the checker drops a
   `Callable` parameter or return annotation, so the function is generic,
-  and calls it with `_acs_Returning[R]`); a module-level alias
+  and calls it with `_acs_Returning[R, N]`); a module-level alias
   (`PositionResolver = Callable[...]`) stays for Python and is `None` to the
   check, which refuses the alias as an expression ("expected type
   expression"). A function that takes either a resolver it is given or one

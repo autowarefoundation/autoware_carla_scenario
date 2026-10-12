@@ -502,9 +502,9 @@ def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
     # An Optional one: called with the callable.
     assert "    maybe(_acs_value(Callable[[float], int]))" in calls
     # A union among the arguments, a Callable type Codon 0.19 crashes on: a
-    # callable of any arguments returning the result's type.
-    assert "    place(_acs_value(_acs_Returning[float]))" in calls
-    assert "    refer(_acs_value(_acs_Returning[Pose]))" in calls
+    # callable of as many arguments, of any type, returning the result's type.
+    assert "    place(_acs_value(_acs_Returning[float, 1]))" in calls
+    assert "    refer(_acs_value(_acs_Returning[Pose, 1]))" in calls
     lines = _CALLABLES.splitlines()
     assert sorted(lines[line - 1].split("(")[0] for line, _ in checks.problems) == [
         "def anything",
@@ -1003,6 +1003,10 @@ def test_a_singleton_and_a_callable_of_a_union_compile(
     wrong = right.replace(".dot(lookup(None))", ".norm_of(lookup(None))")
     assert wrong != right
     assert not _check_case(wrong, tmp_path, monkeypatch).ok
+    # Nor does a call with another number of arguments than the Callable's.
+    arity = right.replace(".dot(lookup(None))", ".dot(lookup(None, None))")
+    assert arity != right
+    assert not _check_case(arity, tmp_path, monkeypatch).ok
 
 
 @needs_codon
