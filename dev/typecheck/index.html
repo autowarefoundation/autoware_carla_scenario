@@ -2128,8 +2128,9 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 153 of
-the package's 228 modules (67%; about 35,800 of 65,800 lines) are <code>CHECKED</code>:
+<p>Every module but two now has an entry other than <code>"not yet checked (#45)"</code>:
+<code>ros2.commands</code> and <code>ros2.transport</code>, which came with the ROS 2 ego, are not
+yet checked. 154 of the package's 236 modules (65%; about 36,000 of 67,500 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2171,7 +2172,8 @@ the <code>scenario_bridge</code> node's command and Python root beside it
 container with Docker (<code>autoware_stack.docker</code>, over a model of
 <code>autoware_stack.devcontainer</code>, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-unit names (<code>odd.unit_names</code>), the CARLA-only helpers, the traffic-light
+unit names (<code>odd.unit_names</code>), the planning of a scenario's route on the
+Lanelet2 map that the ODD's route check starts from (<code>odd.route_plan</code>), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), the camera
 and LiDAR sensors (<code>sensor</code>), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
@@ -2179,7 +2181,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code> and <code>maps</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 72
+below). 80
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -2210,13 +2212,15 @@ statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixtur
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 75 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (about 53 import what Codon cannot
-compile, 28 build on an excluded module and 19 hold values Codon has no type
-for), so each is counted once, in the first group that fits it:</p>
+<code>encode_frame_jpeg()</code> (cv2). The 80 <code>EXCLUDED</code> modules other than the
+two not yet checked fall in three groups. Many fit more than one (about 55
+import what Codon cannot compile, 32 build on an excluded module and 21 hold
+values Codon has no type for), so each is counted once, in the first group
+that fits it:</p>
 <ul>
-<li><strong>53 import what Codon cannot compile</strong>: pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
+<li><strong>55 import what Codon cannot compile</strong>: pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
+  cyclonedds (the ROS 2 ego's DDS transport and messages), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
   beyond <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
   <code>subprocess</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
@@ -2228,16 +2232,17 @@ for), so each is counted once, in the first group that fits it:</p>
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
-<li><strong>19 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>22 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
-  <code>coverage</code>, <code>examples</code>, <code>scaffold</code>), the
-  authoring compiler, builders and validator, <code>odd.probes</code> and <code>odd.route</code>
-  (names of <code>odd.model</code> and <code>coverage.items</code> that the odd and coverage
+  <code>coverage</code>, <code>examples</code>, <code>scaffold</code>, <code>ros2</code>), the ROS 2 ego and its
+  configs (<code>entity.ros2_entity</code>, <code>ros2.config</code>), the
+  authoring compiler, builders and validator, <code>odd.probes</code> and <code>odd.route</code>,
+  the coverage half of the route check (names of <code>odd.model</code> and <code>coverage.items</code> that the odd and coverage
   models do not declare, such as <code>UNDECIDED</code>; both also hold attribute
   values of any type, <code>dict[str, Any]</code>) and
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 19
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 6 of the 22
   also hold values Codon has no type for.</li>
 <li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
@@ -3344,7 +3349,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 07:10:14 UTC"><span class="timeago" datetime="2026-10-13T07:10:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 07:10:14 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 10:15:08 UTC"><span class="timeago" datetime="2026-10-13T10:15:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 10:15:08 UTC">2026-10-13</span>
   </span>
 
     
