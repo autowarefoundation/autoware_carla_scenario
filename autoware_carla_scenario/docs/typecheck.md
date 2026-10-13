@@ -260,15 +260,17 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 152 of
-the package's 228 modules (67%; about 35,500 of 65,800 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 153 of
+the package's 228 modules (67%; about 35,800 of 65,800 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
 and the lane arithmetic of a relative lane pose (`trajectory.relative_lane`),
 the map manager that loads the Lanelet2 map and the OpenDRIVE road network
 (`coordinate.map_manager`) and the sweeper's lighter loader of the Lanelet2
-map (`sweeper.map_loader`), what places a trajectory's vertices in CARLA
+map (`sweeper.map_loader`), with the projection and origin both read a map
+with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
+whose YAML values are of any type), what places a trajectory's vertices in CARLA
 world coordinates (`trajectory.resolve`),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
@@ -340,12 +342,12 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 76 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 54 import what Codon cannot
-compile, 28 build on an excluded module and 20 hold values Codon has no type
+`encode_frame_jpeg()` (cv2). The 75 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 53 import what Codon cannot
+compile, 28 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **54 import what Codon cannot compile**: pyxodr,
+- **53 import what Codon cannot compile**: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
@@ -464,10 +466,11 @@ with an example scenario in it failed in Codon 0.19's code generation
 `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code declares only what the
-checked modules and scenarios use of it: `coordinate.codon` declares, of
-`coordinate.projection` (yaml), only the `map_origin()`, `resolve_projector()`
-and `_parse_geo_reference()` that the checked `coordinate.map_manager` and
-`sweeper.map_loader` import. Its `MapManager` is now the scenario check's
+checked modules and scenarios use of it. `coordinate.codon` still declares,
+of `coordinate.projection`, the `map_origin()`, `resolve_projector()` and
+`_parse_geo_reference()` that `coordinate.map_manager` and
+`sweeper.map_loader` import, though the library check now compiles all three
+from their source. Its `MapManager` is now the scenario check's
 alone: the library check compiles `map_manager.py` from its source, which
 every checked module imports, and nothing of the model takes or returns a
 `MapManager`, so it needs no `REPLACED_MODELS` entry.
@@ -1144,7 +1147,16 @@ What Codon 0.19 needs that Python does not, beyond
   `Optional[int]`) but takes `self._lane_id = address.lane_id`, and
   `X(...) if c else None` likewise only without the annotation.
 - **`x or []` with `x: Optional[list[T]]`** has no one type in Codon: start
-  from an annotated empty list and assign `x` under `if x:`.
+  from an annotated empty list and assign `x` under `if x:`. Likewise
+  `stated or DEFAULT` with `stated: Optional[str]`: branch on the cases
+  into an annotated `str` local (`coordinate.projection.resolve_projector`).
+- **A regex group used as a `str`** (`m.group(1)` handed to `re.search`, or
+  to a `str` local): Codon's `Match.group()` is an `Optional[str]` whose
+  type Codon 0.19 cannot settle from such a use. Take `str(m.group(1))`,
+  the same `str` in Python (`coordinate.projection._parse_geo_reference`).
+- **Projectors of different classes return through one `-> Projector`**
+  (`coordinate.projection.make_projector`): the lanelet2 model derives each
+  from `Projector`, and Codon 0.19 converts a subclass to it at `return`.
 - **A subclass goes into an `Optional` base parameter from a base-typed
   variable**: Codon does not upcast and wrap in one step, so
   `super().__init__(child=PersistentCondition(...))` against
