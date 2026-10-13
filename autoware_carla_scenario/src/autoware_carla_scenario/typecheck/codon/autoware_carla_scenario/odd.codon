@@ -10,7 +10,7 @@ import typesafe_carla.carla as carla
 import lanelet2.core
 import lanelet2.routing
 
-from ._tc import _keyword_only, _expect_float, _expect_optional_float
+from ._tc import _keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float
 from .coverage import _expect_cover_expression, _expect_optional_range, _expect_optional_edges
 
 
@@ -261,8 +261,15 @@ def plan_route_coverage(odd, scenario_or_route, *_kw, lanelet_map = None,
     """The ODD's verdict on a planned route.  *odd* is a
     Union[OddDefinition, str, None] and *scenario_or_route* a
     Union[BaseScenario, PlannedRoute, Iterable[int]]: a Union parameter
-    crashes Codon 0.19, so both are generic; the ODD's type is checked here."""
+    crashes Codon 0.19, so both are generic and checked here.  A scenario is
+    told by its goal (`goal_pose`, `require_goal()`): the checked runner passes
+    the checked scenario_base's BaseScenario, not the model's.  PlannedRoute
+    (odd.route_plan) is not declared, so passing one fails the check."""
     _keyword_only(_kw, "plan_route_coverage(): lanelet_map, routing_graph and name")
+    if hasattr(scenario_or_route, "goal_pose") and hasattr(scenario_or_route, "require_goal"):
+        pass
+    else:
+        _expect_int_sequence(scenario_or_route)
     if isinstance(odd, None):
         pass
     elif isinstance(odd, Optional[NoneType]):
