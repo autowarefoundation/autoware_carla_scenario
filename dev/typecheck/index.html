@@ -2082,8 +2082,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 151 of
-the package's 228 modules (66%; about 35,000 of 65,600 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 152 of
+the package's 228 modules (67%; about 35,500 of 65,800 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2098,7 +2098,8 @@ frame, poses and search (<code>route.geometry</code>, <code>route.frame</code>, 
 <code>route.search</code>), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
-walk-straight actions, the logical scenario's route search and matches (<code>route.model</code>) and
+walk-straight actions and the background-traffic source and sink
+(<code>actions.background_traffic</code>), the logical scenario's route search and matches (<code>route.model</code>) and
 the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
@@ -3138,7 +3139,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (it imports <code>coordinate.transform</code> itself, which is checked, so the library
   check compiles the real <code>to_map_frame</code> there).
 - <strong>No <code>math.dist</code></strong> in Codon's <code>math</code>: <code>math.hypot</code> of the differences,
-  which is the computation CPython's <code>math.dist</code> makes (<code>AutowareEgoEntity</code>).
+  which is the computation CPython's <code>math.dist</code> makes (<code>AutowareEgoEntity</code>,
+  <code>actions.background_traffic</code>, where <code>test_background_traffic.py</code> pins the
+  two to the same number).
+- <strong>A function whose only return is <code>return None</code></strong> cannot be typed, even
+  with an <code>Optional[X]</code> return annotation ("cannot typecheck 'None'"), and
+  <code>del</code> of a parameter is refused: return a local declared
+  <code>Optional[X] = None</code> (<code>_Never.check</code> in <code>actions.background_traffic</code>).
 - <strong>A method that takes <code>**kwargs</code>, called on a value whose class a checked
   subclass overrides it in</strong>, is called through the base class under <code>if
   TYPE_CHECKING:</code>, and as written in the <code>else</code> branch: <code>actions.turn</code> calls
@@ -3277,7 +3284,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 23:22:54 UTC"><span class="timeago" datetime="2026-10-12T23:22:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 23:22:54 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 01:55:43 UTC"><span class="timeago" datetime="2026-10-13T01:55:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 01:55:43 UTC">2026-10-13</span>
   </span>
 
     
