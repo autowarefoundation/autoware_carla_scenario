@@ -345,11 +345,12 @@ class MapManager:
         raise NotImplementedError()
 
 
-# What the checked coordinate/map_manager.py and sweeper/map_loader.py import
-# of coordinate/projection.py, which is not checked (it reads the map's
-# map_projector_info.yaml with yaml): where a map is anchored, the projector
-# it is read with, and the OpenDRIVE geoReference parser map_manager
-# re-exports. None is exported by the coordinate package.
+# What coordinate/map_manager.py and sweeper/map_loader.py import of
+# coordinate/projection.py: where a map is anchored, the projector it is read
+# with, and the OpenDRIVE geoReference parser map_manager re-exports. The
+# library check compiles all three modules from their source now (#142), so
+# it no longer reads these; they stay declared as in Python
+# (test_typecheck_model.py). None is exported by the coordinate package.
 
 # map_origin(lanelet2_path, xodr_path): ((lat, lon, alt), what said so).
 # Raises ValueError for an OpenDRIVE file without a geoReference.
