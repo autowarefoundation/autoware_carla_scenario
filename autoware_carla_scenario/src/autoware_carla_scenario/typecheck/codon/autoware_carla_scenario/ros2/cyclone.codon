@@ -1,0 +1,16 @@
+# Model of autoware_carla_scenario.ros2.cyclone (docs/typecheck.md), which
+# imports cyclonedds: the CycloneRos2Transport that the checked
+# entity.ros2_entity._cyclone_transport() builds. Only its constructor is
+# declared; open(), publish_state(), poll() and close() are the base's, which
+# is what Ros2EgoEntity calls them through.
+#
+# The base and the config come from _ros2.codon, which the library check
+# replaces with the checked ros2.transport and ros2.config (REPLACED_MODELS,
+# typecheck/library.py): the transport is then a checked Ros2EgoTransport.
+
+from .._ros2 import Ros2EgoConfig, Ros2EgoTransport
+
+
+class CycloneRos2Transport(Ros2EgoTransport):
+    def __init__(self, config: Ros2EgoConfig):
+        super().__init__(config)

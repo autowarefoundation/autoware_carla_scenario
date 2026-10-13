@@ -326,6 +326,30 @@ def test_the_map_source_model_re_exports_the_checked_source() -> None:
     ]
 
 
+def test_the_ros2_model_re_exports_the_checked_config_and_transport() -> None:
+    # So the model CycloneRos2Transport (ros2/cyclone.codon) derives from the
+    # checked Ros2EgoTransport and takes the checked Ros2EgoConfig, which the
+    # checked entity.ros2_entity._cyclone_transport() hands it.
+    config, transport = REPLACED_MODELS["_ros2"]
+    problems: list = []
+    out = replaced_models(_trees(config, transport), problems)
+    assert problems == []
+    assert out["_ros2"].splitlines() == [
+        f"from {workspace_module(config)} import Ros2EgoConfig",
+        f"from {workspace_module(transport)} import Ros2EgoTransport",
+    ]
+
+
+def test_the_cyclone_model_stands_in_for_the_unchecked_module() -> None:
+    # ros2.cyclone imports cyclonedds: the checked ros2_entity imports it
+    # through its model, a module of the checked ros2 package's own.
+    assert f"{_PACKAGE}.ros2.cyclone" in EXCLUDED
+    assert f"{_PACKAGE}.ros2" in CHECKED
+    assert _model_module(f"{_PACKAGE}.ros2.cyclone") == f"{_PACKAGE}.ros2.cyclone"
+    assert _model_module(f"{_PACKAGE}.ros2") is None
+    assert _model_module(f"{_PACKAGE}.ros2.messages") is None
+
+
 def test_a_model_is_replaced_only_once_all_its_modules_are_checked() -> None:
     frames, _poses = REPLACED_MODELS["_poses"]
     problems: list = []
