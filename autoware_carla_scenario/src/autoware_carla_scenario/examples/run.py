@@ -391,9 +391,40 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         control = ControlConfig.from_mapping(driver_dict.get("control", {}))
         return CarlaDriverEntity(DriverClientConfig.from_mapping(driver_dict), control)
 
+    if entity == "ros2":
+        # ROS 2 nodes drive the ego over DDS (docs/ros2.md). The DDS binding is
+        # imported when the scenario starts, so a missing `ros2` extra fails
+        # there, with the install hint, rather than here.
+        from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
+        from autoware_carla_scenario.entity.ros2_entity import (  # noqa: PLC0415
+            Ros2EgoEntity,
+        )
+        from autoware_carla_scenario.ros2 import Ros2EgoConfig  # noqa: PLC0415
+
+        ros2_cfg = cfg.get("ros2")
+        if ros2_cfg is None:
+            msg = (
+                "ego.entity=ros2 requires the 'ros2' config group. "
+                "Add 'ros2: default' to the defaults list."
+            )
+            raise ValueError(msg)
+
+        if (cfg.get("server") or {}).get("max_tick_rate_hz") is None:
+            # Freshness is judged in simulation time while the nodes publish on
+            # the wall clock: unpaced, a 10 Hz node's commands land more than
+            # stale_s apart and its source flaps between fresh and stale.
+            logger.warning(
+                "ego.entity=ros2 without server.max_tick_rate_hz: the run is not "
+                "paced to real time, so ROS 2 nodes may look stale; set "
+                "server.max_tick_rate_hz=20 (docs/ros2.md, Timing)"
+            )
+        ros2_dict = _to_dict(ros2_cfg)
+        control = ControlConfig.from_mapping(ros2_dict.get("control") or {})
+        return Ros2EgoEntity(Ros2EgoConfig.from_mapping(ros2_dict), control)
+
     msg = (
         f"Unknown ego.entity: {entity!r}. "
-        "Expected one of: 'autopilot', 'autoware', 'carla_driver'."
+        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2'."
     )
     raise ValueError(msg)
 

@@ -150,13 +150,14 @@ The policy gets every observation and plans all the way, but does not drive; the
 scenario's clock starts, and the policy takes over, on arrival. Set `warmup_s` to
 the history the policy reads (3 s for ResWorld's ego past).
 
-`ego.entity` selects the entity and accepts three values:
+`ego.entity` selects the entity and accepts four values:
 
 | Value | Behaviour |
 | --- | --- |
 | `autopilot` (default) | CARLA's TrafficManager drives the ego. |
 | `autoware` | Nothing drives the ego; the actor is left for an external stack. |
 | `carla_driver` | An external policy drives the ego over the contract described here. |
+| `ros2` | ROS 2 nodes drive the ego over DDS ([ROS 2 over DDS](ros2.md)). |
 
 A policy is usually built for one rig, so a preset can choose the vehicle and cameras
 along with the rest of the group. `driver=vision_pilot` is

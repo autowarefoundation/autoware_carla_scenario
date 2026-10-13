@@ -514,6 +514,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 | `autopilot` (default) | CARLA's TrafficManager drives the ego |
 | `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
+| `ros2` | ROS 2 nodes drive the ego over DDS, with no bridge node ([ROS 2 over DDS](ros2.md)) |
 
 Common overrides:
 
