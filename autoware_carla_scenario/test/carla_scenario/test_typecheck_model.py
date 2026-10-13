@@ -28,7 +28,7 @@ from pyxodr.road_objects.network import RoadNetwork as PyxodrRoadNetwork
 from pyxodr.road_objects.road import Road as PyxodrRoad
 
 import autoware_carla_scenario as acs
-from autoware_carla_scenario import carla_install, trajectory_recorder
+from autoware_carla_scenario import carla_install, environment, trajectory_recorder
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
@@ -44,6 +44,7 @@ from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
+from autoware_carla_scenario.odd import route as odd_route
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
@@ -225,6 +226,13 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "to_map_frame": ("coordinate", coordinate_transform.to_map_frame),
     "reset_probes": ("odd", odd_probes.reset_probes),
     "resolve_odd": ("odd", odd_registry.resolve_odd),
+    # What scenario_runner's _warn_if_route_leaves_odd uses of odd.route.
+    **{
+        name: ("odd", getattr(odd_route, name))
+        for name in ("RouteCoverage", "RouteLanelet", "plan_route_coverage")
+    },
+    # What scenario_runner's _record_run reads of environment.capture().
+    "RunEnvironment": ("environment", environment.RunEnvironment),
 }
 
 

@@ -7,6 +7,8 @@
 from pathlib import Path
 
 import typesafe_carla.carla as carla
+import lanelet2.core
+import lanelet2.routing
 
 from ._tc import _keyword_only, _expect_float, _expect_optional_float
 from .coverage import _expect_cover_expression, _expect_optional_range, _expect_optional_edges
@@ -167,6 +169,7 @@ def _expect_optional_modules(modules):
 
 class OddDefinition:
     name: str
+    modules: List[OddModule]
     text: str
 
     def __init__(self, name: str, attributes, modules = None, *_kw,
@@ -177,13 +180,104 @@ class OddDefinition:
         _expect_optional_modules(modules)
         _expect_optional_labels(roots)
         self.name = name
+        self.modules = List[OddModule]()
+        if not (isinstance(modules, None) or isinstance(modules, Optional[NoneType])
+                or isinstance(modules, List[NoneType])):
+            for module in modules:
+                self.modules.append(module)
         self.text = text
 
 
-# A case drawn from the ODD and the space it was drawn in (openodd's, a Rust
-# extension): the checked scenario_runner and scenario_queue only pass it on.
+# openodd's sample and parameter space (a Rust extension): the checked
+# scenario_runner only hands them to CoverageCollector.record_case(), so
+# neither declares more than its being a value.
+class OddSample:
+    _unused: int
+
+    def __init__(self):
+        compile_error("OddSample: openodd's sampler draws it; it is not built here")
+
+    def _acs_odd_sample(self) -> int:
+        return 0
+
+
+class ParameterSpace:
+    _unused: int
+
+    def __init__(self):
+        compile_error("ParameterSpace: openodd's flaky search builds it; it is not built here")
+
+    def _acs_parameter_space(self) -> int:
+        return 0
+
+
+# A case drawn from the ODD and the space it was drawn in
+# (`tuple[OddSample, ParameterSpace]`): the checked scenario_runner records it
+# (`coverage.record_case(*case)`), and scenario_queue passes it on.
+@tuple
 class OddCase:
-    pass
+    sample: OddSample
+    space: ParameterSpace
+
+
+# What the checked scenario_runner uses of odd.route (excluded): the ODD's
+# verdict on the ego's planned route.  Neither class is built by a scenario:
+# plan_route_coverage() returns them.
+class RouteLanelet:
+    lanelet_id: int
+    length_m: float
+    verdict: str
+    failing_modules: List[str]
+
+    def __init__(self, lanelet_id: int, length_m: float, verdict: str,
+                 values = None, failing_modules = None):
+        compile_error("RouteLanelet: plan_route_coverage() builds it")
+
+
+class RouteCoverage:
+    odd: str
+    name: str
+    lanelets: List[RouteLanelet]
+    map_attributes: List[str]
+
+    def __init__(self, odd: str, name: str, lanelets: List[RouteLanelet],
+                 expected_m: Dict[str, Dict[str, float]], map_attributes: List[str]):
+        compile_error("RouteCoverage: plan_route_coverage() builds it")
+
+    @property
+    def length_m(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def outside_m(self) -> float:
+        raise NotImplementedError()
+
+    def outside(self) -> List[RouteLanelet]:
+        raise NotImplementedError()
+
+
+def plan_route_coverage(odd, scenario_or_route, *_kw, lanelet_map = None,
+                        routing_graph = None, name: str = "") -> RouteCoverage:
+    """The ODD's verdict on a planned route.  *odd* is a
+    Union[OddDefinition, str, None] and *scenario_or_route* a
+    Union[BaseScenario, PlannedRoute, Iterable[int]]: a Union parameter
+    crashes Codon 0.19, so both are generic; the ODD's type is checked here."""
+    _keyword_only(_kw, "plan_route_coverage(): lanelet_map, routing_graph and name")
+    if isinstance(odd, None):
+        pass
+    elif isinstance(odd, Optional[NoneType]):
+        pass
+    elif isinstance(odd, str) or isinstance(odd, Optional[str]):
+        pass
+    elif isinstance(odd, OddDefinition) or isinstance(odd, Optional[OddDefinition]):
+        pass
+    else:
+        compile_error("plan_route_coverage(): the ODD is an OddDefinition, a str or None")
+    if not (isinstance(lanelet_map, None) or isinstance(lanelet_map, Optional[NoneType])):
+        m: Optional[lanelet2.core.LaneletMap] = lanelet_map
+    if not (isinstance(routing_graph, None) or isinstance(routing_graph, Optional[NoneType])):
+        g: Optional[lanelet2.routing.RoutingGraph] = routing_graph
+    raise NotImplementedError()
 
 
 def default_odd() -> OddDefinition:
