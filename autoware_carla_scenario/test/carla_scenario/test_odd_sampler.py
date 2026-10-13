@@ -84,7 +84,7 @@ def test_built_in_probes_need_no_knob() -> None:
 def test_a_drawn_value_reads_back_as_its_bucket() -> None:
     """The knob's ranges are the probes' own levels, read backwards."""
     for case in OddSampler(default_odd(), seed=7).sample(50):
-        precipitation = _value(case.overrides, "environment.precipitation")
+        precipitation = _value(case.overrides, "environment.rain")
         fog_density = _value(case.overrides, "environment.fog_density")
         sun = _value(case.overrides, "environment.sun_altitude_angle")
         assert intensity_level(precipitation) == case.buckets["environment.rain"]
@@ -398,7 +398,7 @@ def test_a_sweep_of_samples_alone_needs_no_map() -> None:
         assert case[-2].startswith("++odd_case=")
         assert {o.split("=")[0] for o in case[:-2]} == {
             "environment.sun_altitude_angle",
-            "environment.precipitation",
+            "environment.rain",
             "environment.fog_density",
         }
 
@@ -565,7 +565,7 @@ def test_rounding_does_not_carry_a_value_into_another_bucket() -> None:
 def test_what_is_written_reads_back_exactly() -> None:
     """Rendered in full: 29.9999 must not come back as 30, a level up."""
     for case in OddSampler(default_odd(), seed=21).sample(300):
-        precipitation = _value(case.overrides, "environment.precipitation")
+        precipitation = _value(case.overrides, "environment.rain")
         assert intensity_level(precipitation) == case.buckets["environment.rain"]
 
 

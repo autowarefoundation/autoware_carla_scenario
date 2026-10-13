@@ -740,9 +740,23 @@ their own:
 
 | Probe | Key | Ranges |
 |---|---|---|
-| `rain` | `environment.precipitation` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
+| `rain` | `environment.rain` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
 | `fog` | `environment.fog_density` | as `rain` |
 | `illumination` | `environment.sun_altitude_angle` | `day` 15-90, `low_sun` 0-15, `twilight` -6-0, `night` -90 to -6 |
+
+`environment.rain` sets the precipitation and, with it, the cloudiness,
+standing water and wetness of CARLA's rain presets (`EnvironmentAction`'s
+`rain`): precipitation alone draws only the falling drops, and a camera sees a
+dry road under a clear sky. The probe reads the precipitation, so a drawn value
+still reads back as its bucket. `rain` and `precipitation` cannot both be set
+(the run fails at its start), and the `none` bucket, `rain=0`, is a dry road
+under a clear sky whatever the map's own weather.
+
+Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
+CARLA 0.10 server on the UE 5.8 engine (the `ue58-dev` tree) multiplies it by `carla.Weather.FogDensityScale`,
+whose default 0.001 leaves even `fog_density=100` a faint haze on the horizon.
+Start it with `-ExecCmds="carla.Weather.FogDensityScale 0.01"` for fog a
+camera sees.
 
 A scenario that sets the weather itself (its own `EnvironmentAction`) has
 the last word over the config.

@@ -94,3 +94,51 @@ class TestIntrospection:
         action = EnvironmentAction(precipitation=60.0)
         action.settings["precipitation"] = 0.0
         assert action.settings == {"precipitation": 60.0}
+
+
+class TestRain:
+    def test_rain_brings_the_clouds_and_the_wet_road_of_carlas_presets(self) -> None:
+        """HardRain: precipitation 100, cloudiness 100, deposits 90, wetness 100."""
+        world = _world()
+        EnvironmentAction(rain=100.0).execute(world)
+
+        weather = _applied(world)
+        assert math.isclose(weather.precipitation, 100.0)
+        assert math.isclose(weather.cloudiness, 100.0)
+        assert math.isclose(weather.precipitation_deposits, 90.0)
+        assert math.isclose(weather.wetness, 100.0)
+
+    def test_between_presets_it_is_interpolated(self) -> None:
+        settings = EnvironmentAction(rain=45.0).settings
+        assert settings["precipitation"] == pytest.approx(45.0)
+        assert settings["cloudiness"] == pytest.approx(70.0)
+        assert settings["precipitation_deposits"] == pytest.approx(55.0)
+        assert settings["wetness"] == pytest.approx(45.0)
+
+    def test_no_rain_is_a_dry_clear_sky(self) -> None:
+        settings = EnvironmentAction(rain=0.0).settings
+        assert settings == {
+            "precipitation": 0.0,
+            "cloudiness": 0.0,
+            "precipitation_deposits": 0.0,
+            "wetness": 0.0,
+        }
+
+    def test_a_field_given_beside_rain_wins(self) -> None:
+        settings = EnvironmentAction(rain=100.0, cloudiness=20.0).settings
+        assert settings["cloudiness"] == pytest.approx(20.0)
+        assert settings["wetness"] == pytest.approx(100.0)
+
+    def test_rain_is_clamped_to_its_range(self) -> None:
+        assert EnvironmentAction(rain=150.0).settings["precipitation"] == 100.0
+        assert EnvironmentAction(rain=-5.0).settings["precipitation"] == 0.0
+
+    def test_rain_and_precipitation_together_is_an_error(self) -> None:
+        with pytest.raises(ValueError, match="rain or precipitation"):
+            EnvironmentAction(rain=50.0, precipitation=10.0)
+
+    def test_rain_is_keyword_only(self) -> None:
+        """A twelfth positional argument has nowhere to go: rain is keyword-only."""
+        positional: list = [None] * 11
+        with pytest.raises(TypeError):
+            EnvironmentAction(*positional, 50.0)  # type: ignore[call-arg]
