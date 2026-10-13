@@ -227,16 +227,34 @@ def _write_result(
 
 
 def _record_run(
-    coverage: CoverageCollector, case: Optional[OddCase], passed: bool
+    coverage: CoverageCollector, case: Optional[OddCase], result: ScenarioResult
 ) -> None:
     """Record in *coverage* the case the run ran, if it was drawn from the ODD,
-    and whether it passed: what the merged report assesses the flakiness of
-    and a later sweep's flaky search learns from. openodd's (a Rust
-    extension): the check (docs/typecheck.md) does not compile it.
+    and its outcome: what the merged report assesses the flakiness of and a
+    later sweep's flaky search learns from. openodd's (a Rust extension): the
+    check (docs/typecheck.md) does not compile it.
+
+    A failed run also records when it failed -- ``result.elapsed_seconds``,
+    on the simulated clock the collector was started and ticked on -- so the
+    report can say which ODD cell the ego was in. Every run records its
+    environment's id (what ``{stem}_requirements.lock`` pins, the id its
+    header and the result carry): the report never pools runs of different
+    environments, where a regression would read as flakiness.
     """
+    from .environment import capture  # noqa: PLC0415
+
     if case is not None:
         coverage.record_case(*case)
-    coverage.record_outcome(passed)
+    try:
+        environment: Optional[str] = capture().id
+    except Exception:  # noqa: BLE001 - a run's outcome matters more than this
+        logger.warning("could not read the run's environment", exc_info=True)
+        environment = None
+    coverage.record_outcome(
+        result.passed,
+        failed_at=None if result.passed else result.elapsed_seconds,
+        environment=environment,
+    )
 
 
 def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
@@ -1329,7 +1347,7 @@ class ScenarioRunner:
                     # The case is openodd's (a Rust extension): Codon has none.
                     pass
                 else:
-                    _record_run(coverage, case, result.passed)
+                    _record_run(coverage, case, result)
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(

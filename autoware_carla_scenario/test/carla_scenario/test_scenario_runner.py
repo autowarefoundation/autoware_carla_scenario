@@ -442,3 +442,55 @@ class TestReloadingTheMap:
 
         client.reload_world.assert_called_once_with()
         client.load_world.assert_not_called()
+
+
+class TestRecordRun:
+    """What a run's coverage file says of its outcome."""
+
+    def test_a_failed_run_records_when_and_on_what(self) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.environment import capture
+        from autoware_carla_scenario.scenario_runner import _record_run
+
+        coverage = MagicMock()
+        result = ScenarioResult(passed=False, message="crash", elapsed_seconds=123.45)
+        _record_run(coverage, None, result)
+        coverage.record_case.assert_not_called()
+        coverage.record_outcome.assert_called_once_with(
+            False, failed_at=123.45, environment=capture().id
+        )
+
+    def test_a_passed_run_records_no_failure_time(self) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.environment import capture
+        from autoware_carla_scenario.scenario_runner import _record_run
+
+        coverage = MagicMock()
+        case = (MagicMock(), MagicMock())
+        _record_run(
+            coverage,
+            case,
+            ScenarioResult(passed=True, message="ok", elapsed_seconds=9.0),
+        )
+        coverage.record_case.assert_called_once_with(*case)
+        coverage.record_outcome.assert_called_once_with(
+            True, failed_at=None, environment=capture().id
+        )
+
+    def test_an_unreadable_environment_is_none(self) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.scenario_runner import _record_run
+
+        coverage = MagicMock()
+        with patch(
+            "autoware_carla_scenario.environment.capture",
+            side_effect=RuntimeError("no"),
+        ):
+            _record_run(
+                coverage,
+                None,
+                ScenarioResult(passed=False, message="x", elapsed_seconds=1.0),
+            )
+        coverage.record_outcome.assert_called_once_with(
+            False, failed_at=1.0, environment=None
+        )
