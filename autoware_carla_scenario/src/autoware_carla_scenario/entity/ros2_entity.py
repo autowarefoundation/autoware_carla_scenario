@@ -181,12 +181,7 @@ class Ros2EgoEntity(EgoVehicle):
             actor.get_physics_control()
         )
         if self._transport is None:
-            if TYPE_CHECKING:
-                # ros2.cyclone imports cyclonedds, which Codon cannot compile:
-                # the check builds no transport (docs/typecheck.md).
-                raise ImportError("the static check builds no Cyclone DDS transport")
-            else:
-                self._transport = _cyclone_transport(self._config)
+            self._transport = _cyclone_transport(self._config)
         self._transport.open()
         self._open = True
         self._transport.publish_state(self._state(world, actor)[0])

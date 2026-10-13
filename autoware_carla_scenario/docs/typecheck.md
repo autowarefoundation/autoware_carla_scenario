@@ -314,7 +314,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 83
+below). 82
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -344,9 +344,7 @@ odd.route or a condition's details (writing the result and its environment,
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
-ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
-builds the ROS 2 ego's Cyclone DDS transport (`entity.ros2_entity._cyclone_transport()`,
-which imports `ros2.cyclone` inside it) and
+ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
 `encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 55 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
@@ -444,7 +442,8 @@ stands in for it in the check's workspace:
   `coordinate.codon`), or, for a module of a package that is itself checked,
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
-  `maps/cache.codon`, `autoware_stack/devcontainer.codon`), or, for a module of
+  `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
+  `ros2/cyclone.codon`), or, for a module of
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
@@ -1191,8 +1190,7 @@ What Codon 0.19 needs that Python does not, beyond
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
   first branch what it can (`ScenarioRunner` calls `require_goal()`, built
   on the ego's class, and `_warn_if_route_leaves_odd()`, which plans the
-  route with odd.route, in the `else` branch; `Ros2EgoEntity.on_scenario_start()`
-  builds its Cyclone DDS transport, `_cyclone_transport()`, there too). A
+  route with odd.route, in the `else` branch). A
   private helper that imports such a module inside it needs an `UNCALLED`
   entry of its own: its import is rewritten, and refused, even when nothing
   compiled calls it.
@@ -1337,7 +1335,17 @@ What Codon 0.19 needs that Python does not, beyond
   top-level package model itself is not replaced: the examples would then
   derive from the checked `BaseScenario`, and their constructors' calls to
   `super().__init__()` would compile `BaseScenario.__init__`, which is
-  `UNCALLED` (it stores the ego's class, `ego_type`).
+  `UNCALLED` (it stores the ego's class, `ego_type`). The model of
+  `ros2.cyclone` (`ros2/cyclone.codon`, cyclonedds) declares the
+  `CycloneRos2Transport` constructor that the checked
+  `entity.ros2_entity._cyclone_transport()` calls; its base `Ros2EgoTransport`
+  and its `Ros2EgoConfig` come from a model module of their own
+  (`_ros2.codon`), which `REPLACED_MODELS` replaces with the checked
+  `ros2.transport` and `ros2.config`, so the transport `_cyclone_transport()`
+  returns is the checked `Ros2EgoTransport`, and its body is compiled. For the
+  scenario check, which has no ROS 2 package, the two are stand-ins whose
+  constructors are a `compile_error`, as for a class a checked package only
+  re-exports (below).
 - **A class a checked package only re-exports** is declared in the model by
   name and constructor: `GrpcAutowareBridgeServer`
   (`autoware_bridge/grpc_server.codon`, grpc), `EgoDriverGrpcClient`
