@@ -231,7 +231,7 @@ defines anything.
 `CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every
 other module to the reason it is not. `"not yet checked (#45)"` marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(`"imports lanelet2, json"`: a package or a standard module Codon cannot
+(`"imports omegaconf, hydra"`: a package or a standard module Codon cannot
 compile). numpy is not one: Codon ships its own, and a module's numpy calls
 compile. Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
@@ -260,15 +260,17 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 151 of
-the package's 228 modules (66%; about 35,000 of 65,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 153 of
+the package's 228 modules (67%; about 35,800 of 65,800 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
 and the lane arithmetic of a relative lane pose (`trajectory.relative_lane`),
 the map manager that loads the Lanelet2 map and the OpenDRIVE road network
 (`coordinate.map_manager`) and the sweeper's lighter loader of the Lanelet2
-map (`sweeper.map_loader`), what places a trajectory's vertices in CARLA
+map (`sweeper.map_loader`), with the projection and origin both read a map
+with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
+whose YAML values are of any type), what places a trajectory's vertices in CARLA
 world coordinates (`trajectory.resolve`),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
@@ -276,7 +278,8 @@ frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
-walk-straight actions, the logical scenario's route search and matches (`route.model`) and
+walk-straight actions and the background-traffic source and sink
+(`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
@@ -332,23 +335,22 @@ node's command from its ROS parameters (`bridge_ros_args()`,
 values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
 already sealed`, so the checker drops one and the check has nothing to call
 with), what the runner does with `json`,
-lanelet2 or a condition's details (writing the result and its environment,
+odd.route or a condition's details (writing the result and its environment,
 `_write_result()`; checking the planned route against the ODD,
 `ScenarioRunner._warn_if_route_leaves_odd()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 58 import what Codon cannot
-compile, 28 build on an excluded module and 20 hold values Codon has no type
+`encode_frame_jpeg()` (cv2). The 75 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 53 import what Codon cannot
+compile, 28 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **58 import what Codon cannot compile**: lanelet2 beyond what its model
-  declares (most of these walk its objects typed `Any`), pyxodr,
+- **53 import what Codon cannot compile**: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
-  beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
+  beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
@@ -358,13 +360,14 @@ for), so each is counted once, in the first group that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **16 build on an excluded module**, and import nothing Codon lacks
+- **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator and
-  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 16
+  authoring compiler, builders and validator, `odd.probes` and `odd.route`
+  (`odd.model`; the lanelet2 they read is modelled) and
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -463,10 +466,11 @@ with an example scenario in it failed in Codon 0.19's code generation
 `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code declares only what the
-checked modules and scenarios use of it: `coordinate.codon` declares, of
-`coordinate.projection` (yaml), only the `map_origin()`, `resolve_projector()`
-and `_parse_geo_reference()` that the checked `coordinate.map_manager` and
-`sweeper.map_loader` import. Its `MapManager` is now the scenario check's
+checked modules and scenarios use of it. `coordinate.codon` still declares,
+of `coordinate.projection`, the `map_origin()`, `resolve_projector()` and
+`_parse_geo_reference()` that `coordinate.map_manager` and
+`sweeper.map_loader` import, though the library check now compiles all three
+from their source. Its `MapManager` is now the scenario check's
 alone: the library check compiles `map_manager.py` from its source, which
 every checked module imports, and nothing of the model takes or returns a
 `MapManager`, so it needs no `REPLACED_MODELS` entry.
@@ -1143,7 +1147,16 @@ What Codon 0.19 needs that Python does not, beyond
   `Optional[int]`) but takes `self._lane_id = address.lane_id`, and
   `X(...) if c else None` likewise only without the annotation.
 - **`x or []` with `x: Optional[list[T]]`** has no one type in Codon: start
-  from an annotated empty list and assign `x` under `if x:`.
+  from an annotated empty list and assign `x` under `if x:`. Likewise
+  `stated or DEFAULT` with `stated: Optional[str]`: branch on the cases
+  into an annotated `str` local (`coordinate.projection.resolve_projector`).
+- **A regex group used as a `str`** (`m.group(1)` handed to `re.search`, or
+  to a `str` local): Codon's `Match.group()` is an `Optional[str]` whose
+  type Codon 0.19 cannot settle from such a use. Take `str(m.group(1))`,
+  the same `str` in Python (`coordinate.projection._parse_geo_reference`).
+- **Projectors of different classes return through one `-> Projector`**
+  (`coordinate.projection.make_projector`): the lanelet2 model derives each
+  from `Projector`, and Codon 0.19 converts a subclass to it at `return`.
 - **A subclass goes into an `Optional` base parameter from a base-typed
   variable**: Codon does not upcast and wrap in one step, so
   `super().__init__(child=PersistentCondition(...))` against
@@ -1166,7 +1179,7 @@ What Codon 0.19 needs that Python does not, beyond
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
   first branch what it can (`ScenarioRunner` calls `require_goal()`, built
   on the ego's class, and `_warn_if_route_leaves_odd()`, which plans the
-  route with lanelet2, in the `else` branch).
+  route with odd.route, in the `else` branch).
 - **An entity looked up by role is looked up by kind**:
   `find_entity_by_role_name` returns an entity of any kind (`Optional[Any]`),
   so a checked module asks `entity.registry` for the kind it acts on,
@@ -1338,7 +1351,13 @@ What Codon 0.19 needs that Python does not, beyond
   (it imports `coordinate.transform` itself, which is checked, so the library
   check compiles the real `to_map_frame` there).
 - **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
-  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`).
+  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`,
+  `actions.background_traffic`, where `test_background_traffic.py` pins the
+  two to the same number).
+- **A function whose only return is `return None`** cannot be typed, even
+  with an `Optional[X]` return annotation ("cannot typecheck 'None'"), and
+  `del` of a parameter is refused: return a local declared
+  `Optional[X] = None` (`_Never.check` in `actions.background_traffic`).
 - **A method that takes `**kwargs`, called on a value whose class a checked
   subclass overrides it in**, is called through the base class under `if
   TYPE_CHECKING:`, and as written in the `else` branch: `actions.turn` calls

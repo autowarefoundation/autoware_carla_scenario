@@ -111,6 +111,44 @@ def test_the_sweep_of_the_frame_asked_for_is_taken_and_the_backlog_dropped(
     assert sweep is not None and sweep[0, 0] == 14.0
 
 
+def test_between_sweeps_the_newest_is_taken_with_its_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
+    assert lidar.sweep_interval_ticks == 2
+    lidar._receive(_measurement(10))  # noqa: SLF001
+    sweep = lidar.latest_sweep(10)
+    assert sweep is not None and sweep[0] == 10
+    # The tick after: no sweep is due, the one of frame 10 is the newest.
+    sweep = lidar.latest_sweep(11)
+    assert sweep is not None and sweep[0] == 10 and sweep[1][0, 0] == 10.0
+    # Two ticks on, one is due and waited for.
+    lidar._receive(_measurement(12))  # noqa: SLF001
+    sweep = lidar.latest_sweep(12)
+    assert sweep is not None and sweep[0] == 12
+
+
+def test_a_sweep_a_tick_off_the_policy_is_still_this_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
+    for frame in (10, 12):
+        lidar._receive(_measurement(frame))  # noqa: SLF001
+    sweep = lidar.latest_sweep(13)
+    assert sweep is not None and sweep[0] == 12
+    # Nothing comes for frame 14: by 15 the sweep of 12 is an interval old.
+    assert lidar.latest_sweep(15) is None
+
+
+def test_the_sweep_interval_is_whole_ticks() -> None:
+    with pytest.raises(ValueError, match="sweep_interval_s"):
+        CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.07)
+    with pytest.raises(ValueError, match="sweep_interval_s"):
+        CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.0)
+
+
 def test_the_listener_hands_the_measurement_to_receive() -> None:
     lidar = CarlaLidarSensor(DriverLidarConfig())
     lidar._on_sensor_data(_measurement(7))  # type: ignore[arg-type]  # noqa: SLF001
@@ -135,6 +173,25 @@ def test_attach_pins_one_revolution_per_tick() -> None:
     assert blueprint.attributes["rotation_frequency"] == "20.0"
     assert blueprint.attributes["channels"] == "32"
     assert blueprint.attributes["dropoff_general_rate"] == "0.0"
+    # Every tick: CARLA's default sensor_tick is left alone.
+    assert "sensor_tick" not in blueprint.attributes
+
+
+def test_attach_sweeps_once_an_interval_still_a_revolution_a_sweep() -> None:
+    blueprint = SimpleNamespace(attributes={}, has_attribute=lambda name: True)
+    blueprint.set_attribute = blueprint.attributes.__setitem__
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
+        spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
+            listen=lambda cb: None
+        ),
+    )
+    CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1).attach(
+        world, SimpleNamespace(type_id="vehicle.lincoln.mkz")
+    )
+    assert blueprint.attributes["rotation_frequency"] == "20.0"
+    # Just under the interval, so two ticks' float deltas reach it.
+    assert 0.0999 < float(blueprint.attributes["sensor_tick"]) < 0.1
 
 
 # ---------------------------------------------------------------------------

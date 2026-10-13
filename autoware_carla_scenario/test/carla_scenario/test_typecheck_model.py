@@ -200,8 +200,8 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
     "MapManager": ("coordinate", coordinate_map_manager.MapManager),
-    # coordinate.projection (yaml) is not checked: what the checked
-    # map_manager and sweeper.map_loader import of it.
+    # What map_manager and sweeper.map_loader import of coordinate.projection,
+    # which the library check now compiles from its source too.
     **{
         name: ("coordinate", getattr(coordinate_projection, name))
         for name in ("_parse_geo_reference", "map_origin", "resolve_projector")

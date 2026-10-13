@@ -350,7 +350,11 @@ class CarlaDriverEntity(EgoVehicle):
         from ..sensor.carla_lidar import CarlaLidarSensor  # noqa: PLC0415
 
         for config in self._config.lidars:
-            lidar = CarlaLidarSensor(config)
+            # Swept only on the ticks the policy reads it: the sweeps between
+            # would be ray-cast for nobody.
+            lidar = CarlaLidarSensor(
+                config, sweep_interval_s=self._config.policy_timestep_s
+            )
             lidar.attach(world, actor)
             mount = sensor_pose_in_rig(
                 config.position_x,
@@ -380,20 +384,26 @@ class CarlaDriverEntity(EgoVehicle):
         )
 
     def _lidar_sweeps(self) -> List[LidarSweep]:
-        """This tick's sweep from every LiDAR that delivered one, in the rig frame."""
+        """Every LiDAR's newest sweep, in the rig frame, stamped with when it was taken.
+
+        A LiDAR sweeps once a policy step, which need not be this very tick: a
+        sweep from an earlier tick carries that tick's time.
+        """
         if not self._lidars or self._world is None:
             return []
         frame = int(self._world.get_snapshot().frame)
+        tick_us = int(round(_FIXED_DELTA_S * _US_PER_S))
         sweeps = []
         for logical_id, lidar, mount in self._lidars:
-            raw = lidar.get_sweep(frame)
-            if raw is None:
+            sweep = lidar.latest_sweep(frame)
+            if sweep is None:
                 continue
+            age_ticks = max(frame - sweep[0], 0)
             sweeps.append(
                 pack_lidar_sweep(
                     logical_id,
-                    self._sim_time_us,
-                    lidar_points_to_rig(raw, mount),
+                    self._sim_time_us - age_ticks * tick_us,
+                    lidar_points_to_rig(sweep[1], mount),
                     mount.to_proto(),
                 )
             )
