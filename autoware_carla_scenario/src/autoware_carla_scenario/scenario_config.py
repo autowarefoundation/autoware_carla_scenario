@@ -431,3 +431,8 @@ class SweepConfig:
     #: and ``flaky`` (a flaky search learning from ``coverage_from``'s runs).
     #: Empty draws nothing.
     odd_sample: dict[str, Any] = field(default_factory=dict)
+
+    #: Keep only the case at this (0-based) index of the expansion; ``None``
+    #: keeps them all.  ``++sweep.case_index=0`` on a batch runs each scenario
+    #: on its first case.
+    case_index: int | None = None
