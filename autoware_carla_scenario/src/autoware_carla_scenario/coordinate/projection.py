@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 # autoware_lanelet2_extension_python must be imported before lanelet2.  Its
 # `regulatory_elements` module is what registers the Autoware-specific ones
@@ -39,7 +39,6 @@ from autoware_lanelet2_extension_python.projection import (
 )
 import lanelet2.io
 import lanelet2.projection
-import yaml  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,13 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
 
     Both things read out of it -- the projection and the origin -- come through
     here, so "is there a descriptor, and is it usable" is decided once.
+
+    yaml is imported here, the one place that reads it: the check
+    (docs/typecheck.md) compiles neither this nor the two readers, which
+    hand out YAML values of any type.
     """
+    import yaml  # type: ignore[import-untyped]
+
     info_path = Path(lanelet2_path).parent / PROJECTOR_INFO_FILENAME
     if not info_path.is_file():
         return {}
@@ -191,7 +196,9 @@ def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     if geo_ref_match is None:
         raise ValueError("No <geoReference> element found in XODR file.")
 
-    proj_string = geo_ref_match.group(1)
+    # str() of the str a matched group is: Codon 0.19 cannot settle the type
+    # of a group (`Optional[str]`) that is then used as a str.
+    proj_string = str(geo_ref_match.group(1))
 
     lat_match = re.search(r"\+lat_0=([-\d.]+)", proj_string)
     lon_match = re.search(r"\+lon_0=([-\d.]+)", proj_string)
@@ -230,23 +237,38 @@ def map_origin(
     Raises:
         ValueError: If a given OpenDRIVE file lacks a valid ``geoReference``.
     """
-    stated = read_map_origin(lanelet2_path)
+    if TYPE_CHECKING:
+        # read_map_origin() reads the descriptor's YAML values (`Any`), which
+        # Codon cannot express (UNCALLED in typecheck/library.py): the check
+        # takes a map that states no origin.
+        stated: Optional[tuple[float, float, float]] = None
+    else:
+        stated = read_map_origin(lanelet2_path)
     if stated is not None:
-        return stated, PROJECTOR_INFO_FILENAME
+        origin: tuple[float, float, float] = stated
+        return origin, PROJECTOR_INFO_FILENAME
     if xodr_path is not None:
         path = Path(xodr_path)
         return _parse_geo_reference(path.read_text(encoding="utf-8")), path.name
     return NULL_ISLAND, "the CARLA town default"
 
 
-def make_projector(projector_type: str, origin: "lanelet2.io.Origin") -> Any:
-    """Return the Lanelet2 projector named by *projector_type*, at *origin*."""
+def make_projector(
+    projector_type: str, origin: "lanelet2.io.Origin"
+) -> lanelet2.projection.Projector:
+    """Return the Lanelet2 projector named by *projector_type*, at *origin*.
+
+    Every one of them is a ``lanelet::Projector`` in C++, which is what
+    ``lanelet2.io.load()`` takes; Python's binding registers none as derived
+    from ``Projector`` (nor do lanelet2's stubs), hence the ignores.  The
+    check's lanelet2 model derives them as C++ does.
+    """
     if projector_type == "mgrs":
         return MGRSProjector(origin)
     if projector_type == "utm":
-        return lanelet2.projection.UtmProjector(origin)
+        return lanelet2.projection.UtmProjector(origin)  # type: ignore[return-value]
     if projector_type == "local_cartesian":
-        return lanelet2.projection.LocalCartesianProjector(origin)
+        return lanelet2.projection.LocalCartesianProjector(origin)  # type: ignore[return-value]
     if projector_type == "transverse_mercator":
         return TransverseMercatorProjector(origin)
     raise ValueError(
@@ -259,12 +281,19 @@ def resolve_projector(
     lanelet2_path: Path,
     origin: "lanelet2.io.Origin",
     projector_type: Optional[str] = None,
-) -> tuple[Any, str]:
+) -> tuple[lanelet2.projection.Projector, str]:
     """Return the projector to read *lanelet2_path* with, and its name.
 
     *projector_type* forces the choice; leave it ``None`` to take it from the
     map's own descriptor, and ``mgrs`` when there is no descriptor.
     """
-    if projector_type is None:
-        projector_type = read_projector_type(lanelet2_path) or DEFAULT_PROJECTOR
-    return make_projector(projector_type, origin), projector_type
+    if projector_type is not None:
+        name: str = projector_type
+    elif TYPE_CHECKING:
+        # read_projector_type() reads the descriptor's YAML values (`Any`),
+        # which Codon cannot express (UNCALLED in typecheck/library.py): the
+        # check takes a map without one.
+        name = DEFAULT_PROJECTOR
+    else:
+        name = read_projector_type(lanelet2_path) or DEFAULT_PROJECTOR
+    return make_projector(name, origin), name
