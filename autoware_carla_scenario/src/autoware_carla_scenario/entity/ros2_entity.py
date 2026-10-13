@@ -28,17 +28,15 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Dict, Optional
-
+from typing import TYPE_CHECKING, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS
 from ..driver.base import EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower, VehicleCommand
-from ..driver.geometry import Pose, Trajectory
+from ..driver.geometry import Trajectory
 from ..driver.observation import ego_observation, rear_axle_offset
 from ..ros2.commands import (
     CommandArbiter,
-    ControlCommand,
     EgoState,
     Selection,
     SteerAccelCommand,
@@ -64,35 +62,32 @@ _US_PER_S: int = 1_000_000
 _MIN_TIMING_SPEED_MPS: float = 0.1
 
 
-def plan_from_trajectory(command: TrajectoryCommand, anchor_s: float) -> Trajectory:
+def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajectory:
     """Return *command* as a timed plan in the local frame.
 
-    Each point is stamped ``anchor_s + time_from_start``.  A trajectory whose
+    Each point is stamped ``anchor_us + time_from_start``.  A trajectory whose
     ``time_from_start`` does not increase -- many planners leave it zero -- is
     timed from its speeds instead: each segment takes its length over the mean of
     its end speeds.
 
     Args:
         command: The received trajectory.
-        anchor_s: The simulation time its first point belongs to.
+        anchor_us: The simulation time its first point belongs to.
     """
     points = command.points
-    offsets = [point.time_from_start_s for point in points]
+    offsets = [point.time_from_start_us for point in points]
     if any(later <= earlier for earlier, later in zip(offsets, offsets[1:])):
-        offsets = [0.0]
+        offsets = [0]
         for previous, point in zip(points, points[1:]):
-            length = math.dist((previous.x, previous.y), (point.x, point.y))
+            length = math.dist(previous.pose.position[:2], point.pose.position[:2])
             speed = 0.5 * (previous.velocity_mps + point.velocity_mps)
             if speed < _MIN_TIMING_SPEED_MPS:
                 # The plan stops here: whatever follows is not reached.
                 break
-            offsets.append(offsets[-1] + length / speed)
+            offsets.append(offsets[-1] + int(round(length / speed * _US_PER_S)))
     plan = Trajectory.empty()
     for point, offset in zip(points, offsets):
-        plan.append(
-            int(round((anchor_s + offset) * _US_PER_S)),
-            Pose.from_xyz_yaw(point.x, point.y, point.z, point.yaw),
-        )
+        plan.append(anchor_us + offset, point.pose)
     return plan
 
 
@@ -120,7 +115,8 @@ class Ros2EgoEntity(EgoVehicle):
     _open: bool
     _active: Optional[str]
     _active_fresh: bool
-    _plans: Dict[int, Trajectory]
+    #: The trajectory command last tracked and its timed plan.
+    _planned: Optional[Tuple[TrajectoryCommand, Trajectory]]
 
     def __init__(
         self,
@@ -137,7 +133,7 @@ class Ros2EgoEntity(EgoVehicle):
         self._open = False
         self._active = None
         self._active_fresh = False
-        self._plans = {}
+        self._planned = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -195,10 +191,10 @@ class Ros2EgoEntity(EgoVehicle):
         state, observation = self._state(world, actor)
         transport.publish_state(state)
         for source_name, command in transport.poll():
-            self._arbiter.observe(source_name, command, state.stamp_s)
-        selection = self._arbiter.select(state.stamp_s)
+            self._arbiter.observe(source_name, command, state.stamp_us)
+        selection = self._arbiter.select(state.stamp_us)
         self._note_selection(selection)
-        self._apply(actor, selection, observation, state.stamp_s)
+        self._apply(actor, selection, observation)
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Leave the DDS domain.
@@ -220,17 +216,22 @@ class Ros2EgoEntity(EgoVehicle):
     def _state(
         self, world: "carla.World", actor: "carla.Actor"
     ) -> tuple[EgoState, EgoObservation]:
-        stamp_s = float(world.get_snapshot().timestamp.elapsed_seconds)
-        observation = ego_observation(
-            actor, int(round(stamp_s * _US_PER_S)), self._rear_axle_offset_m
+        stamp_us = int(
+            round(float(world.get_snapshot().timestamp.elapsed_seconds) * _US_PER_S)
         )
+        observation = ego_observation(actor, stamp_us, self._rear_axle_offset_m)
         state = EgoState(
-            stamp_s=stamp_s,
+            stamp_us=stamp_us,
             pose=observation.pose,
             linear_velocity=observation.linear_velocity,
             angular_velocity=observation.angular_velocity,
             speed_mps=observation.speed_mps,
-            steering_tire_angle_rad=_steering_tire_angle(actor),
+            # Two server round trips a tick: only when something reads it.
+            steering_tire_angle_rad=(
+                _steering_tire_angle(actor)
+                if self._config.steering_status_topic
+                else 0.0
+            ),
         )
         return state, observation
 
@@ -252,7 +253,7 @@ class Ros2EgoEntity(EgoVehicle):
                 if self._config.on_stale == "hold"
                 else "braking",
             )
-        elif fresh and not self._active_fresh and name is not None:
+        elif fresh and not self._active_fresh:
             logger.info("Command source %r is fresh again", name)
         self._active = name
         self._active_fresh = fresh
@@ -262,7 +263,6 @@ class Ros2EgoEntity(EgoVehicle):
         actor: "carla.Actor",
         selection: Optional[Selection],
         observation: EgoObservation,
-        now_s: float,
     ) -> None:
         if selection is None or (
             not selection.fresh and self._config.on_stale == "brake"
@@ -272,76 +272,52 @@ class Ros2EgoEntity(EgoVehicle):
         command = selection.command
         source = selection.source
         if isinstance(command, TrajectoryCommand):
-            plan = self._plan(selection)
             vehicle_command = self._follower.step(
-                plan,
+                self._plan(command, selection.received_us),
                 observation.pose,
                 observation.speed_mps,
                 FIXED_DELTA_SECONDS,
                 yaw_rate_rps=float(observation.angular_velocity[2]),
-                now_us=int(round(now_s * _US_PER_S)),
+                now_us=observation.timestamp_us,
                 gear=int(actor.get_control().gear),
             )
             actor.apply_control(vehicle_command.to_carla_control())
-        elif isinstance(command, SteerAccelCommand):
-            _apply_ackermann(
-                actor,
-                steer_rad=source.steering_sign * command.steering_rad,
-                speed_mps=observation.speed_mps
-                + command.acceleration_mps2 * source.speed_horizon_s,
-                acceleration_mps2=command.acceleration_mps2,
-                jerk_mps3=source.jerk_mps3,
+            return
+        if isinstance(command, SteerAccelCommand):
+            steer_rad = source.steering_sign * command.steering_rad
+            speed_mps = (
+                observation.speed_mps
+                + command.acceleration_mps2 * source.speed_horizon_s
             )
-        elif isinstance(command, ControlCommand):
-            _apply_ackermann(
-                actor,
-                # Autoware steers positive to the left; CARLA's Ackermann
-                # controller, positive to the right.
-                steer_rad=-command.steering_tire_angle_rad,
-                speed_mps=command.velocity_mps,
-                acceleration_mps2=command.acceleration_mps2,
-                jerk_mps3=(
-                    command.jerk_mps3
-                    if command.jerk_mps3 is not None
-                    else source.jerk_mps3
-                ),
+            acceleration_mps2 = command.acceleration_mps2
+            jerk_mps3 = source.jerk_mps3
+        else:
+            # Autoware steers positive to the left; CARLA's Ackermann
+            # controller, positive to the right.
+            steer_rad = -command.steering_tire_angle_rad
+            speed_mps = command.velocity_mps
+            acceleration_mps2 = command.acceleration_mps2
+            jerk_mps3 = (
+                command.jerk_mps3 if command.jerk_mps3 is not None else source.jerk_mps3
             )
+        import typesafe_carla.carla as _carla  # noqa: PLC0415
 
-    def _plan(self, selection: Selection) -> Trajectory:
-        """The timed plan of a trajectory selection, built once per command."""
-        command = selection.command
-        assert isinstance(command, TrajectoryCommand)
-        key = id(command)
-        plan = self._plans.get(key)
-        if plan is None:
-            anchor_s = (
-                command.stamp_s if command.stamp_s > 0.0 else selection.received_s
+        actor.apply_ackermann_control(
+            _carla.VehicleAckermannControl(
+                steer=float(steer_rad),
+                steer_speed=0.0,
+                speed=float(max(0.0, speed_mps)),
+                acceleration=float(acceleration_mps2),
+                jerk=float(jerk_mps3),
             )
-            plan = plan_from_trajectory(command, anchor_s)
-            # Only the command in use is worth keeping.
-            self._plans = {key: plan}
-        return plan
-
-
-def _apply_ackermann(
-    actor: "carla.Actor",
-    *,
-    steer_rad: float,
-    speed_mps: float,
-    acceleration_mps2: float,
-    jerk_mps3: float,
-) -> None:
-    import typesafe_carla.carla as _carla  # noqa: PLC0415
-
-    actor.apply_ackermann_control(
-        _carla.VehicleAckermannControl(
-            steer=float(steer_rad),
-            steer_speed=0.0,
-            speed=float(max(0.0, speed_mps)),
-            acceleration=float(acceleration_mps2),
-            jerk=float(jerk_mps3),
         )
-    )
+
+    def _plan(self, command: TrajectoryCommand, received_us: int) -> Trajectory:
+        """The timed plan of *command*, built once while it is the one tracked."""
+        if self._planned is None or self._planned[0] is not command:
+            anchor_us = command.stamp_us if command.stamp_us > 0 else received_us
+            self._planned = (command, plan_from_trajectory(command, anchor_us))
+        return self._planned[1]
 
 
 def _steering_tire_angle(actor: "carla.Actor") -> float:

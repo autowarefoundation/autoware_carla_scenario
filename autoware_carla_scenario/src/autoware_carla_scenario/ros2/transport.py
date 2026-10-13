@@ -35,11 +35,6 @@ class Ros2EgoTransport(ABC):
     def __init__(self, config: Ros2EgoConfig) -> None:
         self._config = config
 
-    @property
-    def config(self) -> Ros2EgoConfig:
-        """Return the configuration."""
-        return self._config
-
     @abstractmethod
     def open(self) -> None:
         """Join the DDS domain and create the publishers and subscribers."""
@@ -52,7 +47,10 @@ class Ros2EgoTransport(ABC):
 
     @abstractmethod
     def poll(self) -> List[Received]:
-        """Return the commands that arrived since the last poll, oldest first."""
+        """Return the commands that arrived since the last poll, by source.
+
+        A source's commands come in the order they arrived.
+        """
         ...
 
     @abstractmethod

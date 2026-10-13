@@ -96,9 +96,9 @@ def _config(domain: int) -> Ros2EgoConfig:
     )
 
 
-def _state(stamp_s: float) -> EgoState:
+def _state(stamp_us: int) -> EgoState:
     return EgoState(
-        stamp_s=stamp_s,
+        stamp_us=stamp_us,
         pose=Pose.from_xyz_yaw(1.0, 2.0, 0.0, 0.5),
         linear_velocity=np.array([3.0, 0.0, 0.0]),
         angular_velocity=np.array([0.0, 0.0, 0.1]),
@@ -107,11 +107,11 @@ def _state(stamp_s: float) -> EgoState:
     )
 
 
-def test_ros_time_splits_seconds() -> None:
-    stamp = ros_time(12.25)
+def test_ros_time_splits_microseconds() -> None:
+    stamp = ros_time(12_250_000)
     assert (stamp.sec, stamp.nanosec) == (12, 250_000_000)
-    stamp = ros_time(0.9999999999)
-    assert (stamp.sec, stamp.nanosec) == (1, 0)
+    stamp = ros_time(999_999)
+    assert (stamp.sec, stamp.nanosec) == (0, 999_999_000)
 
 
 def test_dds_topic_names_follow_rmw_cyclonedds() -> None:
@@ -140,7 +140,7 @@ def test_state_reaches_a_ros_2_style_reader(loopback: None) -> None:
         )
 
         def publish_and_take() -> List[msg.Odometry]:
-            transport.publish_state(_state(12.5))
+            transport.publish_state(_state(12_500_000))
             return list(odometry.take(4))
 
         (sample, *_) = _until(publish_and_take)
@@ -231,11 +231,13 @@ def test_commands_from_ros_2_style_writers_are_taken(loopback: None) -> None:
         ) == (4.0, -3.0, 1.5)
         plan = by_source["planner"]
         assert isinstance(plan, TrajectoryCommand)
-        assert plan.stamp_s == pytest.approx(3.0)
-        assert [point.x for point in plan.points] == [0.0, 1.0, 2.0]
-        assert [point.time_from_start_s for point in plan.points] == pytest.approx(
-            [0.0, 0.1, 0.2]
-        )
+        assert plan.stamp_us == 3_000_000
+        assert [point.pose.position[0] for point in plan.points] == [0.0, 1.0, 2.0]
+        assert [point.time_from_start_us for point in plan.points] == [
+            0,
+            100_000,
+            200_000,
+        ]
     finally:
         transport.close()
 

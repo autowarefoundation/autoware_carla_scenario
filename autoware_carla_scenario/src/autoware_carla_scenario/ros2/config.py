@@ -8,8 +8,10 @@ and validated where none is installed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
+
+from ..utils.config import checked_options
 
 __all__ = [
     "COMMAND_KINDS",
@@ -104,11 +106,19 @@ class CommandSourceConfig:
             return (self.steering_topic, self.acceleration_topic)
         return (self.topic,)
 
+    @property
+    def stale_us(self) -> int:
+        """:attr:`stale_s` in microseconds, the clock commands are timed on."""
+        return int(round(self.stale_s * 1_000_000))
+
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "CommandSourceConfig":
-        """Build from a plain mapping (e.g. a Hydra node), ignoring unknown keys."""
-        known = {f.name for f in fields(cls)}
-        return cls(**{key: value for key, value in mapping.items() if key in known})
+        """Build from a plain mapping (e.g. a Hydra node).
+
+        Raises:
+            ValueError: If *mapping* holds a key this config does not define.
+        """
+        return cls(**checked_options(cls, mapping))
 
 
 def _default_sources() -> Tuple[CommandSourceConfig, ...]:
@@ -170,9 +180,16 @@ class Ros2EgoConfig:
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2EgoConfig":
-        """Build from a plain mapping (e.g. a Hydra node), ignoring unknown keys."""
-        known = {f.name for f in fields(cls)}
-        values = {key: value for key, value in mapping.items() if key in known}
+        """Build from a plain mapping (e.g. a Hydra node).
+
+        A ``control`` entry, if present, is ignored: the trajectory follower is
+        configured separately, through
+        :meth:`~autoware_carla_scenario.driver.control.ControlConfig.from_mapping`.
+
+        Raises:
+            ValueError: If *mapping* holds a key this config does not define.
+        """
+        values = checked_options(cls, mapping, ignore={"control"})
         sources = values.pop("sources", None)
         if sources is not None:
             values["sources"] = tuple(

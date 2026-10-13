@@ -3,11 +3,14 @@
 The transport turns DDS samples into the plain commands here and the ego's state
 into DDS samples, so the entity never touches a DDS type.  :class:`CommandArbiter`
 picks, each tick, the command source that drives.
+
+Time is in integer microseconds of simulation time throughout, the clock the
+trajectory follower and the ego observation already keep.
 """
 
 from __future__ import annotations
 
-import math
+import dataclasses
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple, Union
 
@@ -26,12 +29,7 @@ __all__ = [
     "SteerAccelPairer",
     "TrajectoryCommand",
     "TrajectoryCommandPoint",
-    "yaw_from_quaternion",
 ]
-
-#: Slack on the freshness test, so that a command exactly ``stale_s`` old --
-#: as a sum of 0.05 s ticks lands, give or take a rounding -- is still fresh.
-_FRESHNESS_EPSILON_S: float = 1e-9
 
 
 @dataclass(frozen=True)
@@ -39,7 +37,7 @@ class EgoState:
     """The ego, as one tick publishes it.
 
     Attributes:
-        stamp_s: Simulation time, as CARLA's ``/clock`` reports it.
+        stamp_us: Simulation time, as CARLA's ``/clock`` reports it.
         pose: The ``base_link`` pose in the right-handed local frame.
         linear_velocity: ``(3,)`` velocity in ``base_link``, m/s.
         angular_velocity: ``(3,)`` angular velocity in ``base_link``, rad/s.
@@ -47,7 +45,7 @@ class EgoState:
         steering_tire_angle_rad: Front tyre angle, positive to the left.
     """
 
-    stamp_s: float
+    stamp_us: int
     pose: Pose
     linear_velocity: np.ndarray[tuple[int], np.dtype[np.float64]]
     angular_velocity: np.ndarray[tuple[int], np.dtype[np.float64]]
@@ -87,22 +85,16 @@ class ControlCommand:
 
 @dataclass(frozen=True)
 class TrajectoryCommandPoint:
-    """One point of a planned trajectory, in the right-handed local frame.
+    """One point of a planned trajectory.
 
     Attributes:
-        time_from_start_s: When the ego should be here, after the plan's stamp.
-        x: Position, metres.
-        y: Position, metres.
-        z: Position, metres.
-        yaw: Heading, radians, counter-clockwise from ``+x``.
+        time_from_start_us: When the ego should be here, after the plan's stamp.
+        pose: Where, in the right-handed local frame.
         velocity_mps: Longitudinal speed at this point.
     """
 
-    time_from_start_s: float
-    x: float
-    y: float
-    z: float
-    yaw: float
+    time_from_start_us: int
+    pose: Pose
     velocity_mps: float
 
 
@@ -111,20 +103,15 @@ class TrajectoryCommand:
     """An ``autoware_planning_msgs/msg/Trajectory``.
 
     Attributes:
-        stamp_s: ``header.stamp``, simulation seconds; ``0.0`` when unset.
+        stamp_us: ``header.stamp``; ``0`` when unset.
         points: The plan.
     """
 
-    stamp_s: float
+    stamp_us: int
     points: Tuple[TrajectoryCommandPoint, ...]
 
 
 Command = Union[SteerAccelCommand, ControlCommand, TrajectoryCommand]
-
-
-def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
-    """Return the heading of a quaternion, radians about ``+z``."""
-    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 class SteerAccelPairer:
@@ -169,31 +156,30 @@ class Selection:
     Attributes:
         source: The source it came from.
         command: The command.
-        received_s: Simulation time it arrived.
+        received_us: Simulation time it arrived.
         fresh: Whether its source was still fresh at the tick that chose it.
     """
 
     source: CommandSourceConfig
     command: Command
-    received_s: float
+    received_us: int
     fresh: bool
 
 
 class CommandArbiter:
     """Chooses, each tick, which source's command drives the ego.
 
-    Of the sources whose last command arrived at most ``stale_s`` simulated
-    seconds ago, the highest priority wins; between equal priorities, the most
-    recent command.  When every source is stale, :meth:`select` returns the
-    command that drove last, marked not fresh, so the caller can hold it or
-    brake.
+    Of the sources whose last command arrived at most ``stale_s`` ago, the
+    highest priority wins; between equal priorities, the most recent command.
+    When every source is stale, :meth:`select` returns the command that drove
+    last, marked not fresh, so the caller can hold it or brake.
 
     Args:
         sources: The configured sources.
     """
 
     _sources: Dict[str, CommandSourceConfig]
-    _latest: Dict[str, Tuple[Command, float]]
+    _latest: Dict[str, Tuple[Command, int]]
     _last: Optional[Selection]
 
     def __init__(self, sources: Sequence[CommandSourceConfig]) -> None:
@@ -201,36 +187,35 @@ class CommandArbiter:
         self._latest = {}
         self._last = None
 
-    def observe(self, source_name: str, command: Command, now_s: float) -> None:
-        """Record *command* from *source_name*, arrived at *now_s*.
+    def observe(self, source_name: str, command: Command, now_us: int) -> None:
+        """Record *command* from *source_name*, arrived at *now_us*.
 
         Raises:
             KeyError: If *source_name* is not a configured source.
         """
         if source_name not in self._sources:
             raise KeyError(f"unknown command source {source_name!r}")
-        self._latest[source_name] = (command, now_s)
+        self._latest[source_name] = (command, now_us)
 
-    def select(self, now_s: float) -> Optional[Selection]:
-        """Return the command that drives at *now_s*, or ``None`` before any."""
+    def select(self, now_us: int) -> Optional[Selection]:
+        """Return the command that drives at *now_us*, or ``None`` before any."""
         best: Optional[Selection] = None
-        for name, (command, received_s) in self._latest.items():
+        for name, (command, received_us) in self._latest.items():
             source = self._sources[name]
-            if now_s - received_s > source.stale_s + _FRESHNESS_EPSILON_S:
+            if now_us - received_us > source.stale_us:
                 continue
             if (
                 best is None
                 or source.priority > best.source.priority
                 or (
                     source.priority == best.source.priority
-                    and received_s > best.received_s
+                    and received_us > best.received_us
                 )
             ):
-                best = Selection(source, command, received_s, fresh=True)
+                best = Selection(source, command, received_us, fresh=True)
         if best is not None:
             self._last = best
             return best
         if self._last is None:
             return None
-        last = self._last
-        return Selection(last.source, last.command, last.received_s, fresh=False)
+        return dataclasses.replace(self._last, fresh=False)

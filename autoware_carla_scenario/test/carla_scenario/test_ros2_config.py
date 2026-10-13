@@ -83,6 +83,19 @@ def test_a_source_lists_the_topics_it_reads() -> None:
     assert CommandSourceConfig(name="c", kind="control", topic="/c").topics == ("/c",)
 
 
+def test_from_mapping_rejects_an_unknown_key() -> None:
+    with pytest.raises(ValueError, match="stale_sec"):
+        Ros2EgoConfig.from_mapping(
+            {
+                "sources": [
+                    {"name": "c", "kind": "control", "topic": "/c", "stale_sec": 1}
+                ]
+            }
+        )
+    with pytest.raises(ValueError, match="domain"):
+        Ros2EgoConfig.from_mapping({"domain": 1})
+
+
 def test_from_mapping_builds_the_sources_and_ignores_the_control_section() -> None:
     config = Ros2EgoConfig.from_mapping(
         {

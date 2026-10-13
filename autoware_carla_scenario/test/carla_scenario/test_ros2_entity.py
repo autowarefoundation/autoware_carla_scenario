@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
 from autoware_carla_scenario.ros2 import (
     CommandSourceConfig,
@@ -133,7 +134,7 @@ def test_every_tick_publishes_the_state_in_the_local_frame() -> None:
     entity, transport, _, clock = _started(actor=_actor(speed_mps=5.0, wheel_deg=10.0))
     _tick(entity, clock)
     state = transport.published[-1]
-    assert state.stamp_s == pytest.approx(_TICK_S)
+    assert state.stamp_us == 50_000
     # CARLA's y=-2 is y=+2 right-handed, and base_link sits 1.4 m behind the
     # actor origin.
     assert state.pose.position[0] == pytest.approx(8.6)
@@ -249,10 +250,12 @@ def test_a_trajectory_is_tracked_by_the_framework_follower() -> None:
     entity, transport, actor, clock = _started(actor=_actor(speed_mps=0.0))
     # Straight ahead along the ego's heading, in the local frame, at 5 m/s.
     points: List[TrajectoryCommandPoint] = [
-        TrajectoryCommandPoint(0.2 * i, 8.6 + 1.0 * i, 2.0, 0.0, 0.0, 5.0)
+        TrajectoryCommandPoint(
+            200_000 * i, Pose.from_xyz_yaw(8.6 + 1.0 * i, 2.0, 0.0, 0.0), 5.0
+        )
         for i in range(30)
     ]
-    transport.deliver("planner", TrajectoryCommand(stamp_s=0.0, points=tuple(points)))
+    transport.deliver("planner", TrajectoryCommand(stamp_us=0, points=tuple(points)))
     _tick(entity, clock)
     assert entity.active_source == "planner"
     control = _last_control(actor)
@@ -265,15 +268,17 @@ def test_a_trajectory_is_tracked_by_the_framework_follower() -> None:
 def test_the_plan_of_a_trajectory_is_built_once() -> None:
     entity, transport, _, clock = _started()
     command = TrajectoryCommand(
-        stamp_s=0.0,
+        stamp_us=0,
         points=tuple(
-            TrajectoryCommandPoint(0.1 * i, 8.6 + 0.5 * i, 2.0, 0.0, 0.0, 5.0)
+            TrajectoryCommandPoint(
+                100_000 * i, Pose.from_xyz_yaw(8.6 + 0.5 * i, 2.0, 0.0, 0.0), 5.0
+            )
             for i in range(10)
         ),
     )
     transport.deliver("planner", command)
     _tick(entity, clock)
-    first = entity._plan(entity._arbiter.select(clock.now_s))  # type: ignore[arg-type]
+    planned = entity._planned
+    assert planned is not None and planned[0] is command
     _tick(entity, clock)
-    second = entity._plan(entity._arbiter.select(clock.now_s))  # type: ignore[arg-type]
-    assert first is second
+    assert entity._planned is planned
