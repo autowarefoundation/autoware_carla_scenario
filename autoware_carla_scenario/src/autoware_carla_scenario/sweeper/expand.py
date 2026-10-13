@@ -21,7 +21,10 @@ uncovered when asked to (:mod:`autoware_carla_scenario.odd.sampler`); with
 constraints or a route search too, each drawn case takes their cases in turn.
 A batch expanding several scenarios hands each the cases the earlier ones
 drew (``drawn``, an :class:`~autoware_carla_scenario.odd.sampler.OddDraws`),
-so scenarios on one ODD go on from each other rather than draw alike.
+so scenarios on one ODD go on from each other rather than draw alike. Each
+drawn case also carries itself, encoded (``++odd_case=...``), for its run to
+record with its outcome; with ``odd_sample.flaky``, part of the cases are
+chosen where the earlier runs left the outcome unsure.
 
 A config without a sweep is already concrete and expands to itself (one empty
 override list). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
@@ -118,15 +121,19 @@ def _with_odd_samples(
 ) -> list[list[str]]:
     """``odd_sample.count`` cases (one per base case by default), each a base
     case -- a lanelet or a route match -- and settings drawn from the ODD."""
-    from ..odd.sampler import sampler_from_config  # noqa: PLC0415
+    from openodd import ParameterSpace  # noqa: PLC0415
 
-    sampler, count = sampler_from_config(
+    from ..odd.sampler import ODD_CASE_KEY, encode_case, search_from_config  # noqa: PLC0415
+
+    sampler, search, count = search_from_config(
         {str(k): v for k, v in odd_sample.items()},
         odd=odd,
         controls=controls,
         drawn=drawn,
     )
-    samples = sampler.sample(len(base_cases) if count is None else count)
+    wanted = len(base_cases) if count is None else count
+    samples = search.sample(wanted) if search is not None else sampler.sample(wanted)
+    space = search.space if search is not None else ParameterSpace.of(sampler)
     if drawn is not None:
         drawn.add(sampler.odd, samples)
     logger.info(
@@ -139,8 +146,20 @@ def _with_odd_samples(
         if sampler.situation_holes
         else "",
     )
+    if search is not None:
+        explored = sum(sample.flaky is not None for sample in samples)
+        logger.info(
+            "%d of them chosen for instability, learnt from %d earlier run(s)",
+            explored,
+            len(search.model),
+        )
+    # Each run gets its case, to record with its outcome in its coverage file.
     return [
-        [*base_cases[i % len(base_cases)], *sample.overrides]
+        [
+            *base_cases[i % len(base_cases)],
+            *sample.overrides,
+            f"++{ODD_CASE_KEY}={encode_case(sample, space)}",
+        ]
         for i, sample in enumerate(samples)
     ]
 

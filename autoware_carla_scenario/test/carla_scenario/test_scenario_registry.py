@@ -506,7 +506,11 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
             pass
 
         def add(
-            self, scenario: object, *, timeout_seconds: float | None = None
+            self,
+            scenario: object,
+            *,
+            timeout_seconds: float | None = None,
+            case: object = None,
         ) -> None:
             added.append((scenario, timeout_seconds))
 

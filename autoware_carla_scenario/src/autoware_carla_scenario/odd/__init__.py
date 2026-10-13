@@ -57,6 +57,7 @@ from .route import (
 )
 from .sampler import (
     DEFAULT_KNOBS,
+    OddCase,
     OddDraws,
     OddKnob,
     OddSample,
@@ -83,6 +84,7 @@ __all__ = [
     "DEFAULT_ODD",
     "ENTRY_POINT_GROUP",
     "OddAttribute",
+    "OddCase",
     "OddCondition",
     "OddDefinition",
     "OddDraws",

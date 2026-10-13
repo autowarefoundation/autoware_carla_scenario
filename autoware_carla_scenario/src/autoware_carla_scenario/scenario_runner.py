@@ -28,7 +28,7 @@ from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector
 from .measures import set_measured_scenario
-from .odd import OddDefinition, reset_probes, resolve_odd
+from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _set_warmup_done
 from .scenario_base import BaseScenario
@@ -224,6 +224,19 @@ def _write_result(
     if environment is not None:
         data["environment"] = environment
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _record_run(
+    coverage: CoverageCollector, case: Optional[OddCase], passed: bool
+) -> None:
+    """Record in *coverage* the case the run ran, if it was drawn from the ODD,
+    and whether it passed: what the merged report assesses the flakiness of
+    and a later sweep's flaky search learns from. openodd's (a Rust
+    extension): the check (docs/typecheck.md) does not compile it.
+    """
+    if case is not None:
+        coverage.record_case(*case)
+    coverage.record_outcome(passed)
 
 
 def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
@@ -768,7 +781,11 @@ class ScenarioRunner:
     # ------------------------------------------------------------------
 
     def run_scenario(
-        self, scenario: BaseScenario, *, timeout_seconds: float | None = None
+        self,
+        scenario: BaseScenario,
+        *,
+        timeout_seconds: float | None = None,
+        case: OddCase | None = None,
     ) -> ScenarioResult:
         """Execute a single scenario from setup to teardown.
 
@@ -788,6 +805,10 @@ class ScenarioRunner:
             scenario: The scenario to run.
             timeout_seconds: The default timeout for this scenario; the
                 runner's ``timeout_seconds`` when ``None``.
+            case: The case drawn from the ODD that the scenario runs, and the
+                space it was drawn in: recorded in the coverage file with the
+                run's outcome, so that the merged report can assess its
+                flakiness and the next sweep's flaky search learn from it.
 
         Returns:
             The outcome of the scenario execution.
@@ -1266,6 +1287,11 @@ class ScenarioRunner:
                 _write_result(json_path, self.output_dir, file_stem, scenario, result)
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
+                if TYPE_CHECKING:
+                    # The case is openodd's (a Rust extension): Codon has none.
+                    pass
+                else:
+                    _record_run(coverage, case, result.passed)
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(

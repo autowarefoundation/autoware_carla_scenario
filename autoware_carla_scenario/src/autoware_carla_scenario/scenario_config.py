@@ -427,6 +427,7 @@ class SweepConfig:
 
     #: Concrete cases drawn from the ODD (``docs/odd.md``, "Sampling
     #: scenarios from the ODD"): ``count``, ``seed``, ``strategy``
-    #: (``uniform`` or ``coverage``), ``odd``, ``coverage_from``, ``knobs``.
+    #: (``uniform`` or ``coverage``), ``odd``, ``coverage_from``, ``knobs``,
+    #: and ``flaky`` (a flaky search learning from ``coverage_from``'s runs).
     #: Empty draws nothing.
     odd_sample: dict[str, Any] = field(default_factory=dict)

@@ -157,7 +157,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "10.3.2"
+version = "10.4.0"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
@@ -213,7 +213,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },
-    { name = "openodd-py", specifier = ">=0.4.0" },
+    { name = "openodd-py", specifier = ">=0.6.0" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -2789,14 +2789,14 @@ wheels = [
 
 [[package]]
 name = "openodd-py"
-version = "0.4.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/bd/9e/301a57042ec5cc1ebcd442f914d4c71dcd883f47912f9e63c253deb3c024/openodd_py-0.4.0.tar.gz", hash = "sha256:96d6020174fd2a7a2b09dfe0a2fc669c34fc0c25d1f823c1d9f13c32870109fa", size = 143523, upload-time = "2026-10-12T04:13:49.831Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/15/9297763c3c64c1e997204e5d33cc26630ec71cf006dac51acde2a1fbfcc3/openodd_py-0.6.0.tar.gz", hash = "sha256:a2126eb32633d13e23704c6b063e03a5aa24637929e3f7f13b1aa169b7332f5e", size = 182852, upload-time = "2026-10-12T17:16:48.856Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/a2/5bd8f618341018776ed28359212927bf339be4237b986eeba96d3a463830/openodd_py-0.4.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:92db4381b9c8acd556e354cf443c0477e3403b6f71c60db465db48473975ef40", size = 3500541, upload-time = "2026-10-12T04:13:42.88Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/00/5de405ae26adc229f23a39c4f808fa14c807c01e3acc61b7af8a0d04d28b/openodd_py-0.4.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1c907187620e7cc4529dac5d183914083b5d748967a5916a4463bd06c9c3790d", size = 1942471, upload-time = "2026-10-12T04:13:45.057Z" },
-    { url = "https://files.pythonhosted.org/packages/db/74/febba8de41d1462ecfbbf3cbfa0d9843b932568525e13911f9f5eedadbfb/openodd_py-0.4.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:db28fe72c4fd00c37b2378aeb897d172c74daed626ff14c8029fff950f4df11c", size = 1973748, upload-time = "2026-10-12T04:13:46.809Z" },
-    { url = "https://files.pythonhosted.org/packages/90/41/48ece2699806a677f5f22a65259184fe91915b0f1c78703f04e080b8664a/openodd_py-0.4.0-cp310-abi3-win_amd64.whl", hash = "sha256:ec40eb9026c8cd412f68f09547cb1b832256a14cfd051ca0f0b016aa9cb75549", size = 1709381, upload-time = "2026-10-12T04:13:48.442Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/33/d48bf4478fbaef22af908845ca2d5ff8fa8693221a2f649f4731c065e9db/openodd_py-0.6.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:42769c732880a79de0045c53e66aa9b85f354a615a48dc936a4c0a921c8ae93f", size = 3815956, upload-time = "2026-10-12T17:16:41.455Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/46/327825c9fa1dbdf7c4b9931a544051621f18dc33d3d2d43d87b5e0866fb1/openodd_py-0.6.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:42564a977493626a7fe14711c3305f737990532d77fa363bfe8a7ab7a6c2d7b0", size = 2108309, upload-time = "2026-10-12T17:16:43.415Z" },
+    { url = "https://files.pythonhosted.org/packages/42/7f/56b6fe04a2edbc227903ab89a9916acf22890ecdfc805221379846393f4d/openodd_py-0.6.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7e0a86e67b899e9d4d0c6a8d5fcdb8540d5dac9920e3fd3ca816398492dc1602", size = 2158518, upload-time = "2026-10-12T17:16:45.551Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/f8/2374a458b26e185505b2d768028a37d1b8c2a55ea42533ecbc4b1e292efd/openodd_py-0.6.0-cp310-abi3-win_amd64.whl", hash = "sha256:f307e3bd4632d1c69b4c224f4442ba25a1d0d8a9472879b40983f5bd82ef9566", size = 1885875, upload-time = "2026-10-12T17:16:47.538Z" },
 ]
 
 [[package]]
