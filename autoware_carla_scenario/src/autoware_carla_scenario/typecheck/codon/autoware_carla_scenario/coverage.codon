@@ -80,8 +80,8 @@ class CrossItem:
 
 
 # What the checked scenario_runner uses of coverage.collector (openodd's
-# collector, a Rust extension): the collector, the sampling it is told of, and
-# the file it writes. The ODD is any value in Python (`odd: Any`); backend and
+# collector, a Rust extension): the collector, the sampling it is told of, the
+# case and outcome of the run it records, and the file it writes. The ODD is any value in Python (`odd: Any`); backend and
 # generator are openodd's types, which are not declared, so passing one fails
 # the check.
 class CoverageCollector:
@@ -103,4 +103,19 @@ class CoverageCollector:
         raise NotImplementedError()
 
     def write(self, path: Path, scenario: str) -> None:
+        raise NotImplementedError()
+
+    def record_case(self, case, space = None) -> None:
+        """An OddSample and the ParameterSpace it was drawn in (odd.codon,
+        which imports this module, so they are told by their markers)."""
+        if not hasattr(case, "_acs_odd_sample"):
+            compile_error("record_case(): the case is an OddSample")
+        if not (isinstance(space, None) or isinstance(space, Optional[NoneType])):
+            if not hasattr(space, "_acs_parameter_space"):
+                compile_error("record_case(): the space is a ParameterSpace or None")
+        raise NotImplementedError()
+
+    def record_outcome(self, passed: bool, *_kw, failed_at: Optional[float] = None,
+                       environment: Optional[str] = None) -> None:
+        _keyword_only(_kw, "CoverageCollector.record_outcome(): failed_at and environment")
         raise NotImplementedError()
