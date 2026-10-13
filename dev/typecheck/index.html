@@ -2182,7 +2182,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code> and <code>maps</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 79
+below). 78
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -2210,9 +2210,7 @@ the result and its environment, <code>_write_result()</code>; collecting the con
 statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver and
-ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>), what
-builds the ROS 2 ego's Cyclone DDS transport (<code>entity.ros2_entity._cyclone_transport()</code>,
-which imports <code>ros2.cyclone</code> inside it) and
+ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
 <code>encode_frame_jpeg()</code> (cv2). The 77 <code>EXCLUDED</code> modules fall in
 three groups. Many fit more than one (about 55 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
@@ -2301,7 +2299,8 @@ stands in for it in the check's workspace:</p>
   <code>coordinate.codon</code>), or, for a module of a package that is itself checked,
   a model of that module alone (<code>utils/traffic_light.codon</code>,
   <code>autoware_bridge/grpc_server.codon</code>, <code>driver/egodriver_client.codon</code>,
-  <code>maps/cache.codon</code>, <code>autoware_stack/devcontainer.codon</code>), or, for a module of
+  <code>maps/cache.codon</code>, <code>autoware_stack/devcontainer.codon</code>,
+  <code>ros2/cyclone.codon</code>), or, for a module of
   the top-level package, a model of that module (<code>carla_install.codon</code>, for
   <code>server</code>, declares <code>installed_executable()</code>; <code>trajectory_recorder.codon</code>,
   for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
@@ -3036,8 +3035,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   function <code>UNCALLED</code> names is still compiled when a checked function calls
   it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
   first branch what it can (<code>ScenarioRunner</code> calls <code>require_goal()</code>, built
-  on the ego's class, in the <code>else</code> branch; <code>Ros2EgoEntity.on_scenario_start()</code>
-  builds its Cyclone DDS transport, <code>_cyclone_transport()</code>, there too). A
+  on the ego's class, in the <code>else</code> branch). A
   private helper that imports such a module inside it needs an <code>UNCALLED</code>
   entry of its own: its import is rewritten, and refused, even when nothing
   compiled calls it.
@@ -3182,7 +3180,17 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   top-level package model itself is not replaced: the examples would then
   derive from the checked <code>BaseScenario</code>, and their constructors' calls to
   <code>super().__init__()</code> would compile <code>BaseScenario.__init__</code>, which is
-  <code>UNCALLED</code> (it stores the ego's class, <code>ego_type</code>).
+  <code>UNCALLED</code> (it stores the ego's class, <code>ego_type</code>). The model of
+  <code>ros2.cyclone</code> (<code>ros2/cyclone.codon</code>, cyclonedds) declares the
+  <code>CycloneRos2Transport</code> constructor that the checked
+  <code>entity.ros2_entity._cyclone_transport()</code> calls; its base <code>Ros2EgoTransport</code>
+  and its <code>Ros2EgoConfig</code> come from a model module of their own
+  (<code>_ros2.codon</code>), which <code>REPLACED_MODELS</code> replaces with the checked
+  <code>ros2.transport</code> and <code>ros2.config</code>, so the transport <code>_cyclone_transport()</code>
+  returns is the checked <code>Ros2EgoTransport</code>, and its body is compiled. For the
+  scenario check, which has no ROS 2 package, the two are stand-ins whose
+  constructors are a <code>compile_error</code>, as for a class a checked package only
+  re-exports (below).
 - <strong>A class a checked package only re-exports</strong> is declared in the model by
   name and constructor: <code>GrpcAutowareBridgeServer</code>
   (<code>autoware_bridge/grpc_server.codon</code>, grpc), <code>EgoDriverGrpcClient</code>
@@ -3371,7 +3379,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 19:08:29 UTC"><span class="timeago" datetime="2026-10-13T19:08:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 19:08:29 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 21:57:20 UTC"><span class="timeago" datetime="2026-10-13T21:57:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 21:57:20 UTC">2026-10-13</span>
   </span>
 
     
