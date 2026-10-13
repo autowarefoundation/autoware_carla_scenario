@@ -313,7 +313,19 @@ class LaneletLengthConstraint(Constraint):
     def __post_init__(self) -> None:
         from ..conditions.comparison import ComparisonRule
 
-        valid = {r.name.lower() for r in ComparisonRule}
+        if TYPE_CHECKING:
+            # Codon's enum shim iterates over no enum class
+            # (docs/typecheck.md): the members, spelled out.
+            rules = [
+                ComparisonRule.GREATER_THAN,
+                ComparisonRule.LESS_THAN,
+                ComparisonRule.EQUAL_TO,
+                ComparisonRule.GREATER_THAN_OR_EQUAL,
+                ComparisonRule.LESS_THAN_OR_EQUAL,
+            ]
+        else:
+            rules = list(ComparisonRule)
+        valid = {r.name.lower() for r in rules}
         if self.rule not in valid:
             raise ValueError(f"Unknown rule {self.rule!r}. Available: {sorted(valid)}")
 

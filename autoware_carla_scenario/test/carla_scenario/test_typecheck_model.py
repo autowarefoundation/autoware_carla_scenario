@@ -43,6 +43,7 @@ from autoware_carla_scenario.coordinate import projection as coordinate_projecti
 from autoware_carla_scenario.coordinate import transform as coordinate_transform
 from autoware_carla_scenario.coverage import collector as coverage_collector
 from autoware_carla_scenario.coverage import items as coverage_items
+from autoware_carla_scenario.coverage import report as coverage_report
 from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.maps import cache as maps_cache
@@ -205,6 +206,11 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CoverItem": ("coverage", coverage_items.CoverItem),
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
+    # What the checked coverage package re-exports.
+    "COVERAGE_SCHEMA": ("coverage", coverage_collector.COVERAGE_SCHEMA),
+    "CoverGroup": ("coverage", coverage_items.CoverGroup),
+    "CoverageReport": ("coverage", coverage_report.CoverageReport),
+    "merge_coverage": ("coverage", coverage_report.merge_coverage),
     "MapManager": ("coordinate", coordinate_map_manager.MapManager),
     # What map_manager and sweeper.map_loader import of coordinate.projection,
     # which the library check now compiles from its source too.
@@ -377,6 +383,7 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
 _UNBUILDABLE: dict[str, str] = {
     "AutowareLauncher": "autoware_stack/launcher",
     "CarlaDriverEntity": "entity",
+    "CoverageReport": "coverage",
     "EgoDriverGrpcClient": "driver/egodriver_client",
     "GrpcAutowareBridgeServer": "autoware_bridge/grpc_server",
     # Stand-ins of checked classes the library check replaces (_ros2.codon):
@@ -424,6 +431,25 @@ def test_the_devcontainer_model_holds_python_s_values() -> None:
     params = stack_devcontainer.DevContainer.__dataclass_params__  # type: ignore[attr-defined]
     assert params.frozen
     assert issubclass(stack_devcontainer.DevContainerError, ValueError)
+
+
+def test_the_coverage_model_holds_python_s_values() -> None:
+    # The constant is compared by its value, and the enum stand-in (a @tuple
+    # of ClassVars) by the value of each member.
+    definitions = _definitions("coverage")
+    constant = definitions["COVERAGE_SCHEMA"][0]
+    assert isinstance(constant, ast.AnnAssign) and constant.value is not None
+    assert ast.literal_eval(constant.value) == coverage_collector.COVERAGE_SCHEMA
+    node = definitions["CoverGroup"][0]
+    assert isinstance(node, ast.ClassDef)
+    members = {
+        stmt.target.id: ast.literal_eval(stmt.value.args[0])
+        for stmt in node.body
+        if isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and isinstance(stmt.value, ast.Call)
+    }
+    assert members == {m.name: m.value for m in coverage_items.CoverGroup}
 
 
 def test_the_launcher_model_is_the_protocol_s_methods() -> None:
