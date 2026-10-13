@@ -12,12 +12,14 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
 
 from ..constants import US_PER_S
+from ..driver.base import DriverCameraConfig
 from ..utils.config import checked_options
 
 __all__ = [
     "COMMAND_KINDS",
     "ON_STALE_ACTIONS",
     "CommandSourceConfig",
+    "Ros2CameraConfig",
     "Ros2EgoConfig",
 ]
 
@@ -122,6 +124,29 @@ class CommandSourceConfig:
         return cls(**checked_options(cls, mapping))
 
 
+@dataclass(frozen=True)
+class Ros2CameraConfig(DriverCameraConfig):
+    """A camera on the ego whose frames the entity publishes itself.
+
+    For a CARLA server built without ROS 2, which publishes no camera of its
+    own.  Each frame goes out as a ``sensor_msgs/msg/Image`` in ``bgra8``, stamped
+    with its simulation time, as CARLA's own ROS 2 interface publishes it.  The
+    rendering and the mount are :class:`~..driver.base.DriverCameraConfig`'s.
+
+    Attributes:
+        topic: The image topic.  CARLA's own interface names it
+            ``/carla/<role name>/<sensor ros_name>/image``.
+        frame_id: ``header.frame_id`` of the published images.
+    """
+
+    topic: str = ""
+    frame_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.topic:
+            raise ValueError(f"camera {self.logical_id!r} needs a topic")
+
+
 def _default_sources() -> Tuple[CommandSourceConfig, ...]:
     return (
         CommandSourceConfig(
@@ -154,6 +179,8 @@ class Ros2EgoConfig:
             ``None`` derives it from the wheel physics.
         on_stale: One of :data:`ON_STALE_ACTIONS`.
         sources: The command sources, see :class:`CommandSourceConfig`.
+        cameras: Cameras whose frames the entity publishes, for a CARLA server
+            built without ROS 2; see :class:`Ros2CameraConfig`.
     """
 
     domain_id: int = 0
@@ -166,6 +193,7 @@ class Ros2EgoConfig:
     rear_axle_offset_m: Optional[float] = None
     on_stale: str = "hold"
     sources: Tuple[CommandSourceConfig, ...] = field(default_factory=_default_sources)
+    cameras: Tuple[Ros2CameraConfig, ...] = ()
 
     def __post_init__(self) -> None:
         if self.on_stale not in ON_STALE_ACTIONS:
@@ -178,6 +206,9 @@ class Ros2EgoConfig:
         names = [source.name for source in self.sources]
         if len(set(names)) != len(names):
             raise ValueError(f"command source names must be unique, got {names}")
+        topics = [camera.topic for camera in self.cameras]
+        if len(set(topics)) != len(topics):
+            raise ValueError(f"camera topics must be unique, got {topics}")
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2EgoConfig":
@@ -195,5 +226,10 @@ class Ros2EgoConfig:
         if sources is not None:
             values["sources"] = tuple(
                 CommandSourceConfig.from_mapping(source) for source in sources
+            )
+        cameras = values.pop("cameras", None)
+        if cameras is not None:
+            values["cameras"] = tuple(
+                Ros2CameraConfig.from_mapping(camera) for camera in cameras
             )
         return cls(**values)

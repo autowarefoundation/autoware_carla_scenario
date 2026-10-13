@@ -18,6 +18,7 @@ from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
 from autoware_carla_scenario.ros2 import (
     CommandSourceConfig,
+    Ros2CameraConfig,
     ControlCommand,
     FakeRos2Transport,
     Ros2EgoConfig,
@@ -87,9 +88,14 @@ def _actor(speed_mps: float = 5.0, wheel_deg: float = 0.0) -> MagicMock:
 
 
 def _started(
-    *, on_stale: str = "hold", actor: MagicMock | None = None
+    *,
+    on_stale: str = "hold",
+    actor: MagicMock | None = None,
+    cameras: tuple[Ros2CameraConfig, ...] = (),
 ) -> tuple[Ros2EgoEntity, FakeRos2Transport, MagicMock, _Clock]:
-    config = Ros2EgoConfig(sources=_SOURCES, on_stale=on_stale, rear_axle_offset_m=-1.4)
+    config = Ros2EgoConfig(
+        sources=_SOURCES, on_stale=on_stale, rear_axle_offset_m=-1.4, cameras=cameras
+    )
     transport = FakeRos2Transport(config)
     entity = Ros2EgoEntity(config, transport=transport)
     actor = actor if actor is not None else _actor()
@@ -282,3 +288,67 @@ def test_the_plan_of_a_trajectory_is_built_once() -> None:
     assert planned is not None and planned[0] is command
     _tick(entity, clock)
     assert entity._planned is planned
+
+
+# ---------------------------------------------------------------------------
+# Published cameras
+# ---------------------------------------------------------------------------
+
+_CAMERA = Ros2CameraConfig(
+    logical_id="main_cam",
+    topic="/carla/hero/main_cam/image",
+    image_width=4,
+    image_height=2,
+    fov=60.0,
+    fps=10.0,
+    position_x=1.25,
+    position_z=1.58,
+)
+
+
+def _image(timestamp_s: float) -> SimpleNamespace:
+    return SimpleNamespace(
+        timestamp=timestamp_s, width=4, height=2, raw_data=bytes(range(32))
+    )
+
+
+def test_no_camera_is_spawned_unless_one_is_configured() -> None:
+    _, _, _, clock = _started()
+    clock.world.spawn_actor.assert_not_called()
+
+
+def test_a_configured_camera_is_mounted_on_the_ego() -> None:
+    _, _, actor, clock = _started(cameras=(_CAMERA,))
+    blueprint = clock.world.get_blueprint_library.return_value.find.return_value
+    blueprint.set_attribute.assert_any_call("image_size_x", "4")
+    blueprint.set_attribute.assert_any_call("fov", "60.0")
+    blueprint.set_attribute.assert_any_call("sensor_tick", "0.1")
+    (_, transform), kwargs = clock.world.spawn_actor.call_args
+    assert kwargs["attach_to"] is actor
+    assert transform.location.x == pytest.approx(1.25)
+    assert transform.location.z == pytest.approx(1.58)
+
+
+def test_each_frame_is_published_as_it_arrives() -> None:
+    _, transport, _, clock = _started(cameras=(_CAMERA,))
+    sensor = clock.world.spawn_actor.return_value
+    (listener,) = sensor.listen.call_args.args
+    listener(_image(1.25))
+    listener(_image(1.35))
+    assert [frame.stamp_us for frame in transport.images] == [1_250_000, 1_350_000]
+    frame = transport.images[0]
+    assert (frame.camera, frame.width, frame.height) == (0, 4, 2)
+    assert frame.bgra == bytes(range(32))
+
+
+def test_the_cameras_go_before_the_transport_closes() -> None:
+    entity, transport, _, clock = _started(cameras=(_CAMERA,))
+    sensor = clock.world.spawn_actor.return_value
+    (listener,) = sensor.listen.call_args.args
+    entity.on_scenario_end(clock.world)
+    sensor.stop.assert_called_once()
+    sensor.destroy.assert_called_once()
+    assert transport.closed == 1
+    # A frame still in flight after the end is dropped.
+    listener(_image(2.0))
+    assert transport.images == []

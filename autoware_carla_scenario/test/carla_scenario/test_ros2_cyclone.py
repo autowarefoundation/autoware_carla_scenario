@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Callable, Dict, List, TypeVar
+from typing import Any, Callable, Dict, List, TypeVar, cast
 
 import numpy as np
 import pytest
@@ -24,7 +24,9 @@ from cyclonedds.topic import Topic  # noqa: E402
 
 from autoware_carla_scenario.driver.geometry import Pose  # noqa: E402
 from autoware_carla_scenario.ros2 import (  # noqa: E402
+    CameraFrame,
     CommandSourceConfig,
+    Ros2CameraConfig,
     ControlCommand,
     EgoState,
     Ros2EgoConfig,
@@ -79,6 +81,13 @@ def _config(domain: int) -> Ros2EgoConfig:
     return Ros2EgoConfig(
         domain_id=domain,
         clock_topic="/clock",
+        cameras=(
+            Ros2CameraConfig(
+                logical_id="main_cam",
+                topic="/carla/hero/main_cam/image",
+                frame_id="main_cam",
+            ),
+        ),
         sources=(
             CommandSourceConfig(
                 name="vp",
@@ -280,5 +289,56 @@ def test_a_writer_going_away_is_not_a_command(loopback: None) -> None:
             time.sleep(0.02)
         # And the source still works after it.
         assert _until(publish_and_poll)
+    finally:
+        transport.close()
+
+
+def test_an_image_is_written_as_its_sequence_form_would_be() -> None:
+    """``data`` as one bytes block, on the wire exactly as ``sequence<uint8>``."""
+    pixels = bytes(range(256)) * 3
+    image = msg.Image(
+        header=msg.Header(stamp=ros_time(1_500_000), frame_id="main_cam"),
+        height=2,
+        width=96,
+        encoding="bgra8",
+        step=384,
+        data=cast(Any, pixels),
+    )
+    as_list = msg.Image(**{**image.__dict__, "data": list(pixels)})
+    wire = image.serialize(use_version_2=False)
+    assert wire == super(msg.Image, as_list).serialize(use_version_2=False)
+    assert bytes(cast(Any, msg.Image.deserialize(wire).data)) == pixels
+
+
+def test_a_camera_frame_reaches_a_ros_2_style_reader(loopback: None) -> None:
+    domain = _domain()
+    transport = CycloneRos2Transport(_config(domain))
+    transport.open()
+    try:
+        peer = DomainParticipant(domain)
+        images = DataReader(
+            peer,
+            Topic(peer, "rt/carla/hero/main_cam/image", msg.Image),
+            qos=_qos(1),
+        )
+        pixels = bytes(range(256)) * (1280 * 720 * 4 // 256)
+
+        def publish_and_take() -> List[msg.Image]:
+            transport.publish_image(
+                CameraFrame(
+                    camera=0, stamp_us=2_100_000, width=1280, height=720, bgra=pixels
+                )
+            )
+            return list(images.take(1))
+
+        (sample, *_) = _until(publish_and_take)
+        assert (sample.header.stamp.sec, sample.header.stamp.nanosec) == (
+            2,
+            100_000_000,
+        )
+        assert sample.header.frame_id == "main_cam"
+        assert (sample.width, sample.height, sample.step) == (1280, 720, 5120)
+        assert sample.encoding == "bgra8"
+        assert bytes(cast(Any, sample.data)) == pixels
     finally:
         transport.close()

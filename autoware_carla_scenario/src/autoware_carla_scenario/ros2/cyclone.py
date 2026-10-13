@@ -34,7 +34,7 @@ from .commands import (
     TrajectoryCommandPoint,
 )
 from .config import CommandSourceConfig, Ros2EgoConfig
-from .transport import Received, Ros2EgoTransport
+from .transport import CameraFrame, Received, Ros2EgoTransport
 
 logger = logging.getLogger(__name__)
 
@@ -212,12 +212,14 @@ class CycloneRos2Transport(Ros2EgoTransport):
 
     _participant: Optional[DomainParticipant]
     _publishers: List[Tuple[DataWriter, _Build]]
+    _image_writers: List[DataWriter]
     _drains: List[Tuple[str, _Drain]]
 
     def __init__(self, config: Ros2EgoConfig) -> None:
         super().__init__(config)
         self._participant = None
         self._publishers = []
+        self._image_writers = []
         self._drains = []
 
     def open(self) -> None:
@@ -264,6 +266,16 @@ class CycloneRos2Transport(Ros2EgoTransport):
             )
             for name, message_type, build in published
         ]
+        # Reliable, as every other topic here: it matches a best-effort
+        # subscriber (ROS 2's sensor-data profile) as well as a reliable one.
+        self._image_writers = [
+            DataWriter(
+                participant,
+                Topic(participant, msg.dds_topic(camera.topic), msg.Image),
+                qos=_qos(1),
+            )
+            for camera in config.cameras
+        ]
         self._drains = [
             (source.name, _source_drain(participant, source))
             for source in config.sources
@@ -271,7 +283,11 @@ class CycloneRos2Transport(Ros2EgoTransport):
         logger.info(
             "Joined DDS domain %d: publishing %s; commands from %s",
             config.domain_id,
-            ", ".join(name for name, _, _ in published) or "nothing",
+            ", ".join(
+                [name for name, _, _ in published]
+                + [camera.topic for camera in config.cameras]
+            )
+            or "nothing",
             ", ".join(
                 f"{source.name} ({source.kind}: {', '.join(source.topics)})"
                 for source in config.sources
@@ -283,6 +299,22 @@ class CycloneRos2Transport(Ros2EgoTransport):
         for writer, build in self._publishers:
             writer.write(build(state, stamp))
 
+    def publish_image(self, frame: CameraFrame) -> None:
+        camera = self._config.cameras[frame.camera]
+        self._image_writers[frame.camera].write(
+            msg.Image(
+                header=msg.Header(
+                    stamp=ros_time(frame.stamp_us), frame_id=camera.frame_id
+                ),
+                height=frame.height,
+                width=frame.width,
+                encoding="bgra8",
+                step=frame.width * 4,
+                # Image.serialize writes bytes as one block.
+                data=cast(Any, frame.bgra),
+            )
+        )
+
     def poll(self) -> List[Received]:
         return [(name, command) for name, drain in self._drains for command in drain()]
 
@@ -290,4 +322,5 @@ class CycloneRos2Transport(Ros2EgoTransport):
         # Dropping the participant deletes every entity it owns.
         self._drains = []
         self._publishers = []
+        self._image_writers = []
         self._participant = None
