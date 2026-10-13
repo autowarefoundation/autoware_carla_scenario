@@ -2082,15 +2082,17 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 152 of
-the package's 228 modules (67%; about 35,500 of 65,800 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 153 of
+the package's 228 modules (67%; about 35,800 of 65,800 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
 and the lane arithmetic of a relative lane pose (<code>trajectory.relative_lane</code>),
 the map manager that loads the Lanelet2 map and the OpenDRIVE road network
 (<code>coordinate.map_manager</code>) and the sweeper's lighter loader of the Lanelet2
-map (<code>sweeper.map_loader</code>), what places a trajectory's vertices in CARLA
+map (<code>sweeper.map_loader</code>), with the projection and origin both read a map
+with (<code>coordinate.projection</code>; not how it reads <code>map_projector_info.yaml</code>,
+whose YAML values are of any type), what places a trajectory's vertices in CARLA
 world coordinates (<code>trajectory.resolve</code>),
 the sweeper's lanelet constraints and parameter bindings
 (<code>sweeper.constraints</code>, <code>sweeper.bindings</code>) and the route's map questions,
@@ -2275,10 +2277,11 @@ with an example scenario in it failed in Codon 0.19's code generation
 (<code>LLVM: error: value doesn't match function result type '{ ptr, ptr }'</code>, in
 <code>opt_ref_new</code> of the model's <code>BaseScenario</code>).</p>
 <p>A model module that stands in for unchecked code declares only what the
-checked modules and scenarios use of it: <code>coordinate.codon</code> declares, of
-<code>coordinate.projection</code> (yaml), only the <code>map_origin()</code>, <code>resolve_projector()</code>
-and <code>_parse_geo_reference()</code> that the checked <code>coordinate.map_manager</code> and
-<code>sweeper.map_loader</code> import. Its <code>MapManager</code> is now the scenario check's
+checked modules and scenarios use of it. <code>coordinate.codon</code> still declares,
+of <code>coordinate.projection</code>, the <code>map_origin()</code>, <code>resolve_projector()</code> and
+<code>_parse_geo_reference()</code> that <code>coordinate.map_manager</code> and
+<code>sweeper.map_loader</code> import, though the library check now compiles all three
+from their source. Its <code>MapManager</code> is now the scenario check's
 alone: the library check compiles <code>map_manager.py</code> from its source, which
 every checked module imports, and nothing of the model takes or returns a
 <code>MapManager</code>, so it needs no <code>REPLACED_MODELS</code> entry.</p>
@@ -2944,7 +2947,16 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>Optional[int]</code>) but takes <code>self._lane_id = address.lane_id</code>, and
   <code>X(...) if c else None</code> likewise only without the annotation.
 - <strong><code>x or []</code> with <code>x: Optional[list[T]]</code></strong> has no one type in Codon: start
-  from an annotated empty list and assign <code>x</code> under <code>if x:</code>.
+  from an annotated empty list and assign <code>x</code> under <code>if x:</code>. Likewise
+  <code>stated or DEFAULT</code> with <code>stated: Optional[str]</code>: branch on the cases
+  into an annotated <code>str</code> local (<code>coordinate.projection.resolve_projector</code>).
+- <strong>A regex group used as a <code>str</code></strong> (<code>m.group(1)</code> handed to <code>re.search</code>, or
+  to a <code>str</code> local): Codon's <code>Match.group()</code> is an <code>Optional[str]</code> whose
+  type Codon 0.19 cannot settle from such a use. Take <code>str(m.group(1))</code>,
+  the same <code>str</code> in Python (<code>coordinate.projection._parse_geo_reference</code>).
+- <strong>Projectors of different classes return through one <code>-&gt; Projector</code></strong>
+  (<code>coordinate.projection.make_projector</code>): the lanelet2 model derives each
+  from <code>Projector</code>, and Codon 0.19 converts a subclass to it at <code>return</code>.
 - <strong>A subclass goes into an <code>Optional</code> base parameter from a base-typed
   variable</strong>: Codon does not upcast and wrap in one step, so
   <code>super().__init__(child=PersistentCondition(...))</code> against
@@ -3284,7 +3296,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 01:55:43 UTC"><span class="timeago" datetime="2026-10-13T01:55:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 01:55:43 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 03:51:46 UTC"><span class="timeago" datetime="2026-10-13T03:51:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 03:51:46 UTC">2026-10-13</span>
   </span>
 
     
