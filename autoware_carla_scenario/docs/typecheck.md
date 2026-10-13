@@ -366,7 +366,9 @@ for), so each is counted once, in the first group that fits it:
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
   authoring compiler, builders and validator, `odd.probes` and `odd.route`
-  (`odd.model`; the lanelet2 they read is modelled) and
+  (names of `odd.model` and `coverage.items` that the odd and coverage
+  models do not declare, such as `UNDECIDED`; both also hold attribute
+  values of any type, `dict[str, Any]`) and
   `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:

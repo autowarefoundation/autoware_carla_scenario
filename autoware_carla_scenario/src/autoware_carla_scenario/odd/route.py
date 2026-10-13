@@ -43,6 +43,9 @@ from .model import OddAttribute, OddDefinition
 from .registry import resolve_odd
 
 if TYPE_CHECKING:
+    import lanelet2.core
+    import lanelet2.routing
+
     from ..coordinate.poses import Lanelet2Pose
     from ..scenario_base import BaseScenario
 
@@ -269,7 +272,9 @@ def _lanelet(lanelet_map: Any, lanelet_id: int, what: str) -> Any:
 
 
 def plan_route(
-    route: PlannedRoute, lanelet_map: Any, routing_graph: Any
+    route: PlannedRoute,
+    lanelet_map: lanelet2.core.LaneletMap,
+    routing_graph: lanelet2.routing.RoutingGraph,
 ) -> list[tuple[int, float]]:
     """The lanelets of *route*, in order, with the metres driven on each.
 
@@ -446,8 +451,8 @@ def plan_route_coverage(
     odd: Union[OddDefinition, str, None],
     scenario_or_route: Union["BaseScenario", PlannedRoute, Iterable[int]],
     *,
-    lanelet_map: Any = None,
-    routing_graph: Any = None,
+    lanelet_map: Optional[lanelet2.core.LaneletMap] = None,
+    routing_graph: Optional[lanelet2.routing.RoutingGraph] = None,
     name: str = "",
 ) -> RouteCoverage:
     """The ODD's verdict on a planned route, lanelet by lanelet, and its expected coverage.
