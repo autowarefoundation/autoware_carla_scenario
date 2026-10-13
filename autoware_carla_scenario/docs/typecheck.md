@@ -260,8 +260,9 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 154 of
-the package's 236 modules (65%; about 36,000 of 67,500 lines) are `CHECKED`:
+Every module but two now has an entry other than `"not yet checked (#45)"`:
+`ros2.commands` and `ros2.transport`, which came with the ROS 2 ego, are not
+yet checked. 154 of the package's 236 modules (65%; about 36,000 of 67,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -312,7 +313,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 72
+below). 80
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -343,13 +344,15 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 75 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 53 import what Codon cannot
-compile, 28 build on an excluded module and 19 hold values Codon has no type
-for), so each is counted once, in the first group that fits it:
+`encode_frame_jpeg()` (cv2). The 80 `EXCLUDED` modules other than the
+two not yet checked fall in three groups. Many fit more than one (about 55
+import what Codon cannot compile, 32 build on an excluded module and 21 hold
+values Codon has no type for), so each is counted once, in the first group
+that fits it:
 
-- **53 import what Codon cannot compile**: pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
+- **55 import what Codon cannot compile**: pyxodr,
+  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
+  cyclonedds (the ROS 2 ego's DDS transport and messages), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
@@ -361,16 +364,17 @@ for), so each is counted once, in the first group that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **19 build on an excluded module**, and import nothing Codon lacks
+- **22 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `coverage`, `examples`, `scaffold`), the
+  `coverage`, `examples`, `scaffold`, `ros2`), the ROS 2 ego and its
+  configs (`entity.ros2_entity`, `ros2.config`), the
   authoring compiler, builders and validator, `odd.probes` and `odd.route`,
   the coverage half of the route check (names of `odd.model` and `coverage.items` that the odd and coverage
   models do not declare, such as `UNDECIDED`; both also hold attribute
   values of any type, `dict[str, Any]`) and
-  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
+  `traffic.registry` (the `registry`, in its plugin loader); 6 of the 22
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
