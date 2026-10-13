@@ -475,6 +475,43 @@ def test_the_routing_graph(lanelet_map: Any, graph: Any) -> None:
     assert conflicts > 0
 
 
+def test_the_shortest_path(lanelet_map: Any, graph: Any) -> None:
+    core = lanelet2.core
+    lanelets = list(lanelet_map.laneletLayer)
+    paths = 0
+    unreachable = 0
+    for lanelet in lanelets:
+        following = graph.following(lanelet)
+        if not following:
+            continue  # not in the vehicles' graph (a crosswalk), or a dead end
+        # To itself: a path of that one lanelet.
+        alone = graph.shortestPath(lanelet, lanelet)
+        assert isinstance(alone, lanelet2.routing.LaneletPath)
+        assert [ll.id for ll in alone] == [lanelet.id]
+        # A ConstLanelet (what the graph hands out) goes back in, as the
+        # model's ConstLanelet parameters say.
+        for path in (
+            graph.shortestPath(lanelet, following[0]),
+            graph.shortestPath(lanelet, following[0], 0),
+            graph.shortestPath(following[0], following[0], 0, True),
+            graph.shortestPath(
+                lanelet, following[0], routingCostId=0, withLaneChanges=False
+            ),
+        ):
+            assert isinstance(path, lanelet2.routing.LaneletPath)
+            assert isinstance(len(path), int)
+            assert all(type(ll) is core.ConstLanelet for ll in path)
+            assert type(path[0]) is core.ConstLanelet
+            assert path[len(path) - 1].id == following[0].id
+            paths += 1
+        # No path back against the direction of travel: None.
+        back = graph.shortestPath(following[0], lanelet)
+        assert back is None or isinstance(back, lanelet2.routing.LaneletPath)
+        unreachable += back is None
+    assert paths > 0
+    assert unreachable > 0
+
+
 def test_the_projector_and_origin() -> None:
     assert isinstance(lanelet2.io.Origin(35.0, 139.0), lanelet2.io.Origin)
     origin = lanelet2.io.Origin(lat=35.0, lon=139.0, alt=0.0)

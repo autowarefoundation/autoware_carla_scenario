@@ -29,6 +29,10 @@ Two simplifications, both in the length rather than in the verdict: a lane
 change splits the length of the lanelets on either side of it between them,
 and a goal behind the start on the same lanelet is a route of no length (the
 routing graph is not asked to go round the block).
+
+The planning itself (:class:`PlannedRoute`, :func:`plan_route` and
+:class:`RouteError`) lives in :mod:`~autoware_carla_scenario.odd.route_plan`
+and is re-exported here under the same names.
 """
 
 from __future__ import annotations
@@ -41,12 +45,12 @@ from ..coverage.items import value_label
 from .model import UNDECIDED as _OPEN
 from .model import OddAttribute, OddDefinition
 from .registry import resolve_odd
+from .route_plan import PlannedRoute, RouteError, _lanelet, plan_route
 
 if TYPE_CHECKING:
     import lanelet2.core
     import lanelet2.routing
 
-    from ..coordinate.poses import Lanelet2Pose
     from ..scenario_base import BaseScenario
 
 __all__ = [
@@ -72,49 +76,6 @@ UNDECIDED_BUCKET = "<undecided>"
 INSIDE = "inside"
 OUTSIDE = "outside"
 UNDECIDED = "undecided"
-
-
-class RouteError(ValueError):
-    """A route that cannot be planned: no goal, an unknown lanelet, no path."""
-
-
-@dataclass(frozen=True)
-class PlannedRoute:
-    """Where a route starts, the lanelets it passes through, and where it ends.
-
-    Args:
-        start: The ego's initial pose.
-        goal: Where it is routed to.  ``None`` cannot be planned.
-        via: Poses the route passes through, in order (their lanelets).
-        name: What the report calls it.
-    """
-
-    start: "Lanelet2Pose"
-    goal: Optional["Lanelet2Pose"] = None
-    via: Sequence["Lanelet2Pose"] = ()
-    name: str = ""
-
-    @classmethod
-    def of_scenario(cls, scenario: "BaseScenario", name: str = "") -> "PlannedRoute":
-        """The route a scenario's ego will be given: spawn, waypoints, goal.
-
-        Read before ``setup()``, so a goal or waypoints the scenario only
-        derives there are not known yet.
-
-        Raises:
-            RouteError: if the scenario has no spawn pose.
-        """
-        start = getattr(scenario, "_spawn_pose", None)
-        if start is None:
-            raise RouteError(
-                f"{type(scenario).__name__} names no spawn pose to start a route at"
-            )
-        return cls(
-            start=start,
-            goal=scenario.goal_pose,
-            via=tuple(scenario.waypoint_poses),
-            name=name or type(scenario).__name__,
-        )
 
 
 @dataclass
@@ -257,83 +218,6 @@ def _describe_value(value: Any) -> Any:
 
 def _round_buckets(buckets: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
     return {a: {k: round(v, 3) for k, v in b.items()} for a, b in buckets.items()}
-
-
-# ---------------------------------------------------------------------------
-# Planning
-# ---------------------------------------------------------------------------
-
-
-def _lanelet(lanelet_map: Any, lanelet_id: int, what: str) -> Any:
-    layer = lanelet_map.laneletLayer
-    if not layer.exists(int(lanelet_id)):
-        raise RouteError(f"the {what} names lanelet {lanelet_id}, not in the map")
-    return layer[int(lanelet_id)]
-
-
-def plan_route(
-    route: PlannedRoute,
-    lanelet_map: lanelet2.core.LaneletMap,
-    routing_graph: lanelet2.routing.RoutingGraph,
-) -> list[tuple[int, float]]:
-    """The lanelets of *route*, in order, with the metres driven on each.
-
-    Each leg (start to the first waypoint, ... to the goal) is the shortest
-    path in *routing_graph*, lane changes allowed.
-
-    Raises:
-        RouteError: if the route has no goal, names a lanelet the map does
-            not have, or a leg has no path.
-    """
-    if route.goal is None:
-        raise RouteError("no goal: the route cannot be planned")
-    import lanelet2.geometry  # noqa: PLC0415
-
-    stops = [
-        (_lanelet(lanelet_map, route.start.lanelet_id, "start"), "start"),
-        *(
-            (_lanelet(lanelet_map, pose.lanelet_id, f"waypoint {i}"), f"waypoint {i}")
-            for i, pose in enumerate(route.via, 1)
-        ),
-        (_lanelet(lanelet_map, route.goal.lanelet_id, "goal"), "goal"),
-    ]
-    path: list[Any] = [stops[0][0]]
-    for there, what in stops[1:]:
-        if there.id == path[-1].id:
-            continue  # already on it
-        leg = routing_graph.shortestPath(path[-1], there)
-        if leg is None:
-            raise RouteError(
-                f"no route from lanelet {path[-1].id} to lanelet {there.id} ({what})"
-            )
-        path.extend(list(leg)[1:])
-
-    # Metres on each: the start lanelet from the start pose on, the goal
-    # lanelet up to the goal pose.
-    last = len(path) - 1
-    driven: list[float] = []
-    for i, lanelet in enumerate(path):
-        length = float(lanelet2.geometry.length2d(lanelet))
-        begin = _clamp(route.start.s, length) if i == 0 else 0.0
-        end = _clamp(route.goal.s, length) if i == last else length
-        driven.append(max(0.0, end - begin))
-
-    # A lane change: the vehicle drives along the two lanelets side by side,
-    # so their length is split between them rather than counted twice.
-    lateral = [0] * len(path)
-    for i in range(last):
-        following = {ll.id for ll in routing_graph.following(path[i])}
-        if path[i + 1].id not in following:
-            lateral[i] += 1
-            lateral[i + 1] += 1
-    return [
-        (int(lanelet.id), metres / (1 + sides))
-        for lanelet, metres, sides in zip(path, driven, lateral)
-    ]
-
-
-def _clamp(s: float, length: float) -> float:
-    return min(max(float(s), 0.0), length)
 
 
 # ---------------------------------------------------------------------------

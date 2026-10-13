@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 158 of
-the package's 235 modules (67%; about 36,800 of 67,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 159 of
+the package's 236 modules (67%; about 37,000 of 67,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -305,7 +305,8 @@ the `scenario_bridge` node's command and Python root beside it
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
+unit names (`odd.unit_names`), the planning of a scenario's route on the
+Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
@@ -353,8 +354,8 @@ for), so each is counted once, in the first group that fits it:
 
 - **55 import what Codon cannot compile**: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
-  cyclonedds (`ros2.cyclone`, `ros2.messages`, the ROS 2 ego's DDS transport
-  and its message types), or
+  cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
+  transport and its message types), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
@@ -371,8 +372,8 @@ for), so each is counted once, in the first group that fits it:
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator, `odd.probes` and `odd.route`
-  (names of `odd.model` and `coverage.items` that the odd and coverage
+  authoring compiler, builders and validator, `odd.probes` and `odd.route`,
+  the coverage half of the route check (names of `odd.model` and `coverage.items` that the odd and coverage
   models do not declare, such as `UNDECIDED`; both also hold attribute
   values of any type, `dict[str, Any]`) and
   `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19

@@ -1,10 +1,23 @@
 # Model of lanelet2.routing, for the checker (docs/typecheck.md): the routing
 # graph and the neighbours it gives a lanelet (following, beside and
 # conflicting), which it hands out as ConstLanelets (a Lanelet goes in;
-# core.codon). Its routes, paths and costs are not declared.
+# core.codon), and the shortest path between two lanelets. Its routes,
+# other paths and costs are not declared.
 
 from lanelet2.core import ConstLanelet, LaneletMap
 from lanelet2.traffic_rules import TrafficRules
+
+
+# The lanelets of a path, in order, as ConstLanelets (shortestPath()).
+class LaneletPath:
+    def __getitem__(self, key: int) -> ConstLanelet:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[ConstLanelet]:
+        raise NotImplementedError()
+
+    def __len__(self) -> int:
+        raise NotImplementedError()
 
 
 class RoutingGraph:
@@ -38,4 +51,9 @@ class RoutingGraph:
     # them out as ConstLanelets; lanelet2's own binding wraps each in a
     # ConstLaneletOrArea, which the framework unwraps at run time.
     def conflicting(self, lanelet: ConstLanelet, routingCostId: int = 0) -> List[ConstLanelet]:
+        raise NotImplementedError()
+
+    # The shortest path from one lanelet to another, both included, or None
+    # when the graph has none (a path to the lanelet itself is that lanelet).
+    def shortestPath(self, fromLanelet: ConstLanelet, toLanelet: ConstLanelet, routingCostId: int = 0, withLaneChanges: bool = True) -> Optional[LaneletPath]:
         raise NotImplementedError()
