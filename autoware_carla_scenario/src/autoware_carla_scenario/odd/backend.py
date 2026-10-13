@@ -90,8 +90,11 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #: are the probes' own levels (:func:`~.probes.intensity_level`,
 #: :func:`~.probes.illumination_level`), read backwards.
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
+    # environment.rain rather than environment.precipitation: precipitation
+    # alone barely shows in a camera image, so a "heavy rain" case would look
+    # like a dry day (EnvironmentAction's ``rain``).
     probes.rain: OddKnob(
-        "environment.precipitation",
+        "environment.rain",
         values={"none": 0, "light": [1, 30], "moderate": [30, 70], "heavy": [70, 100]},
     ),
     probes.fog: OddKnob(

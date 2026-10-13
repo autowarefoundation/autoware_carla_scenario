@@ -164,8 +164,14 @@ controls: {}
 # initialization); null leaves the world's own. A sweep's odd_sample draws
 # these from the ODD (docs/odd.md), as can a single run:
 #
-#   uv run scenario ... environment.precipitation=80 environment.sun_altitude_angle=-10
+#   uv run scenario ... environment.rain=80 environment.sun_altitude_angle=-10
+#
+# `rain` is rain as a camera sees it: precipitation with the cloudiness,
+# standing water and wetness CARLA's rain presets pair with it. `precipitation`
+# alone sets only the falling drops, which barely show. The fields given
+# beside `rain` win over the ones it derives.
 environment:
+  rain: null
   cloudiness: null
   precipitation: null
   precipitation_deposits: null
