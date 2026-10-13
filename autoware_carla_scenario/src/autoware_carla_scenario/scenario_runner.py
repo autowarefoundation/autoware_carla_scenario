@@ -231,8 +231,9 @@ def _record_run(
 ) -> None:
     """Record in *coverage* the case the run ran, if it was drawn from the ODD,
     and its outcome: what the merged report assesses the flakiness of and a
-    later sweep's flaky search learns from. openodd's (a Rust extension): the
-    check (docs/typecheck.md) does not compile it.
+    later sweep's flaky search learns from, with openodd's collector (a Rust
+    extension), which the check (docs/typecheck.md) compiles against the
+    coverage model.
 
     A failed run also records when it failed -- ``result.elapsed_seconds``,
     on the simulated clock the collector was started and ticked on -- so the
@@ -990,12 +991,11 @@ class ScenarioRunner:
             # which a scenario that snaps its own spawn never calls.
             if TYPE_CHECKING:
                 # require_goal() reads the ego's class (`ego_type`), which
-                # Codon cannot hold as a value, and the route is planned with
-                # odd.route (lanelet2): the check compiles neither.
+                # Codon cannot hold as a value: the check does not compile it.
                 pass
             else:
                 scenario.require_goal()
-                self._warn_if_route_leaves_odd(scenario_name, scenario)
+            self._warn_if_route_leaves_odd(scenario_name, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             if TYPE_CHECKING:
                 # EgoVehicle.spawn() takes the model's EgoConfig (entity.ego
@@ -1343,11 +1343,7 @@ class ScenarioRunner:
                 _write_result(json_path, self.output_dir, file_stem, scenario, result)
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
-                if TYPE_CHECKING:
-                    # The case is openodd's (a Rust extension): Codon has none.
-                    pass
-                else:
-                    _record_run(coverage, case, result)
+                _record_run(coverage, case, result)
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(

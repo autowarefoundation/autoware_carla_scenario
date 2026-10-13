@@ -1,0 +1,21 @@
+# Model of autoware_carla_scenario.environment (docs/typecheck.md).
+#
+# What the checked scenario_runner uses of it (platform, json, importlib's
+# metadata: excluded): the id of this process's environment, which a run
+# records with its outcome.  A scenario never builds a RunEnvironment:
+# capture() returns it.
+
+
+class RunEnvironment:
+    _unused: int
+
+    def __init__(self, packages):
+        compile_error("RunEnvironment: capture() builds it")
+
+    @property
+    def id(self) -> str:
+        raise NotImplementedError()
+
+
+def capture() -> RunEnvironment:
+    raise NotImplementedError()

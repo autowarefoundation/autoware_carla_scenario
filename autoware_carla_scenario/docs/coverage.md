@@ -282,6 +282,27 @@ name, event and buckets agree. An item whose definition changed between runs
 is reported once per definition (`name#2`, ...), because adding up hits of
 different buckets would mean nothing.
 
+## The ODD matrix
+
+```bash
+scenario-coverage outputs/ multirun/ --html coverage.html
+```
+
+writes a standalone page with openodd's coverage matrix (its `CoverageView`,
+[docs/coverage_view.md](https://github.com/hakuturu583/openodd_py/blob/main/docs/coverage_view.md)):
+two ODD attributes, one per axis, and in each cell the runs that spent time in
+it, coloured by what they did -- **flaky** where they both passed and failed,
+**fails** where every one failed, **passes** where every one passed, and
+**not sampled** or **outside the ODD** where none could be. A cell with too
+few runs to judge has a dashed outline. Clicking a cell lays out the next two
+attributes inside it, keeping only the time spent there (`--html-depth` levels
+deep, 2 by default); each axis has a picker for any other attribute.
+
+A sweep drawn from the ODD with `flaky` ([Finding flaky
+cases](odd.md#finding-flaky-cases)) is what fills the yellow cells in: run the
+rounds one after another, each reading the earlier ones' outputs, and render
+the page over all of them.
+
 ## Exporting the observed conditions as an OpenODD COD
 
 Besides the aggregates, the coverage file keeps every tick's ODD values

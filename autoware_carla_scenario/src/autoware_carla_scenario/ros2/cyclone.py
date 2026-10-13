@@ -304,7 +304,7 @@ class CycloneRos2Transport(Ros2EgoTransport):
         self._image_writers[frame.camera].write(
             msg.Image(
                 header=msg.Header(
-                    stamp=ros_time(frame.stamp_us), frame_id=camera.frame_id
+                    stamp=ros_time(frame.stamp_us), frame_id=camera.header_frame_id
                 ),
                 height=frame.height,
                 width=frame.width,

@@ -27,11 +27,10 @@ server built without it, the entity publishes them itself: the cameras in
 
 from __future__ import annotations
 
-import functools
 import logging
 import math
 import threading
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
 from ..driver.base import EgoObservation
@@ -40,6 +39,7 @@ from ..driver.geometry import Trajectory
 from ..driver.observation import ego_observation, rear_axle_offset
 from ..ros2.commands import (
     CommandArbiter,
+    ControlCommand,
     EgoState,
     Selection,
     SteerAccelCommand,
@@ -80,7 +80,13 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
     if any(later <= earlier for earlier, later in zip(offsets, offsets[1:])):
         offsets = [0]
         for previous, point in zip(points, points[1:]):
-            length = math.dist(previous.pose.position[:2], point.pose.position[:2])
+            # math.hypot of the differences, which is math.dist's own
+            # computation: Codon's math has no dist().
+            start = previous.pose.position
+            end = point.pose.position
+            length = math.hypot(
+                float(start[0]) - float(end[0]), float(start[1]) - float(end[1])
+            )
             speed = 0.5 * (previous.velocity_mps + point.velocity_mps)
             if speed < _MIN_TIMING_SPEED_MPS:
                 # The plan stops here: whatever follows is not reached.
@@ -184,18 +190,24 @@ class Ros2EgoEntity(EgoVehicle):
             actor.get_physics_control()
         )
         if self._transport is None:
-            self._transport = _cyclone_transport(self._config)
+            if TYPE_CHECKING:
+                # ros2.cyclone imports cyclonedds, which Codon cannot compile:
+                # the check builds no transport (docs/typecheck.md).
+                raise ImportError("the static check builds no Cyclone DDS transport")
+            else:
+                self._transport = _cyclone_transport(self._config)
         self._transport.open()
         self._open = True
         self._transport.publish_state(self._state(world, actor)[0])
-        for index, camera in enumerate(self._config.cameras):
-            sensor = _PublishingCamera(
-                camera.to_sensor_config(),
-                functools.partial(self._publish_frame, index),
-            )
-            sensor.attach(world, actor)
-            self._cameras.append(sensor)
-            logger.info("Publishing camera %r on %s", camera.logical_id, camera.topic)
+        if TYPE_CHECKING:
+            # The cameras' listener (ros2.camera) is outside the static check.
+            pass
+        else:
+            for index, camera in enumerate(self._config.cameras):
+                sensor = _publishing_camera(camera.to_sensor_config(), self, index)
+                sensor.attach(world, actor)
+                self._cameras.append(sensor)
+                logger.info("Publishing camera %r on %s", camera.logical_id, camera.topic)
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Publish the ego's state, take the commands, and apply the one that drives."""
@@ -234,7 +246,7 @@ class Ros2EgoEntity(EgoVehicle):
                 logger.exception("Failed to close the ROS 2 transport")
         self._open = False
 
-    def _publish_frame(self, index: int, image: Any) -> None:
+    def _publish_frame(self, index: int, image: "carla.Image") -> None:
         """A published camera's listener: hand its frame to the transport.
 
         Runs on a CARLA sensor thread.  A frame after :meth:`on_scenario_end`
@@ -244,6 +256,12 @@ class Ros2EgoEntity(EgoVehicle):
             transport = self._transport
             if transport is None or not self._open:
                 return
+            if TYPE_CHECKING:
+                # typesafe_carla's Codon raw_data is a view (as in
+                # CarlaCameraSensor.get_image).
+                bgra = image.raw_data.tobytes()
+            else:
+                bgra = bytes(image.raw_data)
             try:
                 transport.publish_image(
                     CameraFrame(
@@ -251,7 +269,7 @@ class Ros2EgoEntity(EgoVehicle):
                         stamp_us=int(round(float(image.timestamp) * US_PER_S)),
                         width=int(image.width),
                         height=int(image.height),
-                        bgra=bytes(image.raw_data),
+                        bgra=bgra,
                     )
                 )
             except Exception:  # noqa: BLE001 - a sensor thread must not die
@@ -288,7 +306,9 @@ class Ros2EgoEntity(EgoVehicle):
     # ------------------------------------------------------------------
 
     def _note_selection(self, selection: Optional[Selection]) -> None:
-        name = selection.source.name if selection is not None else None
+        name: Optional[str] = None
+        if selection is not None:
+            name = selection.source.name
         fresh = selection is not None and selection.fresh
         if name != self._active:
             logger.info("Ego driven by command source %r", name)
@@ -319,9 +339,12 @@ class Ros2EgoEntity(EgoVehicle):
             return
         command = selection.command
         source = selection.source
+        # Each branch names the command as its class: Codon 0.19 reads no
+        # attribute of a union (docs/typecheck.md).
         if isinstance(command, TrajectoryCommand):
+            trajectory: TrajectoryCommand = command
             vehicle_command = self._follower.step(
-                self._plan(command, selection.received_us),
+                self._plan(trajectory, selection.received_us),
                 observation.pose,
                 observation.speed_mps,
                 FIXED_DELTA_SECONDS,
@@ -332,22 +355,25 @@ class Ros2EgoEntity(EgoVehicle):
             actor.apply_control(vehicle_command.to_carla_control())
             return
         if isinstance(command, SteerAccelCommand):
-            steer_rad = source.steering_sign * command.steering_rad
+            steer_accel: SteerAccelCommand = command
+            steer_rad = source.steering_sign * steer_accel.steering_rad
             speed_mps = (
                 observation.speed_mps
-                + command.acceleration_mps2 * source.speed_horizon_s
+                + steer_accel.acceleration_mps2 * source.speed_horizon_s
             )
-            acceleration_mps2 = command.acceleration_mps2
+            acceleration_mps2 = steer_accel.acceleration_mps2
             jerk_mps3 = source.jerk_mps3
         else:
+            control: ControlCommand = command
             # Autoware steers positive to the left; CARLA's Ackermann
             # controller, positive to the right.
-            steer_rad = -command.steering_tire_angle_rad
-            speed_mps = command.velocity_mps
-            acceleration_mps2 = command.acceleration_mps2
-            jerk_mps3 = (
-                command.jerk_mps3 if command.jerk_mps3 is not None else source.jerk_mps3
-            )
+            steer_rad = -control.steering_tire_angle_rad
+            speed_mps = control.velocity_mps
+            acceleration_mps2 = control.acceleration_mps2
+            jerk_mps3 = source.jerk_mps3
+            control_jerk = control.jerk_mps3
+            if control_jerk is not None:
+                jerk_mps3 = control_jerk
         import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         actor.apply_ackermann_control(
@@ -379,23 +405,13 @@ def _steering_tire_angle(actor: "carla.Actor") -> float:
     return -math.radians(0.5 * (left + right))
 
 
-class _PublishingCamera(CarlaCameraSensor):
-    """A CARLA RGB camera that hands each frame to *deliver* as it arrives.
+def _publishing_camera(
+    config: CarlaCameraSensorConfig, entity: Ros2EgoEntity, index: int
+) -> CarlaCameraSensor:
+    """A camera that publishes each frame through *entity* (:mod:`..ros2.camera`)."""
+    from ..ros2.camera import PublishingCamera  # noqa: PLC0415
 
-    Nothing queues: the frame is published from the sensor's own thread, so a
-    slow reader never holds frames back.
-    """
-
-    _deliver: Callable[[Any], None]
-
-    def __init__(
-        self, config: CarlaCameraSensorConfig, deliver: Callable[[Any], None]
-    ) -> None:
-        super().__init__(config)
-        self._deliver = deliver
-
-    def _on_sensor_data(self, data: Any) -> None:
-        self._deliver(data.as_image() if hasattr(data, "as_image") else data)
+    return PublishingCamera(config, entity, index)
 
 
 def _cyclone_transport(config: Ros2EgoConfig) -> Ros2EgoTransport:
