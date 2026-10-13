@@ -2056,7 +2056,7 @@ defines anything.</p>
 <p><code>CHECKED</code> lists the modules compiled from their source; <code>EXCLUDED</code> maps every
 other module to the reason it is not. <code>"not yet checked (#45)"</code> marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(<code>"imports lanelet2, json"</code>: a package or a standard module Codon cannot
+(<code>"imports omegaconf, hydra"</code>: a package or a standard module Codon cannot
 compile). numpy is not one: Codon ships its own, and a module's numpy calls
 compile. Every module of the package except <code>typecheck/</code> is in exactly one of
 the two, which the test suite checks, so <strong>a new module needs an entry</strong>.</p>
@@ -2157,23 +2157,22 @@ node's command from its ROS parameters (<code>bridge_ros_args()</code>,
 values; Codon 0.19 fails on a <code>Union</code> in a parameter annotation, <code>union
 already sealed</code>, so the checker drops one and the check has nothing to call
 with), what the runner does with <code>json</code>,
-lanelet2 or a condition's details (writing the result and its environment,
+odd.route or a condition's details (writing the result and its environment,
 <code>_write_result()</code>; checking the planned route against the ODD,
 <code>ScenarioRunner._warn_if_route_leaves_odd()</code>; collecting the condition
 statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
 <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 77 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (about 58 import what Codon cannot
-compile, 28 build on an excluded module and 20 hold values Codon has no type
+<code>encode_frame_jpeg()</code> (cv2). The 75 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (about 53 import what Codon cannot
+compile, 28 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>58 import what Codon cannot compile</strong>: lanelet2 beyond what its model
-  declares (most of these walk its objects typed <code>Any</code>), pyxodr,
+<li><strong>53 import what Codon cannot compile</strong>: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
-  beyond <code>importlib.metadata</code>, or more of <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
+  beyond <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
   <code>subprocess</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
@@ -2183,13 +2182,14 @@ for), so each is counted once, in the first group that fits it:</p>
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
-<li><strong>16 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>19 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
   <code>coverage</code>, <code>examples</code>, <code>scaffold</code>), the
-  authoring compiler, builders and validator and
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 16
+  authoring compiler, builders and validator, <code>odd.probes</code> and <code>odd.route</code>
+  (<code>odd.model</code>; the lanelet2 they read is modelled) and
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.</li>
 <li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
@@ -2979,7 +2979,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
   first branch what it can (<code>ScenarioRunner</code> calls <code>require_goal()</code>, built
   on the ego's class, and <code>_warn_if_route_leaves_odd()</code>, which plans the
-  route with lanelet2, in the <code>else</code> branch).
+  route with odd.route, in the <code>else</code> branch).
 - <strong>An entity looked up by role is looked up by kind</strong>:
   <code>find_entity_by_role_name</code> returns an entity of any kind (<code>Optional[Any]</code>),
   so a checked module asks <code>entity.registry</code> for the kind it acts on,
@@ -3296,7 +3296,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 03:51:46 UTC"><span class="timeago" datetime="2026-10-13T03:51:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 03:51:46 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 05:01:55 UTC"><span class="timeago" datetime="2026-10-13T05:01:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 05:01:55 UTC">2026-10-13</span>
   </span>
 
     
