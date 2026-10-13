@@ -99,9 +99,9 @@ DEFAULT_MODELS: dict[str, str] = {
 #: ``autopilot`` is CARLA's TrafficManager, which is driven for the ego and
 #: reads no goal.  ``autoware`` is the closed loop: Autoware localizes at the
 #: spawn, plans a route to the goal and only then engages, so a goal is required
-#: of it and of nothing else.  (The framework's third value, ``carla_driver``,
-#: needs a ``driver`` config group the editor does not author; a run can still
-#: select it from the command line.)
+#: of it and of nothing else.  (The framework's other values, ``carla_driver``
+#: and ``ros2``, need a ``driver`` or ``ros2`` config group the editor does not
+#: author; a run can still select them from the command line.)
 EgoDriver = Literal["autopilot", "autoware"]
 #: How a lanelet-valued slot gets its lanelet.
 #:

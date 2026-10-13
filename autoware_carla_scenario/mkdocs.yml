@@ -91,6 +91,7 @@ nav:
   - HD Maps: maps.md
   - Autoware as the Ego: autoware.md
   - External Driver Interface: driver_interface.md
+  - ROS 2 over DDS: ros2.md
   - Traffic Backends: traffic_backends.md
   - Trajectories and Recorded-Scene Replay: trajectory.md
   - Logical Scenarios from Routes: logical_scenarios.md

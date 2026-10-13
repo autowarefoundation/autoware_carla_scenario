@@ -391,9 +391,31 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         control = ControlConfig.from_mapping(driver_dict.get("control", {}))
         return CarlaDriverEntity(DriverClientConfig.from_mapping(driver_dict), control)
 
+    if entity == "ros2":
+        # ROS 2 nodes drive the ego over DDS (docs/ros2.md). The DDS binding is
+        # imported when the scenario starts, so a missing `ros2` extra fails
+        # there, with the install hint, rather than here.
+        from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
+        from autoware_carla_scenario.entity.ros2_entity import (  # noqa: PLC0415
+            Ros2EgoEntity,
+        )
+        from autoware_carla_scenario.ros2 import Ros2EgoConfig  # noqa: PLC0415
+
+        ros2_cfg = cfg.get("ros2")
+        if ros2_cfg is None:
+            msg = (
+                "ego.entity=ros2 requires the 'ros2' config group. "
+                "Add 'ros2: default' to the defaults list."
+            )
+            raise ValueError(msg)
+
+        ros2_dict = _to_dict(ros2_cfg)
+        control = ControlConfig.from_mapping(ros2_dict.get("control") or {})
+        return Ros2EgoEntity(Ros2EgoConfig.from_mapping(ros2_dict), control)
+
     msg = (
         f"Unknown ego.entity: {entity!r}. "
-        "Expected one of: 'autopilot', 'autoware', 'carla_driver'."
+        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2'."
     )
     raise ValueError(msg)
 

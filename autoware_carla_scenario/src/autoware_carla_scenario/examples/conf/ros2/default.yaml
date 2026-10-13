@@ -1,0 +1,37 @@
+# @package _global_
+#
+# Settings for an ego driven by ROS 2 nodes over DDS, used when
+# `ego.entity: ros2` (docs/ros2.md). The framework joins the DDS domain itself
+# through Cyclone DDS (the `ros2` extra): no rclpy, no bridge node, no gRPC.
+# It publishes the ego's state on the topics below and takes commands from
+# `sources`, the freshest of the highest priority driving.
+#
+# Nothing waits for a command: the run goes at the pace `server.max_tick_rate_hz`
+# sets (20 Hz is real time at the 0.05 s step), as a ROS 2 bridge to CARLA does.
+ros2:
+  # ROS_DOMAIN_ID. Cyclone reads CYCLONEDDS_URI, as a ROS 2 node does.
+  domain_id: 0
+  frame_id: map
+  child_frame_id: base_link
+  # null leaves a topic unpublished.
+  kinematic_state_topic: /localization/kinematic_state    # nav_msgs/Odometry
+  steering_status_topic: /vehicle/status/steering_status  # autoware_vehicle_msgs/SteeringReport
+  speed_topic: /vehicle/speed                             # std_msgs/Float64, m/s
+  # rosgraph_msgs/Clock, for a CARLA server built without ROS 2.
+  clock_topic: null
+  # null derives it from the wheel physics.
+  rear_axle_offset_m: null
+  # hold | brake: what to do once every source has gone stale.
+  on_stale: hold
+  # kind: trajectory (autoware_planning_msgs/Trajectory on `topic`, tracked by
+  # the framework's trajectory follower), control (autoware_control_msgs/Control
+  # on `topic`) or steer_accel (std_msgs/Float64 on `steering_topic` and
+  # `acceleration_topic`); the last two go to CARLA's Ackermann controller.
+  sources:
+    - name: planner
+      kind: trajectory
+      topic: /planning/scenario_planning/trajectory
+      priority: 0
+      stale_s: 0.3
+  # Gains for tracking a trajectory (driver.control's, see conf/driver/default.yaml).
+  control: {}

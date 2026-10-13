@@ -4,6 +4,7 @@ defaults:
   - ego: default
   - entity: default
   - driver: default
+  - ros2: default
   - traffic_manager: default
   - traffic: traffic_manager
   - scenario: intersection_passing/left_turn
@@ -101,7 +102,7 @@ ego:
   # Where the ego is going; each scenario names it, or derives it in setup().
   goal_lanelet_id: null
   goal_s: 0.0
-  # autopilot | autoware | carla_driver
+  # autopilot | autoware | carla_driver | ros2
   entity: autopilot
 
 # Background traffic: vehicles no scenario entity stands for, placed and

@@ -1,0 +1,181 @@
+"""Settings for the ego entity that talks to ROS 2 nodes over DDS.
+
+:class:`Ros2EgoConfig` says what the entity publishes about the ego and which
+topics it takes commands from; :class:`CommandSourceConfig` is one of those
+command sources.  Neither imports a DDS implementation, so a config can be built
+and validated where none is installed.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, fields
+from typing import Any, Mapping, Optional, Tuple
+
+__all__ = [
+    "COMMAND_KINDS",
+    "ON_STALE_ACTIONS",
+    "CommandSourceConfig",
+    "Ros2EgoConfig",
+]
+
+#: What a command source carries:
+#:
+#: * ``"trajectory"`` -- ``autoware_planning_msgs/msg/Trajectory`` on
+#:   :attr:`CommandSourceConfig.topic`, tracked by the framework's own
+#:   trajectory follower.
+#: * ``"steer_accel"`` -- two ``std_msgs/msg/Float64`` topics, a steering angle
+#:   and an acceleration, as VisionPilot publishes them; handed to CARLA's
+#:   Ackermann controller.
+#: * ``"control"`` -- ``autoware_control_msgs/msg/Control`` on
+#:   :attr:`CommandSourceConfig.topic`; handed to CARLA's Ackermann controller.
+COMMAND_KINDS: Tuple[str, ...] = ("trajectory", "steer_accel", "control")
+
+#: What the entity does once every source has gone stale:
+#:
+#: * ``"hold"`` -- keep applying the last command, as a ROS 2 node that relays
+#:   commands to CARLA does when its upstream stops.
+#: * ``"brake"`` -- brake to a stop.
+ON_STALE_ACTIONS: Tuple[str, ...] = ("hold", "brake")
+
+
+@dataclass(frozen=True)
+class CommandSourceConfig:
+    """One ROS 2 publisher the ego takes commands from.
+
+    Sources are arbitrated every tick: of those whose last command arrived at
+    most :attr:`stale_s` ago, the one with the highest :attr:`priority` drives.
+
+    Attributes:
+        name: The source's name in logs and :attr:`Ros2EgoEntity.active_source`.
+        kind: One of :data:`COMMAND_KINDS`.
+        topic: The command topic, for ``trajectory`` and ``control``.
+        steering_topic: The steering topic, for ``steer_accel``.
+        acceleration_topic: The acceleration topic, for ``steer_accel``.
+        priority: Higher wins among the fresh sources.
+        stale_s: Simulated seconds after its last command that a source stops
+            counting as fresh.
+        steering_sign: Multiplies a ``steer_accel`` steering angle before it
+            reaches CARLA, whose Ackermann steer is positive to the right.
+            VisionPilot already steers positive to the right, so ``1.0``.
+        speed_horizon_s: A ``steer_accel`` acceleration becomes the Ackermann
+            target speed ``speed + acceleration * speed_horizon_s``, as
+            VisionPilot's ``carla_control_publisher`` builds it.
+        jerk_mps3: The Ackermann jerk limit, for ``steer_accel`` and for a
+            ``control`` command that leaves its jerk undefined.
+    """
+
+    name: str
+    kind: str
+    topic: str = ""
+    steering_topic: str = ""
+    acceleration_topic: str = ""
+    priority: int = 0
+    stale_s: float = 0.3
+    steering_sign: float = 1.0
+    speed_horizon_s: float = 2.0
+    jerk_mps3: float = 10.0
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("a command source needs a name")
+        if self.kind not in COMMAND_KINDS:
+            raise ValueError(
+                f"command source {self.name!r}: unknown kind {self.kind!r}, "
+                f"expected one of {COMMAND_KINDS}"
+            )
+        if self.kind == "steer_accel":
+            if not self.steering_topic or not self.acceleration_topic:
+                raise ValueError(
+                    f"command source {self.name!r}: steer_accel needs "
+                    "steering_topic and acceleration_topic"
+                )
+        elif not self.topic:
+            raise ValueError(f"command source {self.name!r}: {self.kind} needs a topic")
+        if self.stale_s <= 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: stale_s must be positive, "
+                f"got {self.stale_s}"
+            )
+
+    @property
+    def topics(self) -> Tuple[str, ...]:
+        """Every topic this source reads."""
+        if self.kind == "steer_accel":
+            return (self.steering_topic, self.acceleration_topic)
+        return (self.topic,)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "CommandSourceConfig":
+        """Build from a plain mapping (e.g. a Hydra node), ignoring unknown keys."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in mapping.items() if key in known})
+
+
+def _default_sources() -> Tuple[CommandSourceConfig, ...]:
+    return (
+        CommandSourceConfig(
+            name="planner",
+            kind="trajectory",
+            topic="/planning/scenario_planning/trajectory",
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class Ros2EgoConfig:
+    """How the ego meets ROS 2 nodes over DDS.
+
+    Topics are ROS 2 names (``/vehicle/speed``); ``None`` leaves that one
+    unpublished.  Poses are published in the right-handed local frame -- CARLA's
+    world with ``y`` flipped, as CARLA's own ROS 2 interface publishes it -- with
+    the origin on the rear axle, Autoware's ``base_link``.
+
+    Attributes:
+        domain_id: The DDS domain (``ROS_DOMAIN_ID``).
+        frame_id: ``header.frame_id`` of the published odometry.
+        child_frame_id: Its ``child_frame_id``.
+        kinematic_state_topic: ``nav_msgs/msg/Odometry`` of the ego.
+        steering_status_topic: ``autoware_vehicle_msgs/msg/SteeringReport``.
+        speed_topic: ``std_msgs/msg/Float64``, the ground speed in m/s.
+        clock_topic: ``rosgraph_msgs/msg/Clock``, for a CARLA server built
+            without ROS 2, whose own ``/clock`` is then missing.
+        rear_axle_offset_m: Offset from the actor origin back to ``base_link``;
+            ``None`` derives it from the wheel physics.
+        on_stale: One of :data:`ON_STALE_ACTIONS`.
+        sources: The command sources, see :class:`CommandSourceConfig`.
+    """
+
+    domain_id: int = 0
+    frame_id: str = "map"
+    child_frame_id: str = "base_link"
+    kinematic_state_topic: Optional[str] = "/localization/kinematic_state"
+    steering_status_topic: Optional[str] = "/vehicle/status/steering_status"
+    speed_topic: Optional[str] = "/vehicle/speed"
+    clock_topic: Optional[str] = None
+    rear_axle_offset_m: Optional[float] = None
+    on_stale: str = "hold"
+    sources: Tuple[CommandSourceConfig, ...] = field(default_factory=_default_sources)
+
+    def __post_init__(self) -> None:
+        if self.on_stale not in ON_STALE_ACTIONS:
+            raise ValueError(
+                f"unknown on_stale {self.on_stale!r}, expected one of "
+                f"{ON_STALE_ACTIONS}"
+            )
+        if not self.sources:
+            raise ValueError("the ego needs at least one command source")
+        names = [source.name for source in self.sources]
+        if len(set(names)) != len(names):
+            raise ValueError(f"command source names must be unique, got {names}")
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2EgoConfig":
+        """Build from a plain mapping (e.g. a Hydra node), ignoring unknown keys."""
+        known = {f.name for f in fields(cls)}
+        values = {key: value for key, value in mapping.items() if key in known}
+        sources = values.pop("sources", None)
+        if sources is not None:
+            values["sources"] = tuple(
+                CommandSourceConfig.from_mapping(source) for source in sources
+            )
+        return cls(**values)

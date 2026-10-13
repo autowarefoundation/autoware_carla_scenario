@@ -1,0 +1,279 @@
+"""Unit tests for the ego entity driven by ROS 2 nodes over DDS.
+
+The CARLA world and the ego actor are mocked and the DDS transport is the
+in-memory fake, so the loop -- publish, take commands, arbitrate, apply -- runs
+without a simulator or a DDS domain.
+"""
+
+from __future__ import annotations
+
+import math
+from types import SimpleNamespace
+from typing import List
+from unittest.mock import MagicMock
+
+import pytest
+
+from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
+from autoware_carla_scenario.ros2 import (
+    CommandSourceConfig,
+    ControlCommand,
+    FakeRos2Transport,
+    Ros2EgoConfig,
+    SteerAccelCommand,
+    TrajectoryCommand,
+    TrajectoryCommandPoint,
+)
+
+from ._vehicle_physics import mkz_physics
+
+_TICK_S = 0.05
+
+_SOURCES = (
+    CommandSourceConfig(
+        name="vp",
+        kind="steer_accel",
+        steering_topic="/vehicle/steering_cmd",
+        acceleration_topic="/vehicle/throttle_cmd",
+        priority=0,
+        stale_s=0.3,
+    ),
+    CommandSourceConfig(
+        name="si",
+        kind="control",
+        topic="/control/trajectory_follower/control_cmd",
+        priority=10,
+        stale_s=0.3,
+    ),
+    CommandSourceConfig(
+        name="planner",
+        kind="trajectory",
+        topic="/planning/scenario_planning/trajectory",
+        priority=-1,
+        stale_s=0.3,
+    ),
+)
+
+
+class _Clock:
+    """A world whose snapshot reports a settable simulation time."""
+
+    def __init__(self) -> None:
+        self.now_s = 0.0
+        self.world = MagicMock()
+        self.world.get_snapshot.side_effect = lambda: SimpleNamespace(
+            timestamp=SimpleNamespace(elapsed_seconds=self.now_s)
+        )
+
+    def advance(self) -> None:
+        self.now_s += _TICK_S
+
+
+def _actor(speed_mps: float = 5.0, wheel_deg: float = 0.0) -> MagicMock:
+    """A mock ego vehicle heading +x in CARLA's world at *speed_mps*."""
+    actor = MagicMock()
+    actor.get_transform.return_value = SimpleNamespace(
+        location=SimpleNamespace(x=10.0, y=-2.0, z=0.0),
+        rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=0.0),
+    )
+    actor.get_velocity.return_value = SimpleNamespace(x=speed_mps, y=0.0, z=0.0)
+    actor.get_acceleration.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_angular_velocity.return_value = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    actor.get_physics_control.return_value = mkz_physics()
+    actor.get_control.return_value = SimpleNamespace(gear=1)
+    actor.get_wheel_steer_angle.return_value = wheel_deg
+    return actor
+
+
+def _started(
+    *, on_stale: str = "hold", actor: MagicMock | None = None
+) -> tuple[Ros2EgoEntity, FakeRos2Transport, MagicMock, _Clock]:
+    config = Ros2EgoConfig(sources=_SOURCES, on_stale=on_stale, rear_axle_offset_m=-1.4)
+    transport = FakeRos2Transport(config)
+    entity = Ros2EgoEntity(config, transport=transport)
+    actor = actor if actor is not None else _actor()
+    entity._vehicle = actor
+    clock = _Clock()
+    entity.on_scenario_start(clock.world)
+    return entity, transport, actor, clock
+
+
+def _tick(entity: Ros2EgoEntity, clock: _Clock) -> None:
+    clock.advance()
+    entity.on_tick(clock.world, clock.now_s)
+
+
+def _last_ackermann(actor: MagicMock):
+    return actor.apply_ackermann_control.call_args.args[0]
+
+
+def _last_control(actor: MagicMock):
+    return actor.apply_control.call_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle and state
+# ---------------------------------------------------------------------------
+
+
+def test_start_opens_the_transport_and_publishes_the_first_state() -> None:
+    entity, transport, _, _ = _started()
+    assert transport.opened == 1
+    assert len(transport.published) == 1
+    assert entity.use_autopilot is False
+
+
+def test_start_before_spawn_is_an_error() -> None:
+    entity = Ros2EgoEntity(transport=FakeRos2Transport(Ros2EgoConfig()))
+    with pytest.raises(RuntimeError, match="before spawn"):
+        entity.on_scenario_start(_Clock().world)
+
+
+def test_every_tick_publishes_the_state_in_the_local_frame() -> None:
+    entity, transport, _, clock = _started(actor=_actor(speed_mps=5.0, wheel_deg=10.0))
+    _tick(entity, clock)
+    state = transport.published[-1]
+    assert state.stamp_s == pytest.approx(_TICK_S)
+    # CARLA's y=-2 is y=+2 right-handed, and base_link sits 1.4 m behind the
+    # actor origin.
+    assert state.pose.position[0] == pytest.approx(8.6)
+    assert state.pose.position[1] == pytest.approx(2.0)
+    assert state.speed_mps == pytest.approx(5.0)
+    assert state.linear_velocity[0] == pytest.approx(5.0)
+    # CARLA's wheels at +10 deg (right) are Autoware's -10 deg.
+    assert state.steering_tire_angle_rad == pytest.approx(-math.radians(10.0))
+
+
+def test_end_closes_the_transport_once() -> None:
+    entity, transport, _, clock = _started()
+    entity.on_scenario_end(clock.world)
+    entity.on_scenario_end(clock.world)
+    assert transport.closed == 1
+    # A tick after the end is ignored.
+    published = len(transport.published)
+    _tick(entity, clock)
+    assert len(transport.published) == published
+
+
+def test_a_failing_close_does_not_raise() -> None:
+    entity, transport, _, clock = _started()
+    transport.close = MagicMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+    entity.on_scenario_end(clock.world)
+
+
+# ---------------------------------------------------------------------------
+# Applying commands
+# ---------------------------------------------------------------------------
+
+
+def test_the_ego_brakes_before_any_command() -> None:
+    entity, _, actor, clock = _started()
+    _tick(entity, clock)
+    assert entity.active_source is None
+    assert _last_control(actor).brake == pytest.approx(1.0)
+    actor.apply_ackermann_control.assert_not_called()
+
+
+def test_steer_accel_goes_to_the_ackermann_controller_as_visionpilot_hands_it() -> None:
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    transport.deliver("vp", SteerAccelCommand(steering_rad=0.1, acceleration_mps2=0.5))
+    _tick(entity, clock)
+    assert entity.active_source == "vp"
+    control = _last_ackermann(actor)
+    # carla_control_publisher: steer as is, speed = v + a * 2.0.
+    assert control.steer == pytest.approx(0.1)
+    assert control.speed == pytest.approx(6.0)
+    assert control.acceleration == pytest.approx(0.5)
+    assert control.jerk == pytest.approx(10.0)
+
+
+def test_a_negative_target_speed_is_clamped_to_zero() -> None:
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=1.0))
+    transport.deliver("vp", SteerAccelCommand(0.0, -3.0))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).speed == pytest.approx(0.0)
+
+
+def test_a_control_command_is_steered_in_carlas_sense() -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=None))
+    _tick(entity, clock)
+    control = _last_ackermann(actor)
+    assert control.steer == pytest.approx(-0.2)
+    assert control.speed == pytest.approx(4.0)
+    assert control.acceleration == pytest.approx(-3.0)
+    assert control.jerk == pytest.approx(10.0)
+
+
+def test_the_safety_island_overrides_visionpilot_while_fresh() -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
+    _tick(entity, clock)
+    assert entity.active_source == "vp"
+
+    transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
+    transport.deliver("si", ControlCommand(0.0, 3.0, -3.0))
+    _tick(entity, clock)
+    assert entity.active_source == "si"
+
+    # VisionPilot keeps talking, the CR52 falls silent: after its stale_s
+    # VisionPilot drives again.
+    for _ in range(7):
+        transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
+        _tick(entity, clock)
+    assert entity.active_source == "vp"
+    assert _last_ackermann(actor).steer == pytest.approx(0.1)
+
+
+def test_a_stale_source_is_held_by_default() -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("si", ControlCommand(0.0, 3.0, -3.0))
+    _tick(entity, clock)
+    for _ in range(10):
+        _tick(entity, clock)
+    assert entity.active_source == "si"
+    assert _last_ackermann(actor).speed == pytest.approx(3.0)
+    actor.apply_control.assert_not_called()
+
+
+def test_a_stale_source_brakes_when_asked_to() -> None:
+    entity, transport, actor, clock = _started(on_stale="brake")
+    transport.deliver("si", ControlCommand(0.0, 3.0, -3.0))
+    _tick(entity, clock)
+    for _ in range(10):
+        _tick(entity, clock)
+    assert _last_control(actor).brake == pytest.approx(1.0)
+
+
+def test_a_trajectory_is_tracked_by_the_framework_follower() -> None:
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=0.0))
+    # Straight ahead along the ego's heading, in the local frame, at 5 m/s.
+    points: List[TrajectoryCommandPoint] = [
+        TrajectoryCommandPoint(0.2 * i, 8.6 + 1.0 * i, 2.0, 0.0, 0.0, 5.0)
+        for i in range(30)
+    ]
+    transport.deliver("planner", TrajectoryCommand(stamp_s=0.0, points=tuple(points)))
+    _tick(entity, clock)
+    assert entity.active_source == "planner"
+    control = _last_control(actor)
+    assert control.throttle > 0.0
+    assert control.brake == pytest.approx(0.0)
+    assert abs(control.steer) < 0.05
+    actor.apply_ackermann_control.assert_not_called()
+
+
+def test_the_plan_of_a_trajectory_is_built_once() -> None:
+    entity, transport, _, clock = _started()
+    command = TrajectoryCommand(
+        stamp_s=0.0,
+        points=tuple(
+            TrajectoryCommandPoint(0.1 * i, 8.6 + 0.5 * i, 2.0, 0.0, 0.0, 5.0)
+            for i in range(10)
+        ),
+    )
+    transport.deliver("planner", command)
+    _tick(entity, clock)
+    first = entity._plan(entity._arbiter.select(clock.now_s))  # type: ignore[arg-type]
+    _tick(entity, clock)
+    second = entity._plan(entity._arbiter.select(clock.now_s))  # type: ignore[arg-type]
+    assert first is second
