@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 153 of
-the package's 228 modules (67%; about 35,800 of 65,800 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 154 of
+the package's 229 modules (67%; about 36,000 of 66,000 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -303,7 +303,8 @@ the `scenario_bridge` node's command and Python root beside it
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-unit names (`odd.unit_names`), the CARLA-only helpers, the traffic-light
+unit names (`odd.unit_names`), the planning of a scenario's route on the
+Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
@@ -365,8 +366,8 @@ for), so each is counted once, in the first group that fits it:
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator, `odd.probes` and `odd.route`
-  (names of `odd.model` and `coverage.items` that the odd and coverage
+  authoring compiler, builders and validator, `odd.probes` and `odd.route`,
+  the coverage half of the route check (names of `odd.model` and `coverage.items` that the odd and coverage
   models do not declare, such as `UNDECIDED`; both also hold attribute
   values of any type, `dict[str, Any]`) and
   `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
