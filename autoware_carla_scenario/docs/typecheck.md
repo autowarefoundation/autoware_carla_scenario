@@ -340,12 +340,12 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 57 import what Codon cannot
+`encode_frame_jpeg()` (cv2). The 76 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 54 import what Codon cannot
 compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **57 import what Codon cannot compile**: pyxodr,
+- **54 import what Codon cannot compile**: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
@@ -358,13 +358,14 @@ for), so each is counted once, in the first group that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **17 build on an excluded module**, and import nothing Codon lacks
+- **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator and
-  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 17
+  authoring compiler, builders and validator, `odd.probes` and `odd.route`
+  (`odd.model`; the lanelet2 they read is modelled) and
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
