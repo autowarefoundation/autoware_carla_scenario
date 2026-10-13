@@ -314,7 +314,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 83
+below). 79
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -337,10 +337,8 @@ node's command from its ROS parameters (`bridge_ros_args()`,
 `bridge_command()`: a `Mapping[str, Any]` of bool, int, float and str
 values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
 already sealed`, so the checker drops one and the check has nothing to call
-with), what the runner does with `json`,
-odd.route or a condition's details (writing the result and its environment,
-`_write_result()`; checking the planned route against the ODD,
-`ScenarioRunner._warn_if_route_leaves_odd()`; collecting the condition
+with), what the runner does with `json` or a condition's details (writing
+the result and its environment, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
@@ -448,7 +446,9 @@ stands in for it in the check's workspace:
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
-  closes, whose JSON lines hold values of mixed types). A module with no
+  closes, whose JSON lines hold values of mixed types; `environment.codon`,
+  for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
+  returns). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
@@ -1190,8 +1190,7 @@ What Codon 0.19 needs that Python does not, beyond
   function `UNCALLED` names is still compiled when a checked function calls
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
   first branch what it can (`ScenarioRunner` calls `require_goal()`, built
-  on the ego's class, and `_warn_if_route_leaves_odd()`, which plans the
-  route with odd.route, in the `else` branch; `Ros2EgoEntity.on_scenario_start()`
+  on the ego's class, in the `else` branch; `Ros2EgoEntity.on_scenario_start()`
   builds its Cyclone DDS transport, `_cyclone_transport()`, there too). A
   private helper that imports such a module inside it needs an `UNCALLED`
   entry of its own: its import is rewritten, and refused, even when nothing
@@ -1455,13 +1454,21 @@ What Codon 0.19 needs that Python does not, beyond
   value. The module sets its global in a function of its own
   (`entity.vehicle_entity._set_warmup_done()`).
 - **The runner's boundary is modelled**: `coverage.codon` declares the
-  `CoverageCollector` (its constructor, `start()`, `tick()`, `end()` and
-  `write(path, scenario)`; openodd's `backend` and `generator` are refused),
-  `odd.codon` `resolve_odd(spec)`, whose union parameter (`str`, `Path`,
-  `OddDefinition` or `None`) is generic and checked in its body, and
-  `reset_probes()`, and `autoware_stack/launcher.codon` the launcher's
-  `prepare()` and `close()`, which the queue calls. `test_typecheck_model.py`
-  compares each with the Python one.
+  `CoverageCollector` (its constructor, `start()`, `tick()`, `end()`,
+  `write(path, scenario)`, and the run's case and outcome,
+  `record_case(case, space=None)` and
+  `record_outcome(passed, *, failed_at=None, environment=None)`; openodd's
+  `backend` and `generator` are refused), `odd.codon` `resolve_odd(spec)`,
+  whose union parameter (`str`, `Path`, `OddDefinition` or `None`) is
+  generic and checked in its body, `reset_probes()`, the ODD's `modules`,
+  the case a run records (`OddCase`, a `@tuple` of openodd's `OddSample` and
+  `ParameterSpace`, which only the sampler builds) and what the runner reads
+  of odd.route's verdict on the ego's planned route (`plan_route_coverage()`,
+  `RouteCoverage` and `RouteLanelet`, which only it builds),
+  `environment.codon` the id of the run's environment (`capture()` and
+  `RunEnvironment.id`), and `autoware_stack/launcher.codon` the launcher's
+  `prepare()` and `close()`, which the queue calls.
+  `test_typecheck_model.py` compares each with the Python one.
 - **No attribute of a union**: Codon 0.19 reads `pose.yaw` of a value typed
   as a union (a vertex's `position`) as no type, even when every member has
   it with one type. After `isinstance`, name the value as the class
