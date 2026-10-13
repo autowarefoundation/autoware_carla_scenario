@@ -180,6 +180,12 @@ class OddDefinition:
         self.text = text
 
 
+# A case drawn from the ODD and the space it was drawn in (openodd's, a Rust
+# extension): the checked scenario_runner and scenario_queue only pass it on.
+class OddCase:
+    pass
+
+
 def default_odd() -> OddDefinition:
     raise NotImplementedError()
 

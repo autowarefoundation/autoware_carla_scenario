@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "10.3.2"
+version = "10.4.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -60,7 +60,7 @@ dependencies = [
     # ASAM OpenODD: reading, judging, versioning and sampling ODDs, and coverage
     # -- collecting, merging, the COD export (a Rust core). This package is its
     # CARLA backend (odd/backend.py's CarlaBackend).
-    "openodd-py>=0.4.0",
+    "openodd-py>=0.6.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",

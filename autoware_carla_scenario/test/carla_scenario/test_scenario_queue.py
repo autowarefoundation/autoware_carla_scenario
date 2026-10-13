@@ -175,6 +175,24 @@ class TestScenarioQueueUnit:
         ]
         assert timeouts == [1.5, None]  # None: the runner's own default
 
+    def test_run_all_passes_each_scenarios_odd_case(self) -> None:
+        queue, mock_runner = _make_queue_with_mock_runner()
+        s1 = _NullScenario(_make_ego_config())
+        s2 = _NullScenario(_make_ego_config())
+        case = (MagicMock(), MagicMock())
+        queue.add(s1, case=case)
+        queue.add(s2)
+        mock_runner.run_scenario.return_value = ScenarioResult(
+            passed=True, message="ok", elapsed_seconds=0.0
+        )
+
+        queue.run_all()
+
+        cases = [
+            call.kwargs["case"] for call in mock_runner.run_scenario.call_args_list
+        ]
+        assert cases == [case, None]
+
     def test_owns_server_flag_when_no_server_provided(self) -> None:
         with patch("autoware_carla_scenario.scenario_queue.CarlaServerManager"):
             queue = ScenarioQueue()

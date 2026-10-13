@@ -391,7 +391,9 @@ def test_a_sweep_of_samples_alone_needs_no_map() -> None:
     assert len(cases) == 3
     for case in cases:
         assert case[-1] == "ego.entity=autoware"
-        assert {o.split("=")[0] for o in case[:-1]} == {
+        # The settings, then the case itself for the run to record.
+        assert case[-2].startswith("++odd_case=")
+        assert {o.split("=")[0] for o in case[:-2]} == {
             "environment.sun_altitude_angle",
             "environment.precipitation",
             "environment.fog_density",
@@ -419,7 +421,7 @@ def test_drawn_cases_take_the_lanelet_cases_in_turn(monkeypatch) -> None:
         "ego.spawn_lanelet_id=2",
         "ego.spawn_lanelet_id=1",
     ]
-    assert all(c[-1] == "x=1" and len(c) == 5 for c in cases)
+    assert all(c[-1] == "x=1" and len(c) == 6 for c in cases)
 
     # Without a count, one drawn case per lanelet case.
     del odd_sample["count"]
@@ -971,3 +973,80 @@ def test_expanding_configs_in_turn_goes_on_from_the_earlier_draws() -> None:
     assert not {tuple(c) for c in first} & {tuple(c) for c in second}
     # Without a record, every expansion draws alike, as before.
     assert expand_config(cfg) == expand_config(cfg) == first
+
+
+# ---------------------------------------------------------------------------
+# Recording the cases and their outcomes; the flaky search
+# ---------------------------------------------------------------------------
+
+
+def _decoded(case: list[str]):
+    from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, decode_case
+
+    (encoded,) = [
+        o.split("=", 1)[1] for o in case if o.startswith(f"++{ODD_CASE_KEY}=")
+    ]
+    return decode_case(encoded)
+
+
+def test_a_drawn_case_travels_to_its_run_whole() -> None:
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 2, "seed": 1}}}
+    )
+    for case in expand_config(cfg):
+        sample, space = _decoded(case)
+        # What the run is given is the case's own settings.
+        assert [o for o in case if not o.startswith("++")] == sample.overrides
+        assert sample.flaky is None
+        assert set(space.names) == set(sample.values)
+
+
+def test_the_flaky_search_learns_from_the_runs_recorded_before(tmp_path: Path) -> None:
+    from openodd import CoverageCollector
+
+    sweep: dict[str, Any] = {
+        "odd_sample": {"count": 20, "seed": 3, "strategy": "coverage"}
+    }
+    cfg = OmegaConf.create({"odd": "default", "sweep": sweep})
+    # A first sweep, run: heavy fog fails, as the runner would record it.
+    for i, case in enumerate(expand_config(cfg)):
+        sample, space = _decoded(case)
+        collector = CoverageCollector([])
+        collector.record_case(sample, space)
+        collector.record_outcome(sample.values["environment.fog"] != "heavy")
+        (tmp_path / f"run{i}").mkdir()
+        collector.write(tmp_path / f"run{i}" / "S_coverage.json", "S")
+
+    sweep["odd_sample"]["coverage_from"] = [str(tmp_path)]
+    sweep["odd_sample"]["flaky"] = {"explore_fraction": 1.0, "coverage_depth": 0}
+    second = [
+        _decoded(c)[0]
+        for c in expand_config(OmegaConf.create({"odd": "default", "sweep": sweep}))
+    ]
+    assert all(s.flaky is not None for s in second)
+    report = load_and_merge([tmp_path])
+    assert len(report.cases) == 20 and all(c.passed is not None for c in report.cases)
+    assert "## Flaky cases" in report.to_markdown()
+
+
+def test_an_unknown_flaky_field_is_refused() -> None:
+    from autoware_carla_scenario.odd.sampler import search_from_config
+
+    with pytest.raises(ValueError, match="flaky: unknown fields"):
+        search_from_config({"flaky": {"bogus": 1}}, odd=_weather_odd())
+    with pytest.raises(ValueError, match="search_from_config"):
+        sampler_from_config({"flaky": True}, odd=_weather_odd())
+
+
+def test_a_run_reads_its_case_back_from_the_override() -> None:
+    from autoware_carla_scenario.examples.run import _compose_config, _odd_case
+
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 1, "seed": 1}}}
+    )
+    case = expand_config(cfg)[0]
+    drawn, space = _decoded(case)
+    run_case = _odd_case(_compose_config("cut_in/left", case))
+    assert run_case is not None
+    assert run_case[0] == drawn and run_case[1] == space
+    assert _odd_case(_compose_config("cut_in/left", [])) is None
