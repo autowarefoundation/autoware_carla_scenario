@@ -60,7 +60,7 @@ dependencies = [
     # ASAM OpenODD: reading, judging, versioning and sampling ODDs, and coverage
     # -- collecting, merging, the COD export (a Rust core). This package is its
     # CARLA backend (odd/backend.py's CarlaBackend).
-    "openodd-py>=0.7.0",
+    "openodd-py>=0.8.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",

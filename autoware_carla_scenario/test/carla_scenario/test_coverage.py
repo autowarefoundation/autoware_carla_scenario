@@ -326,6 +326,12 @@ class TestReport:
         assert "Holes" in out_md.read_text()
         assert load_and_merge([tmp_path / "outputs"]).runs == 2
 
+    def test_the_cli_writes_the_odd_matrix(self, tmp_path: Path) -> None:
+        (tmp_path / "S_coverage.json").write_text(json.dumps(_run(1)))
+        page = tmp_path / "coverage.html"
+        assert main([str(tmp_path), "--html", str(page)]) == 0
+        assert "oo-cov" in page.read_text()
+
     def test_the_cli_fails_when_there_is_nothing_to_merge(self, tmp_path: Path) -> None:
         assert main([str(tmp_path)]) == 1
 
