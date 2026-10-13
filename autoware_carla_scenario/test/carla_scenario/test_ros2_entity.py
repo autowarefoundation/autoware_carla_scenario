@@ -206,6 +206,13 @@ def test_a_control_command_is_steered_in_carlas_sense() -> None:
     assert control.jerk == pytest.approx(10.0)
 
 
+def test_a_control_command_keeps_its_own_jerk_when_it_defines_one() -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=2.5))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).jerk == pytest.approx(2.5)
+
+
 def test_the_safety_island_overrides_visionpilot_while_fresh() -> None:
     entity, transport, actor, clock = _started()
     transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
