@@ -62,6 +62,9 @@ check. This is how a ROS 2 bridge that relays to CARLA behaves (VisionPilot's ru
 the world in synchronous mode, paced to wall-clock 10 Hz, without waiting for a
 command).
 
+`ego.entity=ros2` without `server.max_tick_rate_hz` logs a warning: unpaced, the
+simulation outruns the nodes and their sources look stale.
+
 Published stamps and the freshness of commands are both in simulation time, the time
 CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 
@@ -172,7 +175,9 @@ installed. They are written in XCDR1, the representation `rmw_cyclonedds_cpp` wr
 
 * Only `rmw_cyclonedds_cpp` has been tried. Other RMWs speak the same RTPS, but
   matching them is not tested.
-* The entity publishes no camera: the CARLA server's own ROS 2 interface does.
+* The ego's role name is `Ego`, where VisionPilot subscribes its camera under
+  `/carla/hero/...`; whether CARLA's own ROS 2 topics follow the role name has not
+  been checked against a server yet.
 * Commands are read in the local frame `frame_id` names; nothing transforms a plan
   published in another frame (a Lanelet2 `map`, say).
 * `control` and `steer_accel` hand the acceleration to CARLA's Ackermann controller as

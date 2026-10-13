@@ -272,9 +272,13 @@ def test_a_writer_going_away_is_not_a_command(loopback: None) -> None:
         assert _until(publish_and_poll)
         control.dispose(sample)
         control.unregister_instance(sample)
-        deadline = time.monotonic() + 1.0
+        # Loopback delivers in milliseconds: long enough for the dataless
+        # sample to reach the transport and be taken, and skipped.
+        deadline = time.monotonic() + 0.2
         while time.monotonic() < deadline:
             assert transport.poll() == []
             time.sleep(0.02)
+        # And the source still works after it.
+        assert _until(publish_and_poll)
     finally:
         transport.close()

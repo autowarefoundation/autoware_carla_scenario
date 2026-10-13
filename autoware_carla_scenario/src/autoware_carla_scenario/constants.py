@@ -19,6 +19,10 @@ DEFAULT_TM_PORT: int = 8100
 # Three private copies that must agree is exactly the coupling this avoids.
 FIXED_DELTA_SECONDS: float = 0.05
 
+# Microseconds per second: simulation time as an integer, the clock the
+# trajectory follower, the ego observation and the ROS 2 command arbiter keep.
+US_PER_S: int = 1_000_000
+
 # When a forced lane change counts as completed.
 #
 # ``force_lane_change`` returns as soon as the command is queued, so the action

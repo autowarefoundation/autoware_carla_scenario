@@ -409,6 +409,15 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             )
             raise ValueError(msg)
 
+        if (cfg.get("server") or {}).get("max_tick_rate_hz") is None:
+            # Freshness is judged in simulation time while the nodes publish on
+            # the wall clock: unpaced, a 10 Hz node's commands land more than
+            # stale_s apart and its source flaps between fresh and stale.
+            logger.warning(
+                "ego.entity=ros2 without server.max_tick_rate_hz: the run is not "
+                "paced to real time, so ROS 2 nodes may look stale; set "
+                "server.max_tick_rate_hz=20 (docs/ros2.md, Timing)"
+            )
         ros2_dict = _to_dict(ros2_cfg)
         control = ControlConfig.from_mapping(ros2_dict.get("control") or {})
         return Ros2EgoEntity(Ros2EgoConfig.from_mapping(ros2_dict), control)

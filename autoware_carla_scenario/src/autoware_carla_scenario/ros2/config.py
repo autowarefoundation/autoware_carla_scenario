@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
 
+from ..constants import US_PER_S
 from ..utils.config import checked_options
 
 __all__ = [
@@ -109,7 +110,7 @@ class CommandSourceConfig:
     @property
     def stale_us(self) -> int:
         """:attr:`stale_s` in microseconds, the clock commands are timed on."""
-        return int(round(self.stale_s * 1_000_000))
+        return int(round(self.stale_s * US_PER_S))
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "CommandSourceConfig":

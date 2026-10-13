@@ -22,6 +22,7 @@ from cyclonedds.sub import DataReader
 from cyclonedds.topic import Topic
 from cyclonedds.util import duration
 
+from ..constants import US_PER_S
 from ..driver.geometry import Pose
 from . import messages as msg
 from .commands import (
@@ -45,15 +46,13 @@ __all__ = [
     "trajectory_from_message",
 ]
 
-#: Samples a reader keeps between polls.  Commands are taken every tick, so
-#: only the newest matters; a little depth keeps a burst from being lost
-#: before the pairing of a ``steer_accel`` source sees it.
-_COMMAND_DEPTH: int = 4
-
-_US_PER_S: int = 1_000_000
+#: Samples a ``steer_accel`` reader keeps between polls: a little depth keeps
+#: a burst from being lost before the pairing sees it.  The other kinds keep
+#: one, the newest, which is all the arbiter uses.
+_PAIRED_DEPTH: int = 4
 
 
-def _take(reader: DataReader) -> List[Any]:
+def _take(reader: DataReader, depth: int) -> List[Any]:
     """The reader's new samples, without the ones that carry no data.
 
     A writer that goes away -- a node shut down, a process killed -- leaves an
@@ -61,9 +60,7 @@ def _take(reader: DataReader) -> List[Any]:
     ``InvalidSample``.
     """
     return [
-        sample
-        for sample in reader.take(_COMMAND_DEPTH)
-        if not isinstance(sample, InvalidSample)
+        sample for sample in reader.take(depth) if not isinstance(sample, InvalidSample)
     ]
 
 
@@ -79,22 +76,24 @@ def _qos(depth: int) -> Qos:
     )
 
 
-def _reader(participant: DomainParticipant, name: str, message_type: Any) -> DataReader:
+def _reader(
+    participant: DomainParticipant, name: str, message_type: Any, depth: int
+) -> DataReader:
     return DataReader(
         participant,
         Topic(participant, msg.dds_topic(name), message_type),
-        qos=_qos(_COMMAND_DEPTH),
+        qos=_qos(depth),
     )
 
 
 def ros_time(microseconds: int) -> msg.Time:
     """Return *microseconds* as a ``builtin_interfaces/msg/Time``."""
-    sec, remainder = divmod(int(microseconds), _US_PER_S)
+    sec, remainder = divmod(int(microseconds), US_PER_S)
     return msg.Time(sec=sec, nanosec=remainder * 1000)
 
 
 def _microseconds(time: Any) -> int:
-    return int(time.sec) * _US_PER_S + int(time.nanosec) // 1000
+    return int(time.sec) * US_PER_S + int(time.nanosec) // 1000
 
 
 def odometry_message(
@@ -123,6 +122,11 @@ def odometry_message(
     )
 
 
+def _pose(pose: msg.Pose) -> Pose:
+    p, q = pose.position, pose.orientation
+    return Pose(np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]))
+
+
 def control_from_message(message: msg.Control) -> ControlCommand:
     """Return the command an ``autoware_control_msgs/msg/Control`` carries."""
     longitudinal = message.longitudinal
@@ -139,23 +143,7 @@ def trajectory_from_message(message: msg.Trajectory) -> TrajectoryCommand:
     points = tuple(
         TrajectoryCommandPoint(
             time_from_start_us=_microseconds(point.time_from_start),
-            pose=Pose(
-                np.array(
-                    [
-                        point.pose.position.x,
-                        point.pose.position.y,
-                        point.pose.position.z,
-                    ]
-                ),
-                np.array(
-                    [
-                        point.pose.orientation.x,
-                        point.pose.orientation.y,
-                        point.pose.orientation.z,
-                        point.pose.orientation.w,
-                    ]
-                ),
-            ),
+            pose=_pose(point.pose),
             velocity_mps=float(point.longitudinal_velocity_mps),
         )
         for point in cast(List[msg.TrajectoryPoint], message.points)
@@ -180,20 +168,21 @@ def _source_drain(
 ) -> _Drain:
     if source.kind in _SINGLE_TOPIC_KINDS:
         message_type, convert = _SINGLE_TOPIC_KINDS[source.kind]
-        reader = _reader(participant, source.topic, message_type)
+        reader = _reader(participant, source.topic, message_type, 1)
 
         def drain_newest() -> List[Command]:
-            # The arbiter keeps only a source's newest command: convert that one.
-            samples = _take(reader)
-            return [convert(samples[-1])] if samples else []
+            return [convert(sample) for sample in _take(reader, 1)]
 
         return drain_newest
 
     pairer = SteerAccelPairer()
     feeds = (
-        (_reader(participant, source.steering_topic, msg.Float64), pairer.steering),
         (
-            _reader(participant, source.acceleration_topic, msg.Float64),
+            _reader(participant, source.steering_topic, msg.Float64, _PAIRED_DEPTH),
+            pairer.steering,
+        ),
+        (
+            _reader(participant, source.acceleration_topic, msg.Float64, _PAIRED_DEPTH),
             pairer.acceleration,
         ),
     )
@@ -201,7 +190,7 @@ def _source_drain(
     def drain_pairs() -> List[Command]:
         commands: List[Command] = []
         for reader, feed in feeds:
-            for sample in _take(reader):
+            for sample in _take(reader, _PAIRED_DEPTH):
                 paired = feed(float(sample.data))
                 if paired is not None:
                     commands.append(paired)

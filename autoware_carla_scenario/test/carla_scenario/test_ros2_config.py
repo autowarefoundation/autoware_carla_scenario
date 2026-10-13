@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from autoware_carla_scenario.driver.control import ControlConfig
+from autoware_carla_scenario.examples.run import _to_dict
 from autoware_carla_scenario.ros2 import CommandSourceConfig, Ros2EgoConfig
 
 _CONF = (
@@ -118,11 +119,7 @@ def test_from_mapping_builds_the_sources_and_ignores_the_control_section() -> No
 
 def test_shipped_default_builds_the_config() -> None:
     cfg = _composed([])
-    from omegaconf import OmegaConf
-
-    container = OmegaConf.to_container(cfg.ros2, resolve=True)
-    assert isinstance(container, dict)
-    mapping = {str(key): value for key, value in container.items()}
+    mapping = _to_dict(cfg.ros2)
     assert Ros2EgoConfig.from_mapping(mapping) == Ros2EgoConfig()
     assert ControlConfig.from_mapping(mapping["control"]) == ControlConfig()
     # Selecting the group selects nothing: the ego is still the autopilot's.
@@ -130,16 +127,12 @@ def test_shipped_default_builds_the_config() -> None:
 
 
 def test_visionpilot_safety_island_preset_replaces_the_bench_bridge() -> None:
-    from omegaconf import OmegaConf
-
     cfg = _composed(["ros2=visionpilot_safety_island"])
     assert cfg.ego.entity == "ros2"
     assert cfg.ego.vehicle_type == "vehicle.lincoln.mkz"
     assert cfg.server.max_tick_rate_hz == pytest.approx(20.0)
 
-    container = OmegaConf.to_container(cfg.ros2, resolve=True)
-    assert isinstance(container, dict)
-    mapping = {str(key): value for key, value in container.items()}
+    mapping = _to_dict(cfg.ros2)
     config = Ros2EgoConfig.from_mapping(mapping)
     assert config.domain_id == 1
     sources = {source.name: source for source in config.sources}
@@ -165,6 +158,17 @@ def test_run_builds_the_ros2_entity() -> None:
     assert entity.use_autopilot is False
     # Nothing has joined the domain yet: that waits for the scenario to start.
     assert entity.transport is None
+
+
+def test_run_warns_when_the_run_is_not_paced(caplog: pytest.LogCaptureFixture) -> None:
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    build_ego_entity(_composed(["ego.entity=ros2"]))
+    assert "max_tick_rate_hz" in caplog.text
+
+    caplog.clear()
+    build_ego_entity(_composed(["ros2=visionpilot_safety_island"]))
+    assert "max_tick_rate_hz" not in caplog.text
 
 
 def test_run_refuses_ros2_without_its_group() -> None:

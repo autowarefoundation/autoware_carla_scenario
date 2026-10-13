@@ -30,7 +30,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Optional, Tuple
 
-from ..constants import FIXED_DELTA_SECONDS
+from ..constants import FIXED_DELTA_SECONDS, US_PER_S
 from ..driver.base import EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower, VehicleCommand
 from ..driver.geometry import Trajectory
@@ -54,9 +54,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["Ros2EgoEntity", "plan_from_trajectory"]
-
-#: Microseconds per second, the trajectory follower's clock.
-_US_PER_S: int = 1_000_000
 
 #: Below this speed (m/s) a trajectory without timing is not timed from it.
 _MIN_TIMING_SPEED_MPS: float = 0.1
@@ -84,7 +81,7 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
             if speed < _MIN_TIMING_SPEED_MPS:
                 # The plan stops here: whatever follows is not reached.
                 break
-            offsets.append(offsets[-1] + int(round(length / speed * _US_PER_S)))
+            offsets.append(offsets[-1] + int(round(length / speed * US_PER_S)))
     plan = Trajectory.empty()
     for point, offset in zip(points, offsets):
         plan.append(anchor_us + offset, point.pose)
@@ -217,7 +214,7 @@ class Ros2EgoEntity(EgoVehicle):
         self, world: "carla.World", actor: "carla.Actor"
     ) -> tuple[EgoState, EgoObservation]:
         stamp_us = int(
-            round(float(world.get_snapshot().timestamp.elapsed_seconds) * _US_PER_S)
+            round(float(world.get_snapshot().timestamp.elapsed_seconds) * US_PER_S)
         )
         observation = ego_observation(actor, stamp_us, self._rear_axle_offset_m)
         state = EgoState(

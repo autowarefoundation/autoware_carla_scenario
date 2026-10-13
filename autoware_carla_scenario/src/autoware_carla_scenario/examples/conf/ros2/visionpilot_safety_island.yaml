@@ -31,14 +31,11 @@ ros2:
       kind: steer_accel
       steering_topic: /vehicle/steering_cmd
       acceleration_topic: /vehicle/throttle_cmd
-      priority: 0
-      # VisionPilot plans at the camera's 10 Hz.
-      stale_s: 0.3
-      steering_sign: 1.0
-      speed_horizon_s: 2.0
+      # Plans at the camera's 10 Hz, so stale_s keeps its default 0.3 s; it
+      # steers positive to the right, as CARLA does (steering_sign 1.0).
     - name: safety_island
       kind: control
       topic: /control/trajectory_follower/control_cmd
+      # Overrides VisionPilot while fresh: the CR52 commands every 150 ms,
+      # well inside the default stale_s.
       priority: 10
-      # The CR52 commands every 150 ms while it overrides.
-      stale_s: 0.3
