@@ -446,7 +446,9 @@ stands in for it in the check's workspace:
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
-  closes, whose JSON lines hold values of mixed types). A module with no
+  closes, whose JSON lines hold values of mixed types; `environment.codon`,
+  for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
+  returns). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
