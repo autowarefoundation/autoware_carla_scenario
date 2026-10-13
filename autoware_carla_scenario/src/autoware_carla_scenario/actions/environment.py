@@ -114,8 +114,11 @@ class EnvironmentAction(BaseAction):
         sun_azimuth_angle: Degrees.
         rain: Rain as a camera sees it, 0-100: ``precipitation``, and the
             ``cloudiness``, ``precipitation_deposits`` and ``wetness`` CARLA's
-            rain presets pair with it (:func:`rain_weather`).  Any of those
-            given as well wins over the one *rain* derives.
+            rain presets pair with it (:func:`rain_weather`).  Cloudiness,
+            standing water or wetness given as well wins over the one *rain*
+            derives; precipitation may not be given with it.  ``rain=0`` is a
+            dry road under a clear sky, whatever the map's own weather.
+            Keyword-only.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.
         label: Human-readable identifier.
@@ -135,14 +138,21 @@ class EnvironmentAction(BaseAction):
         fog_distance: Optional[float] = None,
         sun_altitude_angle: Optional[float] = None,
         sun_azimuth_angle: Optional[float] = None,
-        rain: Optional[float] = None,
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
+        rain: Optional[float] = None,
         label: str = "environment",
         once: bool = True,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
+        if rain is not None and precipitation is not None:
+            # rain sets the precipitation: both would leave the probe reading a
+            # different rain than the one asked for.
+            raise ValueError(
+                "EnvironmentAction: give rain or precipitation, not both "
+                "(rain sets the precipitation)"
+            )
         settings: dict[str, float] = {}
         if rain is not None:
             settings.update(rain_weather(rain))

@@ -106,11 +106,11 @@ def _expect_lanelet2_poses(poses) -> List[Lanelet2Pose]:
 class EnvironmentAction(BaseAction):
     def __init__(self, cloudiness = None, precipitation = None, precipitation_deposits = None,
                  wetness = None, wind_intensity = None, fog_density = None, fog_distance = None,
-                 sun_altitude_angle = None, sun_azimuth_angle = None, rain = None,
-                 condition = None, timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, rain = None,
                  label: str = "environment",
                  once: bool = True):
-        _keyword_only(_kw, "EnvironmentAction(): label and once")
+        _keyword_only(_kw, "EnvironmentAction(): rain, label and once")
         _expect_optional_float(cloudiness)
         _expect_optional_float(precipitation)
         _expect_optional_float(precipitation_deposits)

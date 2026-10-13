@@ -691,10 +691,12 @@ their own:
 standing water and wetness of CARLA's rain presets (`EnvironmentAction`'s
 `rain`): precipitation alone draws only the falling drops, and a camera sees a
 dry road under a clear sky. The probe reads the precipitation, so a drawn value
-still reads back as its bucket.
+still reads back as its bucket. `rain` and `precipitation` cannot both be set
+(the run fails at its start), and the `none` bucket, `rain=0`, is a dry road
+under a clear sky whatever the map's own weather.
 
 Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
-CARLA 0.10 (UE 5.8) server multiplies it by `carla.Weather.FogDensityScale`,
+CARLA 0.10 server on the UE 5.8 engine (the `ue58-dev` tree) multiplies it by `carla.Weather.FogDensityScale`,
 whose default 0.001 leaves even `fog_density=100` a faint haze on the horizon.
 Start it with `-ExecCmds="carla.Weather.FogDensityScale 0.01"` for fog a
 camera sees.

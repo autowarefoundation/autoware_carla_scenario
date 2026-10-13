@@ -132,3 +132,13 @@ class TestRain:
     def test_rain_is_clamped_to_its_range(self) -> None:
         assert EnvironmentAction(rain=150.0).settings["precipitation"] == 100.0
         assert EnvironmentAction(rain=-5.0).settings["precipitation"] == 0.0
+
+    def test_rain_and_precipitation_together_is_an_error(self) -> None:
+        with pytest.raises(ValueError, match="rain or precipitation"):
+            EnvironmentAction(rain=50.0, precipitation=10.0)
+
+    def test_rain_is_keyword_only(self) -> None:
+        """A twelfth positional argument has nowhere to go: rain is keyword-only."""
+        positional: list = [None] * 11
+        with pytest.raises(TypeError):
+            EnvironmentAction(*positional, 50.0)  # type: ignore[call-arg]
