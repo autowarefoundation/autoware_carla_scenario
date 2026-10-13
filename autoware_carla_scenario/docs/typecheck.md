@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 151 of
-the package's 228 modules (66%; about 35,000 of 65,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 152 of
+the package's 228 modules (67%; about 35,500 of 65,800 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -276,7 +276,8 @@ frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
-walk-straight actions, the logical scenario's route search and matches (`route.model`) and
+walk-straight actions and the background-traffic source and sink
+(`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
@@ -1338,7 +1339,13 @@ What Codon 0.19 needs that Python does not, beyond
   (it imports `coordinate.transform` itself, which is checked, so the library
   check compiles the real `to_map_frame` there).
 - **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
-  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`).
+  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`,
+  `actions.background_traffic`, where `test_background_traffic.py` pins the
+  two to the same number).
+- **A function whose only return is `return None`** cannot be typed, even
+  with an `Optional[X]` return annotation ("cannot typecheck 'None'"), and
+  `del` of a parameter is refused: return a local declared
+  `Optional[X] = None` (`_Never.check` in `actions.background_traffic`).
 - **A method that takes `**kwargs`, called on a value whose class a checked
   subclass overrides it in**, is called through the base class under `if
   TYPE_CHECKING:`, and as written in the `else` branch: `actions.turn` calls

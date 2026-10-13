@@ -90,6 +90,8 @@ class LaneletRegion:
     built before the map is -- from a Hydra config, for instance.
     """
 
+    _ids: Optional[list[int]]
+
     def __init__(self, constraints: Sequence[ConstraintSpec]) -> None:
         if not constraints:
             raise ValueError("a lanelet region needs at least one constraint")
@@ -102,14 +104,21 @@ class LaneletRegion:
         if self._ids is None:
             from ..coordinate.map_manager import MapManager  # noqa: PLC0415
             from ..sweeper.constraints import (  # noqa: PLC0415
+                Constraint,
                 find_matching_lanelets,
                 parse_constraint,
             )
 
-            parsed = [
-                parse_constraint(dict(c)) if isinstance(c, Mapping) else c
-                for c in self._constraints
-            ]
+            if TYPE_CHECKING:
+                # The constraints are a mix of Hydra nodes and parsed
+                # constraints (ConstraintSpec), which Codon cannot hold; the
+                # check sees the parsed list they become.
+                parsed: list[Constraint] = []
+            else:
+                parsed = [
+                    parse_constraint(dict(c)) if isinstance(c, Mapping) else c
+                    for c in self._constraints
+                ]
             manager = MapManager.get_instance()
             self._ids = find_matching_lanelets(
                 parsed, manager.lanelet_map, manager.routing_graph
@@ -131,9 +140,11 @@ class _Never(BaseCondition):
     def __init__(self) -> None:
         super().__init__(label="until_the_run_ends")
 
-    def check(self, world: Any, elapsed: float) -> Optional[ScenarioResult]:
-        del world, elapsed
-        return None
+    def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
+        # Through a typed local: Codon 0.19 cannot type a bare `return None`
+        # that is a function's only return.
+        never: Optional[ScenarioResult] = None
+        return never
 
 
 class _BackendAction(BaseAction):
@@ -145,6 +156,8 @@ class _BackendAction(BaseAction):
     """
 
     REISSUES_BY_DEFAULT = True
+
+    _backend: Optional[TrafficBackend]
 
     def __init__(
         self, label: str, *, until: Optional[BaseCondition] = None, **kwargs: Any
@@ -191,6 +204,19 @@ class TrafficSourceAction(_BackendAction):
             that with no *until* it runs until the scenario ends.  It reissues
             by default: each tick of its run is a tick it may add a vehicle on.
     """
+
+    _region: LaneletRegion
+    _initial: int
+    _rate: float
+    _max: Optional[int]
+    _speed_kmh: float
+    _min_gap: float
+    _blueprint: Optional[str]
+    _rng: random.Random
+    _handles: set[str]
+    _started: bool
+    _last_time: Optional[float]
+    _owed: float
 
     def __init__(
         self,
@@ -261,7 +287,7 @@ class TrafficSourceAction(_BackendAction):
         live = backend.background_vehicles(world)
         if self._max is not None:
             due = min(due, max(self._max - len(live), 0))
-        occupied = [*live.values(), *_vehicle_positions(world)]
+        occupied = list(live.values()) + _vehicle_positions(world)
         added = 0
         for _ in range(due):
             handle = self._spawn_one(world, backend, occupied)
@@ -291,14 +317,30 @@ class TrafficSourceAction(_BackendAction):
             else:
                 s = length / 2
             pose = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=s))
-            if any(math.dist((pose.x, pose.y), p) < self._min_gap for p in occupied):
+            if any(
+                math.hypot(pose.x - px, pose.y - py) < self._min_gap
+                for px, py in occupied
+            ):
                 continue
-            handle = backend.spawn_background(
-                world,
-                pose.to_carla_transform(),
-                speed_kmh=self._speed_kmh,
-                blueprint=self._blueprint,
-            )
+            handle: Optional[str] = None
+            if TYPE_CHECKING:
+                # Through the class: Codon 0.19 calls a method the backends
+                # override through a dispatch thunk, which takes no keyword
+                # argument (docs/typecheck.md).
+                handle = TrafficBackend.spawn_background(
+                    backend,
+                    world,
+                    pose.to_carla_transform(),
+                    speed_kmh=self._speed_kmh,
+                    blueprint=self._blueprint,
+                )
+            else:
+                handle = backend.spawn_background(
+                    world,
+                    pose.to_carla_transform(),
+                    speed_kmh=self._speed_kmh,
+                    blueprint=self._blueprint,
+                )
             if handle is not None:
                 occupied.append((pose.x, pose.y))
                 return handle
@@ -317,6 +359,9 @@ class TrafficSinkAction(_BackendAction):
             :class:`~autoware_carla_scenario.actions.base.BaseAction`, except
             that with no *until* it runs until the scenario ends.
     """
+
+    _region: LaneletRegion
+    removed: int
 
     def __init__(
         self,
@@ -351,19 +396,19 @@ class TrafficSinkAction(_BackendAction):
                 self.removed += 1
 
 
-def _simulated_seconds(world: Any) -> Optional[float]:
+def _simulated_seconds(world: "carla.World") -> Optional[float]:
     try:
         return float(world.get_snapshot().timestamp.elapsed_seconds)
     except Exception:  # noqa: BLE001 - a fake or a closing world
         return None
 
 
-def _vehicle_positions(world: Any) -> list[tuple[float, float]]:
+def _vehicle_positions(world: "carla.World") -> list[tuple[float, float]]:
     try:
         actors = world.get_actors().filter("vehicle.*")
     except Exception:  # noqa: BLE001
         return []
-    out = []
+    out: list[tuple[float, float]] = []
     for actor in actors:
         try:
             location = actor.get_location()
