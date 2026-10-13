@@ -1,10 +1,15 @@
-"""CARLA ray-cast LiDAR, one full sweep per simulation tick.
+"""CARLA ray-cast LiDAR: one full revolution per sweep, a sweep every so many ticks.
 
 Sweeps arrive asynchronously, like camera frames, into a queue the caller drains
-once per policy step; :meth:`CarlaLidarSensor.get_sweep` hands back the raw
-``[N, 4]`` buffer in the sensor's own (left-handed) frame, and the conversion into
-the rig frame is left to whoever sends it -- only a sweep actually sent is worth
-converting.
+once per policy step; :meth:`CarlaLidarSensor.latest_sweep` hands back the newest
+raw ``[N, 4]`` buffer in the sensor's own (left-handed) frame, with the frame it
+was taken on, and the conversion into the rig frame is left to whoever sends it
+-- only a sweep actually sent is worth converting.
+
+A sweep costs the server one ray per point, every tick it is taken on: at a
+million points a second that is most of what a tick costs.  A LiDAR read once a
+policy step is therefore swept once a policy step (``sweep_interval_s``), not on
+the ticks between, whose sweeps nobody would read.
 """
 
 from __future__ import annotations
@@ -26,9 +31,18 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["CarlaLidarSensor", "CarlaLidarSensorConfig"]
 
-#: How long :meth:`CarlaLidarSensor.get_sweep` waits for the sweep of the frame asked
-#: for, in seconds.
+#: How long :meth:`CarlaLidarSensor.latest_sweep` waits for a sweep that is due, in
+#: seconds.
 _SWEEP_TIMEOUT: float = 1.0
+
+#: How far below ``sweep_interval_s`` the blueprint's ``sensor_tick`` is set.  CARLA
+#: sums the ticks' float deltas and sweeps once the sum reaches ``sensor_tick``;
+#: two 0.05 s ticks sum to a hair under 0.1 s, so a ``sensor_tick`` of exactly 0.1
+#: sweeps one tick late every time it is reached.  What is left over carries to
+#: the next sweep, so the margin only adds up, a tick in every
+#: ``interval / margin`` sweeps -- a sweep a tick early, which
+#: :meth:`CarlaLidarSensor.latest_sweep` takes as the newest it has.
+_SENSOR_TICK_MARGIN_S: float = 1e-6
 
 
 @dataclass(frozen=True)
@@ -73,18 +87,44 @@ class CarlaLidarSensor:
 
     Args:
         config: Blueprint attributes and mount.
+        sweep_interval_s: Simulated seconds between sweeps, a positive whole
+            number of ticks; one tick (the default) sweeps on every tick.  Each
+            sweep is still one whole revolution, taken within its tick.
+
+    Raises:
+        ValueError: If *sweep_interval_s* is not a positive whole number of ticks.
     """
 
     _config: CarlaLidarSensorConfig
     _sensor: Optional["carla.Actor"]
     #: ``(frame, raw [N, 4] float32)``, oldest first.  Unbounded: the listen
-    #: callback must never block, and :meth:`get_sweep` drains it every call.
+    #: callback must never block, and :meth:`latest_sweep` drains it every call.
     _sweeps: queue.Queue[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
+    _interval_ticks: int
+    #: The newest sweep received, kept until a newer one arrives.
+    _newest: Optional[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
 
-    def __init__(self, config: CarlaLidarSensorConfig) -> None:
+    def __init__(
+        self,
+        config: CarlaLidarSensorConfig,
+        sweep_interval_s: float = FIXED_DELTA_SECONDS,
+    ) -> None:
+        ticks = int(round(sweep_interval_s / FIXED_DELTA_SECONDS))
+        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - sweep_interval_s) > 1e-9:
+            raise ValueError(
+                f"LiDAR sweep_interval_s must be a positive multiple of the "
+                f"{FIXED_DELTA_SECONDS} s tick, got {sweep_interval_s}"
+            )
         self._config = config
         self._sensor = None
         self._sweeps = queue.Queue()
+        self._interval_ticks = ticks
+        self._newest = None
+
+    @property
+    def sweep_interval_ticks(self) -> int:
+        """Ticks from one sweep to the next."""
+        return self._interval_ticks
 
     @property
     def config(self) -> CarlaLidarSensorConfig:
@@ -114,6 +154,11 @@ class CarlaLidarSensor:
             blueprint.set_attribute(
                 "dropoff_general_rate", str(cfg.dropoff_general_rate)
             )
+        if self._interval_ticks > 1:
+            interval_s = self._interval_ticks * FIXED_DELTA_SECONDS
+            blueprint.set_attribute(
+                "sensor_tick", str(interval_s - _SENSOR_TICK_MARGIN_S)
+            )
         transform = _carla.Transform(
             _carla.Location(x=cfg.position_x, y=cfg.position_y, z=cfg.position_z),
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),
@@ -121,10 +166,12 @@ class CarlaLidarSensor:
         self._sensor = world.spawn_actor(blueprint, transform, attach_to=actor)
         self._sensor.listen(self._on_sensor_data)
         logger.info(
-            "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s -> %s",
+            "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s, "
+            "a sweep every %d tick(s) -> %s",
             cfg.channels,
             cfg.range_m,
             cfg.points_per_second,
+            self._interval_ticks,
             actor.type_id,
         )
 
@@ -164,35 +211,67 @@ class CarlaLidarSensor:
             self._sensor.destroy()
             self._sensor = None
 
-    def get_sweep(
+    def latest_sweep(
         self, frame: int
-    ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
-        """The sweep of simulator frame *frame*, raw ``[N, 4]`` in the sensor frame.
+    ) -> Optional[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]:
+        """The newest sweep as of simulator frame *frame*: ``(its frame, raw [N, 4])``.
 
-        Waits up to :data:`_SWEEP_TIMEOUT` seconds for it; older sweeps queued meanwhile
-        are dropped.  ``None`` when it does not arrive in time -- an older sweep would
-        be a stale one, and the policy is better told nothing than told the past.
+        The raw buffer is in the sensor frame.  A sweep is due on *frame* when the
+        newest one is a whole interval old; then this waits up to
+        :data:`_SWEEP_TIMEOUT` seconds for it.  Between sweeps the newest one is
+        the answer, taken on an earlier tick of the interval.  ``None`` when
+        nothing within the last interval arrived -- an older sweep would be a
+        stale one, and the policy is better told nothing than told the past.
         """
         deadline = time.monotonic() + _SWEEP_TIMEOUT
-        newest: Optional[
-            Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
-        ] = None
-        while newest is None or newest[0] < frame:
+        self._take_queued()
+        while self._due(frame):
             remaining = deadline - time.monotonic()
             try:
-                newest = (
+                self._keep(
                     self._sweeps.get(timeout=remaining)
                     if remaining > 0.0
                     else self._sweeps.get_nowait()
                 )
             except queue.Empty:
                 logger.warning("no LiDAR sweep for frame %d in time; skipped", frame)
-                return None
-        while True:  # a later frame already queued wins
+                break
+            self._take_queued()
+        newest = self._newest
+        if newest is None or newest[0] <= frame - self._interval_ticks:
+            return None
+        if newest[0] != frame:
+            logger.debug("LiDAR swept frame %d for frame %d", newest[0], frame)
+        return newest
+
+    def get_sweep(
+        self, frame: int
+    ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
+        """:meth:`latest_sweep`'s raw buffer alone."""
+        sweep = self.latest_sweep(frame)
+        if sweep is None:
+            return None
+        return sweep[1]
+
+    def _due(self, frame: int) -> bool:
+        """Whether a sweep newer than the newest one is due by *frame*."""
+        newest = self._newest
+        if newest is None:
+            return True
+        return newest[0] + self._interval_ticks <= frame
+
+    def _keep(
+        self, sweep: Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
+    ) -> None:
+        newest = self._newest
+        if newest is None or sweep[0] >= newest[0]:
+            self._newest = sweep
+
+    def _take_queued(self) -> None:
+        """Move every sweep already queued into :attr:`_newest`; never waits."""
+        while True:
             try:
-                newest = self._sweeps.get_nowait()
+                sweep = self._sweeps.get_nowait()
             except queue.Empty:
                 break
-        if newest[0] != frame:
-            logger.debug("LiDAR delivered frame %d for frame %d", newest[0], frame)
-        return newest[1]
+            self._keep(sweep)
