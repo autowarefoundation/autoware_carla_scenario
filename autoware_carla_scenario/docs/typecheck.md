@@ -231,7 +231,7 @@ defines anything.
 `CHECKED` lists the modules compiled from their source; `EXCLUDED` maps every
 other module to the reason it is not. `"not yet checked (#45)"` marks a module
 nobody has made compile yet; any other reason names what keeps a module out
-(`"imports lanelet2, json"`: a package or a standard module Codon cannot
+(`"imports omegaconf, hydra"`: a package or a standard module Codon cannot
 compile). numpy is not one: Codon ships its own, and a module's numpy calls
 compile. Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
@@ -335,23 +335,22 @@ node's command from its ROS parameters (`bridge_ros_args()`,
 values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
 already sealed`, so the checker drops one and the check has nothing to call
 with), what the runner does with `json`,
-lanelet2 or a condition's details (writing the result and its environment,
+odd.route or a condition's details (writing the result and its environment,
 `_write_result()`; checking the planned route against the ODD,
 `ScenarioRunner._warn_if_route_leaves_odd()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver configs'
 `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 58 import what Codon cannot
-compile, 28 build on an excluded module and 20 hold values Codon has no type
+`encode_frame_jpeg()` (cv2). The 75 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 53 import what Codon cannot
+compile, 28 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **58 import what Codon cannot compile**: lanelet2 beyond what its model
-  declares (most of these walk its objects typed `Any`), pyxodr,
+- **53 import what Codon cannot compile**: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
-  beyond `importlib.metadata`, or more of `pathlib`, `shutil`, `signal`,
+  beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
@@ -361,13 +360,14 @@ for), so each is counted once, in the first group that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **16 build on an excluded module**, and import nothing Codon lacks
+- **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
   `coverage`, `examples`, `scaffold`), the
-  authoring compiler, builders and validator and
-  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 16
+  authoring compiler, builders and validator, `odd.probes` and `odd.route`
+  (`odd.model`; the lanelet2 they read is modelled) and
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -1179,7 +1179,7 @@ What Codon 0.19 needs that Python does not, beyond
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
   first branch what it can (`ScenarioRunner` calls `require_goal()`, built
   on the ego's class, and `_warn_if_route_leaves_odd()`, which plans the
-  route with lanelet2, in the `else` branch).
+  route with odd.route, in the `else` branch).
 - **An entity looked up by role is looked up by kind**:
   `find_entity_by_role_name` returns an entity of any kind (`Optional[Any]`),
   so a checked module asks `entity.registry` for the kind it acts on,
