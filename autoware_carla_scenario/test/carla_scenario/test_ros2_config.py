@@ -82,6 +82,9 @@ def test_a_source_lists_the_topics_it_reads() -> None:
     )
     assert pair.topics == ("/s", "/a")
     assert CommandSourceConfig(name="c", kind="control", topic="/c").topics == ("/c",)
+    # Tuples, not the lists the check reads them as (docs/typecheck.md).
+    assert type(pair.topics) is tuple
+    assert type(Ros2EgoConfig().sources) is tuple
 
 
 def test_from_mapping_rejects_an_unknown_key() -> None:

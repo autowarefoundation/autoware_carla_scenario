@@ -37,6 +37,7 @@ from ..driver.geometry import Trajectory
 from ..driver.observation import ego_observation, rear_axle_offset
 from ..ros2.commands import (
     CommandArbiter,
+    ControlCommand,
     EgoState,
     Selection,
     SteerAccelCommand,
@@ -76,7 +77,13 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
     if any(later <= earlier for earlier, later in zip(offsets, offsets[1:])):
         offsets = [0]
         for previous, point in zip(points, points[1:]):
-            length = math.dist(previous.pose.position[:2], point.pose.position[:2])
+            # math.hypot of the differences, which is math.dist's own
+            # computation: Codon's math has no dist().
+            start = previous.pose.position
+            end = point.pose.position
+            length = math.hypot(
+                float(start[0]) - float(end[0]), float(start[1]) - float(end[1])
+            )
             speed = 0.5 * (previous.velocity_mps + point.velocity_mps)
             if speed < _MIN_TIMING_SPEED_MPS:
                 # The plan stops here: whatever follows is not reached.
@@ -174,7 +181,12 @@ class Ros2EgoEntity(EgoVehicle):
             actor.get_physics_control()
         )
         if self._transport is None:
-            self._transport = _cyclone_transport(self._config)
+            if TYPE_CHECKING:
+                # ros2.cyclone imports cyclonedds, which Codon cannot compile:
+                # the check builds no transport (docs/typecheck.md).
+                raise ImportError("the static check builds no Cyclone DDS transport")
+            else:
+                self._transport = _cyclone_transport(self._config)
         self._transport.open()
         self._open = True
         self._transport.publish_state(self._state(world, actor)[0])
@@ -237,7 +249,9 @@ class Ros2EgoEntity(EgoVehicle):
     # ------------------------------------------------------------------
 
     def _note_selection(self, selection: Optional[Selection]) -> None:
-        name = selection.source.name if selection is not None else None
+        name: Optional[str] = None
+        if selection is not None:
+            name = selection.source.name
         fresh = selection is not None and selection.fresh
         if name != self._active:
             logger.info("Ego driven by command source %r", name)
@@ -268,9 +282,12 @@ class Ros2EgoEntity(EgoVehicle):
             return
         command = selection.command
         source = selection.source
+        # Each branch names the command as its class: Codon 0.19 reads no
+        # attribute of a union (docs/typecheck.md).
         if isinstance(command, TrajectoryCommand):
+            trajectory: TrajectoryCommand = command
             vehicle_command = self._follower.step(
-                self._plan(command, selection.received_us),
+                self._plan(trajectory, selection.received_us),
                 observation.pose,
                 observation.speed_mps,
                 FIXED_DELTA_SECONDS,
@@ -281,22 +298,25 @@ class Ros2EgoEntity(EgoVehicle):
             actor.apply_control(vehicle_command.to_carla_control())
             return
         if isinstance(command, SteerAccelCommand):
-            steer_rad = source.steering_sign * command.steering_rad
+            steer_accel: SteerAccelCommand = command
+            steer_rad = source.steering_sign * steer_accel.steering_rad
             speed_mps = (
                 observation.speed_mps
-                + command.acceleration_mps2 * source.speed_horizon_s
+                + steer_accel.acceleration_mps2 * source.speed_horizon_s
             )
-            acceleration_mps2 = command.acceleration_mps2
+            acceleration_mps2 = steer_accel.acceleration_mps2
             jerk_mps3 = source.jerk_mps3
         else:
+            control: ControlCommand = command
             # Autoware steers positive to the left; CARLA's Ackermann
             # controller, positive to the right.
-            steer_rad = -command.steering_tire_angle_rad
-            speed_mps = command.velocity_mps
-            acceleration_mps2 = command.acceleration_mps2
-            jerk_mps3 = (
-                command.jerk_mps3 if command.jerk_mps3 is not None else source.jerk_mps3
-            )
+            steer_rad = -control.steering_tire_angle_rad
+            speed_mps = control.velocity_mps
+            acceleration_mps2 = control.acceleration_mps2
+            jerk_mps3 = source.jerk_mps3
+            control_jerk = control.jerk_mps3
+            if control_jerk is not None:
+                jerk_mps3 = control_jerk
         import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         actor.apply_ackermann_control(

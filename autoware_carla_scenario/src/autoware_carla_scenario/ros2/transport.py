@@ -9,15 +9,23 @@ extra); :class:`FakeRos2Transport` stands in for it in tests.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
-from .commands import Command, EgoState
+from .commands import (
+    Command,
+    ControlCommand,
+    EgoState,
+    SteerAccelCommand,
+    TrajectoryCommand,
+)
 from .config import Ros2EgoConfig
 
 __all__ = ["FakeRos2Transport", "Received", "Ros2EgoTransport"]
 
-#: A command and the name of the source it came from.
-Received = Tuple[str, Command]
+#: A command and the name of the source it came from.  ``Tuple[str, Command]``,
+#: with the union spelled out: Codon 0.19 does not resolve an alias imported
+#: from another module inside an alias of this one (docs/typecheck.md).
+Received = Tuple[str, Union[SteerAccelCommand, ControlCommand, TrajectoryCommand]]
 
 
 class Ros2EgoTransport(ABC):

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+from typing import Tuple
+
 import pytest
 
 from autoware_carla_scenario.entity.ros2_entity import plan_from_trajectory
@@ -14,7 +17,8 @@ from autoware_carla_scenario.ros2 import (
     TrajectoryCommandPoint,
 )
 from autoware_carla_scenario.driver.geometry import Pose
-from autoware_carla_scenario.ros2.commands import SteerAccelPairer
+from autoware_carla_scenario.ros2.commands import Command, SteerAccelPairer
+from autoware_carla_scenario.ros2.transport import Received
 
 _VP = CommandSourceConfig(
     name="vp",
@@ -150,6 +154,27 @@ def test_an_untimed_trajectory_is_timed_from_its_speeds() -> None:
     plan = plan_from_trajectory(command, anchor_us=_us(1.0))
     # 2 m at 2 m/s, then 4 m at a mean of 4 m/s.
     assert plan.timestamps_us == [1_000_000, 2_000_000, 3_000_000]
+
+
+def test_an_untimed_segment_length_is_math_dist() -> None:
+    # plan_from_trajectory spells math.dist as math.hypot of the differences
+    # (Codon's math has no dist()): the two give the same number.
+    start = Pose.from_xyz_yaw(0.1, 0.7, 5.0, 0.0)
+    end = Pose.from_xyz_yaw(3.3, -2.9, -1.0, 0.0)
+    command = TrajectoryCommand(
+        stamp_us=0,
+        points=(
+            TrajectoryCommandPoint(0, start, 1.0),
+            TrajectoryCommandPoint(0, end, 1.0),
+        ),
+    )
+    plan = plan_from_trajectory(command, anchor_us=0)
+    length = math.dist(start.position[:2], end.position[:2])
+    assert plan.timestamps_us == [0, int(round(length * 1_000_000))]
+
+
+def test_received_is_a_source_name_and_a_command() -> None:
+    assert Received == Tuple[str, Command]
 
 
 def test_an_untimed_trajectory_ends_where_it_stops() -> None:
