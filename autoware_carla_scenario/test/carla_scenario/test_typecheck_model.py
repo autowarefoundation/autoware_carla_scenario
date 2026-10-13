@@ -468,7 +468,11 @@ def test_the_cyclone_model_is_the_transport_ros2_entity_builds() -> None:
     # only where that is installed. The model declares the constructor
     # entity.ros2_entity._cyclone_transport() calls, and derives from the
     # Ros2EgoTransport that the library check replaces with the checked one.
-    cyclone = pytest.importorskip("autoware_carla_scenario.ros2.cyclone")
+    # Skip on cyclonedds alone: an ImportError of ros2.cyclone's own (a moved
+    # name) must fail the test, not skip it.
+    pytest.importorskip("cyclonedds")
+    from autoware_carla_scenario.ros2 import cyclone  # noqa: PLC0415
+
     assert sorted(_definitions("ros2/cyclone")) == ["CycloneRos2Transport"]
     node = _definitions("ros2/cyclone")["CycloneRos2Transport"][0]
     assert isinstance(node, ast.ClassDef)
