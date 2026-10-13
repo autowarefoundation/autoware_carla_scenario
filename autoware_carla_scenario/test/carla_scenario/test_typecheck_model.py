@@ -231,8 +231,6 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
         name: ("odd", getattr(odd_route, name))
         for name in ("RouteCoverage", "RouteLanelet", "plan_route_coverage")
     },
-    # What scenario_runner's _record_run reads of environment.capture().
-    "RunEnvironment": ("environment", environment.RunEnvironment),
 }
 
 
@@ -330,6 +328,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
     "carla_install": (carla_install, ("installed_executable",)),
     "trajectory_recorder": (trajectory_recorder, ("TrajectoryRecorder",)),
+    # What scenario_runner's _record_run reads of the unchecked environment.
+    "environment": (environment, ("RunEnvironment", "capture")),
     "autoware_bridge/grpc_server": (bridge_grpc_server, ("GrpcAutowareBridgeServer",)),
     "autoware_stack/launcher": (
         stack_launcher,
@@ -391,7 +391,10 @@ _MODULE_MODEL_NAMES = [
 @pytest.mark.parametrize(("module", "name"), _MODULE_MODEL_NAMES)
 def test_a_module_model_is_declared_as_in_python(module: str, name: str) -> None:
     python_module, _names = _MODULE_MODELS[module]
-    _assert_declared_as_in_python(name, module, getattr(python_module, name))
+    # A cached function (environment.capture(), `@lru_cache`) is compared as
+    # the function it wraps: the cache takes the same parameters.
+    python = inspect.unwrap(getattr(python_module, name))
+    _assert_declared_as_in_python(name, module, python)
 
 
 def test_the_devcontainer_model_holds_python_s_values() -> None:
