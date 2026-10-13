@@ -47,9 +47,11 @@ __all__ = [
     "PEDESTRIAN_MOVING_MS",
     "VEHICLE_AHEAD_GAP_M",
     "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
+    "in_ego_frame",
     "measured_scenario",
     "read_measure",
     "set_measured_scenario",
+    "vehicle_ahead_gap_between",
 ]
 
 #: Metres to the nearest vehicle ahead in the ego's lane or a lane beside it.
@@ -149,9 +151,49 @@ def _around(world: "carla.World") -> Optional[list[_Around]]:
     return found
 
 
+def in_ego_frame(
+    ego: "carla.Transform", location: "carla.Location"
+) -> tuple[float, float]:
+    """*location* seen from an ego at *ego*: ``(ahead, lateral)`` in metres.
+
+    ``ahead`` is along the ego's heading, ``lateral`` across it (positive to
+    the ego's right, CARLA's left-handed frame), both from the ego's origin.
+    It is the frame every built-in measure reads in, so code that places a
+    road user for a measure (:mod:`autoware_carla_scenario.placement`) uses it
+    too rather than a definition of its own.
+    """
+    yaw = math.radians(ego.rotation.yaw)
+    forward_x, forward_y = math.cos(yaw), math.sin(yaw)
+    dx = location.x - ego.location.x
+    dy = location.y - ego.location.y
+    return dx * forward_x + dy * forward_y, -dx * forward_y + dy * forward_x
+
+
+def _counts_as_vehicle_ahead(ahead: float, lateral: float) -> bool:
+    """Whether a vehicle that far ahead and aside is a vehicle ahead."""
+    return 0.0 < ahead <= AHEAD_RANGE_M and abs(lateral) <= 3 * LANE_HALF_WIDTH_M
+
+
+def vehicle_ahead_gap_between(
+    ego: "carla.Transform", location: "carla.Location"
+) -> Optional[float]:
+    """What :data:`VEHICLE_AHEAD_GAP_M` reads for a vehicle at *location*, seen
+    from an ego at *ego*: centre to centre along the ego's heading.
+
+    ``None`` when the measure would not count it as ahead (behind the ego,
+    beyond :data:`AHEAD_RANGE_M`, or more than a lane beside the ego's).  The
+    built-in measure reads the nearest such vehicle with this same
+    definition, so a vehicle placed where this reads *v*, alone ahead of the
+    ego, is measured at *v*.
+    """
+    ahead, lateral = in_ego_frame(ego, location)
+    if not _counts_as_vehicle_ahead(ahead, lateral):
+        return None
+    return ahead
+
+
 def _relative_to(ego: "carla.Actor", actors: "list[carla.Actor]") -> list[_Around]:
     transform = ego.get_transform()
-    here = transform.location
     yaw = math.radians(transform.rotation.yaw)
     forward = (math.cos(yaw), math.sin(yaw))
     ego_velocity = ego.get_velocity()
@@ -163,15 +205,14 @@ def _relative_to(ego: "carla.Actor", actors: "list[carla.Actor]") -> list[_Aroun
             kind.startswith("vehicle.") or kind.startswith("walker.")
         ):
             continue
-        at = actor.get_location()
-        dx, dy = at.x - here.x, at.y - here.y
+        ahead, lateral = in_ego_frame(transform, actor.get_location())
         velocity = actor.get_velocity()
         found.append(
             _Around(
                 actor_id=actor.id,
                 vehicle=kind.startswith("vehicle."),
-                ahead=dx * forward[0] + dy * forward[1],
-                lateral=-dx * forward[1] + dy * forward[0],
+                ahead=ahead,
+                lateral=lateral,
                 closing=velocity.x * forward[0] + velocity.y * forward[1] - ego_along,
                 speed=math.hypot(velocity.x, velocity.y),
             )
@@ -184,11 +225,7 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Around]:
     if around is None:
         return None
     candidates = [
-        a
-        for a in around
-        if a.vehicle
-        and 0.0 < a.ahead <= AHEAD_RANGE_M
-        and abs(a.lateral) <= 3 * LANE_HALF_WIDTH_M
+        a for a in around if a.vehicle and _counts_as_vehicle_ahead(a.ahead, a.lateral)
     ]
     return min(candidates, key=lambda a: a.ahead, default=None)
 

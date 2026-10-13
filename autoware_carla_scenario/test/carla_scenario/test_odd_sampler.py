@@ -30,7 +30,10 @@ from autoware_carla_scenario.odd import (
 from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M
 from autoware_carla_scenario.odd import scenario_measure
 from autoware_carla_scenario.odd.probes import illumination_level, intensity_level
-from autoware_carla_scenario.odd.sampler import sampler_from_config
+from autoware_carla_scenario.odd.sampler import (
+    controls_from_mapping,
+    sampler_from_config,
+)
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
 
 
@@ -847,7 +850,10 @@ def test_the_example_scenarios_declare_their_controls_by_measure() -> None:
 
     cut_in = scenario_controls(_compose_config("cut_in/left", []))
     assert set(cut_in) == {VEHICLE_AHEAD_GAP_M, "vehicle_ahead_relative_speed_kph"}
-    assert cut_in[VEHICLE_AHEAD_GAP_M]["key"] == "scenario.npc_ahead_m"
+    # The gap is drawn as the measure itself, which cut_in solves its NPC's
+    # placement for.
+    assert cut_in[VEHICLE_AHEAD_GAP_M]["key"] == "scenario.npc_gap_m"
+    assert cut_in[VEHICLE_AHEAD_GAP_M]["target"] == "measure"
     # The relative speed is written on top of the ego's own, resolved.
     assert cut_in["vehicle_ahead_relative_speed_kph"]["offset"] == 30.0
 
@@ -859,6 +865,61 @@ def test_the_example_scenarios_declare_their_controls_by_measure() -> None:
         "crossing_pedestrian_speed_ms",
     }
     assert scenario_controls(_compose_config("lane_change/left", [])) == {}
+
+
+def test_a_measure_targeted_control_writes_the_drawn_value_unchanged() -> None:
+    sampler, _ = sampler_from_config(
+        {"count": 30, "seed": 2},
+        odd=_gap_odd(),
+        controls={
+            VEHICLE_AHEAD_GAP_M: {
+                "key": "scenario.npc_gap_m",
+                "target": "measure",
+                "range": [6, 30],
+            }
+        },
+    )
+
+    for case in sampler.sample(30):
+        (override,) = case.overrides
+        key, value = override.split("=")
+        assert key == "scenario.npc_gap_m"
+        assert float(value) == pytest.approx(case.values["dynamic.lead_gap"])
+        assert 6.0 <= float(value) <= 30.0
+
+
+def test_a_control_is_a_raw_setting_unless_it_says_otherwise() -> None:
+    raw = {"key": "scenario.npc_initial_speed_kmh", "offset": 30.0, "range": [-15, 15]}
+
+    assert controls_from_mapping({"m": raw}) == knobs_from_mapping({"m": raw})
+    assert controls_from_mapping({"m": {**raw, "target": "setting"}}) == (
+        knobs_from_mapping({"m": raw})
+    )
+    assert controls_from_mapping({"m": "k"}) == knobs_from_mapping({"m": "k"})
+
+
+@pytest.mark.parametrize(
+    "mapping", [{"scale": 2.0}, {"offset": 1.0}, {"integer": True}, {"values": {}}]
+)
+def test_a_measure_targeted_control_maps_nothing(mapping: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="target: measure writes the measure"):
+        controls_from_mapping({"m": {"key": "k", "target": "measure", **mapping}})
+
+
+def test_a_control_target_is_setting_or_measure() -> None:
+    with pytest.raises(ValueError, match="target must be one of"):
+        controls_from_mapping({"m": {"key": "k", "target": "placement"}})
+
+
+def test_sweep_knobs_may_target_the_measure_too() -> None:
+    gap_knob = {"key": "sweep.gap", "target": "measure", "range": [8, 9]}
+    sampler, _ = sampler_from_config(
+        {"count": 1, "knobs": {"dynamic.lead_gap": gap_knob}},
+        odd=_gap_odd(),
+    )
+
+    (case,) = sampler.sample(1)
+    assert 8.0 <= float(case.overrides[0].split("=")[1]) <= 9.0
 
 
 def test_a_scenarios_controls_are_drawn_without_naming_them_in_the_sweep() -> None:

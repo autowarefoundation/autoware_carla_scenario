@@ -158,8 +158,16 @@ class CutInConfig:
     #: binds it to the pick's neighbour (``neighbour`` binding).
     npc_lanelet_id: int = 0
 
-    #: How far ahead of the ego the NPC starts, along its lanelet (m).
+    #: How far ahead of the ego the NPC starts, along its lanelet (m): its
+    #: ``s`` less the ego's.  A raw setting -- the lanelets beside each other
+    #: need not be the same length, so on a curve this is not the gap measured.
     npc_ahead_m: float = 10.0
+
+    #: The gap the NPC starts at, as ``vehicle_ahead_gap_m`` measures it (m):
+    #: centre to centre along the ego's heading.  When given it replaces
+    #: :attr:`npc_ahead_m`, and the NPC's ``s`` is solved for so the measure
+    #: reads exactly this at the start (``place_at_vehicle_ahead_gap``).
+    npc_gap_m: float | None = None
 
     #: NPC blueprint and starting speed.
     npc_vehicle_type: str = "vehicle.mini.cooper"

@@ -1,0 +1,25 @@
+# Model of autoware_carla_scenario.placement (docs/odd.md, "Controls"):
+# placing a road user so a scenario measure reads a given value at the start.
+
+import typesafe_carla.carla as carla
+
+from ._tc import _keyword_only
+from ._poses import Lanelet2Pose
+
+
+def _expect_read_at(read_at):
+    """A Callable[[float], Optional[float]] argument."""
+    value: Optional[float] = read_at(0.0)
+
+
+def solve_along(read_at, target: float, low: float, high: float, *_kw,
+                step: float = 0.5, tolerance: float = 1e-3,
+                what: str = "the measure") -> float:
+    _keyword_only(_kw, "solve_along(): step, tolerance, what")
+    _expect_read_at(read_at)
+    raise NotImplementedError()
+
+
+def place_at_vehicle_ahead_gap(ego: carla.Transform, lanelet_id: int,
+                               gap_m: float) -> Lanelet2Pose:
+    raise NotImplementedError()
