@@ -351,3 +351,47 @@ class TestConstraintsFromText:
         assert spec is not None
         (field,) = [f for f in spec.fields if f.name == "constraints"]
         assert background_traffic.constraints_from_text(field.default)
+
+
+class TestMinGapDistance:
+    """The source measures its gap with ``math.hypot`` of the differences
+    (Codon's ``math`` has no ``dist``): the same number as ``math.dist``."""
+
+    @pytest.mark.parametrize(
+        ("a", "b"),
+        [
+            ((0.0, 0.0), (0.0, 0.0)),
+            ((0.0, 0.0), (3.0, 4.0)),
+            ((-3.0, 4.0), (0.0, 0.0)),
+            ((1.5, -2.25), (-7.125, 9.0)),
+            ((1e-300, 1e-300), (-1e-300, -1e-300)),
+            ((1e300, 1e300), (-1e300, -1e300)),
+            ((0.1, 0.2), (0.3, 0.7)),
+            ((5.0, 5.0), (5.0, 20.0)),
+        ],
+    )
+    def test_hypot_equals_dist(
+        self, a: tuple[float, float], b: tuple[float, float]
+    ) -> None:
+        import math
+
+        assert math.hypot(a[0] - b[0], a[1] - b[1]) == math.dist(a, b)
+
+    def test_a_vehicle_exactly_min_gap_away_does_not_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.coordinate as coordinate
+
+        pose = SimpleNamespace(
+            x=0.0,
+            y=0.0,
+            to_carla_transform=lambda: carla.Transform(
+                carla.Location(x=0.0, y=0.0, z=0.0)
+            ),
+        )
+        monkeypatch.setattr(coordinate, "to_carla_world", lambda _pose: pose)
+        backend, world = _Backend(), _World()
+        source = TrafficSourceAction(_NOT_JUNCTION, min_gap_m=15.0)
+        # 15 m away (9, 12): far enough; 14.9 m away: too close.
+        assert source._spawn_one(world, backend, [(9.0, 12.0)]) is not None
+        assert source._spawn_one(world, backend, [(0.0, 14.9)]) is None

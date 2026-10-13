@@ -55,6 +55,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.action_state",
     "autoware_carla_scenario.actions",
     "autoware_carla_scenario.actions._departures",
+    "autoware_carla_scenario.actions.background_traffic",
     "autoware_carla_scenario.actions.base",
     "autoware_carla_scenario.actions.environment",
     "autoware_carla_scenario.actions.follow_trajectory",
@@ -236,6 +237,15 @@ _ROS_PARAMETERS = (
     "the checker drops it and the check has nothing to call with"
 )
 
+#: The reason of a background-traffic constructor that takes lanelet constraints.
+_CONSTRAINT_SPECS = (
+    "takes lanelet constraints as `Sequence[ConstraintSpec]`, each a Hydra "
+    "node (`Mapping[str, Any]`) or a parsed constraint "
+    "(`ConstraintSpec = Union[Mapping[str, Any], Any]`), which Codon cannot "
+    "express; LaneletRegion.lanelet_ids parses them in the `else` branch of "
+    "`if TYPE_CHECKING:`"
+)
+
 #: The reason of a function that reads a YAML document's values.
 _YAML = (
     "reads a YAML mapping of values of any type (`Any`: numbers, strings, "
@@ -249,6 +259,10 @@ _YAML = (
 #: imports what Codon has nothing for (``json``) and only that function uses.
 #: Everything else in the module still is.
 UNCALLED: dict[str, str] = {
+    "autoware_carla_scenario.actions.background_traffic.constraints_from_text": "reads YAML (yaml, imported inside it) into a list of `dict[str, Any]` constraint mappings of mixed value types, which Codon cannot express",
+    "autoware_carla_scenario.actions.background_traffic.LaneletRegion.__init__": _CONSTRAINT_SPECS,
+    "autoware_carla_scenario.actions.background_traffic.TrafficSinkAction.__init__": _CONSTRAINT_SPECS,
+    "autoware_carla_scenario.actions.background_traffic.TrafficSourceAction.__init__": _CONSTRAINT_SPECS,
     "autoware_carla_scenario.authoring.framework_pin.Pin.uv_source": 'builds the `[tool.uv.sources]` entry, a dict[str, Any] of str and bool values (`{"path": ..., "editable": True}`), which Codon cannot express',
     "autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args": _ROS_PARAMETERS,
     "autoware_carla_scenario.autoware_stack.bridge_node.bridge_command": f"{_ROS_PARAMETERS}; CommandAutowareLauncher.start() and DockerAutowareLauncher.start() call it in the `else` branch of `if TYPE_CHECKING:`",
@@ -330,7 +344,6 @@ UNCALLED: dict[str, str] = {
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)",
-    "autoware_carla_scenario.actions.background_traffic": "holds lanelet constraints as `ConstraintSpec = Union[Mapping[str, Any], Any]` (a Hydra node or a parsed constraint), which Codon cannot express; yaml is imported inside constraints_from_text",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (tempfile)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler",
