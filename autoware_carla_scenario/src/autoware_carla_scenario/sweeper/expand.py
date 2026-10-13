@@ -26,6 +26,10 @@ drawn case also carries itself, encoded (``++odd_case=...``), for its run to
 record with its outcome; with ``odd_sample.flaky``, part of the cases are
 chosen where the earlier runs left the outcome unsure.
 
+``sweep.case_index`` keeps one case of the expansion, the N-th (0-based):
+``++sweep.case_index=0`` runs every scenario of a batch on its first case, as
+``scenario-expand`` lists them.
+
 A config without a sweep is already concrete and expands to itself (one empty
 override list). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
 these in one process; ``scenario-expand`` hands them to a caller that runs them
@@ -89,9 +93,12 @@ def expand_sweep(
     *drawn*, in a batch, holds the cases earlier scenarios drew from the ODD:
     the sampler goes on from them, and the cases drawn here are added to it.
 
+    With ``sweep.case_index``, only the case at that (0-based) index is kept.
+
     Raises:
         ValueError: If ``sweep`` has none of constraints, a route search and
-            ``odd_sample``, or both constraints and a route search.
+            ``odd_sample``, or both constraints and a route search, or a
+            ``case_index`` past the cases it expands to.
     """
     odd_sample = sweep.get("odd_sample") or {}
     if sweep.get("route"):
@@ -109,6 +116,15 @@ def expand_sweep(
         raise ValueError("sweep.constraints is empty; nothing to expand.")
     if odd_sample and base_cases:
         base_cases = _with_odd_samples(base_cases, odd_sample, odd, controls, drawn)
+    case_index = sweep.get("case_index")
+    if case_index is not None:
+        index = int(case_index)
+        if not 0 <= index < len(base_cases):
+            raise ValueError(
+                f"sweep.case_index {index} is out of range: the sweep expands "
+                f"to {len(base_cases)} case(s)"
+            )
+        base_cases = [base_cases[index]]
     return [[*case, *arguments] for case in base_cases]
 
 

@@ -83,6 +83,8 @@ class ScenarioQueue:
     _results: List[ScenarioResult]
     _scenario_results: dict[int, ScenarioResult]
     _runner: Optional[ScenarioRunner]
+    #: Whether run_all() left its last scenario's world as it was, unreset.
+    _world_left_as_is: bool
 
     def __init__(
         self,
@@ -207,6 +209,7 @@ class ScenarioQueue:
         self._results = []
         self._scenario_results = {}
         self._runner = None
+        self._world_left_as_is = False
 
     # ------------------------------------------------------------------
     # Scenario registration
@@ -257,8 +260,13 @@ class ScenarioQueue:
                 "ScenarioQueue must be started before run_all(). "
                 "Use the context manager ('with queue:') or call start() first."
             )
+        if self._world_left_as_is:
+            # The last run_all() left its last scenario's world as it was.
+            self._runner.reset_world()
+            self._world_left_as_is = False
         results: List[ScenarioResult] = []
         max_attempts = 1 + self._cooldown_max_retries
+        last = len(self._scenarios) - 1
         for i, scenario in enumerate(self._scenarios):
             last_error: Optional[Exception] = None
             for attempt in range(max_attempts):
@@ -279,6 +287,10 @@ class ScenarioQueue:
                         scenario,
                         timeout_seconds=self._timeouts.get(id(scenario)),
                         case=self._cases.get(id(scenario)),
+                        # The map is reloaded for the next scenario; after the
+                        # last there is none, and a later run_all() or a new
+                        # queue loads it first.
+                        reset_world=i < last,
                     )
                     self._scenario_results[id(scenario)] = result
                     results.append(result)
@@ -300,6 +312,7 @@ class ScenarioQueue:
                     f"{max_attempts} attempt(s)"
                 ) from last_error
 
+        self._world_left_as_is = bool(self._scenarios)
         self._results = results
         return results
 
@@ -343,6 +356,7 @@ class ScenarioQueue:
             # better refused before anything else starts.
             self._autoware_launcher.prepare(log_dir=self._output_dir)
         self._server.start()
+        self._world_left_as_is = False
         self._runner = ScenarioRunner(
             self._server,
             host=self._host,

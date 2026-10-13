@@ -780,12 +780,47 @@ class ScenarioRunner:
     # Scenario execution
     # ------------------------------------------------------------------
 
+    def reset_world(self, scenario_name: str = "") -> None:
+        """Reload the current map, so the next scenario starts on a clean world."""
+        # Reload the world to guarantee a completely clean state (all
+        # actors, sensors, physics state, settings and weather are reset).
+        # This is more reliable than destroying actors individually, which
+        # can fail with "failed to destroy actor" errors from the CARLA
+        # server.  Flush any pending server-side operations (e.g. replayer
+        # shutdown) before reloading.
+        try:
+            world = self._client.get_world()
+            world.tick()
+            reload_current_map(self._client)
+            # After reload, get the fresh world and tick it once so that
+            # CARLA fully initialises the new world state.
+            self._world = self._client.get_world()
+            self._world.tick()
+            logger.info("[%s] World reloaded and ticked", scenario_name)
+        except Exception:
+            logger.warning(
+                "[%s] Reloading the map failed — world may retain residual state",
+                scenario_name,
+                exc_info=True,
+            )
+            # Ensure self._world is refreshed even on failure so that the
+            # next scenario does not operate on a stale world reference.
+            try:
+                self._world = self._client.get_world()
+            except Exception:
+                logger.warning(
+                    "[%s] Failed to refresh world reference after reload failure",
+                    scenario_name,
+                    exc_info=True,
+                )
+
     def run_scenario(
         self,
         scenario: BaseScenario,
         *,
         timeout_seconds: float | None = None,
         case: OddCase | None = None,
+        reset_world: bool = True,
     ) -> ScenarioResult:
         """Execute a single scenario from setup to teardown.
 
@@ -809,6 +844,9 @@ class ScenarioRunner:
                 space it was drawn in: recorded in the coverage file with the
                 run's outcome, so that the merged report can assess its
                 flakiness and the next sweep's flaky search learn from it.
+            reset_world: Reload the map at the end, so the next scenario starts
+                on a clean world.  A queue's last scenario has no next one, and
+                whatever runs on the server after it loads its map anyway.
 
         Returns:
             The outcome of the scenario execution.
@@ -1314,36 +1352,9 @@ class ScenarioRunner:
                 scenario_name=scenario_name,
             )
 
-        # Reload the world to guarantee a completely clean state (all
-        # actors, sensors, physics state, settings and weather are reset).
-        # This is more reliable than destroying actors individually, which
-        # can fail with "failed to destroy actor" errors from the CARLA
-        # server.  Flush any pending server-side operations (e.g. replayer
-        # shutdown) before reloading.
-        try:
-            world = self._client.get_world()
-            world.tick()
-            reload_current_map(self._client)
-            # After reload, get the fresh world and tick it once so that
-            # CARLA fully initialises the new world state.
-            self._world = self._client.get_world()
-            self._world.tick()
-            logger.info("[%s] World reloaded and ticked", scenario_name)
-        except Exception:
-            logger.warning(
-                "[%s] Reloading the map failed — world may retain residual state",
-                scenario_name,
-                exc_info=True,
-            )
-            # Ensure self._world is refreshed even on failure so that the
-            # next scenario does not operate on a stale world reference.
-            try:
-                self._world = self._client.get_world()
-            except Exception:
-                logger.warning(
-                    "[%s] Failed to refresh world reference after reload failure",
-                    scenario_name,
-                    exc_info=True,
-                )
+        if reset_world:
+            self.reset_world(scenario_name)
+        else:
+            logger.info("[%s] No scenario follows: world left as it is", scenario_name)
 
         return result

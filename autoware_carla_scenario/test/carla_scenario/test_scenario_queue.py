@@ -193,6 +193,36 @@ class TestScenarioQueueUnit:
         ]
         assert cases == [case, None]
 
+    def test_the_world_is_reset_after_every_scenario_but_the_last(self) -> None:
+        queue, mock_runner = _make_queue_with_mock_runner()
+        for _ in range(3):
+            queue.add(_NullScenario(_make_ego_config()))
+        mock_runner.run_scenario.return_value = ScenarioResult(
+            passed=True, message="ok", elapsed_seconds=0.0
+        )
+
+        queue.run_all()
+
+        resets = [
+            call.kwargs["reset_world"]
+            for call in mock_runner.run_scenario.call_args_list
+        ]
+        assert resets == [True, True, False]
+        mock_runner.reset_world.assert_not_called()
+
+    def test_a_second_run_all_first_resets_the_world_the_first_left(self) -> None:
+        queue, mock_runner = _make_queue_with_mock_runner()
+        queue.add(_NullScenario(_make_ego_config()))
+        mock_runner.run_scenario.return_value = ScenarioResult(
+            passed=True, message="ok", elapsed_seconds=0.0
+        )
+
+        queue.run_all()
+        mock_runner.reset_world.assert_not_called()
+        queue.run_all()
+
+        mock_runner.reset_world.assert_called_once_with()
+
     def test_owns_server_flag_when_no_server_provided(self) -> None:
         with patch("autoware_carla_scenario.scenario_queue.CarlaServerManager"):
             queue = ScenarioQueue()

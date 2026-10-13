@@ -82,6 +82,38 @@ class TestExpandSweep:
             expand_sweep({"constraints": {}}, lanelet_map=object())
 
 
+class TestCaseIndex:
+    """``sweep.case_index`` keeps one case of the expansion."""
+
+    @pytest.fixture
+    def _three_lanelets(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(expand_module, "parse_constraint", lambda c: c)
+        monkeypatch.setattr(expand_module, "create_routing_graph", lambda m: "graph")
+        monkeypatch.setattr(
+            expand_module, "find_matching_lanelets", lambda c, m, g: [5, 6, 7]
+        )
+
+    def _sweep(self, case_index: object) -> dict:
+        return {
+            "constraints": {"ego.spawn_lanelet_id": [{"type": "is_junction"}]},
+            "case_index": case_index,
+        }
+
+    @pytest.mark.usefixtures("_three_lanelets")
+    def test_only_the_case_at_the_index_is_kept(self) -> None:
+        cases = expand_sweep(self._sweep(1), object(), ["map=town10hd_opt"])
+        assert cases == [["ego.spawn_lanelet_id=6", "map=town10hd_opt"]]
+
+    @pytest.mark.usefixtures("_three_lanelets")
+    def test_none_keeps_every_case(self) -> None:
+        assert len(expand_sweep(self._sweep(None), object())) == 3
+
+    @pytest.mark.usefixtures("_three_lanelets")
+    def test_an_index_past_the_cases_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="case_index 3 is out of range"):
+            expand_sweep(self._sweep(3), object())
+
+
 class TestExpandConfig:
     def test_a_concrete_scenario_expands_to_itself_without_loading_a_map(
         self, monkeypatch: pytest.MonkeyPatch
