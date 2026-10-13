@@ -157,7 +157,7 @@ background_traffic:
 # The weather and the sun (`environment` below) are set for every scenario.
 #
 #   controls:
-#     vehicle_ahead_gap_m: {key: scenario.npc_ahead_m, range: [6, 30]}
+#     vehicle_ahead_gap_m: {key: scenario.npc_gap_m, target: measure, range: [6, 30]}
 controls: {}
 
 # The weather and the sun every run starts in (EnvironmentAction, during

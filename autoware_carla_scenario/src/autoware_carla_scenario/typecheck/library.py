@@ -178,6 +178,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.maps.resolver",
     "autoware_carla_scenario.maps.source",
     "autoware_carla_scenario.measures",
+    "autoware_carla_scenario.placement",
     "autoware_carla_scenario.scenario_base",
     "autoware_carla_scenario.scenario_config",
     "autoware_carla_scenario.scenario_queue",

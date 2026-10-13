@@ -47,9 +47,36 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 | Parameter | Value |
 |---|---|
-| NPC1 ahead of the ego | 10 m (at s = 15 m) |
+| NPC1 ahead of the ego | 10 m along its lanelet (at s = 15 m): `npc_ahead_m` |
+| or, measured | `npc_gap_m`: the gap `vehicle_ahead_gap_m` reads at the start (centre to centre along the ego's heading); NPC1's `s` is solved for so it does. Unset by default; an ODD-sampled sweep sets it |
 | NPC1 and ego initial speed | 30 km/h |
 | Cut-in after | 2 s |
 | Held in the ego's lane for | 3 s |
 | Lanelet at least | 60 m |
 | Timeout | 20 s |
+
+## Placing NPC1 by the measured gap
+
+`npc_ahead_m` is a raw setting: NPC1's `s` on its lanelet less the ego's on
+its own. Lanelets side by side are not the same length on a curve -- the
+outer one is longer -- so the gap the `vehicle_ahead_gap_m` measure then
+reads is not `npc_ahead_m`, and differs from place to place.
+
+`npc_gap_m` is that gap itself. When it is set, the scenario places NPC1
+with `place_at_vehicle_ahead_gap`: from the ego's spawn pose, it finds the
+`s` on NPC1's lanelet at which the measure's own geometry reads `npc_gap_m`,
+so the run starts at exactly that gap wherever it is placed. A gap the
+lanelet cannot reach (too short, or curving out of the lanes the measure
+counts) fails the setup, saying what gaps it does reach.
+
+The scenario's controls draw the gap this way (`target: measure`,
+[Controls](../odd.md#controls)), so a sweep's `vehicle_ahead_gap` draws are
+the gaps the runs start at:
+
+```bash
+uv run scenario scenario=cut_in/left map=<map> scenario.npc_gap_m=15
+```
+
+The relative speed needs no solving: `npc_initial_speed_kmh` less the ego's
+initial speed is what the `vehicle_ahead_relative_speed_kph` measure reads at
+the start, up to the cosine of the small heading difference on a curve.

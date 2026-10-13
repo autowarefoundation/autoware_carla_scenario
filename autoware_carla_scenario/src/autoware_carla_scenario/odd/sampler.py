@@ -11,7 +11,15 @@ say which, none of them knowing the others:
   ODD's taxonomy::
 
       controls:
-        vehicle_ahead_gap_m: {key: scenario.npc_ahead_m, range: [6, 30]}
+        vehicle_ahead_gap_m: {key: scenario.npc_gap_m, target: measure, range: [6, 30]}
+
+  A control is a raw setting by default (``target: setting``): the drawn
+  value is written as ``value * scale + offset``, a mapping the scenario's
+  author vouches for.  ``target: measure`` says the key takes the measure
+  itself, as it should read at the start, and the scenario solves for the
+  placement that makes it so (:mod:`autoware_carla_scenario.placement`):
+  the value is written unchanged, so ``scale``, ``offset``, ``integer`` and
+  ``values`` are refused (:func:`controls_from_mapping`);
 
 * the weather and the sun are set for every scenario through the
   ``environment`` config, which the built-in probes :func:`~.probes.rain`,
@@ -55,6 +63,8 @@ __all__ = [
     "OddSampler",
     "decode_case",
     "encode_case",
+    "CONTROL_TARGETS",
+    "controls_from_mapping",
     "knobs_from_mapping",
     "sampler_from_config",
     "search_from_config",
@@ -66,6 +76,15 @@ ODD_CASE_KEY = "odd_case"
 
 #: A case drawn from the ODD and the space it was drawn in: what a run records.
 OddCase = tuple[OddSample, ParameterSpace]
+
+#: What a control's ``target`` may say: ``setting`` (the default), a raw
+#: setting the drawn value is mapped onto by ``scale`` and ``offset``; or
+#: ``measure``, a parameter that takes the measure's value at the start itself,
+#: which the scenario solves its placement for.
+CONTROL_TARGETS = ("setting", "measure")
+#: The fields a ``target: measure`` control refuses: what it writes is the
+#: measure's own value, unchanged.
+_MAPPING_FIELDS = ("scale", "offset", "integer", "values")
 
 #: The fields of ``sweep.odd_sample``.
 SAMPLE_FIELDS = {"count", "seed", "strategy", "odd", "coverage_from", "knobs", "flaky"}
@@ -96,6 +115,43 @@ class OddSampler(_OddSampler):
     ) -> None:
         kw.setdefault("backend", CARLA_BACKEND)
         super().__init__(odd, knobs, **kw)
+
+
+def controls_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob]:
+    """Knobs from config, by name: :func:`knobs_from_mapping`, plus ``target``.
+
+    ``target: setting`` (the default) is a raw setting, as without it.
+    ``target: measure`` declares that the key takes the measure's value at the
+    start itself -- the scenario solves for the placement that makes the
+    measure read it (:mod:`autoware_carla_scenario.placement`) -- so it is
+    written unchanged: such a control may not have ``scale``, ``offset``,
+    ``integer`` or ``values``.  ``range`` and ``limits`` it keeps.
+
+    Raises:
+        ValueError: On an unknown ``target``, a ``target: measure`` control
+            that maps the value, or what :func:`knobs_from_mapping` refuses.
+    """
+    plain: dict[str, Any] = {}
+    for name, spec in (raw or {}).items():
+        if not isinstance(spec, Mapping) or "target" not in spec:
+            plain[name] = spec
+            continue
+        target = spec["target"]
+        if target not in CONTROL_TARGETS:
+            raise ValueError(
+                f"control {name}: target must be one of {list(CONTROL_TARGETS)}, "
+                f"got {target!r}"
+            )
+        rest = {k: v for k, v in spec.items() if k != "target"}
+        if target == "measure":
+            mapped = sorted(f for f in _MAPPING_FIELDS if f in rest)
+            if mapped:
+                raise ValueError(
+                    f"control {name}: target: measure writes the measure's value "
+                    f"unchanged, so it takes no {', '.join(mapped)}"
+                )
+        plain[name] = rest
+    return knobs_from_mapping(plain)
 
 
 def sampler_from_config(
@@ -175,8 +231,8 @@ def search_from_config(
     strategy = str(raw.get("strategy", "uniform"))
     sampler = OddSampler(
         definition,
-        knobs_from_mapping(raw.get("knobs")),
-        controls=knobs_from_mapping(controls),
+        controls_from_mapping(raw.get("knobs")),
+        controls=controls_from_mapping(controls),
         seed=seed,
         strategy=strategy,
         coverage=coverage,
