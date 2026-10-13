@@ -2182,7 +2182,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code> and <code>maps</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 83
+below). 79
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -2205,10 +2205,8 @@ node's command from its ROS parameters (<code>bridge_ros_args()</code>,
 <code>bridge_command()</code>: a <code>Mapping[str, Any]</code> of bool, int, float and str
 values; Codon 0.19 fails on a <code>Union</code> in a parameter annotation, <code>union
 already sealed</code>, so the checker drops one and the check has nothing to call
-with), what the runner does with <code>json</code>,
-odd.route or a condition's details (writing the result and its environment,
-<code>_write_result()</code>; checking the planned route against the ODD,
-<code>ScenarioRunner._warn_if_route_leaves_odd()</code>; collecting the condition
+with), what the runner does with <code>json</code> or a condition's details (writing
+the result and its environment, <code>_write_result()</code>; collecting the condition
 statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver and
@@ -2307,7 +2305,9 @@ stands in for it in the check's workspace:</p>
   the top-level package, a model of that module (<code>carla_install.codon</code>, for
   <code>server</code>, declares <code>installed_executable()</code>; <code>trajectory_recorder.codon</code>,
   for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
-  closes, whose JSON lines hold values of mixed types). A module with no
+  closes, whose JSON lines hold values of mixed types; <code>environment.codon</code>,
+  for <code>scenario_runner</code>, <code>capture()</code> and the id of the <code>RunEnvironment</code> it
+  returns). A module with no
   model (<code>utils.config</code>) cannot be imported by a checked module until it is
   checked itself.</li>
 </ul>
@@ -3036,8 +3036,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   function <code>UNCALLED</code> names is still compiled when a checked function calls
   it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
   first branch what it can (<code>ScenarioRunner</code> calls <code>require_goal()</code>, built
-  on the ego's class, and <code>_warn_if_route_leaves_odd()</code>, which plans the
-  route with odd.route, in the <code>else</code> branch; <code>Ros2EgoEntity.on_scenario_start()</code>
+  on the ego's class, in the <code>else</code> branch; <code>Ros2EgoEntity.on_scenario_start()</code>
   builds its Cyclone DDS transport, <code>_cyclone_transport()</code>, there too). A
   private helper that imports such a module inside it needs an <code>UNCALLED</code>
   entry of its own: its import is rewritten, and refused, even when nothing
@@ -3301,13 +3300,21 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   value. The module sets its global in a function of its own
   (<code>entity.vehicle_entity._set_warmup_done()</code>).
 - <strong>The runner's boundary is modelled</strong>: <code>coverage.codon</code> declares the
-  <code>CoverageCollector</code> (its constructor, <code>start()</code>, <code>tick()</code>, <code>end()</code> and
-  <code>write(path, scenario)</code>; openodd's <code>backend</code> and <code>generator</code> are refused),
-  <code>odd.codon</code> <code>resolve_odd(spec)</code>, whose union parameter (<code>str</code>, <code>Path</code>,
-  <code>OddDefinition</code> or <code>None</code>) is generic and checked in its body, and
-  <code>reset_probes()</code>, and <code>autoware_stack/launcher.codon</code> the launcher's
-  <code>prepare()</code> and <code>close()</code>, which the queue calls. <code>test_typecheck_model.py</code>
-  compares each with the Python one.
+  <code>CoverageCollector</code> (its constructor, <code>start()</code>, <code>tick()</code>, <code>end()</code>,
+  <code>write(path, scenario)</code>, and the run's case and outcome,
+  <code>record_case(case, space=None)</code> and
+  <code>record_outcome(passed, *, failed_at=None, environment=None)</code>; openodd's
+  <code>backend</code> and <code>generator</code> are refused), <code>odd.codon</code> <code>resolve_odd(spec)</code>,
+  whose union parameter (<code>str</code>, <code>Path</code>, <code>OddDefinition</code> or <code>None</code>) is
+  generic and checked in its body, <code>reset_probes()</code>, the ODD's <code>modules</code>,
+  the case a run records (<code>OddCase</code>, a <code>@tuple</code> of openodd's <code>OddSample</code> and
+  <code>ParameterSpace</code>, which only the sampler builds) and what the runner reads
+  of odd.route's verdict on the ego's planned route (<code>plan_route_coverage()</code>,
+  <code>RouteCoverage</code> and <code>RouteLanelet</code>, which only it builds),
+  <code>environment.codon</code> the id of the run's environment (<code>capture()</code> and
+  <code>RunEnvironment.id</code>), and <code>autoware_stack/launcher.codon</code> the launcher's
+  <code>prepare()</code> and <code>close()</code>, which the queue calls.
+  <code>test_typecheck_model.py</code> compares each with the Python one.
 - <strong>No attribute of a union</strong>: Codon 0.19 reads <code>pose.yaw</code> of a value typed
   as a union (a vertex's <code>position</code>) as no type, even when every member has
   it with one type. After <code>isinstance</code>, name the value as the class
@@ -3364,7 +3371,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 11:43:28 UTC"><span class="timeago" datetime="2026-10-13T11:43:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 11:43:28 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 19:08:29 UTC"><span class="timeago" datetime="2026-10-13T19:08:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 19:08:29 UTC">2026-10-13</span>
   </span>
 
     
