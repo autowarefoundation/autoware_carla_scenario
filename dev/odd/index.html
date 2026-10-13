@@ -1582,6 +1582,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Controls">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#raw-settings-and-measure-targeted-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw settings and measure-targeted controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2010,6 +2027,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Controls">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#raw-settings-and-measure-targeted-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw settings and measure-targeted controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2911,13 +2945,14 @@ keyed by measure:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># scenario/cut_in/left.yaml</span>
 <a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nt">controls</span><span class="p">:</span>
 <a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span><span class="nt">vehicle_ahead_gap_m</span><span class="p">:</span>
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_ahead_m</span>
-<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">6.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">30.0</span><span class="p p-Indicator">]</span><span class="w">                 </span><span class="c1"># what the scenario can stage</span>
-<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">  </span><span class="nt">vehicle_ahead_relative_speed_kph</span><span class="p">:</span>
-<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_initial_speed_kmh</span>
-<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">    </span><span class="nt">offset</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ego.initial_speed_kmh}</span><span class="w">   </span><span class="c1"># its speed less the ego's</span>
-<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">-15.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">15.0</span><span class="p p-Indicator">]</span>
-<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">    </span><span class="nt">limits</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># a speed: never below zero, however slow the ego</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_gap_m</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">measure</span><span class="w">                    </span><span class="c1"># the gap the measure reads at the start</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">6.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">30.0</span><span class="p p-Indicator">]</span><span class="w">                 </span><span class="c1"># what the scenario can stage</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">  </span><span class="nt">vehicle_ahead_relative_speed_kph</span><span class="p">:</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_initial_speed_kmh</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">    </span><span class="nt">offset</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ego.initial_speed_kmh}</span><span class="w">   </span><span class="c1"># its speed less the ego's</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">-15.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">15.0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="w">    </span><span class="nt">limits</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># a speed: never below zero, however slow the ego</span>
 </code></pre></div>
 <table>
 <thead>
@@ -2930,6 +2965,10 @@ keyed by measure:</p>
 <tr>
 <td><code>key</code></td>
 <td>The config key the value is written to</td>
+</tr>
+<tr>
+<td><code>target</code></td>
+<td><code>setting</code> (the default): the key is a raw setting, written through <code>scale</code> and <code>offset</code>. <code>measure</code>: the key takes the measure's value at the start itself, written unchanged -- no <code>scale</code>, <code>offset</code>, <code>integer</code> or <code>values</code> (see below)</td>
 </tr>
 <tr>
 <td><code>range</code></td>
@@ -2955,6 +2994,69 @@ keyed by measure:</p>
 </table>
 <p><code>{measure: key}</code> is short for <code>{measure: {key: key}}</code>. The ODD's attribute
 and the measure share a unit: the binding takes the measure's.</p>
+<h4 id="raw-settings-and-measure-targeted-controls">Raw settings and measure-targeted controls<a class="headerlink" href="#raw-settings-and-measure-targeted-controls" title="Permanent link">&para;</a></h4>
+<p>A raw setting (<code>target: setting</code>) is a scenario parameter the drawn value is
+mapped onto by <code>scale</code> and <code>offset</code>, and the mapping is the author's claim
+that the parameter brings the measure about. It holds where the two are the
+same quantity by definition. It is a guess where they are not:
+<code>npc_ahead_m</code> is the NPC's <code>s</code> along its lanelet less the ego's along its
+own, while <code>vehicle_ahead_gap_m</code> is centre to centre along the ego's heading.
+Neighbouring lanelets do not run alike on a curve -- the outer one is longer,
+and their <code>s</code> do not line up -- so no constant offset is right wherever the
+scenario is placed (on CARLA 0.10 Town04_Opt one guessed +11 m was measured
+2.2 m off, and the right offset there is right nowhere else).</p>
+<p>A measure that the <strong>initial placement alone determines</strong> can be the
+parameter instead. The scenario takes "the measure should read <em>v</em> at the
+start" and solves for the placement that makes it so, evaluating the
+measure's own definition on the poses it will spawn at; the control says
+<code>target: measure</code>, and the value drawn is written unchanged:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">place_at_vehicle_ahead_gap</span><span class="p">,</span> <span class="n">solve_along</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="c1"># The NPC's s on its lanelet at which vehicle_ahead_gap_m reads cfg.npc_gap_m,</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="c1"># seen from where the ego spawns -- whatever the two lanelets' shapes.</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">ego_at</span> <span class="o">=</span> <span class="n">to_carla_world</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_spawn_pose</span><span class="p">)</span><span class="o">.</span><span class="n">to_carla_transform</span><span class="p">()</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">npc_pose</span> <span class="o">=</span> <span class="n">place_at_vehicle_ahead_gap</span><span class="p">(</span><span class="n">ego_at</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">npc_lanelet_id</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">npc_gap_m</span><span class="p">)</span>
+</code></pre></div>
+<p><code>place_at_vehicle_ahead_gap</code> reads the gap with the measure's own geometry
+(<code>measures.vehicle_ahead_gap_between</code>) for the NPC at each <code>s</code> of its
+lanelet, as a <code>Lanelet2Pose</code> spawns there, and narrows the first crossing of
+<em>v</em> down by bisection (<code>solve_along</code>, a 1-D root find that takes any
+<code>s -&gt; measure</code> function, for a measure of a scenario's own). A gap the
+lanelet cannot reach -- too short, turning away, or out of the lanes the
+measure counts -- is refused with the gaps it does reach, so a drawn case
+that cannot be staged fails at setup rather than running another gap.</p>
+<p>Which to use:</p>
+<table>
+<thead>
+<tr>
+<th>The measure is</th>
+<th>Control</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>decided by where and how road users start, and the parameter is that measure by definition (<code>npc_initial_speed_kmh</code> less the ego's is the relative speed)</td>
+<td>a raw setting, with the <code>offset</code> that makes it the measure</td>
+</tr>
+<tr>
+<td>decided by where road users start, but the parameter is another quantity (an arc length for a gap)</td>
+<td><code>target: measure</code>, with the scenario solving its placement</td>
+</tr>
+<tr>
+<td>decided by what the run then drives (a pedestrian's gap when it sets off, anything a controller or traffic changes)</td>
+<td>a raw setting; how far the measure drifts from what was drawn is read off the runs, in openodd's case plot (its drift/calibration view), not solved at setup</td>
+</tr>
+</tbody>
+</table>
+<p>The relative speed of <code>cut_in</code> is the first kind: both vehicles start at
+their speeds along their lanes, and the measure is the NPC's velocity along
+the ego's heading less the ego's, so its <code>offset: ${ego.initial_speed_kmh}</code>
+writes it exactly where the two lanes are parallel at the start. On a curve
+the NPC's heading differs from the ego's by the angle between their spawn
+points, and the measure reads its speed times the cosine of that: 15 m
+ahead on a 100 m radius at 30 km/h, it reads 30 × (1 − cos 0.15) = 0.34 km/h
+less than written. That is below what a relative-speed bucket resolves, so it
+stays a raw setting.</p>
 <p>The weather and the sun are set for every scenario, through the
 <code>environment</code> config, which sets them before the run starts
 (<code>EnvironmentAction</code>); the built-in probes reading them have controls of
@@ -3000,7 +3102,7 @@ the last word over the config.</p>
 <tr>
 <td><code>cut_in/*</code></td>
 <td><code>vehicle_ahead_gap_m</code></td>
-<td><code>npc_ahead_m</code>, 6-30 m</td>
+<td><code>npc_gap_m</code> (<code>target: measure</code>), 6-30 m</td>
 </tr>
 <tr>
 <td><code>cut_in/*</code></td>
@@ -3055,28 +3157,28 @@ from. Coverage is read when the sweep is expanded: to resume a sweep
 (<code>sweep.resume_from</code>) into the same cases, read the same coverage -- point
 <code>coverage_from</code> at the earlier runs, not at the sweep's own output.</p>
 <p>From Python:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coverage.report</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_and_merge</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddKnob</span><span class="p">,</span> <span class="n">OddSampler</span><span class="p">,</span> <span class="n">resolve_odd</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span>
-<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">resolve_odd</span><span class="p">(</span><span class="s2">"path/to/urban.yaml"</span><span class="p">),</span>
-<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_ahead_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">6.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
-<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
-<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>    <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span>
-<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>    <span class="n">coverage</span><span class="o">=</span><span class="n">load_and_merge</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]),</span>
-<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="p">)</span>
-<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
-<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">case</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">buckets</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">situation</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coverage.report</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_and_merge</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddKnob</span><span class="p">,</span> <span class="n">OddSampler</span><span class="p">,</span> <span class="n">resolve_odd</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="n">resolve_odd</span><span class="p">(</span><span class="s2">"path/to/urban.yaml"</span><span class="p">),</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_gap_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">6.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>    <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>    <span class="n">coverage</span><span class="o">=</span><span class="n">load_and_merge</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]),</span>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="p">)</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">case</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">buckets</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">situation</span><span class="p">)</span>
 </code></pre></div>
 <p>To go on from cases drawn before -- another scenario's, on the same ODD --
 pass them as <code>drawn</code>; <code>OddDraws</code> keeps them per ODD, as a batch does:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddDraws</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">draws</span> <span class="o">=</span> <span class="n">OddDraws</span><span class="p">()</span>
-<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">draws</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>
-<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">later</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span> <span class="n">drawn</span><span class="o">=</span><span class="n">draws</span><span class="o">.</span><span class="n">of</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddDraws</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">draws</span> <span class="o">=</span> <span class="n">OddDraws</span><span class="p">()</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">draws</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="n">later</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span> <span class="n">drawn</span><span class="o">=</span><span class="n">draws</span><span class="o">.</span><span class="n">of</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">))</span>
 </code></pre></div>
 <h3 id="finding-flaky-cases">Finding flaky cases<a class="headerlink" href="#finding-flaky-cases" title="Permanent link">&para;</a></h3>
 <p>Every run a sweep draws from the ODD records its case in its coverage file:
@@ -3091,14 +3193,14 @@ classification), and draws part of each batch where a small change would flip
 the outcome -- after the sampler has covered every bucket, the rest of the
 batch still sweeping the ODD (openodd's
 <a href="https://github.com/hakuturu583/openodd_py/blob/main/docs/flaky.md">docs/flaky.md</a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">sweep</span><span class="p">:</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">odd_sample</span><span class="p">:</span>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">    </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">coverage</span>
-<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">    </span><span class="nt">coverage_from</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">outputs</span><span class="p p-Indicator">]</span><span class="w">       </span><span class="c1"># the earlier sweeps' runs: what the search learns from</span>
-<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">    </span><span class="nt">flaky</span><span class="p">:</span>
-<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">      </span><span class="nt">explore_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.8</span><span class="w">        </span><span class="c1"># of each batch, once every bucket is covered</span>
-<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">      </span><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CutInScenario</span><span class="w">      </span><span class="c1"># learn from this scenario's runs only (all, when left out)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">sweep</span><span class="p">:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">odd_sample</span><span class="p">:</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">    </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">coverage</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">    </span><span class="nt">coverage_from</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">outputs</span><span class="p p-Indicator">]</span><span class="w">       </span><span class="c1"># the earlier sweeps' runs: what the search learns from</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">    </span><span class="nt">flaky</span><span class="p">:</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="w">      </span><span class="nt">explore_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.8</span><span class="w">        </span><span class="c1"># of each batch, once every bucket is covered</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="w">      </span><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CutInScenario</span><span class="w">      </span><span class="c1"># learn from this scenario's runs only (all, when left out)</span>
 </code></pre></div>
 <p><code>flaky: true</code> takes the defaults. Its other fields are <code>FlakySearch</code>'s:
 <code>pool</code>, <code>coverage_depth</code>, <code>threshold</code>, <code>epsilon</code>, <code>perturbations</code>, <code>draws</code>
@@ -3109,10 +3211,10 @@ its instability records the flakiness predicted for it, beside the one the
 report assesses. Run the sweeps one after another, each reading the earlier
 ones' outputs, and every sweep looks where the last left the outcome unsure.</p>
 <h2 id="checking-an-odd">Checking an ODD<a class="headerlink" href="#checking-an-odd" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>my_package.odds:urban_odd<span class="w">   </span><span class="c1"># compile with Codon</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>path/to/urban.yaml<span class="w">          </span><span class="c1"># read the binding and OpenODD files</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>show<span class="w"> </span>path/to/urban.yaml<span class="w">           </span><span class="c1"># attributes, buckets in and out</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>list<span class="w">                              </span><span class="c1"># ODDs known by name</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>my_package.odds:urban_odd<span class="w">   </span><span class="c1"># compile with Codon</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>path/to/urban.yaml<span class="w">          </span><span class="c1"># read the binding and OpenODD files</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>show<span class="w"> </span>path/to/urban.yaml<span class="w">           </span><span class="c1"># attributes, buckets in and out</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>list<span class="w">                              </span><span class="c1"># ODDs known by name</span>
 </code></pre></div>
 <p><code>check</code> compiles a Python ODD with Codon, the same way a scenario is
 compiled. It catches the following:</p>
@@ -3126,9 +3228,9 @@ key. OpenODD YAML is checked as it is read (see <a href="#what-is-read">What is 
 <h2 id="checking-a-planned-route">Checking a planned route<a class="headerlink" href="#checking-a-planned-route" title="Permanent link">&para;</a></h2>
 <p>Before a scenario runs, its ego route can be checked against the ODD on the
 Lanelet2 map alone, with no CARLA server:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span>intersection_passing/left_turn
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'lane_change/*'</span><span class="w"> </span>--json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span>intersection_passing/left_turn
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'lane_change/*'</span><span class="w"> </span>--json
 </code></pre></div>
 <p>Each scenario config is composed as a run composes it. Name it as
 <code>scenario=</code> does (a glob works too); arguments with an <code>=</code> are Hydra
@@ -3227,15 +3329,15 @@ is called unreached.</p>
 when a route could not be planned (no goal, no path, a lanelet the map does
 not have, no Lanelet2 map) or the ODD could not be read.</p>
 <p>From Python:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>    <span class="n">PlannedRoute</span><span class="p">,</span> <span class="n">combine_route_coverage</span><span class="p">,</span> <span class="n">plan_route_coverage</span><span class="p">,</span>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="p">)</span>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coordinate</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="n">route</span> <span class="o">=</span> <span class="n">PlannedRoute</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">203</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span> <span class="n">goal</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">207</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">))</span>
-<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="n">coverage</span> <span class="o">=</span> <span class="n">plan_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="o">=</span><span class="n">lanelet_map</span><span class="p">)</span>
-<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="n">coverage</span><span class="o">.</span><span class="n">leaves_odd</span><span class="p">,</span> <span class="n">coverage</span><span class="o">.</span><span class="n">outside</span><span class="p">(),</span> <span class="n">coverage</span><span class="o">.</span><span class="n">expected_m</span>
-<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="n">combine_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="p">[</span><span class="n">coverage</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span><span class="o">.</span><span class="n">unreached</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>    <span class="n">PlannedRoute</span><span class="p">,</span> <span class="n">combine_route_coverage</span><span class="p">,</span> <span class="n">plan_route_coverage</span><span class="p">,</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="p">)</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coordinate</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="n">route</span> <span class="o">=</span> <span class="n">PlannedRoute</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">203</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span> <span class="n">goal</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">207</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">))</span>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="n">coverage</span> <span class="o">=</span> <span class="n">plan_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="o">=</span><span class="n">lanelet_map</span><span class="p">)</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="n">coverage</span><span class="o">.</span><span class="n">leaves_odd</span><span class="p">,</span> <span class="n">coverage</span><span class="o">.</span><span class="n">outside</span><span class="p">(),</span> <span class="n">coverage</span><span class="o">.</span><span class="n">expected_m</span>
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="n">combine_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="p">[</span><span class="n">coverage</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span><span class="o">.</span><span class="n">unreached</span>
 </code></pre></div>
 <p><code>plan_route_coverage</code> also takes a scenario (its spawn pose, waypoints and
 goal) or a list of lanelet ids. Without <code>lanelet_map</code> it uses the map the
@@ -3288,7 +3390,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 12, 2026 23:24:48 UTC"><span class="timeago" datetime="2026-10-12T23:24:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 12, 2026 23:24:48 UTC">2026-10-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 22:11:58 UTC"><span class="timeago" datetime="2026-10-13T22:11:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 22:11:58 UTC">2026-10-13</span>
   </span>
 
     
