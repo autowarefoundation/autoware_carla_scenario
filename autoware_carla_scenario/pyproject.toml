@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "10.4.5"
+version = "10.5.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -105,6 +105,14 @@ sumo = [
 # traffic-light regulatory elements on the approach lanes (0.18).
 map = [
     "roadgen>=0.18.0",
+]
+# An ego driven by ROS 2 nodes over DDS (`ego.entity=ros2`, docs/ros2.md):
+# Cyclone DDS's Python binding, which speaks to rmw_cyclonedds_cpp nodes with
+# no ROS 2 installation. Its wheels cover Linux x86_64 on CPython 3.10-3.13
+# only (11.0.1); elsewhere it would build from source against a Cyclone DDS C
+# install, so the marker leaves it out there rather than fail the install.
+ros2 = [
+    "cyclonedds>=11.0.1; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.14'",
 ]
 
 [build-system]

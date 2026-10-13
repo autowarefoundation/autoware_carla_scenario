@@ -33,6 +33,8 @@ dev = [
     "traci>=1.23",
     # ...and the `map` extra (driver map files) and its tests.
     "roadgen>=0.18.0",
+    # ...and the `ros2` extra (the DDS ego) and its tests, where it has wheels.
+    "cyclonedds>=11.0.1; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.14'",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",
@@ -57,6 +59,12 @@ exclude = [
 # Generated protobuf modules carry no useful annotations of their own.
 module = ["autoware_carla_scenario.*._proto.*"]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+# Cyclone DDS's IDL annotations (`array[float64, 36]`, `sequence[T]`) are read
+# by cyclonedds at run time; its type stubs do not take type arguments.
+module = ["autoware_carla_scenario.ros2.messages"]
+disable_error_code = ["type-arg", "valid-type", "assignment"]
 
 [tool.pytest.ini_options]
 testpaths = [

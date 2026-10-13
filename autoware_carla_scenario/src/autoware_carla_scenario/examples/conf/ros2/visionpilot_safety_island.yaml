@@ -1,0 +1,41 @@
+# @package _global_
+#
+# The Open AD Kit CES 2027 demo's bench side (autowarefoundation/openadkit#157),
+# with this entity in place of the CARLA-to-ROS 2 bridge's ego-state publisher,
+# speed publisher and command arbiter:
+#
+#   uv run scenario ros2=visionpilot_safety_island
+#
+# VisionPilot steers and accelerates; a fresh command from the safety island
+# (the CR52, restamped onto domain 1 by control_restamp) overrides it. The
+# camera and /clock still come from CARLA's own ROS 2 interface.
+defaults:
+  - default
+  - _self_
+
+ego:
+  # VisionPilot's CARLA rig (Simulation/CARLA/ROS2/config/carla10.json).
+  vehicle_type: vehicle.lincoln.mkz
+  entity: ros2
+
+server:
+  # Real time: the board's deadlines (the heartbeat's 0.5 s staleness, the
+  # health monitor's 80 ms frame) are wall-clock ones.
+  max_tick_rate_hz: 20.0
+
+ros2:
+  # The bench LAN.
+  domain_id: 1
+  sources:
+    - name: visionpilot
+      kind: steer_accel
+      steering_topic: /vehicle/steering_cmd
+      acceleration_topic: /vehicle/throttle_cmd
+      # Plans at the camera's 10 Hz, so stale_s keeps its default 0.3 s; it
+      # steers positive to the right, as CARLA does (steering_sign 1.0).
+    - name: safety_island
+      kind: control
+      topic: /control/trajectory_follower/control_cmd
+      # Overrides VisionPilot while fresh: the CR52 commands every 150 ms,
+      # well inside the default stale_s.
+      priority: 10

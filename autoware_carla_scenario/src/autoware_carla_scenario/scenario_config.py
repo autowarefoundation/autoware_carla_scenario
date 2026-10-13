@@ -199,6 +199,8 @@ class EgoVehicleConfig:
     #: * ``"autoware"`` -- no driver; the actor is left for an external stack.
     #: * ``"carla_driver"`` -- an external policy over the ``egodriver`` gRPC
     #:   contract, configured by the ``driver`` config group.
+    #: * ``"ros2"`` -- ROS 2 nodes over DDS, configured by the ``ros2`` config
+    #:   group (the ``ros2`` extra).
     entity: str = "autopilot"
 
 
