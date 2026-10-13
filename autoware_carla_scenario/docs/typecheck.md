@@ -260,9 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module but two now has an entry other than `"not yet checked (#45)"`:
-`ros2.commands` and `ros2.transport`, which came with the ROS 2 ego, are not
-yet checked. 154 of the package's 236 modules (65%; about 36,000 of 67,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 159 of
+the package's 236 modules (67%; about 37,000 of 67,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -284,7 +283,9 @@ walk-straight actions and the background-traffic source and sink
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
-(`entity.autoware_entity`), the entity registry and the policy
+(`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
+(`entity.ros2_entity`) with its configs, commands, arbitration and transport
+interface (`ros2`, `ros2.config`, `ros2.commands`, `ros2.transport`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
 runner's run loop and the queue that runs scenarios one after another
 (`scenario_runner`, `scenario_queue`), the UI's runner, which runs them in
@@ -313,7 +314,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 80
+below). 79
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -336,23 +337,23 @@ node's command from its ROS parameters (`bridge_ros_args()`,
 `bridge_command()`: a `Mapping[str, Any]` of bool, int, float and str
 values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
 already sealed`, so the checker drops one and the check has nothing to call
-with), what the runner does with `json`,
-odd.route or a condition's details (writing the result and its environment,
-`_write_result()`; checking the planned route against the ODD,
-`ScenarioRunner._warn_if_route_leaves_odd()`; collecting the condition
+with), what the runner does with `json` or a condition's details (writing
+the result and its environment, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
-which reads the `map` config node of any shape (`Any`), the driver configs'
-`from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 80 `EXCLUDED` modules other than the
-two not yet checked fall in three groups. Many fit more than one (about 55
-import what Codon cannot compile, 32 build on an excluded module and 21 hold
-values Codon has no type for), so each is counted once, in the first group
-that fits it:
+which reads the `map` config node of any shape (`Any`), the driver and
+ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
+builds the ROS 2 ego's Cyclone DDS transport (`entity.ros2_entity._cyclone_transport()`,
+which imports `ros2.cyclone` inside it) and
+`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 55 import what Codon cannot
+compile, 29 build on an excluded module and 20 hold values Codon has no type
+for), so each is counted once, in the first group that fits it:
 
 - **55 import what Codon cannot compile**: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
-  cyclonedds (the ROS 2 ego's DDS transport and messages), or
+  cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
+  transport and its message types), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
@@ -364,17 +365,16 @@ that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **22 build on an excluded module**, and import nothing Codon lacks
+- **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `coverage`, `examples`, `scaffold`, `ros2`), the ROS 2 ego and its
-  configs (`entity.ros2_entity`, `ros2.config`), the
+  `coverage`, `examples`, `scaffold`), the
   authoring compiler, builders and validator, `odd.probes` and `odd.route`,
   the coverage half of the route check (names of `odd.model` and `coverage.items` that the odd and coverage
   models do not declare, such as `UNDECIDED`; both also hold attribute
   values of any type, `dict[str, Any]`) and
-  `traffic.registry` (the `registry`, in its plugin loader); 6 of the 22
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -446,7 +446,9 @@ stands in for it in the check's workspace:
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
-  closes, whose JSON lines hold values of mixed types). A module with no
+  closes, whose JSON lines hold values of mixed types; `environment.codon`,
+  for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
+  returns). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
@@ -1120,7 +1122,10 @@ What Codon 0.19 needs that Python does not, beyond
   itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
   its tuple. A dataclass field's `field(default=())` is an empty `List[X]`
   (`Pin.warnings`); a tuple display (`("a",)`) stays a fixed-length Codon
-  tuple, which is no `List[X]`: pass `tuple([...])` of a list instead. A parameter `tuple[X, ...]` is dropped (a caller may pass a
+  tuple, which is no `List[X]`: pass `tuple([...])` of a list instead
+  (`ros2.config`'s default `sources`; `CommandSourceConfig.topics`, which
+  returns a one- or a two-element tuple, likewise, so its two returns have
+  one type). A parameter `tuple[X, ...]` is dropped (a caller may pass a
   tuple), and the library check calls it with a `List[X]`.
   `Phase.states` and `SignalController.phases` (`signals.controller`) are
   checked this way. What only a tuple does is not checked: its hash (a
@@ -1185,8 +1190,17 @@ What Codon 0.19 needs that Python does not, beyond
   function `UNCALLED` names is still compiled when a checked function calls
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
   first branch what it can (`ScenarioRunner` calls `require_goal()`, built
-  on the ego's class, and `_warn_if_route_leaves_odd()`, which plans the
-  route with odd.route, in the `else` branch).
+  on the ego's class, in the `else` branch; `Ros2EgoEntity.on_scenario_start()`
+  builds its Cyclone DDS transport, `_cyclone_transport()`, there too). A
+  private helper that imports such a module inside it needs an `UNCALLED`
+  entry of its own: its import is rewritten, and refused, even when nothing
+  compiled calls it.
+- **A type alias imported from another module, inside an alias of this one**
+  (`Received = Tuple[str, Command]`, with `Command` a `Union` alias of
+  `ros2.commands`) is "not defined" to Codon 0.19, though the imported alias
+  works as an annotation. Spell the union out in the alias
+  (`ros2.transport.Received`; `test_ros2_commands.py` checks the two are
+  equal).
 - **An entity looked up by role is looked up by kind**:
   `find_entity_by_role_name` returns an entity of any kind (`Optional[Any]`),
   so a checked module asks `entity.registry` for the kind it acts on,
@@ -1440,13 +1454,21 @@ What Codon 0.19 needs that Python does not, beyond
   value. The module sets its global in a function of its own
   (`entity.vehicle_entity._set_warmup_done()`).
 - **The runner's boundary is modelled**: `coverage.codon` declares the
-  `CoverageCollector` (its constructor, `start()`, `tick()`, `end()` and
-  `write(path, scenario)`; openodd's `backend` and `generator` are refused),
-  `odd.codon` `resolve_odd(spec)`, whose union parameter (`str`, `Path`,
-  `OddDefinition` or `None`) is generic and checked in its body, and
-  `reset_probes()`, and `autoware_stack/launcher.codon` the launcher's
-  `prepare()` and `close()`, which the queue calls. `test_typecheck_model.py`
-  compares each with the Python one.
+  `CoverageCollector` (its constructor, `start()`, `tick()`, `end()`,
+  `write(path, scenario)`, and the run's case and outcome,
+  `record_case(case, space=None)` and
+  `record_outcome(passed, *, failed_at=None, environment=None)`; openodd's
+  `backend` and `generator` are refused), `odd.codon` `resolve_odd(spec)`,
+  whose union parameter (`str`, `Path`, `OddDefinition` or `None`) is
+  generic and checked in its body, `reset_probes()`, the ODD's `modules`,
+  the case a run records (`OddCase`, a `@tuple` of openodd's `OddSample` and
+  `ParameterSpace`, which only the sampler builds) and what the runner reads
+  of odd.route's verdict on the ego's planned route (`plan_route_coverage()`,
+  `RouteCoverage` and `RouteLanelet`, which only it builds),
+  `environment.codon` the id of the run's environment (`capture()` and
+  `RunEnvironment.id`), and `autoware_stack/launcher.codon` the launcher's
+  `prepare()` and `close()`, which the queue calls.
+  `test_typecheck_model.py` compares each with the Python one.
 - **No attribute of a union**: Codon 0.19 reads `pose.yaw` of a value typed
   as a union (a vertex's `position`) as no type, even when every member has
   it with one type. After `isinstance`, name the value as the class

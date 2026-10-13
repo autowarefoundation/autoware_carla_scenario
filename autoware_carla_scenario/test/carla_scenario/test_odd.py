@@ -999,7 +999,8 @@ def test_the_model_declares_the_probes_as_python_does() -> None:
     }
     for name, node in functions.items():
         python = getattr(odd_pkg, name)
-        assert [a.arg for a in node.args.args] == list(
+        # A keyword-only parameter follows the model's `*_kw` marker.
+        assert [a.arg for a in [*node.args.args, *node.args.kwonlyargs]] == list(
             inspect.signature(python).parameters
         ), name
     for name, value in constants.items():

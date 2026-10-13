@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
 
 from ..constants import US_PER_S
-from ..utils.config import checked_options
 
 __all__ = [
     "COMMAND_KINDS",
@@ -103,9 +102,11 @@ class CommandSourceConfig:
     @property
     def topics(self) -> Tuple[str, ...]:
         """Every topic this source reads."""
+        # tuple() of a list: the check reads it as a list, so both returns
+        # have one type (docs/typecheck.md).
         if self.kind == "steer_accel":
-            return (self.steering_topic, self.acceleration_topic)
-        return (self.topic,)
+            return tuple([self.steering_topic, self.acceleration_topic])
+        return tuple([self.topic])
 
     @property
     def stale_us(self) -> int:
@@ -119,16 +120,22 @@ class CommandSourceConfig:
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
+        from ..utils.config import checked_options  # noqa: PLC0415
+
         return cls(**checked_options(cls, mapping))
 
 
 def _default_sources() -> Tuple[CommandSourceConfig, ...]:
-    return (
-        CommandSourceConfig(
-            name="planner",
-            kind="trajectory",
-            topic="/planning/scenario_planning/trajectory",
-        ),
+    # tuple() of a list, not a display: the check reads a variable-length
+    # tuple field as a list (docs/typecheck.md).
+    return tuple(
+        [
+            CommandSourceConfig(
+                name="planner",
+                kind="trajectory",
+                topic="/planning/scenario_planning/trajectory",
+            )
+        ]
     )
 
 
@@ -190,6 +197,8 @@ class Ros2EgoConfig:
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
+        from ..utils.config import checked_options  # noqa: PLC0415
+
         values = checked_options(cls, mapping, ignore={"control"})
         sources = values.pop("sources", None)
         if sources is not None:
